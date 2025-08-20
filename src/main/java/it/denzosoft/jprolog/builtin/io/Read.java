@@ -1,7 +1,13 @@
 package it.denzosoft.jprolog.builtin.io;
 
-import it.denzosoft.jprolog.*;
-import it.denzosoft.jprolog.terms.*;
+import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
+import it.denzosoft.jprolog.core.engine.Prolog;
+import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.exceptions.PrologParserException;
+import it.denzosoft.jprolog.core.parser.TermParser;
+import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.terms.Variable;
 
 import java.util.HashMap;
 import java.util.List;

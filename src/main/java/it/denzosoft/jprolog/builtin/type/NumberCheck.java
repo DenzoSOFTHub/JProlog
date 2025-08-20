@@ -1,10 +1,10 @@
 package it.denzosoft.jprolog.builtin.type;
 
-import it.denzosoft.jprolog.BuiltIn;
-import it.denzosoft.jprolog.PrologEvaluationException;
-import it.denzosoft.jprolog.terms.Number;
-import it.denzosoft.jprolog.terms.Term;
-import it.denzosoft.jprolog.terms.Variable;
+import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.terms.Number;
+import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.terms.Variable;
 
 import java.util.List;
 import java.util.Map;
@@ -19,8 +19,11 @@ public class NumberCheck implements BuiltIn {
 
         Term termArg = query.getArguments().get(0);
 
-        if (termArg.isGround()) {
-            boolean isNumber = (termArg instanceof Number);
+        // Resolve bindings first
+        Term resolvedTerm = termArg.resolveBindings(bindings);
+        
+        if (resolvedTerm.isGround()) {
+            boolean isNumber = (resolvedTerm instanceof Number);
 
             if (isNumber) {
                 solutions.add(bindings);
@@ -29,7 +32,8 @@ public class NumberCheck implements BuiltIn {
                 return false;
             }
         } else {
-           throw new PrologEvaluationException("number/1: Argument must be ground.");
+           // In ISO Prolog, type checks should fail (not throw) for unbound variables
+           return false;
         }
     }
 }

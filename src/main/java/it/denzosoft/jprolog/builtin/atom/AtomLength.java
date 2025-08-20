@@ -1,11 +1,11 @@
 package it.denzosoft.jprolog.builtin.atom;
 
-import it.denzosoft.jprolog.BuiltIn;
-import it.denzosoft.jprolog.PrologEvaluationException;
-import it.denzosoft.jprolog.terms.Atom;
-import it.denzosoft.jprolog.terms.Number;
-import it.denzosoft.jprolog.terms.Term;
-import it.denzosoft.jprolog.terms.Variable;
+import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.terms.Atom;
+import it.denzosoft.jprolog.core.terms.Number;
+import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.terms.Variable;
 
 import java.util.HashMap;
 import java.util.List;

@@ -1,9 +1,9 @@
 package it.denzosoft.jprolog.builtin.arithmetic;
 
-import it.denzosoft.jprolog.ArithmeticEvaluator;
-import it.denzosoft.jprolog.BuiltIn;
-import it.denzosoft.jprolog.PrologEvaluationException;
-import it.denzosoft.jprolog.terms.Term;
+import it.denzosoft.jprolog.core.engine.ArithmeticEvaluator;
+import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.terms.Term;
 
 import java.util.HashMap;
 import java.util.List;

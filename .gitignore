@@ -94,3 +94,8 @@ desktop.ini
 
 # Application specific
 openrouterclient.properties
+*.sh
+Test*.java
+Debug*.java
+temp_*.txt
+*.class

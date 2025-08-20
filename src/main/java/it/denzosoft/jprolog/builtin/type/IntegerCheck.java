@@ -1,9 +1,9 @@
 package it.denzosoft.jprolog.builtin.type;
 
-import it.denzosoft.jprolog.BuiltIn;
-import it.denzosoft.jprolog.PrologEvaluationException;
-import it.denzosoft.jprolog.terms.Number;
-import it.denzosoft.jprolog.terms.Term;
+import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.terms.Number;
+import it.denzosoft.jprolog.core.terms.Term;
 
 import java.util.List;
 import java.util.Map;
@@ -19,10 +19,13 @@ public class IntegerCheck implements BuiltIn {
 
         Term termArg = query.getArguments().get(0);
 
-        if (termArg.isGround()) {
-            boolean isInteger = (termArg instanceof Number) && 
-                               ((Number) termArg).getValue() == Math.floor(((Number) termArg).getValue()) &&
-                               !Double.isInfinite(((Number) termArg).getValue());
+        // Resolve bindings first
+        Term resolvedTerm = termArg.resolveBindings(bindings);
+        
+        if (resolvedTerm.isGround()) {
+            boolean isInteger = (resolvedTerm instanceof Number) && 
+                               ((Number) resolvedTerm).getValue() == Math.floor(((Number) resolvedTerm).getValue()) &&
+                               !Double.isInfinite(((Number) resolvedTerm).getValue());
             
             if (isInteger) {
                 solutions.add(bindings);
@@ -31,7 +34,8 @@ public class IntegerCheck implements BuiltIn {
                 return false;
             }
         } else {
-            throw new PrologEvaluationException("integer/1: Argument must be ground.");
+            // In ISO Prolog, type checks should fail (not throw) for unbound variables
+            return false;
         }
     }
 }

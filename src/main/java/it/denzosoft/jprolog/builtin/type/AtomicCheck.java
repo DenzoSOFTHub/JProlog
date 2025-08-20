@@ -1,10 +1,10 @@
 package it.denzosoft.jprolog.builtin.type;
 
-import it.denzosoft.jprolog.BuiltIn;
-import it.denzosoft.jprolog.PrologEvaluationException;
-import it.denzosoft.jprolog.terms.Atom;
-import it.denzosoft.jprolog.terms.Number;
-import it.denzosoft.jprolog.terms.Term;
+import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.terms.Atom;
+import it.denzosoft.jprolog.core.terms.Number;
+import it.denzosoft.jprolog.core.terms.Term;
 
 import java.util.List;
 import java.util.Map;
@@ -30,7 +30,7 @@ public class AtomicCheck implements BuiltIn {
                 return false;
             }
         } else {
-            throw new PrologEvaluationException("atomic/1: Argument must be ground.");
+            return false;
         }
     }
 }

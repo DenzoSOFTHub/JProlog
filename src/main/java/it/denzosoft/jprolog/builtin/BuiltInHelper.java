@@ -1,7 +1,7 @@
 package it.denzosoft.jprolog.builtin;
 
-import it.denzosoft.jprolog.Prolog;
-import it.denzosoft.jprolog.QuerySolver;
+import it.denzosoft.jprolog.core.engine.Prolog;
+import it.denzosoft.jprolog.core.engine.QuerySolver;
 import java.lang.reflect.Field;
 
 public class BuiltInHelper {

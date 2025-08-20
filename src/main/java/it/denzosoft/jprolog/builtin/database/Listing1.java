@@ -1,9 +1,11 @@
 package it.denzosoft.jprolog.builtin.database;
 
-import it.denzosoft.jprolog.BuiltInWithContext;
-import it.denzosoft.jprolog.QuerySolver;
-import it.denzosoft.jprolog.terms.Term;
-import it.denzosoft.jprolog.terms.Variable;
+import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
+import it.denzosoft.jprolog.core.engine.Prolog;
+import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.terms.Variable;
 
 import java.util.List;
 import java.util.Map;
@@ -14,7 +16,7 @@ public class Listing1 implements BuiltInWithContext {
     @Override
     public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 1) {
-            throw new it.denzosoft.jprolog.PrologEvaluationException("listing/1 requires exactly one argument.");
+            throw new PrologEvaluationException("listing/1 requires exactly one argument.");
         }
 
         Term indicatorTerm = query.getArguments().get(0);
@@ -25,15 +27,15 @@ public class Listing1 implements BuiltInWithContext {
             Term resolvedTerm = indicatorTerm.resolveBindings(bindings);
             predicateIndicatorString = resolvedTerm.toString();
         } else {
-            throw new it.denzosoft.jprolog.PrologEvaluationException("listing/1: Argument must be ground.");
+            throw new PrologEvaluationException("listing/1: Argument must be ground.");
         }
 
         // Get Prolog engine instance
-        it.denzosoft.jprolog.Prolog engine = solver.getPrologContext();
+        Prolog engine = solver.getPrologContext();
         if (engine != null) {
             engine.listing(predicateIndicatorString);
         } else {
-             throw new it.denzosoft.jprolog.PrologEvaluationException("listing/1: Prolog engine context not available.");
+             throw new PrologEvaluationException("listing/1: Prolog engine context not available.");
         }
 
         // Successfully displayed listing

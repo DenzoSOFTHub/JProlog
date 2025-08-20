@@ -1,0 +1,3 @@
+consult('examples/test_03_arithmetic.pl').
+X is 2 + 3 * 4, write('X = '), write(X), nl.
+:quit

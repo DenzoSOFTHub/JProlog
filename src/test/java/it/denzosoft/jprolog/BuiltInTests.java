@@ -1,8 +1,9 @@
 package it.denzosoft.jprolog;
+import it.denzosoft.jprolog.core.engine.Prolog;
 
-import it.denzosoft.jprolog.terms.Atom;
-import it.denzosoft.jprolog.terms.Term;
-import it.denzosoft.jprolog.terms.Variable;
+import it.denzosoft.jprolog.core.terms.Atom;
+import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.terms.Variable;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
