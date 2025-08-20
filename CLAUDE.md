@@ -532,24 +532,33 @@ mvn test
 #### Documentation Update (MANDATORY)
 **After every version increment**, update immediately:
 
-1. **File `docs/tracking/track-issues.md`**:
+1. **File `CHANGELOG.md`** (CRITICAL - MANDATORY FOR EVERY RELEASE):
+   - **MUST** document ALL changes included in the release
+   - Include version number, date, and comprehensive change summary
+   - List all resolved issues (ISS-YYYY-NNNN references)
+   - Document new features, bug fixes, improvements
+   - Note breaking changes (if any) and known limitations
+   - Include test success metrics and performance data
+   - **NO RELEASE TAG without corresponding CHANGELOG entry**
+
+2. **File `docs/tracking/track-issues.md`**:
    - Update status of resolved issues from `IN_PROGRESS` → `RESOLVED`
    - Add resolution date: `**Resolution Date**: YYYY-MM-DD`
    - Document implemented solution in `#### Implemented Solution` section
    - Add references to modified files
    - Update test results and validation
 
-2. **File `docs/tracking/track-change-requests.md`** (if applicable):
+3. **File `docs/tracking/track-change-requests.md`** (if applicable):
    - Update CR status from `IN_DEVELOPMENT` → `COMPLETED`
    - Document implementation and satisfied acceptance criteria
    - Update impact analysis with actual results
 
-3. **File `docs/tracking/track-limitations.md`**:
+4. **File `docs/tracking/track-limitations.md`**:
    - **REMOVE** entries for resolved issues
    - Update workarounds if no longer needed
    - Document new limitations discovered during implementation
 
-4. **Complete Documentation Review** (MANDATORY):
+5. **Complete Documentation Review** (MANDATORY):
    - Verify that all file references follow the naming convention
    - **IMPORTANT**: Ensure that ALL documentation is in English
    - Update metrics and statistics in report files
@@ -839,6 +848,49 @@ fi
 
 echo "✅ Tag validation completed"
 ```
+
+#### Release Documentation Requirement (MANDATORY)
+**⚠️ CRITICAL PROCEDURE**: The `CHANGELOG.md` file in the root directory MUST be updated with complete release information for EVERY version tag created.
+
+**Required for Each Release**:
+1. **Version number and release date**
+2. **Summary of major features and fixes** 
+3. **Detailed list of all changes** (features, bug fixes, improvements)
+4. **Issue references** (ISS-YYYY-NNNN) that were resolved
+5. **Breaking changes** (if any)
+6. **Known limitations or issues**
+7. **Test success metrics**
+8. **Performance improvements or regressions**
+
+**CHANGELOG.md Format**:
+```markdown
+# Changelog
+
+## [x.y.z] - YYYY-MM-DD
+
+### 🚀 Major Features
+- Description of major new features
+
+### 🔧 Bug Fixes  
+- ISS-YYYY-NNNN: Description of bug fix
+- ISS-YYYY-NNNN: Description of another fix
+
+### ✨ Improvements
+- Description of improvements and enhancements
+
+### 📊 Metrics
+- Test success rate: XX% (YY/ZZ programs)
+- ISO compliance: XX%
+- Built-in coverage: XX predicates
+
+### 🚨 Breaking Changes
+- Description of any breaking changes (if applicable)
+
+### 📋 Known Issues
+- Reference to current limitations (see docs/tracking/track-limitations.md)
+```
+
+**ENFORCEMENT**: No release tag should be created without corresponding CHANGELOG.md entry. This ensures complete traceability of all changes and proper release documentation.
 
 #### Importance of Release Notes
 **⚠️ MANDATORY PROCEDURE**: The `docs/tracking/track-release-notes.md` file MUST be updated before every release for:

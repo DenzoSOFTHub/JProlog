@@ -9,11 +9,12 @@ JProlog is a complete and robust Prolog implementation in Java that provides a c
 ### 🎯 Project Scope
 
 JProlog aims to provide ISO-compliant Prolog functionality with modern development tools, offering:
-- **Near-Complete ISO Compliance**: 99.5% success rate including ISO/IEC DTS 13211-3 DCG extensions
+- **Excellent ISO Compliance**: ~95% success rate with comprehensive built-in predicate coverage
 - **Professional Development Environment**: Full-featured IDE with debugging capabilities  
-- **Command Line Interface**: Interactive Prolog console for quick testing
-- **Extensive Built-in Library**: 93+ built-in predicates with 99.5% coverage of ISO standards
-- **Advanced DCG Support**: Complete Definite Clause Grammar system per ISO/IEC DTS 13211-3
+- **Command Line Interface**: Interactive Prolog console for quick testing and scripting
+- **Comprehensive Built-in Library**: 80+ built-in predicates with extensive ISO standard coverage
+- **Advanced DCG Support**: 85% success rate on comprehensive DCG parsing scenarios
+- **Systematic Issue Tracking**: Complete documentation of limitations with workarounds
 - **Java Integration**: Easy embedding of Prolog logic in Java applications
 
 ## 🏗️ System Architecture
@@ -93,12 +94,13 @@ Comprehensive library of standard Prolog predicates organized by category:
 - **Stream operations**: `open/3`, `close/1`, `current_input/1`, `current_output/1`
 - **Character I/O**: `get_char/1`, `put_char/1`, `get_code/1`, `put_code/1`
 
-#### 🧬 **Advanced DCG Support** (`builtin/dcg/`)
-- **Enhanced Grammar Execution**: `enhanced_phrase/2`, `enhanced_phrase/3` with ISO/IEC DTS 13211-3 compliance
-- **Advanced Options**: `phrase_with_options/4` with syntax error handling, depth limits, tracing
-- **DCG Utilities**: `call_dcg/3`, `dcg_translate_rule/2`, `dcg_body/3` for meta-programming
-- **Complex Control Structures**: Full support for embedded Prolog goals, cuts, conditionals
-- **Automatic Transformation**: `-->` rules converted to standard Prolog predicates with advanced features
+#### 🧬 **DCG Support** (`builtin/dcg/`)
+- **Core DCG Functionality**: Standard `phrase/2` predicate for grammar parsing
+- **Automatic DCG Transformation**: `-->` rules converted to standard Prolog predicates
+- **85% Success Rate**: Comprehensive testing on 20 DCG programs with excellent coverage
+- **Working Features**: Terminal/non-terminal symbols, variables, recursion, basic constraints
+- **Known Limitations**: 3 documented parser limitations with workarounds available
+- **Systematic Testing**: Complete test suite with `test_dcg_01` through `test_dcg_20` programs
 
 ## 🚀 Quick Start
 
@@ -210,36 +212,40 @@ JProlog provides comprehensive documentation for all aspects of the system:
 - **[docs/reports/report-resolution-summary.md](docs/reports/report-resolution-summary.md)**: Summary of resolved issues and improvements
 
 ### 💡 **Examples & Tutorials**
-- **[examples/](examples/)**: 40+ example Prolog programs covering all language features
+- **[examples/](examples/)**: 103 example Prolog programs covering all language features (74 test programs + 20 DCG programs + 9 additional examples)
 - **[examples/example-bug-workflow.md](examples/example-bug-workflow.md)**: Step-by-step bug fixing examples  
 - **[examples/example-nqueens-compilation.md](examples/example-nqueens-compilation.md)**: N-Queens problem compilation guide
 
 ## 📊 **Quality Metrics & Compliance**
 
 ### 🎯 **Current Status (Version 2.0.15)**
-- **ISO Prolog Compliance**: 99.5% including ISO/IEC DTS 13211-3 DCG extensions
-- **Comprehensive Test Success Rate**: 95%+ (20/20 core programs pass)
-- **Built-in Predicate Coverage**: 93+ predicates with 99.5% ISO standard coverage
-- **Parser Support**: ~90% of ISO Prolog syntax supported
-- **DCG Extensions**: Complete ISO/IEC DTS 13211-3 Definite Clause Grammar support
-- **Core Engine Stability**: ~98% robust and reliable operation
+- **ISO Prolog Compliance**: ~95% with comprehensive built-in predicate implementation
+- **Core Test Success Rate**: 95%+ (19/20 comprehensive programs pass)
+- **Built-in Predicate Coverage**: 80+ predicates with extensive ISO standard coverage
+- **Parser Support**: ~85% of ISO Prolog syntax supported with documented limitations
+- **DCG Support**: 85% success rate (17/20 comprehensive DCG programs working)
+- **Issue Tracking**: Complete documentation of 9 active limitations with workarounds
+- **Core Engine Stability**: ~95% robust operation with systematic testing
 
 ### 🧪 **Testing Framework**
-- **40+ Example Programs**: Comprehensive test suite covering all language features
+- **103 Total Prolog Programs**: Comprehensive test suite in `examples/` directory
+- **74 Systematic Test Programs**: `test_*.pl` programs covering all language features
+- **20 DCG Test Programs**: Complete DCG testing from `test_dcg_01` to `test_dcg_20`
 - **Automated Testing**: `./test_all_examples.sh` for continuous validation
 - **Performance Testing**: Includes complex algorithms and data structures
-- **Regression Testing**: Prevents introduction of new bugs
+- **Systematic Issue Tracking**: All limitations documented with concrete examples
 
 ### ✅ **Verified Features**
-- ✅ **Meta-predicates**: `findall/3`, `bagof/3`, `setof/3` fully functional
-- ✅ **Term manipulation**: `functor/3`, `arg/3`, `=../2`, `copy_term/2`
-- ✅ **Arithmetic operations**: `=:=`, `=\=`, `rem`, `xor`, shift operators
-- ✅ **Control structures**: `;`, `->`, `\+`, `once/1`, `!` (cut)
+- ✅ **Meta-predicates**: `findall/3`, `bagof/3`, `setof/3` fully functional (confirmed v2.0.14)
+- ✅ **Term manipulation**: `functor/3`, `arg/3`, `=../2`, `copy_term/2` (confirmed v2.0.14)
+- ✅ **Arithmetic operations**: `=:=`, `=\=`, `rem`, `xor`, shift operators (confirmed v2.0.14)
+- ✅ **Control structures**: `;`, `->`, `\+`, `once/1`, `!` (cut) (confirmed v2.0.14)
 - ✅ **List processing**: ISO-compliant `[a,b,c]` representation
-- ✅ **Advanced DCG support**: Complete ISO/IEC DTS 13211-3 grammar extensions with enhanced predicates
-- ✅ **DCG Meta-programming**: `call_dcg/3`, `dcg_translate_rule/2`, advanced control structures
-- ✅ **Database operations**: Dynamic assert/retract predicates
+- ✅ **DCG Core Functionality**: 85% success rate on comprehensive DCG test suite
+- ✅ **DCG Working Patterns**: Terminal/non-terminal symbols, variables, recursion, constraints
+- ✅ **Database operations**: Dynamic assert/retract predicates (confirmed v2.0.14)
 - ✅ **I/O operations**: File and stream handling
+- ✅ **Atom operations**: `atom_length/2`, `atom_concat/3` (confirmed v2.0.14)
 
 ## 🔧 **IDE Keyboard Shortcuts**
 
@@ -400,20 +406,20 @@ Version 2.0.15 - Released August 2025
 
 - **Repository**: https://github.com/DenzoSOFTHub/JProlog
 - **Website**: https://denzosoft.it
-- **Latest Release**: v2.0.15 with 99.5% ISO 13211-1 + DTS 13211-3 compliance
+- **Latest Release**: v2.0.15 with ~95% ISO 13211-1 compliance and 85% DCG support
 - **License**: Proprietary (DenzoSOFT)
 
 ---
 
 ## 🎯 **Why Choose JProlog?**
 
-✅ **Near-Complete ISO Compliance**: 99.5% ISO 13211-1 + DTS 13211-3 support with advanced DCG extensions  
-✅ **Complete Ecosystem**: Engine + IDE + CLI + 93+ Built-ins in one package  
+✅ **Excellent ISO Compliance**: ~95% ISO 13211-1 support with comprehensive built-in predicate coverage  
+✅ **Complete Ecosystem**: Engine + IDE + CLI + 80+ Built-ins in one package  
 ✅ **Professional Tools**: Full-featured IDE with debugging capabilities  
-✅ **Advanced Grammar Processing**: Complete DCG system for parsing applications
+✅ **Advanced Grammar Processing**: 85% DCG success rate with comprehensive parsing capabilities
 ✅ **Easy Integration**: Simple Java API for embedding Prolog logic  
-✅ **Extensive Documentation**: 25+ documentation files covering all aspects  
-✅ **Educational Value**: 40+ example programs for learning Prolog  
+✅ **Extensive Documentation**: 30+ documentation files covering all aspects  
+✅ **Educational Value**: 103 example programs including 74 test programs and 20 DCG programs  
 
 **Start your Prolog journey with a robust, professional-grade implementation!**
 
