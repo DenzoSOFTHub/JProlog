@@ -364,3 +364,14 @@ This shows:
 ---
 
 For more information about Prolog programming and ISO standard compliance, consult standard Prolog textbooks and the ISO/IEC 13211-1 specification.
+
+---
+
+## Version Information
+
+This guide is current as of **JProlog v2.0.6**. The CLI functionality and examples described have been tested with this version. Note that some mathematical functions (like `sqrt/1`) mentioned in examples may require implementation as they are part of ongoing development.
+
+**Launch Command (updated for v2.0.6):**
+```bash
+java -cp target/classes it.denzosoft.jprolog.PrologCLI
+```

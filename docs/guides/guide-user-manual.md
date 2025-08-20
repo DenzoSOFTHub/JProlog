@@ -666,7 +666,7 @@ factorial(N, F) :-
 
 **JProlog Editor from DenzoSOFT** - Complete Integrated Development Environment for Prolog Programming
 
-*Version 1.0 | DenzoSOFT | https://denzosoft.it*
+*Version 2.0.6 | DenzoSOFT | https://denzosoft.it*
 
 ---
 

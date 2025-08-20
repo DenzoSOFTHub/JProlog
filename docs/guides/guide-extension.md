@@ -1032,3 +1032,13 @@ public class ExtendedPrologCLI extends PrologCLI {
 ```
 
 This comprehensive guide provides multiple approaches for extending JProlog without modifying the core library, from simple Prolog predicates to advanced Java integration patterns.
+
+## Important Notes for v2.0.6
+
+- **Updated Package Paths**: All core classes are now in `it.denzosoft.jprolog.core.*` packages
+- **AbstractBuiltInWithContext**: Use `AbstractBuiltInWithContext` instead of `BuiltInWithContext` for custom predicates  
+- **Internal Access**: Some classes like `BuiltInFactory` and `ArithmeticEvaluator` require internal access for extensions
+- **Consult vs Asserta**: Use `prolog.consult()` instead of `prolog.asserta()` for complex rules to ensure proper parsing
+- **Extension Registration**: For external extensions, focus on Prolog-based predicates rather than Java built-in registration
+
+This guide is current as of JProlog v2.0.6. For the most up-to-date class paths and API, refer to the JavaDoc documentation or browse the source code in `src/main/java/it/denzosoft/jprolog/`.

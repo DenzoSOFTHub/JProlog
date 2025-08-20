@@ -538,4 +538,10 @@ process_list([H|T], Acc, Result) :-
 
 ---
 
+---
+
+## Version Information
+
+This guide is current as of **JProlog v2.0.6**. The debugging features described are fully functional in this version. All examples and procedures have been tested with the current IDE implementation.
+
 *This guide covers the complete debugging functionality of JProlog Editor from DenzoSOFT. For additional help, visit: https://denzosoft.it*
