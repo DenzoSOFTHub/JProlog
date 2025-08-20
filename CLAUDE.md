@@ -177,10 +177,10 @@ mvn exec:java -Dexec.mainClass="it.denzosoft.jprolog.PrologCLI"
 - Always register issues before fixing
 - Create separate issues for related problems discovered during analysis
 
-**Limitations Documentation (`docs/references/ref-limitations.md`)**:
-- **MANDATORY**: When an issue is identified, the `docs/references/ref-limitations.md` file MUST be updated
+**Limitations Documentation (`docs/tracking/track-limitations.md`)**:
+- **MANDATORY**: When an issue is identified, the `docs/tracking/track-limitations.md` file MUST be updated
 - Document the limitation with concrete examples of failing Prolog code
-- When an issue is resolved (status `RESOLVED`), remove the corresponding entry from `docs/references/ref-limitations.md`
+- When an issue is resolved (status `RESOLVED`), remove the corresponding entry from `docs/tracking/track-limitations.md`
 - Entry format:
   ```markdown
   ## ISS-YYYY-NNNN: [Limitation Title]
@@ -516,7 +516,7 @@ mvn test
    - Document implementation and satisfied acceptance criteria
    - Update impact analysis with actual results
 
-3. **File `docs/references/ref-limitations.md`**:
+3. **File `docs/tracking/track-limitations.md`**:
    - **REMOVE** entries for resolved issues
    - Update workarounds if no longer needed
    - Document new limitations discovered during implementation
@@ -548,7 +548,7 @@ mvn test
 - `docs/tracking/track-issues.md` - Issue status and resolution
 - `docs/tracking/track-change-requests.md` - Change request tracking
 - `docs/tracking/track-release-notes.md` - Release notes
-- `docs/references/ref-limitations.md` - Current limitations
+- `docs/tracking/track-limitations.md` - Current limitations
 - `docs/references/ref-builtins.md` - Predicate documentation
 - `docs/reports/report-test-results.md` - Complete test results
 
@@ -558,7 +558,7 @@ mvn test
 - Maven tests pass (`mvn test` success, if present)
 - Comprehensive test passes with success rate >= 75% (`./test_all_examples.sh`)
 - No critical regressions identified
-- **Documentation updated** (docs/tracking/track-issues.md, docs/tracking/track-change-requests.md, docs/references/ref-limitations.md)
+- **Documentation updated** (docs/tracking/track-issues.md, docs/tracking/track-change-requests.md, docs/tracking/track-limitations.md)
 
 ### 7. GitHub Push and Tagging (AFTER Version Update)
 **MANDATORY PROCEDURE**: After incrementing the version and updating documentation:
@@ -605,8 +605,9 @@ git status --porcelain | grep "^??" || echo "None"
 2. **Prolog test file organization** (move all *.pl files to examples/)
 3. **Documentation review and alignment** (verify all file paths and procedures)
 4. **Release notes update** (mandatory before any release)
-5. **Comprehensive testing** (verify system integrity)
-6. **Final compilation check** (ensure no build errors)
+5. **Limitations tracking update** (review and update current system limitations)
+6. **Comprehensive testing** (verify system integrity)
+7. **Final compilation check** (ensure no build errors)
 
 ```bash
 # 1. CLEANUP: Remove all test and debug files
@@ -632,6 +633,13 @@ ls -la docs/guides/ docs/references/ docs/reports/ docs/tracking/ examples/
 # Verify README.md references correct file paths
 echo "✅ Verify README.md file paths are updated"
 
+# CRITICAL: Verify tracking documentation is current
+echo "📋 Verifying tracking documentation completeness:"
+echo "   - docs/tracking/track-issues.md (issue status tracking)"
+echo "   - docs/tracking/track-change-requests.md (CR status tracking)"  
+echo "   - docs/tracking/track-release-notes.md (release documentation)"
+echo "   - docs/tracking/track-limitations.md (current system limitations)"
+
 # Ensure CLAUDE.md reflects current procedures
 echo "✅ Verify CLAUDE.md procedures are current"
 
@@ -647,6 +655,14 @@ echo "- [Add release details here]" >> docs/tracking/track-release-notes.md
 echo "" >> docs/tracking/track-release-notes.md
 
 echo "⚠️  MANUAL ACTION REQUIRED: Update release notes in docs/tracking/track-release-notes.md"
+
+# 3b. UPDATE LIMITATIONS: Mandatory review for every release
+echo "📋 Reviewing and updating limitations tracking..."
+echo "⚠️  MANUAL ACTION REQUIRED: Review docs/tracking/track-limitations.md and:"
+echo "   - Remove entries for issues resolved in this release"
+echo "   - Update workarounds that are no longer needed"
+echo "   - Add any new limitations discovered during development"
+echo "   - Verify all examples still reflect current behavior"
 
 # 4. COMPREHENSIVE TESTING: Verify system integrity
 echo "🧪 Running comprehensive tests..."
