@@ -597,9 +597,76 @@ echo "Untracked files (should be empty or only development files):"
 git status --porcelain | grep "^??" || echo "None"
 ```
 
+#### Pre-Push Preparation (MANDATORY)
+**CRITICAL**: Before any push to GitHub, execute the complete preparation procedure to ensure code quality, documentation alignment, and system integrity.
+
+**This procedure includes**:
+1. **Complete file cleanup** (test files, debug files, temporary files)
+2. **Prolog test file organization** (move all *.pl files to examples/)
+3. **Documentation review and alignment** (verify all file paths and procedures)
+4. **Release notes update** (mandatory before any release)
+5. **Comprehensive testing** (verify system integrity)
+6. **Final compilation check** (ensure no build errors)
+
+```bash
+# 1. CLEANUP: Remove all test and debug files
+rm -f *.class
+rm -f *Test.java         # Only in root, NOT src/test/
+rm -f Debug*.java
+rm -f temp_*.txt
+rm -f *_debug.*
+rm -f test_input.txt
+
+# Move test files to examples directory
+mv test_*.pl examples/ 2>/dev/null || true
+mv *_test.pl examples/ 2>/dev/null || true
+# Remove temporary prolog files from root
+rm -f temp_*.pl debug_*.pl
+
+# 2. DOCUMENTATION REVIEW: Ensure all documentation is aligned and up-to-date
+echo "📚 Reviewing documentation alignment..."
+
+# Check documentation structure
+ls -la docs/guides/ docs/references/ docs/reports/ docs/tracking/ examples/
+
+# Verify README.md references correct file paths
+echo "✅ Verify README.md file paths are updated"
+
+# Ensure CLAUDE.md reflects current procedures
+echo "✅ Verify CLAUDE.md procedures are current"
+
+# 3. UPDATE RELEASE NOTES: Mandatory before any release
+CURRENT_VERSION=$(grep '<version>' pom.xml | head -1 | sed 's/.*<version>\(.*\)<\/version>.*/\1/')
+RELEASE_DATE=$(date +"%Y-%m-%d")
+
+# Update docs/tracking/track-release-notes.md with version details
+echo "📝 Updating release notes for version ${CURRENT_VERSION}..."
+echo "## Release ${CURRENT_VERSION} - ${RELEASE_DATE}" >> docs/tracking/track-release-notes.md
+echo "### Changes in this release:" >> docs/tracking/track-release-notes.md
+echo "- [Add release details here]" >> docs/tracking/track-release-notes.md
+echo "" >> docs/tracking/track-release-notes.md
+
+echo "⚠️  MANUAL ACTION REQUIRED: Update release notes in docs/tracking/track-release-notes.md"
+
+# 4. COMPREHENSIVE TESTING: Verify system integrity
+echo "🧪 Running comprehensive tests..."
+./test_all_examples.sh
+if [ $? -ne 0 ]; then
+    echo "❌ Tests failed! Fix issues before pushing."
+    exit 1
+fi
+
+# 5. FINAL COMPILATION: Ensure everything compiles
+mvn clean compile -q
+if [ $? -ne 0 ]; then
+    echo "❌ Compilation failed! Fix issues before pushing."
+    exit 1
+fi
+```
+
 #### Push and Tagging Sequence
 ```bash
-# 5. Configure GitHub credentials (SECURITY: NEVER hardcode tokens in files)
+# 6. Configure GitHub credentials (SECURITY: NEVER hardcode tokens in files)
 # CRITICAL: Credentials MUST be set as environment variables OUTSIDE of any tracked files
 export GITHUB_USER="DenzoSOFTHub"
 export GITHUB_REPO="https://github.com/DenzoSOFTHub/JProlog"
@@ -618,75 +685,30 @@ if [[ ! "$GITHUB_TOKEN" =~ ^(ghp_|github_pat_) ]]; then
     echo "⚠️ WARNING: Token format may be incorrect. Expected format: ghp_* or github_pat_*"
 fi
 
-# 6. Check Git status and prepare commit
+# 7. Check Git status and prepare commit
 git status
 git add .
 git add -u  # Include deleted files
 
-# 7. Update Release Notes (MANDATORY)
-CURRENT_VERSION=$(grep '<version>' pom.xml | head -1 | sed 's/.*<version>\(.*\)<\/version>.*/\1/')
-RELEASE_DATE=$(date +"%Y-%m-%d")
+# 8. Verify Release Notes are Updated (already done in Pre-Push Preparation)
+echo "✅ Release notes already updated in docs/tracking/track-release-notes.md"
 
-# Create or update release_notes.md with new release
-cat > release_notes.md << EOF
-# JProlog - Release Notes
-
-## Release v${CURRENT_VERSION} - ${RELEASE_DATE}
-
-### 🚀 Major Enhancements
-- Enhanced list representation with ISO-compliant formatting [a,b,c] instead of .(a, .(b, .(c, [])))
-- Meta-predicates (findall/3, bagof/3, setof/3) verified fully functional
-- Term manipulation predicates (functor/3, arg/3, =../2, copy_term/2) working correctly
-- Advanced arithmetic operators (=:=, =\\=, rem, xor, shift operators) operational
-- Control structures (;, ->, \\+, once/1) fully functional
-- DCG (Definite Clause Grammar) system fully operational with phrase/2
-
-### 🔧 Technical Fixes
-- Fixed copy_term/2 predicate registration in BuiltInRegistry
-- Resolved list format issues for improved ISO compliance
-- Enhanced CompoundTerm.toString() with proper list formatting
-- Updated comprehensive documentation and issue tracking
-
-### 📊 Quality Metrics
-- Comprehensive tests passed with 95% success rate (19/20 programs)
-- ISO Prolog compliance significantly improved from 47.6% to 95%
-- Built-in coverage increased from ~50% to ~90%
-- Parser support enhanced from ~60% to ~85%
-
-### 🎯 Impact
-- Dramatically improved ISO Prolog standard compliance
-- Enhanced developer experience with better list representation
-- Robust meta-programming capabilities now available
-- Comprehensive term manipulation for advanced Prolog programming
-
-### 📝 Documentation Updates
-- Updated README.md with complete project overview
-- Enhanced CLAUDE.md with release procedures
-- Updated issues.md with resolved issues and quality metrics
-
----
-
-EOF
-
-# Add release_notes.md file to commit
-git add release_notes.md
-
-# 8. Create commit with structured message
+# 9. Create commit with structured message
 git commit -m "Release v${CURRENT_VERSION}
 
 - Resolved critical issues and enhanced functionality
 - Updated documentation and version bump
 - Comprehensive tests passed (success rate >= 75%)
-- Added release_notes.md for version ${CURRENT_VERSION}
+- Updated docs/tracking/track-release-notes.md for version ${CURRENT_VERSION}
 
 🤖 Generated with [Claude Code](https://claude.ai/code)
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
-# 9. Push to remote repository
+# 10. Push to remote repository
 git push https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/DenzoSOFTHub/JProlog.git main
 
-# 10. Create and push version tag
+# 11. Create and push version tag
 git tag -a "v${CURRENT_VERSION}" -m "Release version ${CURRENT_VERSION}
 
 Features and fixes included in this release:
@@ -699,7 +721,7 @@ Features and fixes included in this release:
 
 git push https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/DenzoSOFTHub/JProlog.git "v${CURRENT_VERSION}"
 
-# 11. Post-Push Validation (MANDATORY)
+# 12. Post-Push Validation (MANDATORY)
 echo "Validating pushed content..."
 
 # Verify tag contains only intended files
@@ -745,7 +767,7 @@ echo "✅ Tag validation completed"
 
 #### Post-Push Verification
 ```bash
-# 12. Verify push and tag on GitHub
+# 13. Verify push and tag on GitHub
 echo "✅ Push completed for version: ${CURRENT_VERSION}"
 echo "🔗 Repository: ${GITHUB_REPO}"
 echo "🏷️  Tag: v${CURRENT_VERSION}"
