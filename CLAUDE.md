@@ -171,16 +171,16 @@ mvn exec:java -Dexec.mainClass="it.denzosoft.jprolog.PrologCLI"
 
 **CRITICAL PROCEDURE**: Every bug or feature request MUST be documented in tracking files before implementation:
 
-**Issue Tracking (`issues.md`)**:
+**Issue Tracking (`docs/tracking/track-issues.md`)**:
 - Format: `ISS-YYYY-NNNN` (e.g., ISS-2025-0001)
 - Status flow: `TO_ANALYZE` → `IN_ANALYSIS` → `IN_PROGRESS` → `RESOLVED` → `CLOSED`
 - Always register issues before fixing
 - Create separate issues for related problems discovered during analysis
 
-**Limitations Documentation (`limitations.md`)**:
-- **MANDATORY**: When an issue is identified, the `limitations.md` file MUST be updated
+**Limitations Documentation (`docs/references/ref-limitations.md`)**:
+- **MANDATORY**: When an issue is identified, the `docs/references/ref-limitations.md` file MUST be updated
 - Document the limitation with concrete examples of failing Prolog code
-- When an issue is resolved (status `RESOLVED`), remove the corresponding entry from `limitations.md`
+- When an issue is resolved (status `RESOLVED`), remove the corresponding entry from `docs/references/ref-limitations.md`
 - Entry format:
   ```markdown
   ## ISS-YYYY-NNNN: [Limitation Title]
@@ -203,8 +203,8 @@ mvn exec:java -Dexec.mainClass="it.denzosoft.jprolog.PrologCLI"
   **Workaround** (if available): Alternative method to achieve the same result
   ```
 
-**Built-in Documentation (`builtins.md`)**:
-- **MANDATORY**: Every time a built-in predicate or operator is added or modified, the `builtins.md` file MUST be updated with an English description and explained code examples
+**Built-in Documentation (`docs/references/ref-builtins.md`)**:
+- **MANDATORY**: Every time a built-in predicate or operator is added or modified, the `docs/references/ref-builtins.md` file MUST be updated with an English description and explained code examples
 - **ORDERING**: Predicates must be organized in alphabetical order by name
 - Formato entry:
   ```markdown
@@ -241,7 +241,7 @@ mvn exec:java -Dexec.mainClass="it.denzosoft.jprolog.PrologCLI"
   **See Also**: Related predicates
   ```
 
-**Change Request Tracking (`ChangeRequest.md`)**:
+**Change Request Tracking (`docs/tracking/track-change-requests.md`)**:
 - Format: `CR-YYYY-NNNN` (e.g., CR-2025-0001)  
 - Status flow: `RICHIESTA` → `IN_ANALYSIS` → `APPROVED` → `IN_DEVELOPMENT` → `COMPLETED`
 - Include acceptance criteria and impact analysis
@@ -400,7 +400,7 @@ rm -f test_*.txt         # Temporary files, NOT test programs examples/test_*.pl
 - `src/test/**/*.java` - Official unit tests
 - `*.sh` - Automation scripts
 - `*.md` - Documentation
-- `issues.md`, `ChangeRequest.md` - Formal tracking
+- `docs/tracking/track-issues.md`, `docs/tracking/track-change-requests.md` - Formal tracking
 
 **Files to Remove**:
 - .class files in root
@@ -504,14 +504,14 @@ mvn test
 #### Documentation Update (MANDATORY)
 **After every version increment**, update immediately:
 
-1. **File `issues.md`**:
+1. **File `docs/tracking/track-issues.md`**:
    - Update status of resolved issues from `IN_PROGRESS` → `RESOLVED`
    - Add resolution date: `**Resolution Date**: YYYY-MM-DD`
    - Document implemented solution in `#### Implemented Solution` section
    - Add references to modified files
    - Update test results and validation
 
-2. **File `ChangeRequest.md`** (if applicable):
+2. **File `docs/tracking/track-change-requests.md`** (if applicable):
    - Update CR status from `IN_DEVELOPMENT` → `COMPLETED`
    - Document implementation and satisfied acceptance criteria
    - Update impact analysis with actual results
@@ -558,7 +558,7 @@ mvn test
 - Maven tests pass (`mvn test` success, if present)
 - Comprehensive test passes with success rate >= 75% (`./test_all_examples.sh`)
 - No critical regressions identified
-- **Documentation updated** (issues.md, ChangeRequest.md, limitations.md)
+- **Documentation updated** (docs/tracking/track-issues.md, docs/tracking/track-change-requests.md, docs/references/ref-limitations.md)
 
 ### 7. GitHub Push and Tagging (AFTER Version Update)
 **MANDATORY PROCEDURE**: After incrementing the version and updating documentation:
@@ -749,7 +749,7 @@ echo "✅ Tag validation completed"
 ```
 
 #### Importance of Release Notes
-**⚠️ MANDATORY PROCEDURE**: The `release_notes.md` file MUST be updated before every release for:
+**⚠️ MANDATORY PROCEDURE**: The `docs/tracking/track-release-notes.md` file MUST be updated before every release for:
 
 1. **Traceability**: Maintains complete history of all releases
 2. **Communication**: Provides clear information to users about changes
@@ -834,7 +834,7 @@ echo "- Tag: ${GITHUB_REPO}/releases/tag/v${CURRENT_VERSION}"
 2. Implement `BuiltIn` or `BuiltInWithContext` interface  
 3. Register in `BuiltInRegistry` (through BuiltInFactory registration)
 4. Add comprehensive test cases to `comprehensive_test.sh`
-5. Update `builtins.md` documentation (MANDATORY)
+5. Update `docs/references/ref-builtins.md` documentation (MANDATORY)
 6. Run `./test_all_examples.sh` to ensure no regressions
 
 ### Debugging Query Resolution Issues
