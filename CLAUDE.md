@@ -178,34 +178,34 @@ mvn exec:java -Dexec.mainClass="it.denzosoft.jprolog.PrologCLI"
 - Create separate issues for related problems discovered during analysis
 
 **Limitations Documentation (`limitations.md`)**:
-- **OBBLIGATORIO**: Quando viene identificata una issue, DEVE essere aggiornato anche il file `limitations.md`
-- Documentare la limitazione con esempi concreti di codice Prolog che fallisce
-- Quando una issue viene risolta (status `RESOLVED`), rimuovere la corrispondente entry da `limitations.md`
-- Formato entry:
+- **MANDATORY**: When an issue is identified, the `limitations.md` file MUST be updated
+- Document the limitation with concrete examples of failing Prolog code
+- When an issue is resolved (status `RESOLVED`), remove the corresponding entry from `limitations.md`
+- Entry format:
   ```markdown
-  ## ISS-YYYY-NNNN: [Titolo Limitazione]
+  ## ISS-YYYY-NNNN: [Limitation Title]
   
-  **Descrizione**: Breve descrizione della limitazione
+  **Description**: Brief description of the limitation
   
-  **Esempi che falliscono**:
+  **Failing Examples**:
   ```prolog
-  % Esempio 1: Query che fallisce
+  % Example 1: Query that fails
   ?- functor(f(a,b), F, A).
   % Expected: F = f, A = 2
   % Actual: No solutions found
   
-  % Esempio 2: Altro caso di fallimento
+  % Example 2: Another failure case
   ?- arg(1, f(a,b,c), X).
   % Expected: X = a
   % Actual: No solutions found
   ```
   
-  **Workaround** (se disponibile): Metodo alternativo per ottenere lo stesso risultato
+  **Workaround** (if available): Alternative method to achieve the same result
   ```
 
 **Built-in Documentation (`builtins.md`)**:
-- **OBBLIGATORIO**: Ogni volta che si aggiunge o modifica un predicato o operatore built-in, DEVE essere aggiornato il file `builtins.md` con una descrizione in inglese e esempi di codice spiegati
-- **ORDINAMENTO**: I predicati devono essere organizzati in ordine alfabetico per nome
+- **MANDATORY**: Every time a built-in predicate or operator is added or modified, the `builtins.md` file MUST be updated with an English description and explained code examples
+- **ORDERING**: Predicates must be organized in alphabetical order by name
 - Formato entry:
   ```markdown
   ## predicate_name/arity
@@ -380,181 +380,254 @@ The `examples/` directory contains 40 comprehensive Prolog test programs coverin
 - `examples/*calculator*.pl` - Calculator implementations
 - `examples/DGC*.pl` - DCG parsing examples
 
-## Procedura di Cleanup e Validazione Finale
+## Final Cleanup and Validation Procedure
 
-**PROCEDURA OBBLIGATORIA**: Al termine di ogni sessione di lavoro o implementazione significativa, seguire sempre questa procedura di cleanup e validazione:
+**MANDATORY PROCEDURE**: At the end of every work session or significant implementation, always follow this cleanup and validation procedure:
 
-### 1. Cleanup File Temporanei
+### 1. Temporary Files Cleanup
 ```bash
-# Rimuovere tutti i file temporanei di test e debug
+# Remove all temporary test and debug files
 rm -f *.class
-rm -f *Test.java         # Solo quelli nella root, NON sotto src/test/
+rm -f *Test.java         # Only those in root, NOT under src/test/
 rm -f Debug*.java
 rm -f temp_*.txt
 rm -f *_debug.*
-rm -f test_*.txt         # File temporanei, NON i programmi test examples/test_*.pl
+rm -f test_*.txt         # Temporary files, NOT test programs examples/test_*.pl
 ```
 
-**File da mantenere**:
-- `examples/test_*.pl` - Programmi di test ufficiali
-- `src/test/**/*.java` - Test unit ufficiali
-- `*.sh` - Script di automazione  
-- `*.md` - Documentazione
-- `issues.md`, `ChangeRequest.md` - Tracking formale
+**Files to Keep**:
+- `examples/test_*.pl` - Official test programs
+- `src/test/**/*.java` - Official unit tests
+- `*.sh` - Automation scripts
+- `*.md` - Documentation
+- `issues.md`, `ChangeRequest.md` - Formal tracking
 
-**File da rimuovere**:
-- File .class nella root 
-- File Debug*.java temporanei
-- File Test*.java nella root (non sotto src/test/)
-- File temp_*.txt, *_debug.*, test_input.txt, etc.
+**Files to Remove**:
+- .class files in root
+- Temporary Debug*.java files
+- Test*.java files in root (not under src/test/)
+- temp_*.txt, *_debug.*, test_input.txt, etc.
 
-### 2. Ricompilazione Completa
+**Prolog Test Files Organization**:
+- All Prolog files (*.pl) used for testing MUST be moved to the `examples/` directory
+- Use descriptive names following the pattern: `examples/test_XX_description.pl`
+- Remove any temporary *.pl files from the root directory
+- Example cleanup:
 ```bash
-# Sempre ricompilare tutto prima di concludere
+# Move test files to examples directory
+mv test_*.pl examples/ 2>/dev/null || true
+mv *_test.pl examples/ 2>/dev/null || true
+# Remove temporary prolog files from root
+rm -f temp_*.pl debug_*.pl
+```
+
+### 2. Complete Recompilation
+```bash
+# Always recompile everything before concluding
 mvn clean compile
 ```
 
-### 3. Validazione Errori
+### 3. Error Validation
 ```bash
-# Verificare che non ci siano errori di compilazione
+# Verify there are no compilation errors
 mvn compile -q
-echo $?  # Deve restituire 0 (successo)
+echo $?  # Must return 0 (success)
 ```
 
-### 4. Test Comprehensive sui 40 Programmi Prolog Standard
-**PROCEDURA OBBLIGATORIA**: Dopo ogni build, eseguire test completo sui 40 programmi di test per verificare che tutte le funzionalità standard operino correttamente.
+### 4. Comprehensive Testing on 40 Standard Prolog Programs
+**MANDATORY PROCEDURE**: After each build, run comprehensive testing on all 40 test programs to verify that all standard functionalities operate correctly.
 
 ```bash
-# Eseguire testing completo su tutti i programmi Prolog di esempio
+# Execute comprehensive testing on all Prolog example programs
 ./test_all_examples.sh
 
-# Output atteso: Summary con percentuale successo >= 75%
-# Se success rate < 75%, investigare fallimenti prima di procedere
+# Expected output: Summary with success percentage >= 75%
+# If success rate < 75%, investigate failures before proceeding
 ```
 
-**Programmi Testati** (examples/test_*.pl):
+**Programs Tested** (examples/test_*.pl):
 - Basic facts, arithmetic, lists, recursion  
 - Control structures, type checking, term manipulation
 - Meta-predicates, database operations, I/O
 - DCG grammars, exception handling, string/atom operations
 - Advanced features, modules, performance tests
 
-**Criteri di Accettazione**:
-- **Success Rate >= 75%**: Acceptable per sessioni di maintenance  
-- **Success Rate >= 85%**: Required per sessioni di sviluppo nuove feature
-- **Success Rate < 75%**: BLOCCA la sessione - identificare e risolvere regressioni
+**Acceptance Criteria**:
+- **Success Rate >= 75%**: Acceptable for maintenance sessions  
+- **Success Rate >= 85%**: Required for new feature development sessions
+- **Success Rate < 75%**: BLOCKS the session - identify and resolve regressions
 
-**Investigazione Fallimenti**:
+**Failure Investigation**:
 ```bash
-# Per investigare singoli fallimenti:
+# To investigate individual failures:
 java -cp target/classes it.denzosoft.jprolog.PrologCLI
-:consult examples/test_XX_nome.pl
-[testare queries manualmente]
+:consult examples/test_XX_name.pl
+[test queries manually]
 
-# Log di debug per problemi specifici:
+# Debug logging for specific problems:
 ./test-debug.sh
 ```
 
-**Note**:
-- I fallimenti per **Parser Limitations** (sintassi ISO avanzata non supportata) sono accettabili
-- I fallimenti per **Missing Advanced Features** (es. constraint programming) sono accettabili  
-- I fallimenti per **Core Features** (arithmetic, lists, control structures) NON sono accettabili
+**Notes**:
+- Failures for **Parser Limitations** (advanced ISO syntax not supported) are acceptable
+- Failures for **Missing Advanced Features** (e.g., constraint programming) are acceptable  
+- Failures for **Core Features** (arithmetic, lists, control structures) are NOT acceptable
 
-### 5. Test di Smoke
+### 5. Smoke Test
 ```bash
-# Test rapido per verificare che il sistema funzioni base
+# Quick test to verify basic system functionality
 echo ":quit" | timeout 5 java -cp target/classes it.denzosoft.jprolog.PrologCLI
 ```
 
-### 6. Aggiornamento Versione e Documentazione
-**PROCEDURA OBBLIGATORIA**: Al termine di ogni modifica del codice che compila con successo E ha passato i test comprehensive:
+### 6. Version and Documentation Update
+**MANDATORY PROCEDURE**: At the end of every code modification that compiles successfully AND has passed comprehensive tests:
 
-#### Sequenza Completa Versioning:
+#### Complete Versioning Sequence:
 ```bash
-# 1. Verificare versione corrente
+# 1. Check current version
 grep "<version>" pom.xml | head -1
 
-# 2. Build completa Maven
+# 2. Complete Maven build
 mvn clean compile
 
-# 3. Test Maven (se presenti)
+# 3. Maven tests (if present)
 mvn test
 
-# 4. Test comprehensive sui 40 programmi (OBBLIGATORIO)
+# 4. Comprehensive test on 40 programs (MANDATORY)
 ./test_all_examples.sh
-# Verificare che success rate >= 75%
+# Verify that success rate >= 75%
 
-# 5. SOLO se tutti i test passano, incrementare patch version
-# Esempio: se era 2.0.3, cambiare a 2.0.4 nel pom.xml
+# 5. ONLY if all tests pass, increment patch version
+# Example: if it was 2.0.3, change to 2.0.4 in pom.xml
 ```
 
-#### Aggiornamento Documentazione (OBBLIGATORIO)
-**Dopo ogni incremento versione**, aggiornare immediatamente:
+#### Documentation Update (MANDATORY)
+**After every version increment**, update immediately:
 
 1. **File `issues.md`**:
-   - Aggiornare status delle issue risolte da `IN_PROGRESS` → `RESOLVED`
-   - Aggiungere data risoluzione: `**Data Risoluzione**: YYYY-MM-DD`
-   - Documentare soluzione implementata nella sezione `#### Soluzione Implementata`
-   - Aggiungere riferimenti ai file modificati
-   - Aggiornare test results e validation
+   - Update status of resolved issues from `IN_PROGRESS` → `RESOLVED`
+   - Add resolution date: `**Resolution Date**: YYYY-MM-DD`
+   - Document implemented solution in `#### Implemented Solution` section
+   - Add references to modified files
+   - Update test results and validation
 
-2. **File `ChangeRequest.md`** (se applicabile):
-   - Aggiornare status CR da `IN_DEVELOPMENT` → `COMPLETED`
-   - Documentare implementazione e acceptance criteria soddisfatti
-   - Aggiornare impatto analysis con risultati effettivi
+2. **File `ChangeRequest.md`** (if applicable):
+   - Update CR status from `IN_DEVELOPMENT` → `COMPLETED`
+   - Document implementation and satisfied acceptance criteria
+   - Update impact analysis with actual results
 
-3. **File `limitations.md`**:
-   - **RIMUOVERE** le entry per issue risolte
-   - Aggiornare workarounds se non più necessari
-   - Documentare nuove limitazioni scoperte durante l'implementazione
+3. **File `docs/references/ref-limitations.md`**:
+   - **REMOVE** entries for resolved issues
+   - Update workarounds if no longer needed
+   - Document new limitations discovered during implementation
 
-#### Criteri di Versioning
-**IMPORTANTE**: La versione viene incrementata SOLO se:
-- Codice compila senza errori (`mvn compile` success)
-- Test Maven passano (`mvn test` success, se presenti)
-- Test comprehensive passa con success rate >= 75% (`./test_all_examples.sh`)
-- Nessuna regressione critica identificata
-- **Documentazione aggiornata** (issues.md, ChangeRequest.md, limitations.md)
+4. **Complete Documentation Review** (MANDATORY):
+   - Verify that all file references follow the naming convention
+   - **IMPORTANT**: Ensure that ALL documentation is in English
+   - Update metrics and statistics in report files
+   - Verify consistency of information between related documents
+   - Update dates and versions in technical documents
+   - Ensure files are in the correct directory structure
 
-### 7. Push a GitHub e Tagging (DOPO Aggiornamento Versione)
-**PROCEDURA OBBLIGATORIA**: Dopo aver incrementato la versione e aggiornato la documentazione:
+#### Documentation Structure and Naming Convention (MANDATORY)
 
-#### Pre-Push Cleanup
+**Naming Convention**: All MD files must follow the convention:
+- **User Guides**: `docs/guides/guide-[name].md`
+- **Technical References**: `docs/references/ref-[name].md`  
+- **Reports and Analysis**: `docs/reports/report-[name].md`
+- **Tracking**: `docs/tracking/track-[name].md`
+- **Examples**: `examples/example-[name].md`
+- **System Files**: `README.md`, `CHANGELOG.md`, `CLAUDE.md` (root)
+
+**Documentation Language** (MANDATORY):
+- **ALL documentation files MUST be in English**
+- This includes: guides, references, reports, tracking, examples, README, CHANGELOG
+- English documentation ensures international accessibility of the project
+
+**Key Files for Each Release**:
+- `docs/tracking/track-issues.md` - Issue status and resolution
+- `docs/tracking/track-change-requests.md` - Change request tracking
+- `docs/tracking/track-release-notes.md` - Release notes
+- `docs/references/ref-limitations.md` - Current limitations
+- `docs/references/ref-builtins.md` - Predicate documentation
+- `docs/reports/report-test-results.md` - Complete test results
+
+#### Versioning Criteria
+**IMPORTANT**: The version is incremented ONLY if:
+- Code compiles without errors (`mvn compile` success)
+- Maven tests pass (`mvn test` success, if present)
+- Comprehensive test passes with success rate >= 75% (`./test_all_examples.sh`)
+- No critical regressions identified
+- **Documentation updated** (issues.md, ChangeRequest.md, limitations.md)
+
+### 7. GitHub Push and Tagging (AFTER Version Update)
+**MANDATORY PROCEDURE**: After incrementing the version and updating documentation:
+
+#### Pre-Push Cleanup and Validation
 ```bash
-# 1. Rimuovere TUTTI i file di test temporanei dalla root
+# 1. Remove ALL temporary test files from root
 rm -f Test*.java
 rm -f Debug*.java
 rm -f temp_*.txt
-rm -f test_*.txt  # File temporanei, NON i programmi examples/test_*.pl
+rm -f test_*.txt  # Temporary files, NOT test programs examples/test_*.pl
 rm -f *.class
 rm -f *_debug.*
 
-# 2. Aggiornare .gitignore per ignorare i file .sh (se non già presente)
+# 2. Update .gitignore to ensure unwanted files are excluded
 echo "*.sh" >> .gitignore
 echo "Test*.java" >> .gitignore  
 echo "Debug*.java" >> .gitignore
 echo "temp_*.txt" >> .gitignore
 echo "*.class" >> .gitignore
+echo "*_debug.*" >> .gitignore
+
+# 3. CRITICAL: Verify that sensitive files are NOT tracked or staged
+git status --ignored
+if git ls-files | grep -E "(token|key|secret|credential)" >/dev/null; then
+    echo "❌ ERROR: Sensitive files detected in repository!"
+    echo "Remove sensitive files before proceeding."
+    exit 1
+fi
+
+# 4. Verify only intended files will be included in the tag
+echo "Files to be included in tag:"
+git ls-files | sort
+echo ""
+echo "Untracked files (should be empty or only development files):"
+git status --porcelain | grep "^??" || echo "None"
 ```
 
-#### Push e Tagging Sequence
+#### Push and Tagging Sequence
 ```bash
-# 3. Configurare credenziali GitHub (SICUREZZA: usa variabili ambiente)
-# NOTA: Le credenziali sono fornite come riferimento ma dovrebbero essere in variabili ambiente
+# 5. Configure GitHub credentials (SECURITY: NEVER hardcode tokens in files)
+# CRITICAL: Credentials MUST be set as environment variables OUTSIDE of any tracked files
 export GITHUB_USER="DenzoSOFTHub"
-export GITHUB_TOKEN="${GITHUB_TOKEN:-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}"
 export GITHUB_REPO="https://github.com/DenzoSOFTHub/JProlog"
 
-# 4. Verificare status Git e preparare commit
+# ⚠️ SECURITY WARNING: The token MUST be provided via environment variable
+# NEVER hardcode tokens in scripts, files, or commit them to repository
+if [ -z "$GITHUB_TOKEN" ]; then
+    echo "❌ ERROR: GITHUB_TOKEN environment variable not set!"
+    echo "Set it with: export GITHUB_TOKEN='your_personal_access_token'"
+    echo "NEVER include tokens in tracked files or commits!"
+    exit 1
+fi
+
+# Verify token format (basic validation)
+if [[ ! "$GITHUB_TOKEN" =~ ^(ghp_|github_pat_) ]]; then
+    echo "⚠️ WARNING: Token format may be incorrect. Expected format: ghp_* or github_pat_*"
+fi
+
+# 6. Check Git status and prepare commit
 git status
 git add .
-git add -u  # Include file eliminati
+git add -u  # Include deleted files
 
-# 5. Aggiornare Release Notes (OBBLIGATORIO)
+# 7. Update Release Notes (MANDATORY)
 CURRENT_VERSION=$(grep '<version>' pom.xml | head -1 | sed 's/.*<version>\(.*\)<\/version>.*/\1/')
 RELEASE_DATE=$(date +"%Y-%m-%d")
 
-# Creare o aggiornare release_notes.md con la nuova release
+# Create or update release_notes.md with new release
 cat > release_notes.md << EOF
 # JProlog - Release Notes
 
@@ -595,10 +668,10 @@ cat > release_notes.md << EOF
 
 EOF
 
-# Aggiungere il file release_notes.md al commit
+# Add release_notes.md file to commit
 git add release_notes.md
 
-# 6. Creare commit con messaggio strutturato
+# 8. Create commit with structured message
 git commit -m "Release v${CURRENT_VERSION}
 
 - Resolved critical issues and enhanced functionality
@@ -610,10 +683,10 @@ git commit -m "Release v${CURRENT_VERSION}
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 
-# 7. Push al repository remoto
+# 9. Push to remote repository
 git push https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/DenzoSOFTHub/JProlog.git main
 
-# 8. Creare e pushare tag con versione
+# 10. Create and push version tag
 git tag -a "v${CURRENT_VERSION}" -m "Release version ${CURRENT_VERSION}
 
 Features and fixes included in this release:
@@ -625,28 +698,54 @@ Features and fixes included in this release:
 🤖 Generated with [Claude Code](https://claude.ai/code)"
 
 git push https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/DenzoSOFTHub/JProlog.git "v${CURRENT_VERSION}"
+
+# 11. Post-Push Validation (MANDATORY)
+echo "Validating pushed content..."
+
+# Verify tag contains only intended files
+echo "Files in the new tag:"
+git ls-tree -r "v${CURRENT_VERSION}" --name-only | sort
+
+# Check for any sensitive or unwanted files in the tag
+SENSITIVE_FILES=$(git ls-tree -r "v${CURRENT_VERSION}" --name-only | grep -E "(token|key|secret|credential|\.env|config\.properties)" || true)
+if [ -n "$SENSITIVE_FILES" ]; then
+    echo "❌ CRITICAL ERROR: Sensitive files found in tag!"
+    echo "$SENSITIVE_FILES"
+    echo "Delete tag and fix before proceeding: git tag -d v${CURRENT_VERSION} && git push --delete origin v${CURRENT_VERSION}"
+    exit 1
+fi
+
+# Verify no temporary or debug files made it into the tag
+TEMP_FILES=$(git ls-tree -r "v${CURRENT_VERSION}" --name-only | grep -E "(Test.*\.java|Debug.*\.java|temp_.*|.*_debug\.|\.class$)" || true)
+if [ -n "$TEMP_FILES" ]; then
+    echo "⚠️ WARNING: Temporary files found in tag!"
+    echo "$TEMP_FILES"
+    echo "Consider cleaning and re-tagging"
+fi
+
+echo "✅ Tag validation completed"
 ```
 
-#### Importanza del Release Notes
-**⚠️ PROCEDURA OBBLIGATORIA**: Il file `release_notes.md` DEVE essere aggiornato prima di ogni release per:
+#### Importance of Release Notes
+**⚠️ MANDATORY PROCEDURE**: The `release_notes.md` file MUST be updated before every release for:
 
-1. **Tracciabilità**: Mantiene uno storico completo di tutte le release
-2. **Comunicazione**: Fornisce informazioni chiare agli utenti sui cambiamenti
-3. **Marketing**: Evidenzia i miglioramenti e l'evoluzione del progetto  
-4. **Supporto**: Aiuta nel debugging e nella risoluzione di problemi specifici per versione
-5. **Compliance**: Standard practice per progetti professionali
+1. **Traceability**: Maintains complete history of all releases
+2. **Communication**: Provides clear information to users about changes
+3. **Marketing**: Highlights improvements and project evolution  
+4. **Support**: Helps in debugging and resolving version-specific issues
+5. **Compliance**: Standard practice for professional projects
 
-**Formato Standard del Release Notes**:
-- **Data Release**: Sempre in formato YYYY-MM-DD
-- **Sezioni Strutturate**: Major Enhancements, Technical Fixes, Quality Metrics, Impact, Documentation
-- **Metriche Concrete**: Success rates, percentuali di miglioramento, numeri specifici
-- **Emoji Coding**: Per migliorare leggibilità e impatto visivo
+**Standard Release Notes Format**:
+- **Release Date**: Always in YYYY-MM-DD format
+- **Structured Sections**: Major Enhancements, Technical Fixes, Quality Metrics, Impact, Documentation
+- **Concrete Metrics**: Success rates, improvement percentages, specific numbers
+- **Emoji Coding**: To improve readability and visual impact
 
-**Nota**: Il file viene sovrascritto ad ogni release (non appendere), mantenendo solo l'ultima release per semplicità.
+**Note**: The file is overwritten with each release (do not append), keeping only the latest release for simplicity.
 
 #### Post-Push Verification
 ```bash
-# 9. Verificare push e tag su GitHub
+# 12. Verify push and tag on GitHub
 echo "✅ Push completed for version: ${CURRENT_VERSION}"
 echo "🔗 Repository: ${GITHUB_REPO}"
 echo "🏷️  Tag: v${CURRENT_VERSION}"
@@ -657,46 +756,54 @@ echo "- Releases: ${GITHUB_REPO}/releases"
 echo "- Tag: ${GITHUB_REPO}/releases/tag/v${CURRENT_VERSION}"
 ```
 
-#### Sicurezza e Best Practices
-**⚠️ IMPORTANTE - Gestione Credenziali**:
-- **MAI** committare token di accesso nel codice sorgente
-- Usare variabili d'ambiente per le credenziali sensibili
-- Il token mostrato sopra è solo di esempio - usare token personale valido
-- Considerare l'uso di SSH keys invece di HTTPS con token per maggiore sicurezza
+#### Security and Best Practices
+**⚠️ CRITICAL - Credential Management**:
+- **NEVER** commit access tokens to source code
+- **NEVER** include credentials in tracked files, scripts, or documentation
+- Use environment variables for sensitive credentials ONLY
+- Consider using SSH keys instead of HTTPS with tokens for greater security
+- **MANDATORY**: Always validate that no sensitive files are included in tags or commits
+- Remove any hardcoded credentials immediately if found in repository
+
+**Security Validation Requirements**:
+- Pre-push validation MUST confirm no sensitive files are tracked
+- Post-push validation MUST verify tag contains only intended files  
+- Any tag containing sensitive information MUST be deleted immediately
+- Use `git filter-branch` or `git filter-repo` to remove credentials from history if needed
 
 **Repository Target**:
 - **URL**: https://github.com/DenzoSOFTHub/JProlog  
 - **User**: DenzoSOFTHub
 - **Branch**: main (default)
-- **Tag Format**: v{major}.{minor}.{patch} (es. v2.0.4)
+- **Tag Format**: v{major}.{minor}.{patch} (e.g., v2.0.4)
 
-#### Razionale Versioning:
-- **Major version (x.0.0)**: Cambi architetturali o breaking changes (su richiesta utente)
-- **Minor version (x.y.0)**: Nuove funzionalità significative (su richiesta utente)
-- **Patch version (x.y.z)**: Bug fix e miglioramenti (automatico dopo ogni modifica)
+#### Versioning Rationale:
+- **Major version (x.0.0)**: Architectural changes or breaking changes (user request)
+- **Minor version (x.y.0)**: Significant new features (user request)
+- **Patch version (x.y.z)**: Bug fixes and improvements (automatic after each modification)
 
-#### Template Aggiornamento Issue (esempio):
+#### Issue Update Template (example):
 ```markdown
-#### Soluzione Implementata
-✅ **COMPLETATA**: [Descrizione breve della soluzione]
+#### Implemented Solution
+✅ **COMPLETED**: [Brief description of solution]
 
-**File Modificati**:
-- `percorso/file1.java` - [descrizione modifica]
-- `percorso/file2.java` - [descrizione modifica]
+**Modified Files**:
+- `path/file1.java` - [modification description]
+- `path/file2.java` - [modification description]
 
 **Test Results**:
 - ✅ Maven build: SUCCESS
-- ✅ Test comprehensive: XX/40 programmi (XX% success rate)
-- ✅ Funzionalità target: [Risultati specifici dei test]
+- ✅ Comprehensive test: XX/40 programs (XX% success rate)
+- ✅ Target functionality: [Specific test results]
 
-**Versione**: Incrementata da X.Y.Z-1 → X.Y.Z
+**Version**: Incremented from X.Y.Z-1 → X.Y.Z
 ```
 
-**Razionale**: Mantenere il workspace pulito evita:
-- Confusione tra file temporanei e codice permanente
-- Accumulo di file di debug obsoleti  
-- Errori di compilazione da file temporanei corrotti
-- Difficoltà nel tracking delle modifiche reali
+**Rationale**: Keeping the workspace clean avoids:
+- Confusion between temporary files and permanent code
+- Accumulation of obsolete debug files
+- Compilation errors from corrupted temporary files
+- Difficulties in tracking real modifications
 
 ## Common Development Scenarios
 

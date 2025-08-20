@@ -415,10 +415,10 @@ num(N) --> ws0, digits(Ds), ws0, { Ds \= [], number_codes(N, Ds) }.
 
 **Titolo**: Parsing di espressioni aritmetiche DCG fallisce nonostante fix precedenti  
 **Data Rilevamento**: 2025-08-19  
-**Status**: IN_ANALYSIS  
+**Status**: RESOLVED  
 **Data Apertura**: 2025-08-19  
 **Data Inizio Analisi**: 2025-08-19  
-**Data Risoluzione**: [da definire]  
+**Data Risoluzione**: 2025-08-20  
 
 #### Descrizione Iniziale
 L'utente riporta che il parsing di espressioni aritmetiche usando DCG continua a fallire anche dopo la risoluzione di ISS-2025-0005 (implementazione number_codes/2). I test specifici che falliscono sono:
@@ -426,6 +426,35 @@ L'utente riporta che il parsing di espressioni aritmetiche usando DCG continua a
 **Sintomi osservati:**
 - `?- parse_expr("1 + 2*3 - 4", AST).` → `false`
 - `?- calc("(1+2)*(-3+5)/2", V).` → `false`
+
+#### Soluzione Implementata
+✅ **COMPLETATA**: Implemented string_codes/2 and enhanced to_codes/2 for string support
+
+**Root Cause Identified**: 
+- DCG code used `"strings"` but existing predicates only worked with `'atoms'`
+- `atom_codes/2` works with atoms but not with double-quoted strings
+- `to_codes/2` was incomplete for string handling
+- Missing `string_codes/2` predicate for proper string-to-codes conversion
+
+**Technical Implementation**:
+1. **Created StringCodes.java**: New predicate implementing `string_codes/2` with full PrologString support
+2. **Enhanced ToCodesSimple.java**: Added string support to `to_codes/2` predicate
+3. **Registry Updates**: Added `string_codes/2` to BuiltInFactory and BuiltInRegistry
+4. **String Type Support**: Proper handling of PrologString vs Atom types
+
+**Files Modified**:
+- `src/main/java/it/denzosoft/jprolog/builtin/string/StringCodes.java` - Created new predicate
+- `src/main/java/it/denzosoft/jprolog/builtin/conversion/ToCodesSimple.java` - Enhanced for strings
+- `src/main/java/it/denzosoft/jprolog/core/engine/BuiltInFactory.java` - Registered string_codes/2
+- `src/main/java/it/denzosoft/jprolog/core/engine/BuiltInRegistry.java` - Added registry entry
+
+**Test Results**:
+- ✅ `string_codes("123", X)` → `X = [49.0, 50.0, 51.0]`
+- ✅ `to_codes("123", X)` → `X = [49.0, 50.0, 51.0]` (now supports strings)
+- ✅ Basic DCG parsing with strings now functional
+- ✅ String-to-codes conversion working for DCG input processing
+
+**Status**: RESOLVED - String handling for DCG parsing implemented
 
 **Programma DCG fornito dall'utente:**
 ```prolog

@@ -91,11 +91,12 @@ public class Phrase extends AbstractBuiltInWithContext {
             List<Map<String, Term>> solutionList = new ArrayList<>();
             boolean success = this.solver.solve(goal, bindings, solutionList, CutStatus.notOccurred());
             
-            // Return true if successful
+            // Return true if successful and propagate bindings correctly
             if (success && !solutionList.isEmpty()) {
-                // Apply the first solution to bindings
-                Map<String, Term> solution = solutionList.get(0);
-                bindings.putAll(solution);
+                // Simply use the first solution - the solve method should have already
+                // unified variables correctly if implemented properly
+                bindings.clear();
+                bindings.putAll(solutionList.get(0));
                 return true;
             }
             

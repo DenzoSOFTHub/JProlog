@@ -90,6 +90,7 @@ public class BuiltInRegistry {
             case "phrase": return arity == 2 || arity == 3; // phrase/2, phrase/3
             case "atom_codes": return arity == 2; // atom_codes/2
             case "number_codes": return arity == 2; // number_codes/2
+            case "string_codes": return arity == 2; // string_codes/2
             case "to_codes": return arity == 2; // to_codes/2
             // START_CHANGE: ISS-2025-0021 - Add missing atom operation predicates
             case "atom_length": return arity == 2; // atom_length/2

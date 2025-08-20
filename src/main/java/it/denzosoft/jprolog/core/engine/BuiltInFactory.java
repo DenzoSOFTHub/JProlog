@@ -160,6 +160,7 @@ public class BuiltInFactory {
         registerFactory("string_concat", StringConcat::new);
         registerFactory("sub_string", SubString::new);
         registerFactory("string_chars", StringChars::new);
+        registerFactory("string_codes", StringCodes::new);
         registerFactory("atom_string", AtomString::new);
         registerFactory("number_string", NumberString::new);
         

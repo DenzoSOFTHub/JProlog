@@ -7,6 +7,7 @@ import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
+import it.denzosoft.jprolog.core.terms.PrologString;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -33,6 +34,11 @@ public class ToCodesSimple implements BuiltIn {
             return atomToCodesMode((Atom) sourceTerm, codesTerm, bindings, solutions);
         }
         
+        // If source is string and codes is variable
+        if (sourceTerm instanceof PrologString && codesTerm instanceof Variable) {
+            return stringToCodesMode((PrologString) sourceTerm, codesTerm, bindings, solutions);
+        }
+        
         // If source is variable and codes is compound (list)
         if (sourceTerm instanceof Variable && isListTerm(codesTerm)) {
             return codesToAtomMode(sourceTerm, codesTerm, bindings, solutions);
@@ -43,6 +49,19 @@ public class ToCodesSimple implements BuiltIn {
             return checkConsistency((Atom) sourceTerm, codesTerm, bindings, solutions);
         }
         
+        return false;
+    }
+    
+    private boolean stringToCodesMode(PrologString string, Term codesTerm,
+                                      Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        String stringValue = string.getStringValue();
+        Term codesList = createCodesListFromString(stringValue);
+        
+        Map<String, Term> newBindings = new HashMap<>(bindings);
+        if (codesTerm.unify(codesList, newBindings)) {
+            solutions.add(newBindings);
+            return true;
+        }
         return false;
     }
     

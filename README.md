@@ -172,45 +172,42 @@ X = sue.
 
 JProlog provides comprehensive documentation for all aspects of the system:
 
-### 🚀 **Getting Started**
-- **[QUICK_START.md](QUICK_START.md)**: 5-minute setup guide for immediate productivity
-- **[USER_MANUAL.md](USER_MANUAL.md)**: Complete user guide for all components
-- **[CLI_USER_MANUAL.md](CLI_USER_MANUAL.md)**: Dedicated command-line interface guide
+### 🚀 **User Guides**
+- **[docs/guides/guide-quick-start.md](docs/guides/guide-quick-start.md)**: 5-minute setup guide for immediate productivity
+- **[docs/guides/guide-user-manual.md](docs/guides/guide-user-manual.md)**: Complete user guide for all components
+- **[docs/guides/guide-cli-usage.md](docs/guides/guide-cli-usage.md)**: Dedicated command-line interface guide
+- **[docs/guides/guide-ide-usage.md](docs/guides/guide-ide-usage.md)**: Integrated Development Environment usage guide
+- **[docs/guides/guide-prolog-intro.md](docs/guides/guide-prolog-intro.md)**: Introduction to Prolog programming
 
 ### 🔧 **Development & Technical**  
 - **[CLAUDE.md](CLAUDE.md)**: Developer guide with build commands, architecture, and workflow procedures
-- **[JAVA_INTEGRATION.md](JAVA_INTEGRATION.md)**: Guide for embedding JProlog in Java applications
-- **[EXTENSION_GUIDE.md](EXTENSION_GUIDE.md)**: How to create custom built-in predicates
-
-### 🐛 **Debugging & Troubleshooting**
-- **[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)**: Comprehensive debugging tutorial with examples
-- **[DEBUG_FEATURES_SUMMARY.md](DEBUG_FEATURES_SUMMARY.md)**: Overview of debugging capabilities
-- **[EXAMPLE_BUG_WORKFLOW.md](EXAMPLE_BUG_WORKFLOW.md)**: Step-by-step bug fixing examples
+- **[docs/guides/guide-java-integration.md](docs/guides/guide-java-integration.md)**: Guide for embedding JProlog in Java applications
+- **[docs/guides/guide-extension.md](docs/guides/guide-extension.md)**: How to create custom built-in predicates
+- **[docs/guides/guide-debugging.md](docs/guides/guide-debugging.md)**: Comprehensive debugging tutorial with examples
 
 ### 📖 **Reference Documentation**
-- **[BUILTIN_REFERENCE.md](BUILTIN_REFERENCE.md)**: Complete reference for all built-in predicates
-- **[builtins.md](builtins.md)**: Detailed documentation of built-in predicates with examples
-- **[ISO_COMPLIANCE.md](ISO_COMPLIANCE.md)**: ISO Prolog standard compliance analysis
-- **[limitations.md](limitations.md)**: Known limitations and workarounds
+- **[docs/references/ref-builtins.md](docs/references/ref-builtins.md)**: Detailed documentation of built-in predicates with examples
+- **[docs/references/ref-builtins-extended.md](docs/references/ref-builtins-extended.md)**: Complete extended reference for all built-in predicates
+- **[docs/references/ref-iso-compliance.md](docs/references/ref-iso-compliance.md)**: ISO Prolog standard compliance analysis
+- **[docs/references/ref-limitations.md](docs/references/ref-limitations.md)**: Known limitations and workarounds
+- **[docs/references/ref-dcg-grammar.md](docs/references/ref-dcg-grammar.md)**: Definite Clause Grammars reference
 
-### 📝 **Project Management**
-- **[issues.md](issues.md)**: Issue tracking and resolution documentation
-- **[ChangeRequest.md](ChangeRequest.md)**: Change requests and enhancement tracking
-- **[CHANGELOG.md](CHANGELOG.md)**: Version history and release notes
+### 📝 **Project Management & Tracking**
+- **[docs/tracking/track-issues.md](docs/tracking/track-issues.md)**: Issue tracking and resolution documentation
+- **[docs/tracking/track-change-requests.md](docs/tracking/track-change-requests.md)**: Change requests and enhancement tracking
+- **[docs/tracking/track-release-notes.md](docs/tracking/track-release-notes.md)**: Latest release notes
+- **[CHANGELOG.md](CHANGELOG.md)**: Complete version history
 
-### 📚 **Educational Resources**
-- **[PROLOG_INTRODUCTION.md](PROLOG_INTRODUCTION.md)**: Introduction to Prolog programming
-- **[DCG_CLARIFICATION.md](DCG_CLARIFICATION.md)**: Definite Clause Grammars explained
+### 🧪 **Reports & Analysis**
+- **[docs/reports/report-test-results.md](docs/reports/report-test-results.md)**: Comprehensive test results and coverage analysis
+- **[docs/reports/report-debug-features.md](docs/reports/report-debug-features.md)**: Overview of debugging capabilities
+- **[docs/reports/report-package-reorg.md](docs/reports/report-package-reorg.md)**: Package reorganization documentation
+- **[docs/reports/report-resolution-summary.md](docs/reports/report-resolution-summary.md)**: Summary of resolved issues and improvements
+
+### 💡 **Examples & Tutorials**
 - **[examples/](examples/)**: 40+ example Prolog programs covering all language features
-
-### 🧪 **Testing & Quality**
-- **[COMPREHENSIVE_TEST_RESULTS.md](COMPREHENSIVE_TEST_RESULTS.md)**: Detailed test results and coverage
-- **[TEST_RESULTS_COMPREHENSIVE.md](TEST_RESULTS_COMPREHENSIVE.md)**: Performance and compliance metrics
-- **[RESOLUTION_SUMMARY.md](RESOLUTION_SUMMARY.md)**: Summary of resolved issues and improvements
-
-### 🏗️ **Architecture & Implementation**
-- **[PACKAGE_REORGANIZATION.md](PACKAGE_REORGANIZATION.md)**: Code organization and structure
-- **[SIMPLIFIED_ISO_COMPLIANCE.md](SIMPLIFIED_ISO_COMPLIANCE.md)**: Simplified ISO compliance overview
+- **[examples/example-bug-workflow.md](examples/example-bug-workflow.md)**: Step-by-step bug fixing examples  
+- **[examples/example-nqueens-compilation.md](examples/example-nqueens-compilation.md)**: N-Queens problem compilation guide
 
 ## 📊 **Quality Metrics & Compliance**
 

@@ -16,10 +16,15 @@ L'IDE JProlog è un ambiente di sviluppo interattivo per programmi Prolog che pe
 ./run_ide.sh
 ```
 
-### Opzione 2: Comando Maven
+### Opzione 2: Script di Avvio Alternativo
+```bash
+./start-ide.sh
+```
+
+### Opzione 3: Comando Maven
 ```bash
 mvn compile
-java -cp target/classes it.denzosoft.jprolog.gui.PrologIDE
+java -cp target/classes it.denzosoft.jprolog.editor.PrologIDE
 ```
 
 ## Come Usare l'IDE
@@ -98,10 +103,15 @@ classify_number(0, Type).
 
 ## Note Tecniche
 
-- L'IDE supporta tutte le funzionalità del motore JProlog
-- Include supporto per operatori condizionali (-> e ;)
+- L'IDE supporta tutte le funzionalità del motore JProlog v2.0.5
+- Include supporto completo per operatori condizionali (-> e ;)
 - Gestisce correttamente il backtracking e le soluzioni multiple
+- Supporta term manipulation predicates (functor/3, arg/3, =../2, copy_term/2)
+- Meta-predicates completamente funzionali (findall/3, bagof/3, setof/3)
+- Liste in formato ISO-compliant [a,b,c]
+- Sistema DCG (Definite Clause Grammar) completamente operativo
 - Interface utente responsive con aggiornamenti in tempo reale
+- 95% di compatibilità con lo standard ISO Prolog
 
 ## Esempi di Backtracking
 

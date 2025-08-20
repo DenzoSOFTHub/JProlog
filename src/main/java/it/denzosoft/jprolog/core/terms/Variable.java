@@ -192,8 +192,26 @@ public class Variable extends Term {
     
     @Override
     public Term resolveBindings(Map<String, Term> bindings) {
+        return resolveBindings(bindings, new java.util.HashSet<String>());
+    }
+    
+    /**
+     * Resolve bindings with cycle detection to prevent infinite recursion.
+     */
+    private Term resolveBindings(Map<String, Term> bindings, java.util.Set<String> visited) {
+        if (visited.contains(this.name)) {
+            // Circular reference detected - return this variable
+            return this;
+        }
+        
         if (bindings.containsKey(this.name)) {
-            return bindings.get(this.name).resolveBindings(bindings);
+            visited.add(this.name);
+            Term bound = bindings.get(this.name);
+            if (bound instanceof Variable) {
+                return ((Variable) bound).resolveBindings(bindings, visited);
+            } else {
+                return bound.resolveBindings(bindings);
+            }
         }
         return this;
     }
