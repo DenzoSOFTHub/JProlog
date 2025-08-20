@@ -109,6 +109,13 @@ public class PrologCLI {
     }
     
     private void handleCommand(String command) {
+        // START_CHANGE: ISS-2025-0011 - Handle commands with trailing periods
+        // Strip trailing period from command for consistency
+        if (command.endsWith(".")) {
+            command = command.substring(0, command.length() - 1);
+        }
+        // END_CHANGE: ISS-2025-0011
+        
         String[] parts = command.split("\\s+", 2);
         String cmd = parts[0].toLowerCase();
         

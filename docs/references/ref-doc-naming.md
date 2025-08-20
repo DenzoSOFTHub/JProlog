@@ -20,7 +20,8 @@
 - `guide-extension.md` - Guida per estensioni
 
 **Riferimenti Tecnici (ref-)**:
-- `ref-builtins.md` - Riferimento predicati built-in
+- `BUILTIN_PREDICATES_REFERENCE.md` - Riferimento predicati built-in organizzati per categoria
+- `BUILTIN_OPERATORS_REFERENCE.md` - Riferimento operatori con regole di precedenza
 - `ref-iso-compliance.md` - Analisi compatibilità ISO
 - `ref-dcg-grammar.md` - Riferimento DCG
 - `ref-limitations.md` - Limitazioni note del sistema
@@ -61,7 +62,8 @@
 │   │   ├── guide-cli-usage.md
 │   │   └── guide-ide-usage.md
 │   ├── references/
-│   │   ├── ref-builtins.md
+│   │   ├── BUILTIN_PREDICATES_REFERENCE.md
+│   │   ├── BUILTIN_OPERATORS_REFERENCE.md
 │   │   ├── ref-iso-compliance.md
 │   │   └── ref-limitations.md
 │   ├── reports/

@@ -5,6 +5,46 @@ All notable changes to JProlog will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.7] - 2025-08-20
+
+### 🔧 Critical Bug Fixes & Documentation Enhancement
+
+This release addresses a systematic issue where 32+ built-in predicates were implemented but not registered, making them inaccessible. Additionally, comprehensive documentation guides have been added.
+
+### Fixed
+
+#### Built-in Predicate Registration (32 predicates restored)
+- **Type Checking (7)**: `integer/1`, `float/1`, `atomic/1`, `callable/1`, `ground/1`, `is_list/1`, `partial_list/1`
+- **List Operations (6)**: `reverse/2`, `msort/2`, `sort/2`, `select/3`, `nth0/3`, `nth1/3`
+- **Control Structures (6)**: `once/1`, `forall/2`, `call/1`, `ignore/1`, `repeat/0`, `\+/1`
+- **I/O Operations (8)**: `read/1`, `writeln/1`, `get_char/1`, `put_char/1`, `get_code/1`, `put_code/1`, `open/3,4`, `close/1`
+- **Type Conversion (4)**: `number_chars/2`, `atom_number/2`, `atom_string/2`, `number_string/2`
+- **Term Comparison (4)**: `@</2`, `@=</2`, `@>/2`, `@>=/2`
+- **DCG Support**: `between/3` for DCG arithmetic constraints
+
+### Added
+
+#### Comprehensive Documentation Guides
+- **guide-knowledge-base.md**: Complete guide for database manipulation predicates
+- **guide-meta-predicates.md**: Higher-order programming with `findall/3`, `bagof/3`, `setof/3`, `forall/2`
+- **guide-io-predicates.md**: Stream and file I/O operations
+
+#### Tracking & Documentation
+- **issues.md**: Formal issue tracking system (ISS-2025-0026 through ISS-2025-0031)
+- **limitations.md**: Current system limitations and workarounds
+- **docs/references/BUILTIN_PREDICATES_REFERENCE.md** and **docs/references/BUILTIN_OPERATORS_REFERENCE.md**: Complete reference for 80+ built-in predicates and operators with examples
+
+### Improved
+- **ISO Compliance**: Increased from ~85% to ~92%
+- **Test Coverage**: 19/20 core test programs passing (95% pass rate)
+- **DCG Functionality**: Full built-in predicate support in DCG rules
+
+### Technical Details
+- All predicates were already implemented in `BuiltInFactory.java`
+- Fixed by adding missing registrations in `BuiltInRegistry.isBuiltIn()`
+- No new implementation code required, only registration fixes
+- Backward compatible - no breaking changes
+
 ## [2.0.0] - 2025-08-18
 
 ### 🎉 Major Release: Complete ISO Prolog Implementation

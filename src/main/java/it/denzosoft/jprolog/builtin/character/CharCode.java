@@ -1,9 +1,10 @@
 package it.denzosoft.jprolog.builtin.character;
 
-import it.denzosoft.jprolog.builtin.AbstractBuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.*;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.List;
 
@@ -12,31 +13,16 @@ import java.util.List;
  * 
  * char_code(?Char, ?Code) - Convert between character and character code
  */
-public class CharCode extends AbstractBuiltInWithContext {
-    
-    /**
-     * Create char_code predicate.
-     * 
-     * @param solver The query solver
-     */
-    public CharCode(QuerySolver solver) {
-        super(solver);
-    }
+public class CharCode implements BuiltIn {
     
     @Override
-    public boolean execute(Term term, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        return solve(solver, bindings);
-    }
-    
-    @Override
-    public boolean solve(QuerySolver solver, Map<String, Term> bindings) {
-        Term[] args = getArguments();
-        if (args.length != 2) {
-            return false;
+    public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        if (query.getArguments().size() != 2) {
+            throw new PrologEvaluationException("char_code/2 requires exactly 2 arguments");
         }
         
-        Term charTerm = args[0];
-        Term codeTerm = args[1];
+        Term charTerm = query.getArguments().get(0).resolveBindings(bindings);
+        Term codeTerm = query.getArguments().get(1).resolveBindings(bindings);
         
         try {
             if (charTerm instanceof Variable && codeTerm instanceof Variable) {
@@ -44,23 +30,33 @@ public class CharCode extends AbstractBuiltInWithContext {
                 return false;
             } else if (charTerm instanceof Variable) {
                 // Convert code to character
-                return codeToChar((Variable) charTerm, codeTerm, bindings);
+                if (codeToChar((Variable) charTerm, codeTerm, bindings, solutions)) {
+                    return true;
+                }
+                return false;
             } else if (codeTerm instanceof Variable) {
                 // Convert character to code
-                return charToCode(charTerm, (Variable) codeTerm, bindings);
+                if (charToCode(charTerm, (Variable) codeTerm, bindings, solutions)) {
+                    return true;
+                }
+                return false;
             } else {
                 // Test conversion
-                return testCharCode(charTerm, codeTerm);
+                if (testCharCode(charTerm, codeTerm)) {
+                    solutions.add(new HashMap<>(bindings));
+                    return true;
+                }
+                return false;
             }
         } catch (Exception e) {
-            return false;
+            throw new PrologEvaluationException("char_code/2 error: " + e.getMessage());
         }
     }
     
     /**
      * Convert character code to character.
      */
-    private boolean codeToChar(Variable charVar, Term codeTerm, Map<String, Term> bindings) {
+    private boolean codeToChar(Variable charVar, Term codeTerm, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (!(codeTerm instanceof it.denzosoft.jprolog.core.terms.Number)) {
             return false;
         }
@@ -73,22 +69,32 @@ public class CharCode extends AbstractBuiltInWithContext {
         }
         
         char ch = (char) code;
-        bindings.put(charVar.getName(), new Atom(String.valueOf(ch)));
-        return true;
+        Map<String, Term> newBindings = new HashMap<>(bindings);
+        if (charVar.unify(new Atom(String.valueOf(ch)), newBindings)) {
+            solutions.add(newBindings);
+            return true;
+        }
+        
+        return false;
     }
     
     /**
      * Convert character to character code.
      */
-    private boolean charToCode(Term charTerm, Variable codeVar, Map<String, Term> bindings) {
+    private boolean charToCode(Term charTerm, Variable codeVar, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         char ch = getCharacter(charTerm);
         if (ch == 0 && !isValidNullChar(charTerm)) {
             return false;
         }
         
         int code = (int) ch;
-        bindings.put(codeVar.getName(), new it.denzosoft.jprolog.core.terms.Number((double) code));
-        return true;
+        Map<String, Term> newBindings = new HashMap<>(bindings);
+        if (codeVar.unify(new it.denzosoft.jprolog.core.terms.Number((double) code), newBindings)) {
+            solutions.add(newBindings);
+            return true;
+        }
+        
+        return false;
     }
     
     /**

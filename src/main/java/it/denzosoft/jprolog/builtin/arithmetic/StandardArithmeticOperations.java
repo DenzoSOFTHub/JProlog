@@ -1,5 +1,8 @@
 package it.denzosoft.jprolog.builtin.arithmetic;
 
+import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
+
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.BinaryOperator;
@@ -11,13 +14,28 @@ public class StandardArithmeticOperations {
         registerOperation("+", Double::sum);
         registerOperation("-", (a, b) -> a - b);
         registerOperation("*", (a, b) -> a * b);
-        registerOperation("/", (a, b) -> a / b);
-        registerOperation("mod", (a, b) -> a % b);
+        registerOperation("/", (a, b) -> {
+            if (b == 0.0) {
+                throw new PrologException(ISOErrorTerms.zeroDivisorError("(/)/2"));
+            }
+            return a / b;
+        });
+        registerOperation("mod", (a, b) -> {
+            if (b == 0.0) {
+                throw new PrologException(ISOErrorTerms.zeroDivisorError("mod/2"));
+            }
+            return a % b;
+        });
         registerOperation("**", Math::pow);
         
         // START_CHANGE: ISS-2025-0017 - Add missing arithmetic operators
         // ISO Prolog remainder operation
-        registerOperation("rem", (a, b) -> a % b); // Same as mod in Java
+        registerOperation("rem", (a, b) -> {
+            if (b == 0.0) {
+                throw new PrologException(ISOErrorTerms.zeroDivisorError("rem/2"));
+            }
+            return a % b;
+        }); // Same as mod in Java
         
         // Bitwise operations (convert to int, operate, convert back)
         registerOperation("/\\", (a, b) -> (double)((int)a.doubleValue() & (int)b.doubleValue()));

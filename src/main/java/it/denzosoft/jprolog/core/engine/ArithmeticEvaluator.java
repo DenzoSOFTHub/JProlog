@@ -3,7 +3,9 @@ package it.denzosoft.jprolog.core.engine;
 import it.denzosoft.jprolog.builtin.arithmetic.StandardArithmeticOperations;
 import it.denzosoft.jprolog.builtin.arithmetic.ArithmeticOperation;
 import it.denzosoft.jprolog.builtin.arithmetic.ISOArithmeticFunctions;
+import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
@@ -33,20 +35,47 @@ public class ArithmeticEvaluator {
         BINARY_OPERATIONS.put("+", Double::sum);
         BINARY_OPERATIONS.put("-", (a, b) -> a - b);
         BINARY_OPERATIONS.put("*", (a, b) -> a * b);
-        BINARY_OPERATIONS.put("/", (a, b) -> a / b);
+        BINARY_OPERATIONS.put("/", (a, b) -> {
+            if (b == 0.0) {
+                // Throw ISO standard zero divisor error
+                throw new PrologException(ISOErrorTerms.zeroDivisorError("(/)/2"));
+            }
+            return a / b;
+        });
         
         // Funzioni matematiche unarie standard
         UNARY_FUNCTIONS.put("sin", Math::sin);
         UNARY_FUNCTIONS.put("cos", Math::cos);
         UNARY_FUNCTIONS.put("tan", Math::tan);
-        UNARY_FUNCTIONS.put("asin", Math::asin);
-        UNARY_FUNCTIONS.put("acos", Math::acos);
+        UNARY_FUNCTIONS.put("asin", x -> {
+            if (x < -1.0 || x > 1.0) {
+                throw new PrologException(ISOErrorTerms.evaluationError("undefined", "asin/1"));
+            }
+            return Math.asin(x);
+        });
+        UNARY_FUNCTIONS.put("acos", x -> {
+            if (x < -1.0 || x > 1.0) {
+                throw new PrologException(ISOErrorTerms.evaluationError("undefined", "acos/1"));
+            }
+            return Math.acos(x);
+        });
         UNARY_FUNCTIONS.put("atan", Math::atan);
-        UNARY_FUNCTIONS.put("sqrt", Math::sqrt);
-        UNARY_FUNCTIONS.put("log", Math::log);
+        UNARY_FUNCTIONS.put("sqrt", x -> {
+            if (x < 0) {
+                throw new PrologException(ISOErrorTerms.evaluationError("undefined", "sqrt/1"));
+            }
+            return Math.sqrt(x);
+        });
+        UNARY_FUNCTIONS.put("log", x -> {
+            if (x <= 0) {
+                throw new PrologException(ISOErrorTerms.evaluationError("undefined", "log/1"));
+            }
+            return Math.log(x);
+        });
         UNARY_FUNCTIONS.put("exp", Math::exp);
         UNARY_FUNCTIONS.put("abs", Math::abs);
         UNARY_FUNCTIONS.put("ceil", Math::ceil);
+        UNARY_FUNCTIONS.put("ceiling", Math::ceil);  // ISO standard name
         UNARY_FUNCTIONS.put("floor", Math::floor);
         UNARY_FUNCTIONS.put("round", (x) -> (double) Math.round(x));
         

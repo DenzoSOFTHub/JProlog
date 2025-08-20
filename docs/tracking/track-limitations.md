@@ -6,34 +6,44 @@ This document describes current limitations in JProlog implementation. Each limi
 
 ## ISS-2025-0008: Variable Unification Fails After TermCopier Renaming in DCG
 
-**Descrizione**: Le variabili rinominate dal sistema TermCopier non si unificano correttamente con i built-in predicati nelle regole DCG.
+**Descrizione**: Le variabili nelle query DCG non vengono unificate correttamente con i risultati del parsing (parzialmente risolto).
 
-**Esempi che falliscono**:
+**Esempi che falliscono** (updated status):
 ```prolog
-% DCG rule with variable renaming issue
+% PARTIALLY FIXED: DCG rule parsing now works but variable binding incomplete
 ?- phrase(digits(Ds), [49,50,51]), number_codes(N, Ds).
 % Expected: N = 123
-% Actual: Ds contains renamed variables like _R159503834207216_D that don't unify properly
+% Actual: phrase succeeds but Ds is unbound → number_codes fails
+
+% Progress made (2025-08-20):
+% ✅ phrase(digits(Ds), [49,50,51]) now finds 1 solution (was 0)
+% ❌ Ds variable not bound in solution (should be [49,50,51])
 ```
+
+**Partial Fix Applied**: DCG transformation in Parser.java now works correctly
+
+**Remaining Issue**: Variable binding propagation from DCG parsing to query result
 
 ---
 
-## ISS-2025-0011: CLI Input Processing Issues - Commands Not Recognized
+## ~~ISS-2025-0011: CLI Input Processing Issues~~ ✓ RESOLVED
 
-**Descrizione**: Il CLI non riconosce alcuni comandi standard e ha problemi con input da file/pipe.
+**Descrizione**: ~~Il CLI non riconosce alcuni comandi standard e ha problemi con input da file/pipe.~~ **FIXED 2025-08-20**
 
-**Esempi che falliscono**:
+**Status**: ✅ **RESOLVED** - CLI command parsing now handles trailing periods correctly
+
+**Examples now working**:
 ```prolog
-% Command not recognized
+% Commands with periods now work correctly
 ?- :listing.
-% Expected: Shows loaded predicates
-% Actual: "Comando sconosciuto: :listing."
+% Result: ✓ Shows loaded predicates correctly
 
-% Input from file issues
+% Input from file/pipe works correctly  
 $ echo ":help" | java -cp target/classes it.denzosoft.jprolog.PrologCLI
-% Expected: Shows help
-% Actual: CLI terminates prematurely
+% Result: ✓ Shows help and processes input correctly
 ```
+
+**Fix**: Modified `handleCommand()` in `PrologCLI.java` to strip trailing periods from commands
 
 ---
 
@@ -312,6 +322,88 @@ $ echo ":help" | java -cp target/classes it.denzosoft.jprolog.PrologCLI
 ```prolog
 ?- findall(X, likes(mary, X), L).
 % Works correctly
+```
+
+---
+
+## ISS-2025-0040: DCG Parser Cannot Handle Compound Operator Terms in List Heads
+
+**Descrizione**: DCG rules con compound terms contenenti operatori (`K-V`) dentro list structures nei rule heads non possono essere parsate correttamente.
+
+**Esempi che falliscono**:
+```prolog
+% DCG rule con compound operator term in list head fallisce:
+json_object([K-V|Pairs]) --> [123], ws, json_pair(K-V), json_object_rest(Pairs), ws, [125].
+% Expected: DCG rule loaded and functional
+% Actual: Error: Expected ')' at line 1, column 12
+
+% Altri esempi che falliscono:
+key_value_list([Name-Value|Rest]) --> identifier(Name), [61], value(Value), key_value_rest(Rest).
+% Expected: Parse key-value pairs
+% Actual: Parser error on compound term in list head
+```
+
+**Workaround**: Usare strutture separate invece di compound terms inline:
+```prolog
+% Workaround: Define separate structure
+json_object([Pair|Pairs]) --> [123], ws, json_pair(Pair), json_object_rest(Pairs), ws, [125].
+json_pair(pair(K,V)) --> json_string(K), ws, [58], ws, json_value(V).
+```
+
+---
+
+## ISS-2025-0041: DCG Parser Fails on Special Characters Due to Tokenizer Delimiters
+
+**Descrizione**: DCG rules contenenti caratteri speciali come `?` in terminal lists falliscono perché questi caratteri sono definiti come delimitatori del tokenizer.
+
+**Esempi che falliscono**:
+```prolog
+% DCG rule con carattere ? fallisce:
+question --> [does], noun_phrase, verb, noun_phrase, [?].
+% Expected: DCG rule loaded and functional
+% Actual: Error: Expected atom name at line 1, column 2
+
+% Altri caratteri speciali che falliscono:
+exclamation --> sentence, [!].  % Fails due to ! in tokenizer
+semicolon_sep --> item, [;], item_list.  % Fails due to ; in tokenizer
+```
+
+**Workaround**: Usare character codes invece di character literals:
+```prolog
+% Workaround: Use character codes
+question --> [does], noun_phrase, verb, noun_phrase, [63].  % 63 is ASCII for '?'
+exclamation --> sentence, [33].  % 33 is ASCII for '!'
+semicolon_sep --> item, [59], item_list.  % 59 is ASCII for ';'
+```
+
+---
+
+## ISS-2025-0042: DCG Constraint Goals Cannot Handle Complex Arithmetic Functions
+
+**Descrizione**: DCG rules con complex arithmetic function calls (`max()`) dentro constraint goals `{ }` non possono essere parsate correttamente.
+
+**Esempi che falliscono**:
+```prolog
+% DCG rule con max() function call fallisce:
+depth(D) --> [40], depth(D1), [41], depth(D2), { D is max(D1+1, D2) }.
+% Expected: DCG rule loaded and functional  
+% Actual: Error: Expected ')' at line 1, column 14
+
+% Altri function calls complessi che falliscono:
+range_check(N) --> digits(Ds), { length(Ds, L), N is min(L, 10) }.
+% Expected: Parse with length constraint
+% Actual: Parser error on complex constraint
+```
+
+**Workaround**: Semplificare le constraints o usare predicati ausiliari:
+```prolog
+% Workaround: Use auxiliary predicates
+depth(D) --> [40], depth(D1), [41], depth(D2), { max_depth(D1, D2, D) }.
+max_depth(D1, D2, D) :- D1 >= D2, D is D1 + 1.
+max_depth(D1, D2, D) :- D1 < D2, D is D2 + 1.
+
+% Or use simpler arithmetic:
+simple_depth(D) --> [40], simple_depth(D1), [41], { D is D1 + 1 }.
 ```
 
 ---

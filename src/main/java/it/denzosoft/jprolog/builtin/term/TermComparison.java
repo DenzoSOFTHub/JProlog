@@ -79,12 +79,12 @@ public class TermComparison implements BuiltIn {
     }
     
     private int compareTerms(Term term1, Term term2) {
-        // Simple implementation - for a full implementation,
-        // we would need to follow Prolog standard term ordering
-        return term1.toString().compareTo(term2.toString());
+        // Use ISO 13211-1 standard term ordering
+        return StandardTermOrdering.compare(term1, term2);
     }
     
     private boolean termsIdentical(Term term1, Term term2) {
-        return term1.toString().equals(term2.toString());
+        // Use standard term ordering for identity check
+        return StandardTermOrdering.identical(term1, term2);
     }
 }

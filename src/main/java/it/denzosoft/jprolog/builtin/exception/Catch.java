@@ -91,11 +91,7 @@ public class Catch implements BuiltInWithContext {
     }
     
     private Term createSystemErrorTerm(String message) {
-        // Create a system_error term
-        try {
-            return new it.denzosoft.jprolog.core.terms.Atom("system_error('" + message + "')");
-        } catch (Exception e) {
-            return new it.denzosoft.jprolog.core.terms.Atom("system_error");
-        }
+        // Use ISO standard error term factory
+        return ISOErrorTerms.systemError(message, "catch/3");
     }
 }

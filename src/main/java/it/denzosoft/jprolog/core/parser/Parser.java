@@ -5,6 +5,7 @@ import it.denzosoft.jprolog.core.exceptions.PrologParserException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.dcg.DCGTransformer;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -177,7 +178,8 @@ public class Parser {
             Term head = termParser.parseTerm(":-(" + directiveBody + ")");
             return new Rule(head, new ArrayList<>());
         } else if (cleanRule.contains("-->")) {
-            // This is a DCG rule - handle specially
+            // START_CHANGE: ISS-2025-0008 - Transform DCG rules properly
+            // This is a DCG rule - transform it to proper Prolog rule
             String[] parts = cleanRule.split("-->", 2);
             if (parts.length != 2) {
                 throw new PrologParserException("Invalid DCG rule format: " + ruleString);
@@ -193,8 +195,8 @@ public class Parser {
             
             // Parse the body as a single term (it may contain commas, so parse as sequence)
             Term body;
-            if (bodyPart.contains(",")) {
-                // Body contains comma-separated goals, parse them individually and create comma structure
+            if (containsTopLevelCommas(bodyPart)) {
+                // Body contains comma-separated goals at top level, parse them individually and create comma structure
                 List<Term> bodyGoals = parseBody(bodyPart);
                 body = createCommaSequence(bodyGoals);
             } else {
@@ -207,7 +209,16 @@ public class Parser {
             dcgArgs.add(head);
             dcgArgs.add(body);
             Term dcgTerm = new CompoundTerm(new Atom("-->"), dcgArgs);
-            return new Rule(dcgTerm, new ArrayList<>());
+            
+            // Transform the DCG rule using DCGTransformer
+            try {
+                DCGTransformer transformer = new DCGTransformer();
+                Rule transformedRule = transformer.transformDCGRule((CompoundTerm) dcgTerm);
+                return transformedRule;
+            } catch (Exception e) {
+                throw new PrologParserException("Error transforming DCG rule: " + e.getMessage(), e);
+            }
+            // END_CHANGE: ISS-2025-0008
         } else if (cleanRule.contains(":-")) {
             String[] parts = cleanRule.split(":-", 2);
             if (parts.length != 2) {
@@ -225,6 +236,67 @@ public class Parser {
         }
     }
 
+    /**
+     * Check if the string contains commas at the top level (not inside parentheses, brackets, or braces).
+     * This helps distinguish between comma-separated goals and commas inside lists or other structures.
+     */
+    private boolean containsTopLevelCommas(String text) {
+        int parenDepth = 0;
+        int bracketDepth = 0;
+        int braceDepth = 0;
+        boolean inQuotes = false;
+        char quoteChar = '\0';
+        
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            
+            // Handle quotes
+            if (!inQuotes && (c == '"' || c == '\'')) {
+                inQuotes = true;
+                quoteChar = c;
+                continue;
+            } else if (inQuotes && c == quoteChar) {
+                inQuotes = false;
+                continue;
+            }
+            
+            // Skip everything inside quotes
+            if (inQuotes) {
+                continue;
+            }
+            
+            // Track nesting levels
+            switch (c) {
+                case '(':
+                    parenDepth++;
+                    break;
+                case ')':
+                    parenDepth--;
+                    break;
+                case '[':
+                    bracketDepth++;
+                    break;
+                case ']':
+                    bracketDepth--;
+                    break;
+                case '{':
+                    braceDepth++;
+                    break;
+                case '}':
+                    braceDepth--;
+                    break;
+                case ',':
+                    // If we're at top level (no nesting), this is a top-level comma
+                    if (parenDepth == 0 && bracketDepth == 0 && braceDepth == 0) {
+                        return true;
+                    }
+                    break;
+            }
+        }
+        
+        return false;
+    }
+
     private List<Term> parseBody(String bodyString) throws PrologParserException {
         List<Term> body = new ArrayList<>();
         // Split on ',' but be careful not to split inside parentheses
@@ -239,15 +311,32 @@ public class Parser {
         return body;
     }
 
-    // Split a string on commas that are not inside parentheses or braces
+    // Split a string on commas that are not inside parentheses, brackets, or braces
     private List<String> splitOnCommasOutsideParens(String input) {
         List<String> result = new ArrayList<>();
         int parenCount = 0;
         int braceCount = 0;
+        int bracketCount = 0;
+        boolean inQuotes = false;
+        char quoteChar = '\0';
         int lastSplit = 0;
         
         for (int i = 0; i < input.length(); i++) {
             char c = input.charAt(i);
+            
+            // Handle quotes
+            if (!inQuotes && (c == '"' || c == '\'')) {
+                inQuotes = true;
+                quoteChar = c;
+            } else if (inQuotes && c == quoteChar) {
+                inQuotes = false;
+            }
+            
+            // Skip everything inside quotes
+            if (inQuotes) {
+                continue;
+            }
+            
             if (c == '(') {
                 parenCount++;
             } else if (c == ')') {
@@ -256,7 +345,11 @@ public class Parser {
                 braceCount++;
             } else if (c == '}') {
                 braceCount--;
-            } else if (c == ',' && parenCount == 0 && braceCount == 0) {
+            } else if (c == '[') {
+                bracketCount++;
+            } else if (c == ']') {
+                bracketCount--;
+            } else if (c == ',' && parenCount == 0 && braceCount == 0 && bracketCount == 0) {
                 result.add(input.substring(lastSplit, i));
                 lastSplit = i + 1;
             }

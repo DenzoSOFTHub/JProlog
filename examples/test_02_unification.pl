@@ -17,7 +17,7 @@ healthy(fruit).
 
 % Complex unification test
 same_structure(f(X, Y), f(A, B)) :- X = A, Y = B.
-complex_match(data(X, [H|T], {key: Value}), Result) :- 
+complex_match(data(X, [H|T], kv(key, Value)), Result) :- 
     X = identifier,
     H = first,
     Value = important,
@@ -28,4 +28,4 @@ complex_match(data(X, [H|T], {key: Value}), Result) :-
 % ?- likes(john, What).
 % ?- same_structure(f(a, b), f(c, d)).
 % ?- X = f(X).                 % Should fail with occurs check
-% ?- complex_match(data(identifier, [first|rest], {key: important}), R).
+% ?- complex_match(data(identifier, [first|rest], kv(key, important)), R).

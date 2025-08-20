@@ -77,6 +77,11 @@ public class BuiltInFactory {
         registerFactory("=..", () -> new TermConstruction(TermConstruction.OperationType.UNIV));
         registerFactory("copy_term", () -> new TermConstruction(TermConstruction.OperationType.COPY_TERM));
         
+        // Phase 5: Term Operations & Meta-programming
+        registerFactory("compare", it.denzosoft.jprolog.builtin.term.Compare::new);
+        registerFactory("term_variables", it.denzosoft.jprolog.builtin.term.TermVariables::new);
+        registerFactory("subsumes_term", it.denzosoft.jprolog.builtin.term.SubsumesTerm::new);
+        
         // Arithmetic evaluation
         registerFactory("is", Is::new);
         
@@ -137,6 +142,13 @@ public class BuiltInFactory {
         registerFactory("set_input", SetInput::new);
         registerFactory("set_output", SetOutput::new);
         
+        // Phase 4 I/O predicates (ISO Prolog)
+        registerFactory("flush_output", FlushOutput::new);
+        registerFactory("peek_char", PeekChar::new);
+        registerFactory("peek_code", PeekCode::new);
+        registerFactory("stream_property", StreamProperty::new);
+        registerFactory("writeq", WriteQ::new);
+        
         // Database
         registerFactory("listing", Listing0::new); // listing/0 - works with QuerySolver context
         
@@ -190,6 +202,7 @@ public class BuiltInFactory {
         registerFactory("retractall", () -> new Retractall(null)); // QuerySolver will be injected
         registerFactory("abolish", () -> new Abolish(null)); // QuerySolver will be injected
         registerFactory("current_predicate", () -> new CurrentPredicate(null)); // QuerySolver will be injected
+        registerFactory("clause", () -> new it.denzosoft.jprolog.builtin.database.Clause(null)); // QuerySolver will be injected
         
         // Debugging predicates (ISO Prolog)
         registerFactory("trace", Trace::new);
@@ -200,7 +213,10 @@ public class BuiltInFactory {
         // System predicates (ISO Prolog)
         registerFactory("current_prolog_flag", CurrentPrologFlag::new);
         registerFactory("set_prolog_flag", SetPrologFlag::new);
-        registerFactory("op", () -> new Op(null)); // QuerySolver will be injected
+        // START_CHANGE: ISS-2025-0049 - Implement comprehensive op/3 system
+        registerFactory("op", () -> new OperatorDefinition(OperatorDefinition.OperatorType.OP));
+        registerFactory("current_op", () -> new OperatorDefinition(OperatorDefinition.OperatorType.CURRENT_OP));
+        // END_CHANGE: ISS-2025-0049
         
         // Advanced I/O predicates (ISO Prolog)
         registerFactory("read_term", () -> new ReadTerm(null)); // QuerySolver will be injected
@@ -208,11 +224,24 @@ public class BuiltInFactory {
         registerFactory("format", () -> new Format(null)); // QuerySolver will be injected
         
         // Character predicates (ISO Prolog)
-        registerFactory("char_type", () -> new CharType(null)); // QuerySolver will be injected
-        registerFactory("char_code", () -> new CharCode(null)); // QuerySolver will be injected
+        registerFactory("char_type", CharType::new);
+        registerFactory("char_code", CharCode::new);
         
-        // DCG predicates (ISO Prolog)
-        registerFactory("phrase", () -> new Phrase(null)); // QuerySolver will be injected
+        // Phase 6: Character & String Processing
+        registerFactory("upcase_atom", it.denzosoft.jprolog.builtin.character.UpCase::new);
+        registerFactory("downcase_atom", it.denzosoft.jprolog.builtin.character.DownCase::new);
+        registerFactory("split_string", it.denzosoft.jprolog.builtin.string.SplitString::new);
+        registerFactory("atomic_list_concat", it.denzosoft.jprolog.builtin.string.JoinString::new);
+        
+        // DCG predicates (ISO Prolog and DTS 13211-3)
+        registerFactory("phrase", () -> new Phrase(null)); // QuerySolver will be injected (legacy)
+        
+        // Phase 8: Enhanced DCG predicates per ISO/IEC DTS 13211-3
+        registerFactory("enhanced_phrase", it.denzosoft.jprolog.builtin.dcg.EnhancedPhrase::new);
+        registerFactory("phrase_with_options", it.denzosoft.jprolog.builtin.dcg.PhraseWithOptions::new);
+        registerFactory("call_dcg", it.denzosoft.jprolog.builtin.dcg.DCGUtils.CallDCG::new);
+        registerFactory("dcg_translate_rule", it.denzosoft.jprolog.builtin.dcg.DCGUtils.DCGTranslateRule::new);
+        registerFactory("dcg_body", it.denzosoft.jprolog.builtin.dcg.DCGUtils.DCGBody::new);
         
         // Additional system predicates
         registerFactory("statistics", () -> new Statistics(null)); // QuerySolver will be injected

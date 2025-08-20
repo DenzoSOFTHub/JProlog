@@ -43,6 +43,12 @@ mvn exec:java -Dexec.mainClass="it.denzosoft.jprolog.PrologCLI"
 # Debug features testing
 ./test-debug.sh
 
+# Phase 1 ISO features testing
+./test_phase1_features.sh
+
+# Phase 2 exception handling testing
+./test_phase2_features.sh
+
 # IDE console testing
 ./test-ide-console.sh
 
@@ -146,6 +152,27 @@ mvn exec:java -Dexec.mainClass="it.denzosoft.jprolog.PrologCLI"
 - `it.denzosoft.jprolog.builtin.dcg.Phrase` - phrase/2 predicate implementation
 - Full support for phrase/2 parsing
 
+**Exception Handling System (Phase 2 ISO Compliance):**
+- `it.denzosoft.jprolog.builtin.exception.ISOErrorTerms` - Factory for ISO standard error terms
+- `it.denzosoft.jprolog.builtin.exception.Throw` - throw/1 predicate implementation  
+- `it.denzosoft.jprolog.builtin.exception.Catch` - catch/3 predicate implementation
+- Complete ISO 13211-1 standard compliance for exception handling
+- Error term hierarchy: instantiation_error, type_error, domain_error, evaluation_error, etc.
+- Built-in zero divisor protection in arithmetic operations
+- Proper exception unification and recovery mechanisms
+- Test coverage: ExceptionHandlingTest.java and examples/test_48_exception_handling.pl
+
+**Arithmetic Functions System (Phase 3 ISO Compliance):**
+- `it.denzosoft.jprolog.builtin.arithmetic.ISOArithmeticFunctions` - Extended arithmetic functions
+- `it.denzosoft.jprolog.core.engine.ArithmeticEvaluator` - Enhanced with 20+ ISO functions
+- Complete mathematical function suite: trigonometric, logarithmic, rounding, bitwise
+- ISO naming compliance (`ceiling` instead of `ceil`)
+- Domain/range error handling for all mathematical functions
+- Binary operations: `max/2`, `min/2`, `atan2/2`, `**/2`
+- Mathematical constants: `pi`, `e`
+- Bitwise operations: `xor/2`, `/\/2`, `\\/2`, `<</2`, `>>/2`
+- Test coverage: examples/test_49_arithmetic_functions.pl and test_phase3_features.sh
+
 **Module System:**
 - `it.denzosoft.jprolog.core.module` - Module support infrastructure
   - `Module` - Module representation
@@ -203,9 +230,10 @@ mvn exec:java -Dexec.mainClass="it.denzosoft.jprolog.PrologCLI"
   **Workaround** (if available): Alternative method to achieve the same result
   ```
 
-**Built-in Documentation (`docs/references/ref-builtins.md`)**:
-- **MANDATORY**: Every time a built-in predicate or operator is added or modified, the `docs/references/ref-builtins.md` file MUST be updated with an English description and explained code examples
-- **ORDERING**: Predicates must be organized in alphabetical order by name
+**Built-in Documentation**:
+- **docs/references/BUILTIN_PREDICATES_REFERENCE.md**: Comprehensive reference for all built-in predicates organized by functional categories
+- **docs/references/BUILTIN_OPERATORS_REFERENCE.md**: Complete reference for operators with precedence rules and examples  
+- **MANDATORY**: Every time a built-in predicate or operator is added or modified, both files MUST be updated with English descriptions and explained code examples
 - Formato entry:
   ```markdown
   ## predicate_name/arity
@@ -531,13 +559,61 @@ mvn test
 
 #### Documentation Structure and Naming Convention (MANDATORY)
 
-**Naming Convention**: All MD files must follow the convention:
-- **User Guides**: `docs/guides/guide-[name].md`
-- **Technical References**: `docs/references/ref-[name].md`  
-- **Reports and Analysis**: `docs/reports/report-[name].md`
-- **Tracking**: `docs/tracking/track-[name].md`
-- **Examples**: `examples/example-[name].md`
-- **System Files**: `README.md`, `CHANGELOG.md`, `CLAUDE.md` (root)
+**Documentation Naming Rules**: All documentation files must follow these strict naming conventions:
+
+**File Categories and Prefixes**:
+- **System Files** (uppercase, root only): `README.md`, `CHANGELOG.md`, `CLAUDE.md`
+- **User Guides** (guide-): `docs/guides/guide-[descriptive-name].md`
+- **Technical References** (ref-): `docs/references/ref-[descriptive-name].md`  
+- **Reports and Analysis** (report-): `docs/reports/report-[descriptive-name].md`
+- **Issue Tracking** (track-): `docs/tracking/track-[descriptive-name].md`
+- **Examples** (example-): `examples/example-[descriptive-name].md`
+
+**Naming Rules** (STRICT COMPLIANCE REQUIRED):
+1. **Format**: `[category-]descriptive-name.md` (lowercase with hyphens)
+2. **Characters**: Only lowercase letters, numbers, hyphens (NO underscores, NO spaces)
+3. **Length**: Maximum 30 characters for filename
+4. **Descriptive**: Name must describe content, not be generic
+5. **No Versioning**: Version info goes in file content, not filename
+6. **Language**: All documentation MUST be in English
+
+**Directory Structure**:
+```
+/workspace/JProlog/
+├── README.md                    # Project overview
+├── CHANGELOG.md                 # Version change log  
+├── CLAUDE.md                    # AI assistant instructions
+├── docs/                        # All documentation
+│   ├── guides/                  # User guides
+│   │   ├── guide-quick-start.md
+│   │   ├── guide-user-manual.md
+│   │   ├── guide-cli-usage.md
+│   │   ├── guide-ide-usage.md
+│   │   ├── guide-prolog-intro.md
+│   │   ├── guide-java-integration.md
+│   │   ├── guide-debugging.md
+│   │   └── guide-extension.md
+│   ├── references/              # Technical references
+│   │   ├── ref-builtins.md
+│   │   ├── ref-iso-compliance.md
+│   │   ├── ref-dcg-grammar.md
+│   │   └── ref-limitations.md
+│   ├── reports/                 # Analysis reports
+│   │   ├── report-test-results.md
+│   │   ├── report-package-reorg.md
+│   │   └── report-resolution-summary.md
+│   └── tracking/                # Project tracking
+│       ├── track-issues.md
+│       ├── track-change-requests.md
+│       └── track-release-notes.md
+└── examples/                    # Example files
+    └── example-bug-workflow.md
+```
+
+**Special Cases**:
+- **Built-in References**: `BUILTIN_PREDICATES_REFERENCE.md` and `BUILTIN_OPERATORS_REFERENCE.md` have been moved to `docs/references/` following naming conventions
+- **Legacy Files**: Existing uppercase documentation files have been migrated to follow naming convention and moved to appropriate directories
+- **Cross-References**: All internal documentation links use relative paths and are updated when files are moved
 
 **Documentation Language** (MANDATORY):
 - **ALL documentation files MUST be in English**
@@ -850,7 +926,7 @@ echo "- Tag: ${GITHUB_REPO}/releases/tag/v${CURRENT_VERSION}"
 2. Implement `BuiltIn` or `BuiltInWithContext` interface  
 3. Register in `BuiltInRegistry` (through BuiltInFactory registration)
 4. Add comprehensive test cases to `comprehensive_test.sh`
-5. Update `docs/references/ref-builtins.md` documentation (MANDATORY)
+5. Update docs/references/BUILTIN_PREDICATES_REFERENCE.md and docs/references/BUILTIN_OPERATORS_REFERENCE.md documentation (MANDATORY)
 6. Run `./test_all_examples.sh` to ensure no regressions
 
 ### Debugging Query Resolution Issues

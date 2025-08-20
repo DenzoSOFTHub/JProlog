@@ -67,6 +67,10 @@ public class TermParser {
         // Term construction
         OPERATOR_PRECEDENCE.put("=..", 700);
         
+        // START_CHANGE: ISS-2025-0037 - Add existential quantification operator
+        OPERATOR_PRECEDENCE.put("^", 200);    // Higher precedence than power (**)
+        // END_CHANGE: ISS-2025-0037
+        
         // Conditional operators (if-then-else)
         OPERATOR_PRECEDENCE.put("->", 1050);
         OPERATOR_PRECEDENCE.put(";", 1100);
@@ -115,6 +119,9 @@ public class TermParser {
         OPERATOR_FUNCTORS.put("\\==", "\\==");
         OPERATOR_FUNCTORS.put("\\=", "\\=");
         OPERATOR_FUNCTORS.put("=..", "=..");
+        // START_CHANGE: ISS-2025-0037 - Add existential quantification operator functor
+        OPERATOR_FUNCTORS.put("^", "^");
+        // END_CHANGE: ISS-2025-0037
         OPERATOR_FUNCTORS.put("->", "->");
         OPERATOR_FUNCTORS.put(";", ";");
         OPERATOR_FUNCTORS.put("-->", "-->");
@@ -312,13 +319,14 @@ public class TermParser {
         return token.equals("=") || token.equals("\\") || token.equals(":") ||
             token.equals("+") || token.equals("-") || token.equals("*") ||
             token.equals("/") || token.equals("<") || token.equals(">") || token.equals(";") ||
-            token.equals(",") || token.equals("!") || token.equals("m"); // 'm' for 'mod'
+            token.equals(",") || token.equals("!") || token.equals("m") || // 'm' for 'mod'
+            token.equals("^"); // '^' for existential quantification
     }
     
     private boolean isOperatorChar(char c) {
         return c == '=' || c == '\\' || c == ':' || c == '+' ||
             c == '-' || c == '*' || c == '/' || c == '<' || c == '>' || c == '@' || c == '.' ||
-            c == ';' || c == ',' || c == '!' || Character.isLetter(c);
+            c == ';' || c == ',' || c == '!' || c == '^' || Character.isLetter(c);
     }
 
     private Term parseExpression(int minPrecedence) throws PrologParserException {
@@ -646,12 +654,13 @@ public class TermParser {
         
         List<Term> elements = new ArrayList<>();
         do {
-            elements.add(parseExpression(999)); // Use precedence below comma (1000) to avoid parsing commas as operators
+            // Parse a single list element (not allowing commas as operators)
+            elements.add(parseListElement());
             skipWhitespace();
             
             if (currentChar() == '|') {
                 nextChar(); // consume '|'
-                Term tail = parseExpression(999); // Use precedence below comma to avoid parsing commas as operators
+                Term tail = parseListElement(); // Parse tail element
                 skipWhitespace();
                 if (currentChar() != ']') {
                     throw new PrologParserException("Expected ']' at line " + line + ", column " + column);
@@ -674,6 +683,66 @@ public class TermParser {
         nextChar(); // consume ']'
         
         return buildList(elements);
+    }
+    
+    /**
+     * Parse a single list element. This method parses terms inside lists
+     * without treating commas as operators, since commas are list separators.
+     */
+    private Term parseListElement() throws PrologParserException {
+        // Parse using normal expression parsing but with restricted precedence
+        // to prevent commas from being parsed as operators at this level
+        return parseExpression(999); // Use precedence below comma (1000)
+    }
+    
+    /**
+     * Parse an expression that stops at any of the specified delimiter characters.
+     */
+    private Term parseExpressionUntil(char... delimiters) throws PrologParserException {
+        // Save current position to handle backtracking if needed
+        int savedPos = position;
+        int savedLine = line;
+        int savedColumn = column;
+        
+        // Parse primary term first
+        Term left = parsePrimary();
+        
+        // Parse infix operators but stop at delimiters
+        while (true) {
+            skipWhitespace();
+            
+            // Check if we've hit a delimiter
+            char currentChar = currentChar();
+            for (char delimiter : delimiters) {
+                if (currentChar == delimiter) {
+                    return left;
+                }
+            }
+            
+            // Check for operators
+            java.lang.String op = peekNextOperator();
+            if (op == null || !OPERATOR_PRECEDENCE.containsKey(op)) {
+                break;
+            }
+            
+            // Don't parse comma as operator in list context
+            if (",".equals(op)) {
+                break;
+            }
+            
+            readToken(); // Consume operator
+            int precedence = OPERATOR_PRECEDENCE.get(op);
+            Term right = parseExpressionUntil(delimiters);
+            
+            // Create compound term for the operator
+            java.lang.String functor = OPERATOR_FUNCTORS.getOrDefault(op, op);
+            List<Term> args = new ArrayList<>();
+            args.add(left);
+            args.add(right);
+            left = new CompoundTerm(new Atom(functor), args);
+        }
+        
+        return left;
     }
 
     private Term buildList(List<Term> elements) {

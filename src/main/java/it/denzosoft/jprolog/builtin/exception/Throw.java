@@ -36,17 +36,7 @@ public class Throw implements BuiltIn {
     }
     
     private Term createInstantiationError(String context) {
-        // Create an instantiation_error term according to ISO standard
-        try {
-            return new it.denzosoft.jprolog.core.terms.CompoundTerm(
-                new it.denzosoft.jprolog.core.terms.Atom("error"),
-                java.util.Arrays.asList(
-                    new it.denzosoft.jprolog.core.terms.Atom("instantiation_error"),
-                    new it.denzosoft.jprolog.core.terms.Atom(context)
-                )
-            );
-        } catch (Exception e) {
-            return new it.denzosoft.jprolog.core.terms.Atom("instantiation_error");
-        }
+        // Use ISO standard error term factory
+        return ISOErrorTerms.instantiationError(context);
     }
 }

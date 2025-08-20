@@ -53,7 +53,7 @@ public class Prolog {
                          name.equals("ignore") || name.equals("forall") ||
                          name.equals("asserta") || name.equals("assertz") || name.equals("retract") ||
                          name.equals("retractall") || name.equals("abolish") || name.equals("current_predicate") ||
-                         name.equals("listing") || name.equals("\\+") || name.equals("phrase"))) {
+                         name.equals("clause") || name.equals("listing") || name.equals("\\+") || name.equals("phrase"))) {
                         // Special handling for context-dependent predicates
                         builtInRegistry.registerBuiltIn(name, new CollectionBuiltInAdapter((BuiltInWithContext) builtIn, querySolver));
                     } else if (name.equals("listing")) {

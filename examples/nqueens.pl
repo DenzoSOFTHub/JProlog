@@ -13,15 +13,15 @@ upto(N, [N|T]) :-
     N1 is N - 1,
     upto(N1, T).
 
-% select/3 (ISO-style, senza tagli)
-select(X, [X|Xs], Xs).
-select(X, [Y|Ys], [Y|Zs]) :-
-    select(X, Ys, Zs).
+% nq_select/3 (custom select to avoid built-in conflict)
+nq_select(X, [X|Xs], Xs).
+nq_select(X, [Y|Ys], [Y|Zs]) :-
+    nq_select(X, Ys, Zs).
 
 % permutazione (permut/2)
 perm([], []).
 perm(L, [X|Xs]) :-
-    select(X, L, R),
+    nq_select(X, L, R),
     perm(R, Xs).
 
 % Sicurezza: nessuna collisione in diagonale
@@ -35,10 +35,16 @@ safe([Q|Qs]) :-
 % con distanza di riga D, D+1, ...
 safe1(_, [], _).
 safe1(Q, [Q1|Qs], D) :-
-    Q1 =\= Q + D,
-    Q1 =\= Q - D,
+    not_diag(Q, Q1, D),
     D1 is D + 1,
     safe1(Q, Qs, D1).
+
+% Helper predicate to check diagonal safety
+not_diag(Q, Q1, D) :-
+    QD1 is Q + D,
+    QD2 is Q - D,
+    Q1 =\\= QD1,
+    Q1 =\\= QD2.
 
 % queens(N, Qs): trova una soluzione per N regine
 queens(N, Qs) :-

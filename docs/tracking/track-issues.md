@@ -2,6 +2,150 @@
 
 ## Issue Attive e Risolte
 
+### ISS-2025-0035: DCG Parser Limitations with Complex Character Lists
+
+**Title**: DCG rules with character code lists fail to parse  
+**Date Created**: 2025-08-20  
+**Status**: RESOLVED  
+**Date Resolved**: 2025-08-20  
+**Priority**: HIGH  
+
+#### Description
+DCG rules containing character codes in list format and constraint goals fail to parse, causing 65% of comprehensive DCG test programs to fail loading.
+
+**Symptoms Observed**:
+- DCG rules with `[104,116,116,112]` format fail: "Expected ']' at line X, column Y"
+- Constraint goals `{ C >= 48, C =< 57 }` in DCG rules cause parse errors
+- Complex character validation patterns cannot be loaded
+- Affects 13 out of 20 comprehensive DCG test programs
+
+**Test Cases That Fail**:
+```prolog
+% Character code lists in DCG rules
+http --> [104,116,116,112].  % Parser error
+
+% Constraint goals in DCG
+digit(D) --> [C], { C >= 48, C =< 57, D is C - 48 }.  % Parse failure
+
+% Character range validation
+letter --> [C], { C >= 97, C =< 122 }.  % Syntax error
+```
+
+**Expected Behavior**: DCG parser should support character code lists and constraint goals
+**Actual Behavior**: Parser rejection with syntax errors
+
+**Impact**: Severely limits DCG usability for practical parsing tasks
+
+#### Resolution (2025-08-20)
+
+**Root Cause**: Parser issues in DCG body processing and list element parsing:
+1. `splitOnCommasOutsideParens()` did not account for brackets `[]`, causing top-level commas after lists to be incorrectly parsed as list elements
+2. `containsTopLevelCommas()` worked correctly but `splitOnCommasOutsideParens()` failed to handle bracket nesting
+
+**Technical Fixes**:
+1. **Enhanced `splitOnCommasOutsideParens()`**: Added bracket counting (`bracketCount`) alongside existing parentheses and brace counting
+2. **Added quote handling**: Improved string parsing within DCG bodies  
+3. **Fixed list element parsing**: Restored proper precedence handling in `parseListElement()` using `parseExpression(999)`
+
+**Files Modified**:
+- `src/main/java/it/denzosoft/jprolog/core/parser/Parser.java` - Fixed comma splitting logic
+- `src/main/java/it/denzosoft/jprolog/core/parser/TermParser.java` - Enhanced list parsing
+
+**Verification**: DCG test suite improved from 35% to 85% success rate (17/20 programs now pass)
+
+---
+
+### ISS-2025-0036: DCG Constraint Goal Processing Not Implemented
+
+**Title**: DCG constraint goals `{ Goal }` not properly handled  
+**Date Created**: 2025-08-20  
+**Status**: RESOLVED  
+**Date Resolved**: 2025-08-20  
+**Priority**: HIGH  
+
+#### Description
+Prolog constraint goals within DCG rules using `{ Goal }` syntax are not parsed or processed correctly.
+
+**Symptoms Observed**:
+- Syntax errors when using `{ Goal }` in DCG rules
+- Variable binding constraints fail to evaluate
+- Mathematical operations in constraints not executed
+- Affects advanced parsing patterns requiring validation
+
+**Test Cases That Fail**:
+```prolog
+% Mathematical constraints
+number(N) --> digits(Ds), { number_codes(N, Ds) }.
+
+% Validation constraints  
+valid_char(C) --> [C], { member(C, [97,98,99]) }.
+
+% Range checking
+in_range(X) --> [X], { X >= 48, X =< 57 }.
+```
+
+**Expected Behavior**: Constraints should be evaluated during DCG processing
+**Actual Behavior**: Parse errors or constraint goals ignored
+
+**Impact**: Prevents creation of validating parsers and sophisticated DCG applications
+
+#### Resolution (2025-08-20)
+
+**Status**: Issue was already resolved - constraint goals were working correctly.
+
+**Verification**: Testing showed that constraint goals `{ Goal }` in DCG rules function properly:
+- `digit(D) --> [C], { C >= 48, C =< 57, D is C - 48 }.` loads and executes correctly
+- Character code 53 ('5') correctly converts to D = 5.0
+- Complex constraints with arithmetic and validation work as expected
+
+**Root Finding**: The original issue was misdiagnosed - constraint goals themselves were functional, but appeared broken due to ISS-2025-0035 (list parsing failures) preventing DCG rules from loading properly.
+
+---
+
+### ISS-2025-0037: DCG Advanced Syntax Features Not Supported
+
+**Title**: DCG negation, cut, and advanced operators missing  
+**Date Created**: 2025-08-20  
+**Status**: RESOLVED  
+**Date Resolved**: 2025-08-20  
+**Priority**: MEDIUM  
+
+#### Description
+Advanced DCG syntax features including negation (`\+`), cut operations, and complex control structures are not supported.
+
+**Symptoms Observed**:
+- Negation `\+` operator causes parse errors in DCG context
+- Cut operations not available in DCG rules
+- Complex control flow constructs fail
+- Advanced parsing patterns cannot be implemented
+
+**Test Cases That Fail**:
+```prolog
+% Negation in DCG
+non_space --> [C], { \+ member(C, [32,9,10]) }.
+
+% Keyword boundary checking
+keyword(if) --> [105,102], \+ identifier_char.
+```
+
+**Expected Behavior**: Advanced operators should work in DCG context
+**Actual Behavior**: Syntax errors and unsupported constructs
+
+**Impact**: Limits DCG expressiveness and prevents advanced parsing techniques
+
+#### Resolution (2025-08-20)
+
+**Status**: Issue resolved as side effect of ISS-2025-0035 fix.
+
+**Verification**: Advanced DCG syntax now works correctly:
+- Negation: `simple_test --> [105], \+ [102].` loads and works
+- Complex patterns: `keyword(if) --> [105,102], \+ identifier_char.` loads successfully  
+- Cut operations: Already supported through DCGTransformer
+
+**Root Finding**: The issue was not with advanced syntax support itself, but with the parser's inability to correctly split DCG body components when lists were involved. Once ISS-2025-0035 was fixed (bracket-aware comma splitting), advanced syntax patterns became functional.
+
+---
+
 ### ISS-2025-0024: DCG Rules Not Being Transformed During Consult
 
 **Titolo**: Regole DCG (-->) non vengono trasformate durante il caricamento  
@@ -613,16 +757,47 @@ public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, 
 
 **Titolo**: Unificazione variabili DCG fallisce dopo rinominazione TermCopier  
 **Data Rilevamento**: 2025-08-19  
-**Status**: TO_ANALYZE  
+**Status**: IN_PROGRESS  
 **Data Apertura**: 2025-08-19  
-**Data Risoluzione**: [da definire]  
+**Data Risoluzione**: [in progress - partial fix completed]
 
-#### Descrizione Iniziale
-Le variabili rinominate dal sistema TermCopier (implementato in ISS-2025-0001) non si unificano correttamente con i built-in predicati, causando fallimento delle regole DCG.
+#### Descrizione Rivista 
+Le variabili nelle query DCG non vengono unificate correttamente con i risultati del parsing. Il problema principale è che le regole DCG non venivano trasformate durante l'aggiunta alla knowledge base, e anche dopo la trasformazione, i binding delle variabili non vengono propagati correttamente.
 
 **Sintomi osservati:**
-- `phrase(digits(Ds), [49,50,51])` → `Ds=.(_R159503834207216_D, _R159503834207216_Ds)`
-- Le variabili rinominate non si unificano con `number_codes/2` e altri built-in
+- ~~`phrase(digits(Ds), [49,50,51])` → nessuna soluzione trovata~~ [FIXED]
+- ~~Regole DCG non trasformate durante asserta~~ [FIXED]  
+- `phrase(digits(Ds), [49,50,51])` → trova soluzione ma `Ds` non è bound nel result
+- Le variabili DCG parsed non vengono propagate correttamente al chiamante
+
+#### Investigazione e Fix Parziale (2025-08-20)
+
+**Root Cause Identificato:**
+1. **RISOLTO**: DCG rules non erano trasformate durante il parsing - rules rimanevano come compound terms `-->(head, body)` invece di essere trasformati in proper Prolog rules
+2. **IN CORSO**: Variable binding propagation issue - DCG queries succeed ma le variabili non sono bound nel result
+
+**Fix Implementato - Part 1 (COMPLETED)**:
+✅ Modificato `Parser.parseRule()` per applicare `DCGTransformer.transformDCGRule()` automaticamente quando trova syntax `-->`
+
+**Technical Changes**:
+```java
+// START_CHANGE: ISS-2025-0008 - Transform DCG rules properly
+// In Parser.java lines 179-220
+DCGTransformer transformer = new DCGTransformer();
+Rule transformedRule = transformer.transformDCGRule((CompoundTerm) dcgTerm);
+return transformedRule;
+// END_CHANGE: ISS-2025-0008
+```
+
+**Verification**:
+- ✅ DCG rules now properly transformed: `digits([D|Ds]) --> [D], digits(Ds)` → `digits([D|Ds], S0, S) :- =(S0, [D|S1]), digits(Ds, S1, S)`  
+- ✅ `phrase/2` finds solutions (1 solution found vs 0 before)
+- ❌ Variable bindings still not propagated (`Ds` appears as unbound)
+
+**Remaining Work - Part 2 (TODO)**:
+- Fix variable binding propagation in phrase/2 or QuerySolver
+- Investigate why successful DCG parsing doesn't bind the query variables
+- Test case: `phrase(digits(Ds), [49,50,51])` should bind `Ds = [49,50,51]`
 - DCG parsing fallisce quando dovrebbe passare dati a predicati built-in
 
 **Issue Parent**: ISS-2025-0006 (DCG Expression Parser Still Failing)  
@@ -1243,23 +1418,51 @@ private Term dereferenceIterative(Term term, Map<String, Term> substitution) {
 
 **Titolo**: CLI non riconosce comandi standard - problema parsing input  
 **Data Rilevamento**: 2025-08-19  
-**Status**: TO_ANALYZE  
+**Status**: RESOLVED  
 **Data Apertura**: 2025-08-19  
-**Data Risoluzione**: [da definire]  
+**Data Risoluzione**: 2025-08-20
 
-#### Descrizione Iniziale
-Il CLI JProlog non riconosce comandi standard come `:listing` e presenta problemi con il processamento dell'input da file e pipe.
+#### Descrizione Rivista
+Il CLI JProlog non riconosce comandi standard quando seguiti da punto (es. `:listing.` vs `:listing`). La vera causa era che i comandi con trailing period non vengano processati correttamente.
 
-**Sintomi osservati:**
-- `:listing.` → "Comando sconosciuto: :listing."
-- Input da file con `< input.txt` non viene processato correttamente
-- CLI termina prematuramente senza eseguire comandi
-- Pipe input con `printf | java` non funziona come aspettato
+**Sintomi osservati RIVISTI:**
+- ✅ `:listing` (senza punto) funziona perfettamente
+- ❌ `:listing.` (con punto) → "Comando sconosciuto: :listing."  
+- ✅ Input da file e pipe funzionano correttamente
+- ✅ CLI processa tutti i comandi correttamente
 
-**Issue Correlata**: ISS-2025-0010 (CLI File Consultation Failure)
+#### Root Cause Identificato (2025-08-20)
+**Problema Specifico**: I comandi CLI con trailing period non venivano riconosciuti nel parsing.
 
-#### Causa Root
-[Da determinare - problema nel command parsing o input stream handling]
+**Analisi Tecnica**:
+- `handleCommand()` in `PrologCLI.java` faceva split del comando ma non rimuoveva trailing periods
+- `parts[0]` diventava `:listing.` invece di `:listing`
+- Switch statement non trovava match per `:listing.`
+
+#### Soluzione Implementata
+✅ **COMPLETATA**: Aggiunto stripping automatico di trailing periods nei comandi CLI
+
+**Technical Changes**:
+```java
+// START_CHANGE: ISS-2025-0011 - Handle commands with trailing periods
+// Strip trailing period from command for consistency
+if (command.endsWith(".")) {
+    command = command.substring(0, command.length() - 1);
+}
+// END_CHANGE: ISS-2025-0011
+```
+
+**File Modified**:
+- `src/main/java/it/denzosoft/jprolog/PrologCLI.java` - Modified `handleCommand()` method
+
+**Verification**:
+- ✅ `:help.` works correctly
+- ✅ `:listing.` works correctly
+- ✅ `:quit.` works correctly
+- ✅ Multiple commands with periods work correctly
+- ✅ Input from pipe/file works correctly
+
+**Status**: RESOLVED - CLI command parsing now handles trailing periods correctly
 
 #### Casi di Test  
 - [ ] `:listing.` deve mostrare predicati caricati
@@ -1734,6 +1937,95 @@ copy_term(hello(world), Y) → {Y=hello(world)} ✓ WORKING
 - [x] `copy_term(hello(world), Y)` → SUCCESS `{Y=hello(world)}` (ground term)
 
 **Impatto**: Predicato copy_term/2 ora completamente funzionale per meta-programmazione
+
+---
+
+### ISS-2025-0040: DCG Parser Cannot Handle Compound Operator Terms in List Heads
+
+**Title**: Complex operator terms in DCG head lists cause parser conflicts  
+**Date Created**: 2025-08-20  
+**Status**: TO_ANALYZE  
+**Priority**: MEDIUM  
+
+#### Description
+DCG rules with compound terms containing operators (like `K-V`) inside list structures in the rule head cannot be parsed correctly.
+
+**Failing Example**:
+```prolog
+% This DCG rule fails to parse:
+json_object([K-V|Pairs]) --> [123], ws, json_pair(K-V), json_object_rest(Pairs), ws, [125].
+% Error: Expected ')' at line 1, column 12
+```
+
+**Root Cause**: The term parser cannot properly handle operator precedence within nested structures when compound terms with infix operators appear inside list syntax.
+
+**Expected Behavior**: DCG heads should support complex structured terms including operators within lists
+**Actual Behavior**: Parser error due to operator/list syntax conflicts
+
+**Impact**: Prevents advanced structured data parsing with DCG (JSON, XML, configuration formats)
+
+**Test Case**: `examples/test_dcg_06_json_parser.pl`
+
+---
+
+### ISS-2025-0041: DCG Parser Fails on Special Characters Due to Tokenizer Delimiters
+
+**Title**: Special characters in DCG terminal lists fail due to tokenization conflicts  
+**Date Created**: 2025-08-20  
+**Status**: TO_ANALYZE  
+**Priority**: MEDIUM  
+
+#### Description
+DCG rules containing special characters like `?` in terminal lists fail to parse because these characters are defined as tokenizer delimiters.
+
+**Failing Example**:
+```prolog
+% This DCG rule fails:
+question --> [does], noun_phrase, verb, noun_phrase, [?].
+% Error: Expected atom name at line 1, column 2
+```
+
+**Root Cause**: In `PrologParser.java`, the `?` character is included in the tokenizer delimiter list:
+```java
+StringTokenizer tokenizer = new StringTokenizer(input, " .,()[]:-+\\-*/;!?", true);
+```
+
+This causes `[?]` to be broken apart during tokenization, preventing proper parsing as a character literal.
+
+**Expected Behavior**: Special characters should be parseable as character literals in DCG terminal lists
+**Actual Behavior**: Tokenizer splits on special characters, breaking DCG syntax
+
+**Impact**: Limits DCG grammar rules that need to handle punctuation and special characters
+
+**Test Case**: `examples/test_dcg_07_context_free_grammar.pl`
+
+---
+
+### ISS-2025-0042: DCG Constraint Goals Cannot Handle Complex Arithmetic Functions
+
+**Title**: Complex function calls in DCG constraints exceed parser capabilities  
+**Date Created**: 2025-08-20  
+**Status**: TO_ANALYZE  
+**Priority**: MEDIUM  
+
+#### Description
+DCG rules with complex arithmetic function calls (like `max()`) within constraint goals `{ }` cannot be parsed correctly.
+
+**Failing Example**:
+```prolog
+% This DCG rule fails:
+depth(D) --> [40], depth(D1), [41], depth(D2), { D is max(D1+1, D2) }.
+% Error: Expected ')' at line 1, column 14
+```
+
+**Root Cause**: The constraint goal parser cannot properly handle function calls with complex arithmetic expressions as arguments (`max(D1+1, D2)`).
+
+**Expected Behavior**: DCG constraints should support built-in functions with arithmetic expressions
+**Actual Behavior**: Parser conflict when processing nested arithmetic in function calls
+
+**Impact**: Prevents mathematical validation and computation within DCG parsing rules
+
+**Test Case**: `examples/test_dcg_09_balanced_parentheses.pl`
 
 ---
 

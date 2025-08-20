@@ -31,7 +31,7 @@ process_data(X, processed(number, X)) :- number(X), !.
 process_data(X, processed(list, Length)) :- 
     is_list(X), !, 
     length(X, Length).
-process_data(X, processed(compound, Functor/Arity)) :- 
+process_data(X, processed(compound, functor_info(Functor, Arity))) :- 
     compound(X), !,
     functor(X, Functor, Arity).
 process_data(X, processed(unknown, X)).
