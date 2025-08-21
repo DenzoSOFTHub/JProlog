@@ -16,7 +16,7 @@ public class PrologToolbar extends JToolBar {
     
     private PrologIDE ide;
     
-    // Pulsanti della toolbar
+    // Toolbar buttons
     private JButton newProjectBtn;
     private JButton openProjectBtn;
     private JButton newFileBtn;
@@ -34,7 +34,7 @@ public class PrologToolbar extends JToolBar {
     
     private JButton aboutBtn;
     
-    // Indicatori di stato
+    // Status indicators
     private JLabel statusIndicator;
     private JLabel traceIndicator;
     
@@ -58,31 +58,31 @@ public class PrologToolbar extends JToolBar {
     }
     
     /**
-     * Crea tutti i pulsanti della toolbar.
+     * Creates all toolbar buttons.
      */
     private void createButtons() {
-        // Gruppo File
+        // File group
         newProjectBtn = createButton("New Project", "Create a new Prolog project", null);
         openProjectBtn = createButton("Open Project", "Open an existing project", null);
         newFileBtn = createButton("New File", "Create a new Prolog file", null);
         saveFileBtn = createButton("Save", "Save current file", KeyStroke.getKeyStroke("ctrl S"));
         saveAllBtn = createButton("Save All", "Save all modified files", null);
         
-        // Gruppo Prolog
+        // Prolog group
         compileFileBtn = createButton("Compile File", "Compile current file", KeyStroke.getKeyStroke("F9"));
         compileProjectBtn = createButton("Compile Project", "Compile all project files", KeyStroke.getKeyStroke("ctrl F9"));
         runQueryBtn = createButton("Run Query", "Open query execution window", KeyStroke.getKeyStroke("F5"));
         traceBtn = createButton("Trace", "Toggle trace mode", KeyStroke.getKeyStroke("F8"));
         debugBtn = createButton("Debug", "Start debugger", null);
         
-        // Gruppo Ricerca
+        // Search group
         findBtn = createButton("Find", "Find text in current file", KeyStroke.getKeyStroke("ctrl F"));
         findInProjectBtn = createButton("Find in Project", "Search in all project files", KeyStroke.getKeyStroke("ctrl shift F"));
         
-        // Gruppo Help
+        // Help group
         aboutBtn = createButton("?", "About the IDE", null);
         
-        // Indicatori di stato
+        // Status indicators
         statusIndicator = new JLabel("●");
         statusIndicator.setForeground(Color.GREEN);
         statusIndicator.setFont(statusIndicator.getFont().deriveFont(Font.BOLD, 16f));
@@ -102,7 +102,7 @@ public class PrologToolbar extends JToolBar {
         button.setFocusable(false);
         button.setMargin(new Insets(2, 8, 2, 8));
         
-        // Stile del pulsante
+        // Button style
         button.setBorderPainted(true);
         button.setContentAreaFilled(true);
         
@@ -110,10 +110,10 @@ public class PrologToolbar extends JToolBar {
     }
     
     /**
-     * Organizza i pulsanti nella toolbar.
+     * Organizes buttons in the toolbar.
      */
     private void layoutButtons() {
-        // Gruppo File
+        // File group
         add(newProjectBtn);
         add(openProjectBtn);
         addSeparator();
@@ -123,7 +123,7 @@ public class PrologToolbar extends JToolBar {
         
         addSeparator();
         
-        // Gruppo Prolog
+        // Prolog group
         add(compileFileBtn);
         add(compileProjectBtn);
         addSeparator();
@@ -133,14 +133,14 @@ public class PrologToolbar extends JToolBar {
         
         addSeparator();
         
-        // Gruppo Ricerca
+        // Search group
         add(findBtn);
         add(findInProjectBtn);
         
-        // Spaziatore per spingere gli indicatori a destra
+        // Spacer to push indicators to the right
         add(Box.createHorizontalGlue());
         
-        // Indicatori di stato
+        // Status indicators
         add(new JLabel("Status: "));
         add(statusIndicator);
         add(Box.createHorizontalStrut(15));
@@ -150,24 +150,24 @@ public class PrologToolbar extends JToolBar {
     }
     
     /**
-     * Configura gli event handlers per tutti i pulsanti.
+     * Configure event handlers for all buttons.
      */
     private void setupEventHandlers() {
-        // Gruppo File
+        // File group
         newProjectBtn.addActionListener(e -> ide.createNewProject());
         openProjectBtn.addActionListener(e -> ide.openProject());
         newFileBtn.addActionListener(e -> ide.createNewFile());
         saveFileBtn.addActionListener(e -> ide.saveCurrentFile());
         saveAllBtn.addActionListener(e -> ide.saveAllFiles());
         
-        // Gruppo Prolog
+        // Prolog group
         compileFileBtn.addActionListener(e -> ide.compileCurrentFile());
         compileProjectBtn.addActionListener(e -> ide.compileProject());
         runQueryBtn.addActionListener(e -> ide.showQueryDialog());
         traceBtn.addActionListener(e -> toggleTrace());
         debugBtn.addActionListener(e -> startDebugger());
         
-        // Gruppo Ricerca
+        // Search group
         findBtn.addActionListener(e -> ide.showSearchPanel());
         findInProjectBtn.addActionListener(e -> ide.showProjectSearch());
         
@@ -176,15 +176,15 @@ public class PrologToolbar extends JToolBar {
     }
     
     /**
-     * Attiva/disattiva il trace.
+     * Toggles trace on/off.
      */
     private void toggleTrace() {
-        // Per ora solo indicazione visiva
+        // For now only visual indication
         boolean traceEnabled = "Trace: OFF".equals(traceIndicator.getText());
         
         if (traceEnabled) {
             traceIndicator.setText("Trace: ON");
-            traceIndicator.setForeground(new Color(255, 140, 0)); // Arancione
+            traceIndicator.setForeground(new Color(255, 140, 0)); // Orange
             traceBtn.setBackground(new Color(255, 240, 200));
             ide.getBottomTabbedPane().appendToOutput("Trace enabled.\n");
         } else {
@@ -198,10 +198,10 @@ public class PrologToolbar extends JToolBar {
     }
     
     /**
-     * Avvia il debugger.
+     * Starts the debugger.
      */
     private void startDebugger() {
-        // Implementazione futura del debugger
+        // Future debugger implementation
         DialogUtils.showCenteredMessage(ide, 
             "Debugger functionality under development.\n\n" +
             "Planned features:\n" +
@@ -213,7 +213,7 @@ public class PrologToolbar extends JToolBar {
     }
     
     /**
-     * Aggiorna lo stato della toolbar in base al contesto.
+     * Updates the toolbar state based on context.
      */
     public void updateToolbarState() {
         boolean hasProject = ide.getCurrentProjectRoot() != null;
@@ -221,7 +221,7 @@ public class PrologToolbar extends JToolBar {
         boolean hasOpenFiles = ide.getEditorTabs().getOpenFileCount() > 0;
         boolean hasUnsavedFiles = ide.getEditorTabs().hasUnsavedFiles();
         
-        // Abilita/disabilita pulsanti in base al contesto
+        // Enable/disable buttons based on context
         newFileBtn.setEnabled(hasProject);
         saveFileBtn.setEnabled(hasCurrentFile && hasUnsavedFiles);
         saveAllBtn.setEnabled(hasUnsavedFiles);
@@ -235,7 +235,7 @@ public class PrologToolbar extends JToolBar {
         findBtn.setEnabled(hasCurrentFile);
         findInProjectBtn.setEnabled(hasProject);
         
-        // Aggiorna indicatore di stato del motore Prolog
+        // Update Prolog engine status indicator
         if (ide.getPrologEngine() != null) {
             statusIndicator.setForeground(Color.GREEN);
             statusIndicator.setToolTipText("Prolog engine active and ready");
@@ -246,21 +246,21 @@ public class PrologToolbar extends JToolBar {
     }
     
     /**
-     * Imposta il messaggio di stato nell'area degli indicatori.
+     * Sets the status message in the indicators area.
      */
     public void setStatusMessage(String message) {
         statusIndicator.setToolTipText(message);
     }
     
     /**
-     * Ottiene lo stato del trace.
+     * Gets the trace state.
      */
     public boolean isTraceEnabled() {
         return "Trace: ON".equals(traceIndicator.getText());
     }
     
     /**
-     * Imposta lo stato del trace programmaticamente.
+     * Sets the trace state programmatically.
      */
     public void setTraceEnabled(boolean enabled) {
         if (enabled != isTraceEnabled()) {
@@ -269,7 +269,7 @@ public class PrologToolbar extends JToolBar {
     }
     
     /**
-     * Evidenzia un pulsante per attirare l'attenzione.
+     * Highlights a button to attract attention.
      */
     public void highlightButton(JButton button, boolean highlight) {
         if (highlight) {
@@ -282,10 +282,10 @@ public class PrologToolbar extends JToolBar {
     }
     
     /**
-     * Mostra un indicatore di progresso sulla toolbar.
+     * Show a progress indicator on the toolbar.
      */
     public void showProgress(String operation) {
-        // Crea un pannello di progresso temporaneo
+        // Create a temporary progress panel
         JPanel progressPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
         JProgressBar progressBar = new JProgressBar();
         progressBar.setIndeterminate(true);
@@ -297,7 +297,7 @@ public class PrologToolbar extends JToolBar {
         progressPanel.add(progressLabel);
         progressPanel.add(progressBar);
         
-        // Aggiungi temporaneamente alla toolbar
+        // Add temporarily to toolbar
         add(progressPanel);
         revalidate();
         repaint();

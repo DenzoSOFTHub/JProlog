@@ -263,7 +263,7 @@ public class PrologCLI {
         try {
             System.out.println("Loading file: " + filename);
             
-            // Leggi il file
+            // Read the file
             java.nio.file.Path path = java.nio.file.Paths.get(filename);
             if (!java.nio.file.Files.exists(path)) {
                 System.err.println("File not found: " + filename);

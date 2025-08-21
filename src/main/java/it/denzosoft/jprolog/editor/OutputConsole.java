@@ -100,7 +100,7 @@ public class OutputConsole extends JTextPane {
         setBackground(Color.WHITE);
         setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
         
-        // Configura il font
+        // Configure font
         Font consoleFont = new Font("Consolas", Font.PLAIN, 12);
         setFont(consoleFont);
         
@@ -110,7 +110,7 @@ public class OutputConsole extends JTextPane {
     }
     
     /**
-     * Configura gli event handlers.
+     * Configure event handlers.
      */
     private void setupEventHandlers() {
         addKeyListener(new KeyListener() {
@@ -132,21 +132,21 @@ public class OutputConsole extends JTextPane {
             public void keyReleased(KeyEvent e) {}
         });
         
-        // Menu contestuale
+        // Context menu
         setupContextMenu();
     }
     
     /**
-     * Configura il menu contestuale.
+     * Configure context menu.
      */
     private void setupContextMenu() {
         JPopupMenu contextMenu = new JPopupMenu();
         
-        JMenuItem clearItem = new JMenuItem("Pulisci Console");
+        JMenuItem clearItem = new JMenuItem("Clear Console");
         clearItem.addActionListener(e -> clear());
         contextMenu.add(clearItem);
         
-        JMenuItem copyItem = new JMenuItem("Copia");
+        JMenuItem copyItem = new JMenuItem("Copy");
         copyItem.addActionListener(e -> copy());
         contextMenu.add(copyItem);
         
@@ -174,7 +174,7 @@ public class OutputConsole extends JTextPane {
     }
     
     /**
-     * Aggiunge testo normale alla console.
+     * Adds normal text to the console.
      */
     public void appendText(String text) {
         appendText(text, normalStyle);
@@ -186,7 +186,7 @@ public class OutputConsole extends JTextPane {
     public void appendText(String text, Style style) {
         SwingUtilities.invokeLater(() -> {
             try {
-                // Aggiungi timestamp se abilitato
+                // Add timestamp if enabled
                 if (showTimestamps && !text.equals("\n")) {
                     String timestamp = "[" + timeFormat.format(new Date()) + "] ";
                     document.insertString(document.getLength(), timestamp, timestampStyle);
@@ -194,14 +194,14 @@ public class OutputConsole extends JTextPane {
                 
                 document.insertString(document.getLength(), text, style);
                 
-                // Mantieni il numero massimo di righe
+                // Maintain maximum number of lines
                 limitLines();
                 
-                // Scorri automaticamente in basso
+                // Automatically scroll to bottom
                 setCaretPosition(document.getLength());
                 
             } catch (BadLocationException e) {
-                // Ignora errori di inserimento
+                // Ignore insertion errors
             }
         });
     }
@@ -277,7 +277,7 @@ public class OutputConsole extends JTextPane {
     }
     
     /**
-     * Limita il numero di righe nella console.
+     * Limits the number of lines in the console.
      */
     private void limitLines() {
         try {
@@ -393,7 +393,7 @@ public class OutputConsole extends JTextPane {
      * Elabora l'input dell'utente.
      */
     private void processInput(String input) {
-        // Questo metodo sarebbe collegato al motore Prolog per query interattive
+        // This method would be connected to the Prolog engine for interactive queries
         appendResult("Input ricevuto: " + input);
         appendText("(Elaborazione query interattive in sviluppo)\n", normalStyle);
     }
@@ -413,7 +413,7 @@ public class OutputConsole extends JTextPane {
     }
     
     /**
-     * Ottiene tutto il testo della console.
+     * Gets all console text.
      */
     public String getAllText() {
         try {
@@ -424,7 +424,7 @@ public class OutputConsole extends JTextPane {
     }
     
     /**
-     * Salva il contenuto della console in un file.
+     * Saves console content to a file.
      */
     public void saveToFile(java.io.File file) throws java.io.IOException {
         try (java.io.FileWriter writer = new java.io.FileWriter(file)) {
@@ -433,7 +433,7 @@ public class OutputConsole extends JTextPane {
     }
     
     /**
-     * Carica contenuto da file nella console.
+     * Loads content from file into console.
      */
     public void loadFromFile(java.io.File file) throws java.io.IOException {
         clear();

@@ -49,12 +49,12 @@ public class VariablesTableModel extends AbstractTableModel {
     
     @Override
     public boolean isCellEditable(int rowIndex, int columnIndex) {
-        // Per ora le variabili sono read-only
+        // For now variables are read-only
         return false;
     }
     
     /**
-     * Aggiunge una variabile alla tabella.
+     * Adds a variable to the table.
      */
     public void addVariable(String name, String value) {
         String type = determineType(value);
@@ -63,7 +63,7 @@ public class VariablesTableModel extends AbstractTableModel {
     }
     
     /**
-     * Aggiorna il valore di una variabile esistente o la aggiunge se non esiste.
+     * Updates the value of an existing variable or adds it if it doesn't exist.
      */
     public void updateVariable(String name, String value) {
         for (int i = 0; i < variables.size(); i++) {
@@ -75,12 +75,12 @@ public class VariablesTableModel extends AbstractTableModel {
                 return;
             }
         }
-        // Se non trovata, aggiungi come nuova variabile
+        // If not found, add as new variable
         addVariable(name, value);
     }
     
     /**
-     * Rimuove una variabile dalla tabella.
+     * Removes a variable from the table.
      */
     public void removeVariable(String name) {
         for (int i = 0; i < variables.size(); i++) {
@@ -93,7 +93,7 @@ public class VariablesTableModel extends AbstractTableModel {
     }
     
     /**
-     * Pulisce tutte le variabili.
+     * Clears all variables.
      */
     public void clear() {
         int oldSize = variables.size();
@@ -104,7 +104,7 @@ public class VariablesTableModel extends AbstractTableModel {
     }
     
     /**
-     * Determina il tipo di una variabile basandosi sul suo valore.
+     * Determines the type of a variable based on its value.
      */
     private String determineType(String value) {
         if (value == null) {
@@ -144,14 +144,14 @@ public class VariablesTableModel extends AbstractTableModel {
     }
     
     /**
-     * Ottieni tutte le variabili.
+     * Get all variables.
      */
     public List<VariableEntry> getVariables() {
         return new ArrayList<>(variables);
     }
     
     /**
-     * Rappresenta una entry nella tabella delle variabili.
+     * Represents an entry in the variables table.
      */
     public static class VariableEntry {
         private String name;

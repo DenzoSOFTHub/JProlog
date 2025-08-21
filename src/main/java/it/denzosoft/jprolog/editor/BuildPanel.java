@@ -22,7 +22,7 @@ public class BuildPanel extends JPanel {
     private Style headerStyle;
     private Style warningStyle;
     
-    // Colori per gli stili
+    // Colors for styles
     private static final Color ERROR_COLOR = new Color(220, 20, 60);
     private static final Color SUCCESS_COLOR = new Color(0, 128, 0);
     private static final Color WARNING_COLOR = new Color(255, 140, 0);
@@ -39,7 +39,7 @@ public class BuildPanel extends JPanel {
     private void initializeComponents() {
         setLayout(new BorderLayout());
         
-        // Text pane con stili
+        // Text pane with styles
         textPane = new JTextPane();
         textPane.setEditable(false);
         textPane.setFont(new Font("Consolas", Font.PLAIN, 12));
@@ -54,44 +54,44 @@ public class BuildPanel extends JPanel {
         
         add(scrollPane, BorderLayout.CENTER);
         
-        // Menu contestuale
+        // Context menu
         setupContextMenu();
     }
     
     /**
-     * Configura gli stili per il testo.
+     * Configures text styles.
      */
     private void setupStyles() {
-        // Stile normale
+        // Normal style
         normalStyle = textPane.addStyle("normal", null);
         StyleConstants.setForeground(normalStyle, Color.BLACK);
         StyleConstants.setFontFamily(normalStyle, "Consolas");
         StyleConstants.setFontSize(normalStyle, 12);
         
-        // Stile errore
+        // Error style
         errorStyle = textPane.addStyle("error", normalStyle);
         StyleConstants.setForeground(errorStyle, ERROR_COLOR);
         StyleConstants.setBold(errorStyle, true);
         
-        // Stile successo
+        // Success style
         successStyle = textPane.addStyle("success", normalStyle);
         StyleConstants.setForeground(successStyle, SUCCESS_COLOR);
         StyleConstants.setBold(successStyle, true);
         
-        // Stile header
+        // Header style
         headerStyle = textPane.addStyle("header", normalStyle);
         StyleConstants.setForeground(headerStyle, HEADER_COLOR);
         StyleConstants.setBold(headerStyle, true);
         StyleConstants.setFontSize(headerStyle, 14);
         
-        // Stile warning
+        // Warning style
         warningStyle = textPane.addStyle("warning", normalStyle);
         StyleConstants.setForeground(warningStyle, WARNING_COLOR);
         StyleConstants.setBold(warningStyle, true);
     }
     
     /**
-     * Configura il menu contestuale.
+     * Configures the context menu.
      */
     private void setupContextMenu() {
         JPopupMenu contextMenu = new JPopupMenu();
@@ -114,7 +114,7 @@ public class BuildPanel extends JPanel {
     }
     
     /**
-     * Inizia una nuova build (pulisce il pannello).
+     * Starts a new build (clears the panel).
      */
     public void startBuild(String buildType) {
         textPane.setText("");
@@ -123,42 +123,42 @@ public class BuildPanel extends JPanel {
     }
     
     /**
-     * Aggiunge testo normale.
+     * Adds normal text.
      */
     public void appendText(String text) {
         appendText(text, normalStyle);
     }
     
     /**
-     * Aggiunge testo di errore.
+     * Adds error text.
      */
     public void appendError(String text) {
         appendText(text, errorStyle);
     }
     
     /**
-     * Aggiunge testo di successo.
+     * Adds success text.
      */
     public void appendSuccess(String text) {
         appendText(text, successStyle);
     }
     
     /**
-     * Aggiunge testo di warning.
+     * Adds warning text.
      */
     public void appendWarning(String text) {
         appendText(text, warningStyle);
     }
     
     /**
-     * Aggiunge testo con header.
+     * Adds text with header.
      */
     public void appendHeader(String text) {
         appendText(text, headerStyle);
     }
     
     /**
-     * Termina la build con il risultato.
+     * Finishes the build with the result.
      */
     public void finishBuild(boolean success) {
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
@@ -169,23 +169,23 @@ public class BuildPanel extends JPanel {
         }
         appendText("=== Build Complete ===\n\n", headerStyle);
         
-        // Scorri alla fine
+        // Scroll to the end
         scrollToBottom();
     }
     
     /**
-     * Aggiunge testo con uno stile specifico.
+     * Adds text with a specific style.
      */
     private void appendText(String text, Style style) {
         try {
             document.insertString(document.getLength(), text, style);
         } catch (BadLocationException e) {
-            // Ignora
+            // Ignore
         }
     }
     
     /**
-     * Scorri verso il basso.
+     * Scroll down.
      */
     private void scrollToBottom() {
         SwingUtilities.invokeLater(() -> {
@@ -194,14 +194,14 @@ public class BuildPanel extends JPanel {
     }
     
     /**
-     * Pulisce il pannello build.
+     * Clears the build panel.
      */
     private void clearBuild() {
         textPane.setText("");
     }
     
     /**
-     * Copia tutto il contenuto.
+     * Copies all content.
      */
     private void copyAll() {
         textPane.selectAll();
@@ -210,7 +210,7 @@ public class BuildPanel extends JPanel {
     }
     
     /**
-     * Salva il log di build.
+     * Saves the build log.
      */
     private void saveBuildLog() {
         JFileChooser chooser = new JFileChooser();
@@ -232,7 +232,7 @@ public class BuildPanel extends JPanel {
     }
     
     /**
-     * Ottiene il contenuto del pannello.
+     * Gets the panel content.
      */
     public String getText() {
         return textPane.getText();

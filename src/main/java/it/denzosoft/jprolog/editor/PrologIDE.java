@@ -78,35 +78,35 @@ public class PrologIDE extends JFrame {
         statusBar = new StatusBar();
         predicatePanel = new PredicatePanel(this);
         
-        searchPanel.setVisible(false); // Inizialmente nascosto
+        searchPanel.setVisible(false); // Initially hidden
     }
     
     /**
-     * Configura il layout principale dell'IDE.
+     * Configure the main IDE layout.
      */
     private void setupLayout() {
         setLayout(new BorderLayout());
         
-        // Toolbar in alto
+        // Toolbar at top
         add(toolbar, BorderLayout.NORTH);
         
-        // Pannello principale con split pane
+        // Main panel with split pane
         JSplitPane mainSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
         mainSplitPane.setDividerLocation(250);
         mainSplitPane.setResizeWeight(0.2);
         
-        // Pannello sinistro: albero progetto + pannello predicati
+        // Left panel: project tree + predicates panel
         JSplitPane leftSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
-        leftSplitPane.setResizeWeight(0.6); // 60% per albero progetto, 40% per predicati
+        leftSplitPane.setResizeWeight(0.6); // 60% for project tree, 40% for predicates
         
-        // Pannello albero progetto
+        // Project tree panel
         JPanel projectPanel = new JPanel(new BorderLayout());
         projectPanel.add(new JLabel("Project", SwingConstants.CENTER), BorderLayout.NORTH);
         projectPanel.add(new JScrollPane(projectTree), BorderLayout.CENTER);
         projectPanel.setMinimumSize(new Dimension(200, 150));
         leftSplitPane.setTopComponent(projectPanel);
         
-        // Pannello predicati
+        // Predicates panel
         predicatePanel.setMinimumSize(new Dimension(200, 100));
         leftSplitPane.setBottomComponent(predicatePanel);
         
@@ -123,13 +123,13 @@ public class PrologIDE extends JFrame {
         editorPanel.add(editorTabs, BorderLayout.CENTER);
         rightSplitPane.setTopComponent(editorPanel);
         
-        // Pannello a tab in basso (Output, Build, Run, Search)
+        // Bottom tabbed panel (Output, Build, Run, Search)
         rightSplitPane.setBottomComponent(bottomTabbedPane);
         
         mainSplitPane.setRightComponent(rightSplitPane);
         add(mainSplitPane, BorderLayout.CENTER);
         
-        // Status bar in basso
+        // Status bar at bottom
         add(statusBar, BorderLayout.SOUTH);
     }
     
@@ -278,7 +278,7 @@ public class PrologIDE extends JFrame {
     // ===================== GESTIONE PROGETTI =====================
     
     /**
-     * Crea un nuovo progetto.
+     * Creates a new project.
      */
     public void createNewProject() {
         JFileChooser chooser = new JFileChooser();
@@ -344,7 +344,7 @@ public class PrologIDE extends JFrame {
     }
     
     /**
-     * Apre una directory come progetto.
+     * Opens a directory as project.
      */
     private void openProjectDirectory(File projectDir, String projectName) {
         if (!projectDir.exists() || !projectDir.isDirectory()) {
@@ -357,13 +357,13 @@ public class PrologIDE extends JFrame {
         currentProjectRoot = projectDir;
         currentProjectName = projectName;
         
-        // Aggiorna il titolo della finestra
+        // Update window title
         setTitle("JProlog IDE - " + projectName + " [" + projectDir.getAbsolutePath() + "]");
         
         // Carica l'albero del progetto
         projectTree.loadProject(projectDir);
         
-        // Reset del motore Prolog per il nuovo progetto
+        // Reset Prolog engine for the new project
         prologEngine = new Prolog();
         
         statusBar.setMessage("Project loaded: " + projectName);
@@ -373,7 +373,7 @@ public class PrologIDE extends JFrame {
     // ===================== GESTIONE FILE =====================
     
     /**
-     * Crea un nuovo file nel progetto.
+     * Creates a new file in the project.
      */
     public void createNewFile() {
         if (currentProjectRoot == null) {
@@ -414,7 +414,7 @@ public class PrologIDE extends JFrame {
     }
     
     /**
-     * Salva tutti i file aperti.
+     * Save all open files.
      */
     public void saveAllFiles() {
         editorTabs.saveAllFiles();
@@ -423,7 +423,7 @@ public class PrologIDE extends JFrame {
     // ===================== PROLOG FUNCTIONALITY =====================
     
     /**
-     * Compila il file corrente.
+     * Compile current file.
      */
     public void compileCurrentFile() {
         FileEditor currentEditor = editorTabs.getCurrentEditor();
@@ -432,7 +432,7 @@ public class PrologIDE extends JFrame {
             return;
         }
         
-        // Salva il file prima di compilare
+        // Save file before compiling
         if (!currentEditor.save()) {
             bottomTabbedPane.appendToOutput("Unable to save file before compilation.\n");
             return;
@@ -441,7 +441,7 @@ public class PrologIDE extends JFrame {
         File file = currentEditor.getFile();
         bottomTabbedPane.startBuild("Compiling File: " + file.getName());
         
-        // Pulisci la knowledge base prima di compilare il singolo file
+        // Clear knowledge base before compiling single file
         clearKnowledgeBase();
         
         boolean success = compileFile(file);
@@ -449,7 +449,7 @@ public class PrologIDE extends JFrame {
     }
     
     /**
-     * Compila tutti i file del progetto.
+     * Compile all project files.
      */
     public void compileProject() {
         if (currentProjectRoot == null) {
@@ -459,16 +459,16 @@ public class PrologIDE extends JFrame {
         
         bottomTabbedPane.startBuild("Compiling Project: " + currentProjectName);
         
-        // Salva tutti i file aperti
+        // Save all open files
         saveAllFiles();
         
-        // Pulisci completamente la knowledge base prima di ricostruire
+        // Completely clear knowledge base before rebuilding
         clearKnowledgeBase();
         
         // Reinitialize Prolog engine with empty knowledge base
         initializePrologEngine();
         
-        // Trova tutti i file .pl
+        // Find all .pl files
         java.util.List<File> prologFiles = findPrologFiles(currentProjectRoot);
         
         if (prologFiles.isEmpty()) {
@@ -507,13 +507,13 @@ public class PrologIDE extends JFrame {
     }
     
     /**
-     * Compila un singolo file: parsing ed caricamento nella knowledge base.
+     * Compile single file: parsing and loading into knowledge base.
      */
     private boolean compileFile(File file) {
         try {
             bottomTabbedPane.appendToBuild("Parsing and loading: " + file.getName() + " ... ");
             
-            // Leggi il contenuto del file
+            // Read file content
             String content = readFileContent(file);
             
             // Complete content parsing through JProlog parser (which now handles comments)
@@ -540,7 +540,7 @@ public class PrologIDE extends JFrame {
     }
     
     /**
-     * Mostra il pannello Run per eseguire query interattive.
+     * Show Run panel to execute interactive queries.
      */
     public void showQueryDialog() {
         if (prologEngine == null) {
@@ -548,13 +548,13 @@ public class PrologIDE extends JFrame {
             return;
         }
         
-        // Mostra il tab Run e da focus al prompt
+        // Show Run tab and give focus to prompt
         bottomTabbedPane.showRunTab();
     }
     
     
     /**
-     * Attiva/disattiva il trace.
+     * Enable/disable trace.
      */
     private void toggleTrace() {
         bottomTabbedPane.showDebugTab();
@@ -573,7 +573,7 @@ public class PrologIDE extends JFrame {
     }
     
     /**
-     * Trova il pulsante trace nel debug panel (helper method).
+     * Find trace button in debug panel (helper method).
      */
     private JToggleButton findTraceButton(JComponent component) {
         if (component instanceof JToggleButton) {
@@ -595,10 +595,10 @@ public class PrologIDE extends JFrame {
         return null;
     }
     
-    // ===================== RICERCA =====================
+    // ===================== SEARCH =====================
     
     /**
-     * Mostra il pannello di ricerca.
+     * Show search panel.
      */
     public void showSearchPanel() {
         searchPanel.setVisible(true);
@@ -606,12 +606,12 @@ public class PrologIDE extends JFrame {
     }
     
     /**
-     * Nasconde il pannello di ricerca.
+     * Hide search panel.
      */
     private void hideSearchPanel() {
         searchPanel.setVisible(false);
         
-        // Restituisce il focus all'editor corrente
+        // Return focus to current editor
         FileEditor currentEditor = editorTabs.getCurrentEditor();
         if (currentEditor != null) {
             currentEditor.requestFocus();
@@ -619,7 +619,7 @@ public class PrologIDE extends JFrame {
     }
     
     /**
-     * Mostra la ricerca nel progetto.
+     * Show project search.
      */
     public void showProjectSearch() {
         searchPanel.setVisible(true);
@@ -635,7 +635,7 @@ public class PrologIDE extends JFrame {
     private void clearKnowledgeBase() {
         if (prologEngine != null) {
             try {
-                // Pulisce tutte le clausole dalla knowledge base
+                // Clear all clauses from knowledge base
                 bottomTabbedPane.appendToBuild("Clearing knowledge base... ");
                 prologEngine = new Prolog(); // Reset completo del motore
                 bottomTabbedPane.appendToBuild("OK\n");
@@ -652,7 +652,7 @@ public class PrologIDE extends JFrame {
         try {
             bottomTabbedPane.appendToBuild("Initializing Prolog engine... ");
             prologEngine = new Prolog();
-            // Carica built-in predicates se necessario
+            // Load built-in predicates if necessary
             // prologEngine.loadBuiltins(); // Se disponibile
             bottomTabbedPane.appendToBuild("OK\n");
         } catch (Exception e) {
@@ -661,7 +661,7 @@ public class PrologIDE extends JFrame {
     }
     
     /**
-     * Mostra lo stato della knowledge base.
+     * Shows the knowledge base status.
      */
     public void showKnowledgeBaseStatus() {
         if (prologEngine == null) {
@@ -708,7 +708,7 @@ public class PrologIDE extends JFrame {
     // ===================== UTILITY =====================
     
     /**
-     * Trova tutti i file .pl in una directory (ricorsivo).
+     * Finds all .pl files in a directory (recursive).
      */
     private java.util.List<File> findPrologFiles(File directory) {
         java.util.List<File> prologFiles = new ArrayList<>();
@@ -794,7 +794,7 @@ public class PrologIDE extends JFrame {
      * Chiude l'applicazione.
      */
     private void exitApplication() {
-        // Controlla se ci sono file non salvati
+        // Check if there are unsaved files
         if (editorTabs.hasUnsavedFiles()) {
             int choice = DialogUtils.showCenteredConfirm(this,
                 "There are unsaved files. Do you want to save before exiting?",

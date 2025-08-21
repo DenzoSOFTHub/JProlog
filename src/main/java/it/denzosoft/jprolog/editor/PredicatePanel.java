@@ -36,7 +36,7 @@ public class PredicatePanel extends JPanel {
     );
     
     /**
-     * Classe per rappresentare un predicato/fatto trovato.
+     * Class to represent a found predicate/fact.
      */
     public static class PredicateInfo {
         public final String name;
@@ -60,7 +60,7 @@ public class PredicatePanel extends JPanel {
     }
     
     /**
-     * Nodo personalizzato per l'albero dei predicati.
+     * Custom node for the predicates tree.
      */
     private static class PredicateNode extends DefaultMutableTreeNode {
         private PredicateInfo predicateInfo;
@@ -170,7 +170,7 @@ public class PredicatePanel extends JPanel {
     }
     
     /**
-     * Aggiorna i predicati per il file corrente.
+     * Updates predicates for the current file.
      */
     public void updatePredicatesForFile(File file) {
         this.currentFile = file;
@@ -199,7 +199,7 @@ public class PredicatePanel extends JPanel {
             populateTree(predicates);
         } catch (Exception e) {
             clearPredicates();
-            // Mostra errore nella status bar
+            // Show error in status bar
             if (ide != null && ide.getStatusBar() != null) {
                 ide.getStatusBar().setMessage("Error parsing predicates: " + e.getMessage());
             }
@@ -295,7 +295,7 @@ public class PredicatePanel extends JPanel {
             }
         }
         
-        // Crea i nodi per categoria
+        // Create nodes for categories
         for (Map.Entry<String, List<PredicateInfo>> entry : grouped.entrySet()) {
             List<PredicateInfo> categoryPredicates = entry.getValue();
             if (!categoryPredicates.isEmpty()) {
@@ -305,7 +305,7 @@ public class PredicatePanel extends JPanel {
                 );
                 rootNode.add(categoryNode);
                 
-                // Ordina per nome e aggiungi
+                // Sort by name and add
                 categoryPredicates.sort((a, b) -> a.name.compareTo(b.name));
                 for (PredicateInfo predicate : categoryPredicates) {
                     PredicateNode predicateNode = new PredicateNode(predicate);
@@ -316,14 +316,14 @@ public class PredicatePanel extends JPanel {
         
         treeModel.reload();
         
-        // Espandi automaticamente se ci sono pochi predicati
+        // Expand automatically if there are few predicates
         if (predicates.size() <= 10) {
             expandAll();
         }
     }
     
     /**
-     * Naviga alla definizione del predicato nell'editor.
+     * Navigate to predicate definition in editor.
      */
     private void navigateToPredicateDefinition(PredicateInfo predicate) {
         if (currentFile == null || ide == null) {
@@ -333,10 +333,10 @@ public class PredicatePanel extends JPanel {
         // Open file if not already open
         ide.getEditorTabs().openFile(currentFile);
         
-        // Ottieni l'editor per questo file
+        // Get the editor for this file
         FileEditor editor = ide.getEditorTabs().getEditor(currentFile);
         if (editor != null) {
-            // Va alla riga del predicato
+            // Go to predicate line
             editor.goToLine(predicate.lineNumber);
             
             // Aggiorna la status bar
@@ -355,7 +355,7 @@ public class PredicatePanel extends JPanel {
     }
     
     /**
-     * Espande tutti i nodi.
+     * Expands all nodes.
      */
     private void expandAll() {
         for (int i = 0; i < predicateTree.getRowCount(); i++) {
@@ -364,7 +364,7 @@ public class PredicatePanel extends JPanel {
     }
     
     /**
-     * Comprimi tutti i nodi.
+     * Collapses all nodes.
      */
     private void collapseAll() {
         for (int i = predicateTree.getRowCount() - 1; i >= 0; i--) {

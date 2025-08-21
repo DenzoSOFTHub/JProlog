@@ -49,7 +49,7 @@ public class SearchResultsPanel extends JPanel {
     }
     
     /**
-     * Nodo personalizzato per l'albero dei risultati.
+     * Custom node for the results tree.
      */
     private static class SearchResultNode extends DefaultMutableTreeNode {
         private File file;
@@ -102,7 +102,7 @@ public class SearchResultsPanel extends JPanel {
         statusLabel.setForeground(Color.GRAY);
         add(statusLabel, BorderLayout.NORTH);
         
-        // Albero dei risultati
+        // Results tree
         rootNode = new SearchResultNode("Search Results", SearchResultNode.NodeType.ROOT);
         treeModel = new DefaultTreeModel(rootNode);
         resultsTree = new JTree(treeModel);
@@ -112,7 +112,7 @@ public class SearchResultsPanel extends JPanel {
         resultsTree.setShowsRootHandles(true);
         resultsTree.getSelectionModel().setSelectionMode(TreeSelectionModel.SINGLE_TREE_SELECTION);
         
-        // Renderer personalizzato per icone diverse
+        // Custom renderer for different icons
         resultsTree.setCellRenderer(new SearchResultCellRenderer());
         
         // Scroll pane
@@ -120,7 +120,7 @@ public class SearchResultsPanel extends JPanel {
         scrollPane.setPreferredSize(new Dimension(300, 0));
         add(scrollPane, BorderLayout.CENTER);
         
-        // Pannello dei controlli
+        // Control panel
         JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         
         JButton expandAllButton = new JButton("Expand All");
@@ -140,10 +140,10 @@ public class SearchResultsPanel extends JPanel {
     }
     
     /**
-     * Configura gli event handlers.
+     * Configure event handlers.
      */
     private void setupEventHandlers() {
-        // Doppio click per aprire file/andare alla riga
+        // Double click to open file/go to line
         resultsTree.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -164,21 +164,21 @@ public class SearchResultsPanel extends JPanel {
     private void handleNodeDoubleClick(SearchResultNode node) {
         switch (node.getType()) {
             case FILE:
-                // Apri il file
+                // Open the file
                 if (node.getFile() != null) {
                     ide.getEditorTabs().openFile(node.getFile());
                 }
                 break;
                 
             case MATCH:
-                // Apri il file e vai alla riga del match
+                // Open the file and go to the match line
                 SearchResultNode fileNode = (SearchResultNode) node.getParent();
                 if (fileNode != null && fileNode.getFile() != null) {
                     ide.getEditorTabs().openFile(fileNode.getFile());
                     FileEditor editor = ide.getEditorTabs().getEditor(fileNode.getFile());
                     if (editor != null) {
                         editor.goToLine(node.getMatch().lineNumber);
-                        // Evidenzia il match
+                        // Highlight the match
                         highlightMatch(editor, node.getMatch());
                     }
                 }
@@ -187,7 +187,7 @@ public class SearchResultsPanel extends JPanel {
     }
     
     /**
-     * Evidenzia il match nell'editor.
+     * Highlights the match in the editor.
      */
     private void highlightMatch(FileEditor editor, SearchMatch match) {
         JTextArea textArea = editor.getTextArea();
@@ -199,24 +199,24 @@ public class SearchResultsPanel extends JPanel {
             textArea.select(matchStart, matchEnd);
             textArea.requestFocus();
         } catch (Exception e) {
-            // Fallback: seleziona tutta la riga
+            // Fallback: select the entire line
             editor.goToLine(match.lineNumber);
         }
     }
     
     /**
-     * Imposta i risultati di ricerca.
+     * Sets the search results.
      */
     public void setSearchResults(Map<File, List<SearchMatch>> results, String searchTerm) {
         this.searchResults = results;
         
-        // Pulisce l'albero
+        // Clear the tree
         rootNode.removeAllChildren();
         
         int totalMatches = 0;
         int fileCount = 0;
         
-        // Popola l'albero
+        // Populate the tree
         for (Map.Entry<File, List<SearchMatch>> entry : results.entrySet()) {
             File file = entry.getKey();
             List<SearchMatch> matches = entry.getValue();
@@ -235,13 +235,13 @@ public class SearchResultsPanel extends JPanel {
             }
         }
         
-        // Aggiorna il modello
+        // Update the model
         treeModel.reload();
         
-        // Espandi tutti i file con pochi match
+        // Expand all files with few matches
         expandNodesWithFewMatches();
         
-        // Aggiorna lo status
+        // Update the status
         if (totalMatches > 0) {
             statusLabel.setText(String.format("'%s': %d matches in %d files", 
                 searchTerm, totalMatches, fileCount));
@@ -251,7 +251,7 @@ public class SearchResultsPanel extends JPanel {
     }
     
     /**
-     * Pulisce i risultati.
+     * Clears the results.
      */
     public void clearResults() {
         rootNode.removeAllChildren();
@@ -261,7 +261,7 @@ public class SearchResultsPanel extends JPanel {
     }
     
     /**
-     * Espande tutti i nodi.
+     * Expands all nodes.
      */
     private void expandAll() {
         for (int i = 0; i < resultsTree.getRowCount(); i++) {
@@ -270,7 +270,7 @@ public class SearchResultsPanel extends JPanel {
     }
     
     /**
-     * Comprimi tutti i nodi.
+     * Collapses all nodes.
      */
     private void collapseAll() {
         for (int i = resultsTree.getRowCount() - 1; i >= 0; i--) {
@@ -279,19 +279,19 @@ public class SearchResultsPanel extends JPanel {
     }
     
     /**
-     * Espande automaticamente i nodi con pochi match.
+     * Automatically expands nodes with few matches.
      */
     private void expandNodesWithFewMatches() {
         for (int i = 0; i < rootNode.getChildCount(); i++) {
             SearchResultNode fileNode = (SearchResultNode) rootNode.getChildAt(i);
-            if (fileNode.getChildCount() <= 5) { // Espandi se ci sono max 5 match
+            if (fileNode.getChildCount() <= 5) { // Expand if there are max 5 matches
                 resultsTree.expandPath(new TreePath(new Object[]{rootNode, fileNode}));
             }
         }
     }
     
     /**
-     * Renderer personalizzato per l'albero.
+     * Custom renderer for the tree.
      */
     private static class SearchResultCellRenderer extends DefaultTreeCellRenderer {
         private Icon fileIcon = UIManager.getIcon("FileView.fileIcon");
@@ -327,7 +327,7 @@ public class SearchResultsPanel extends JPanel {
     }
     
     /**
-     * Ottiene il numero totale di match.
+     * Gets the total number of matches.
      */
     public int getTotalMatches() {
         return searchResults.values().stream()

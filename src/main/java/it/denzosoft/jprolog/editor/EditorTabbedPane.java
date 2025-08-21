@@ -30,24 +30,24 @@ public class EditorTabbedPane extends JTabbedPane {
     }
     
     /**
-     * Configura il pannello con tab.
+     * Configure the tabbed panel.
      */
     private void setupTabbedPane() {
         setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
         
-        // Listener per cambiamento tab
+        // Listener for tab change
         addChangeListener(e -> {
             FileEditor currentEditor = getCurrentEditor();
             if (currentEditor != null) {
                 ide.getStatusBar().setMessage("File: " + currentEditor.getFile().getAbsolutePath());
                 currentEditor.requestFocusInWindow();
                 
-                // Notifica il PredicatePanel del cambio file
+                // Notify PredicatePanel of file change
                 if (ide.getPredicatePanel() != null) {
                     ide.getPredicatePanel().updatePredicatesForFile(currentEditor.getFile());
                 }
             } else {
-                ide.getStatusBar().setMessage("Nessun file aperto");
+                ide.getStatusBar().setMessage("No file open");
                 
                 // Clear PredicatePanel if no file is open
                 if (ide.getPredicatePanel() != null) {
@@ -58,7 +58,7 @@ public class EditorTabbedPane extends JTabbedPane {
     }
     
     /**
-     * Apre un file nell'editor.
+     * Opens a file in the editor.
      */
     public void openFile(File file) {
         if (file == null || !file.exists() || !file.isFile()) {
@@ -76,44 +76,44 @@ public class EditorTabbedPane extends JTabbedPane {
         }
         
         try {
-            // Crea nuovo editor
+            // Create new editor
             FileEditor editor = new FileEditor(file, ide);
             
-            // Crea il pannello tab con pulsante chiusura
+            // Create tab panel with close button
             JPanel tabPanel = createTabPanel(editor);
             
-            // Aggiunge il tab
+            // Add the tab
             addTab(file.getName(), editor.getScrollPane());
             int index = getTabCount() - 1;
             setTabComponentAt(index, tabPanel);
             setSelectedIndex(index);
             
-            // Registra l'editor
+            // Register the editor
             openFiles.put(file, editor);
             tabToEditor.put(editor.getScrollPane(), editor);
             
-            ide.getStatusBar().setMessage("File aperto: " + file.getAbsolutePath());
+            ide.getStatusBar().setMessage("File opened: " + file.getAbsolutePath());
             
         } catch (Exception ex) {
             DialogUtils.showError(ide, 
-                "Errore nell'apertura del file: " + ex.getMessage(),
-                "Errore");
+                "Error opening file: " + ex.getMessage(),
+                "Error");
         }
     }
     
     /**
-     * Crea il pannello del tab con titolo e pulsante chiusura.
+     * Create the tab panel with title and close button.
      */
     private JPanel createTabPanel(FileEditor editor) {
         JPanel tabPanel = new JPanel(new BorderLayout(5, 0));
         tabPanel.setOpaque(false);
         
-        // Label del titolo
+        // Title label
         JLabel titleLabel = new JLabel(editor.getFile().getName());
         titleLabel.setFont(titleLabel.getFont().deriveFont(Font.PLAIN));
         tabPanel.add(titleLabel, BorderLayout.CENTER);
         
-        // Pulsante chiusura
+        // Close button
         JButton closeButton = new JButton("×");
         closeButton.setFont(closeButton.getFont().deriveFont(Font.BOLD, 16f));
         closeButton.setMargin(new Insets(0, 3, 0, 3));
@@ -124,7 +124,7 @@ public class EditorTabbedPane extends JTabbedPane {
         
         closeButton.addActionListener(e -> closeFile(editor.getFile()));
         
-        // Effetto hover
+        // Hover effect
         closeButton.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mouseEntered(java.awt.event.MouseEvent e) {
@@ -142,7 +142,7 @@ public class EditorTabbedPane extends JTabbedPane {
         
         tabPanel.add(closeButton, BorderLayout.EAST);
         
-        // Listener per aggiornamento titolo quando il file viene modificato
+        // Listener for title update when file is modified
         editor.addModifiedListener(() -> {
             String title = editor.getFile().getName();
             if (editor.isModified()) {
@@ -158,7 +158,7 @@ public class EditorTabbedPane extends JTabbedPane {
     }
     
     /**
-     * Chiude un file.
+     * Closes a file.
      */
     public void closeFile(File file) {
         FileEditor editor = openFiles.get(file);
@@ -169,40 +169,40 @@ public class EditorTabbedPane extends JTabbedPane {
         // Check if file is modified
         if (editor.isModified()) {
             int choice = DialogUtils.showCenteredConfirm(ide,
-                "Il file '" + file.getName() + "' è stato modificato.\n" +
-                "Vuoi salvare le modifiche prima di chiudere?",
-                "File Modificato", 
+                "The file '" + file.getName() + "' has been modified.\n" +
+                "Do you want to save changes before closing?",
+                "Modified File", 
                 JOptionPane.YES_NO_CANCEL_OPTION,
                 JOptionPane.WARNING_MESSAGE);
             
             if (choice == JOptionPane.YES_OPTION) {
                 if (!editor.save()) {
-                    return; // Non chiudere se il salvataggio fallisce
+                    return; // Don't close if save fails
                 }
             } else if (choice == JOptionPane.CANCEL_OPTION) {
-                return; // Annulla chiusura
+                return; // Cancel closing
             }
         }
         
-        // Rimuovi il tab
+        // Remove the tab
         Component scrollPane = editor.getScrollPane();
         int index = indexOfComponent(scrollPane);
         if (index >= 0) {
             removeTabAt(index);
         }
         
-        // Rimuovi dalle mappe
+        // Remove from maps
         openFiles.remove(file);
         tabToEditor.remove(scrollPane);
         
-        ide.getStatusBar().setMessage("File chiuso: " + file.getName());
+        ide.getStatusBar().setMessage("File closed: " + file.getName());
     }
     
     /**
-     * Chiude tutti i file.
+     * Close all files.
      */
     public void closeAllFiles() {
-        // Crea una copia della lista per evitare ConcurrentModificationException
+        // Create a copy of the list to avoid ConcurrentModificationException
         List<File> filesToClose = new ArrayList<>(openFiles.keySet());
         for (File file : filesToClose) {
             closeFile(file);
@@ -210,7 +210,7 @@ public class EditorTabbedPane extends JTabbedPane {
     }
     
     /**
-     * Salva il file corrente.
+     * Save current file.
      */
     public void saveCurrentFile() {
         FileEditor currentEditor = getCurrentEditor();
@@ -220,7 +220,7 @@ public class EditorTabbedPane extends JTabbedPane {
     }
     
     /**
-     * Salva tutti i file aperti.
+     * Save all open files.
      */
     public void saveAllFiles() {
         for (FileEditor editor : openFiles.values()) {
@@ -231,7 +231,7 @@ public class EditorTabbedPane extends JTabbedPane {
     }
     
     /**
-     * Controlla se ci sono file non salvati.
+     * Checks if there are unsaved files.
      */
     public boolean hasUnsavedFiles() {
         for (FileEditor editor : openFiles.values()) {
@@ -261,7 +261,7 @@ public class EditorTabbedPane extends JTabbedPane {
     }
     
     /**
-     * Aggiorna il riferimento di un file dopo rinomin.
+     * Updates a file reference after renaming.
      */
     public void updateFileReference(File oldFile, File newFile) {
         FileEditor editor = openFiles.remove(oldFile);
@@ -279,14 +279,14 @@ public class EditorTabbedPane extends JTabbedPane {
     }
     
     /**
-     * Ottiene tutti i file aperti.
+     * Gets all open files.
      */
     public Set<File> getOpenFiles() {
         return new HashSet<>(openFiles.keySet());
     }
     
     /**
-     * Ottiene tutti gli editor aperti.
+     * Gets all open editors.
      */
     public Collection<FileEditor> getEditors() {
         return openFiles.values();

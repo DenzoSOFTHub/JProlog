@@ -95,8 +95,8 @@ public class ArithmeticEvaluator {
      * Registra una nuova funzione matematica binaria.
      * This method allows extending arithmetic functionality.
      * 
-     * @param name Nome della funzione
-     * @param function Implementazione della funzione
+     * @param name Function name
+     * @param function Function implementation
      */
     public static void registerBinaryOperation(String name, BiFunction<Double, Double, Double> function) {
         BINARY_OPERATIONS.put(name, function);
@@ -106,8 +106,8 @@ public class ArithmeticEvaluator {
      * Registra una nuova funzione matematica unaria.
      * This method allows extending arithmetic functionality.
      * 
-     * @param name Nome della funzione
-     * @param function Implementazione della funzione
+     * @param name Function name
+     * @param function Function implementation
      */
     public static void registerUnaryFunction(String name, Function<Double, Double> function) {
         UNARY_FUNCTIONS.put(name, function);

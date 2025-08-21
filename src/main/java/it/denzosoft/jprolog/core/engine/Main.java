@@ -18,13 +18,13 @@ public class Main {
         System.out.println("JProlog Interpreter Demo");
         System.out.println("========================");
         
-        // Registra le estensioni matematiche personalizzate
+        // Register custom mathematical extensions
         MathExtensions.registerCustomFunctions();
         
-        // Crea Prolog engine
+        // Create Prolog engine
         Prolog prolog = new Prolog();
         
-        // Carica alcuni fatti di esempio
+        // Load some example facts
         try {
             System.out.println("\nLoading facts:");
             prolog.consult("father(tom, bob).");
@@ -47,7 +47,7 @@ public class Main {
             System.out.println("  " + rule);
         }
         
-        // Esegui alcune query
+        // Execute some queries
         System.out.println("\nRunning queries:");
         
         // Query semplice su fatti
@@ -122,7 +122,7 @@ public class Main {
     private static void runQuery(Prolog prolog, String queryString) {
         System.out.println("\nQuery: " + queryString);
         try {
-            // Rimuovi il punto finale dalla stringa della query
+            // Remove final period from query string
             if (queryString.endsWith(".")) {
                 queryString = queryString.substring(0, queryString.length() - 1);
             }

@@ -65,7 +65,7 @@ public class BottomTabbedPane extends JTabbedPane {
     }
     
     /**
-     * Crea un'icona per i tab (placeholder per ora).
+     * Creates an icon for tabs (placeholder for now).
      */
     private Icon createTabIcon(String emoji) {
         // Per ora ritorna null, in futuro si possono aggiungere icone vere
@@ -110,29 +110,29 @@ public class BottomTabbedPane extends JTabbedPane {
      */
     public void startBuild(String buildType) {
         buildPanel.startBuild(buildType);
-        // Passa automaticamente al tab Build
+        // Automatically switch to Build tab
         setSelectedIndex(BUILD_TAB);
         
-        // Aggiungi badge di notifica se necessario
+        // Add notification badge if necessary
         updateTabTitle(BUILD_TAB, "Build", true);
     }
     
     /**
-     * Aggiunge testo al build.
+     * Add text to build.
      */
     public void appendToBuild(String text) {
         buildPanel.appendText(text);
     }
     
     /**
-     * Aggiunge errore al build.
+     * Add error to build.
      */
     public void appendBuildError(String text) {
         buildPanel.appendError(text);
     }
     
     /**
-     * Aggiunge successo al build.
+     * Add success to build.
      */
     public void appendBuildSuccess(String text) {
         buildPanel.appendSuccess(text);
@@ -179,7 +179,7 @@ public class BottomTabbedPane extends JTabbedPane {
         searchResultsPanel.setSearchResults(results, searchTerm);
         
         if (searchResultsPanel.hasResults()) {
-            // Passa automaticamente al tab Search se ci sono risultati
+            // Automatically switch to Search tab if there are results
             setSelectedIndex(SEARCH_TAB);
             updateTabTitle(SEARCH_TAB, "Search (" + searchResultsPanel.getTotalMatches() + ")", true);
         } else {
@@ -245,7 +245,7 @@ public class BottomTabbedPane extends JTabbedPane {
     // ===================== UTILITY =====================
     
     /**
-     * Aggiorna il titolo di un tab con notifica opzionale.
+     * Updates a tab title with optional notification.
      */
     private void updateTabTitle(int tabIndex, String baseTitle, boolean hasNotification) {
         if (hasNotification) {
@@ -256,17 +256,17 @@ public class BottomTabbedPane extends JTabbedPane {
     }
     
     /**
-     * Mostra un messaggio temporaneo nella status bar dell'IDE.
+     * Shows a temporary message in the IDE status bar.
      */
     private void showStatusMessage(String message) {
         if (ide != null && ide.getStatusBar() != null) {
             ide.getStatusBar().setMessage(message);
             
-            // Rimuovi il messaggio dopo 3 secondi
+            // Remove message after 3 seconds
             Timer timer = new Timer(3000, new ActionListener() {
                 @Override
                 public void actionPerformed(ActionEvent e) {
-                    ide.getStatusBar().setMessage("Pronto");
+                    ide.getStatusBar().setMessage("Ready");
                 }
             });
             timer.setRepeats(false);

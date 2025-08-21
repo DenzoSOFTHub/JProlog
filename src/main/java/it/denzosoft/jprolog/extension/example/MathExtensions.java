@@ -11,19 +11,19 @@ public class MathExtensions {
      * to extend Prolog interpreter capabilities.
      */
     public static void registerCustomFunctions() {
-        // Funzione potenza (es. pow(2, 3) = 8)
+        // Power function (e.g. pow(2, 3) = 8)
         ArithmeticEvaluator.registerBinaryOperation("pow", Math::pow);
         
-        // Funzione logaritmo in base 10
+        // Base 10 logarithm function
         ArithmeticEvaluator.registerUnaryFunction("log10", Math::log10);
         
-        // Funzione valore massimo tra due numeri
+        // Maximum value function between two numbers
         ArithmeticEvaluator.registerBinaryOperation("max", Math::max);
         
-        // Funzione valore minimo tra due numeri
+        // Minimum value function between two numbers
         ArithmeticEvaluator.registerBinaryOperation("min", Math::min);
         
-        // Funzione fattoriale (implementazione ricorsiva)
+        // Factorial function (recursive implementation)
         ArithmeticEvaluator.registerUnaryFunction("fact", x -> {
             if (x < 0) return Double.NaN;
             int n = (int) Math.round(x); // Fixed: properly convert double to int
@@ -34,37 +34,37 @@ public class MathExtensions {
             return result;
         });
         
-        // Funzione di conversione da gradi a radianti
+        // Degrees to radians conversion function
         ArithmeticEvaluator.registerUnaryFunction("degToRad", Math::toRadians);
         
-        // Funzione di conversione da radianti a gradi
+        // Radians to degrees conversion function
         ArithmeticEvaluator.registerUnaryFunction("radToDeg", Math::toDegrees);
     }
     
     /**
-     * Esempio d'uso dell'estensione matematica.
-     * Questo metodo mostra come utilizzare le funzioni registrate.
+     * Usage example of mathematical extension.
+     * This method shows how to use the registered functions.
      */
     public static void demonstrateUsage() {
-        System.out.println("Esempio di utilizzo delle estensioni matematiche:");
+        System.out.println("Usage example of mathematical extensions:");
         System.out.println("================================================");
         
-        // Nota: Per testare realmente queste funzioni,
-        // sarebbe necessario integrarle con il parser e il motore Prolog
-        System.out.println("Funzioni registrate:");
-        System.out.println("- pow(X, Y): Eleva X alla potenza Y");
-        System.out.println("- log10(X): Logaritmo in base 10 di X");
-        System.out.println("- max(X, Y): Valore massimo tra X e Y");
-        System.out.println("- min(X, Y): Valore minimo tra X e Y");
-        System.out.println("- fact(X): Fattoriale di X (per interi)");
-        System.out.println("- degToRad(X): Converte X da gradi a radianti");
-        System.out.println("- radToDeg(X): Converte X da radianti a gradi");
+        // Note: To actually test these functions,
+        // it would be necessary to integrate them with the parser and Prolog engine
+        System.out.println("Registered functions:");
+        System.out.println("- pow(X, Y): Raises X to the power of Y");
+        System.out.println("- log10(X): Base 10 logarithm of X");
+        System.out.println("- max(X, Y): Maximum value between X and Y");
+        System.out.println("- min(X, Y): Minimum value between X and Y");
+        System.out.println("- fact(X): Factorial of X (for integers)");
+        System.out.println("- degToRad(X): Converts X from degrees to radians");
+        System.out.println("- radToDeg(X): Converts X from radians to degrees");
         
-        System.out.println("\nEsempi di query Prolog che potrebbero essere eseguite:");
-        System.out.println("?- X is pow(2, 3).              % Risultato: X = 8.0");
-        System.out.println("?- X is log10(100).             % Risultato: X = 2.0");
-        System.out.println("?- X is max(5, 12).             % Risultato: X = 12.0");
-        System.out.println("?- X is fact(5).                % Risultato: X = 120.0");
-        System.out.println("?- X is degToRad(180).          % Risultato: X = 3.14159...");
+        System.out.println("\nExamples of Prolog queries that could be executed:");
+        System.out.println("?- X is pow(2, 3).              % Result: X = 8.0");
+        System.out.println("?- X is log10(100).             % Result: X = 2.0");
+        System.out.println("?- X is max(5, 12).             % Result: X = 12.0");
+        System.out.println("?- X is fact(5).                % Result: X = 120.0");
+        System.out.println("?- X is degToRad(180).          % Result: X = 3.14159...");
     }
 }

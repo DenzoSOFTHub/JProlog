@@ -51,12 +51,12 @@ public class ProjectTree extends JTree {
         setShowsRootHandles(true);
         getSelectionModel().setSelectionMode(TreeSelectionModel.SINGLE_TREE_SELECTION);
         
-        // Espandi automaticamente la radice
+        // Automatically expand root
         expandRow(0);
     }
     
     /**
-     * Configura il renderer personalizzato per le icone.
+     * Configure custom renderer for icons.
      */
     private void setupRenderer() {
         setCellRenderer(new DefaultTreeCellRenderer() {
@@ -93,7 +93,7 @@ public class ProjectTree extends JTree {
      * Configura gli event handlers.
      */
     private void setupEventHandlers() {
-        // Double-click per aprire file
+        // Double-click to open file
         addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -145,7 +145,7 @@ public class ProjectTree extends JTree {
                 File file = fileNode.getFile();
                 
                 if (file.isDirectory()) {
-                    // Menu per directory
+                    // Menu for directory
                     JMenuItem newFile = new JMenuItem("New Prolog File...");
                     newFile.addActionListener(ev -> createNewFileInDirectory(file));
                     popup.add(newFile);
@@ -161,7 +161,7 @@ public class ProjectTree extends JTree {
                     popup.add(refresh);
                     
                 } else {
-                    // Menu per file
+                    // Menu for file
                     JMenuItem open = new JMenuItem("Open");
                     open.addActionListener(ev -> ide.getEditorTabs().openFile(file));
                     popup.add(open);
@@ -184,7 +184,7 @@ public class ProjectTree extends JTree {
                 popup.add(rename);
                 
             } else {
-                // Menu per radice progetto
+                // Menu for project root
                 JMenuItem newFile = new JMenuItem("New Prolog File...");
                 newFile.addActionListener(ev -> {
                     if (projectRoot != null) {
@@ -210,7 +210,7 @@ public class ProjectTree extends JTree {
             
             popup.show(this, e.getX(), e.getY());
         } else {
-            // Right-click su spazio vuoto - menu per la radice del progetto
+            // Right-click on empty space - menu for project root
             if (projectRoot != null) {
                 JPopupMenu popup = new JPopupMenu();
                 
@@ -234,7 +234,7 @@ public class ProjectTree extends JTree {
     }
     
     /**
-     * Carica un progetto nell'albero.
+     * Load a project into the tree.
      */
     public void loadProject(File projectRoot) {
         this.projectRoot = projectRoot;
@@ -256,7 +256,7 @@ public class ProjectTree extends JTree {
         File[] files = directory.listFiles();
         if (files == null) return;
         
-        // Ordina: prima le directory, poi i file, entrambi alfabeticamente
+        // Sort: directories first, then files, both alphabetically
         Arrays.sort(files, new Comparator<File>() {
             @Override
             public int compare(File f1, File f2) {
@@ -271,7 +271,7 @@ public class ProjectTree extends JTree {
         });
         
         for (File file : files) {
-            // Salta file nascosti
+            // Skip hidden files
             if (file.getName().startsWith(".")) {
                 continue;
             }
@@ -279,7 +279,7 @@ public class ProjectTree extends JTree {
             FileTreeNode fileNode = new FileTreeNode(file);
             parentNode.add(fileNode);
             
-            // Carica ricorsivamente le sottodirectory
+            // Recursively load subdirectories
             if (file.isDirectory()) {
                 loadDirectoryContents(file, fileNode);
             }
@@ -287,7 +287,7 @@ public class ProjectTree extends JTree {
     }
     
     /**
-     * Aggiorna l'intero progetto.
+     * Refresh entire project.
      */
     public void refreshProject() {
         if (projectRoot != null) {
@@ -308,7 +308,7 @@ public class ProjectTree extends JTree {
     }
     
     /**
-     * Crea un nuovo file Prolog in una directory.
+     * Creates a new Prolog file in a directory.
      */
     private void createNewFileInDirectory(File directory) {
         String fileName = DialogUtils.showCenteredInput(this, 
@@ -370,7 +370,7 @@ public class ProjectTree extends JTree {
                 deleteRecursive(file);
                 refreshProject();
                 
-                // Chiudi il file nell'editor se era aperto
+                // Close file in editor if it was open
                 if (file.isFile()) {
                     ide.getEditorTabs().closeFile(file);
                 }
@@ -385,7 +385,7 @@ public class ProjectTree extends JTree {
     }
     
     /**
-     * Elimina ricorsivamente un file o directory.
+     * Recursively delete a file or directory.
      */
     private void deleteRecursive(File file) {
         if (file.isDirectory()) {
@@ -402,7 +402,7 @@ public class ProjectTree extends JTree {
     }
     
     /**
-     * Rinomina un file.
+     * Rename a file.
      */
     private void renameFile(FileTreeNode node) {
         File file = node.getFile();
@@ -414,7 +414,7 @@ public class ProjectTree extends JTree {
             if (file.renameTo(newFile)) {
                 refreshProject();
                 
-                // Aggiorna l'editor se il file era aperto
+                // Update editor if file was open
                 ide.getEditorTabs().updateFileReference(file, newFile);
                 
                 ide.getBottomTabbedPane().appendToOutput("File renamed: " + file.getName() + " -> " + newName + "\n");
@@ -427,16 +427,16 @@ public class ProjectTree extends JTree {
     }
     
     /**
-     * Compila un file Prolog.
+     * Compile a Prolog file.
      */
     private void compileFile(File file) {
         ide.getBottomTabbedPane().appendToOutput("Compiling " + file.getName() + "...\n");
         // Actual compilation is handled by the main IDE class
-        // Qui possiamo aggiungere comportamenti specifici per l'albero
+        // Here we can add specific behaviors for the tree
     }
     
     /**
-     * Salva lo stato corrente di espansione dei nodi.
+     * Save current node expansion state.
      */
     private void saveExpandedState() {
         expandedPaths.clear();
@@ -444,7 +444,7 @@ public class ProjectTree extends JTree {
     }
     
     /**
-     * Salva ricorsivamente i percorsi espansi.
+     * Recursively save expanded paths.
      */
     private void saveExpandedStateRecursive(DefaultMutableTreeNode node, String basePath) {
         TreePath path = new TreePath(node.getPath());
@@ -465,7 +465,7 @@ public class ProjectTree extends JTree {
                 expandedPaths.add(currentPath);
             }
             
-            // Continua ricorsivamente per i figli
+            // Continue recursively for children
             for (int i = 0; i < node.getChildCount(); i++) {
                 DefaultMutableTreeNode child = (DefaultMutableTreeNode) node.getChildAt(i);
                 saveExpandedStateRecursive(child, currentPath);
@@ -474,13 +474,13 @@ public class ProjectTree extends JTree {
     }
     
     /**
-     * Ripristina lo stato di espansione dei nodi.
+     * Restore node expansion state.
      */
     private void restoreExpandedState() {
-        // Espandi sempre la radice
+        // Always expand root
         expandPath(new TreePath(rootNode));
         
-        // Ripristina gli altri percorsi espansi
+        // Restore other expanded paths
         for (String expandedPath : expandedPaths) {
             FileTreeNode node = findNodeByPath(expandedPath);
             if (node != null) {
@@ -491,7 +491,7 @@ public class ProjectTree extends JTree {
     }
     
     /**
-     * Trova un nodo in base al percorso relativo.
+     * Find a node based on relative path.
      */
     private FileTreeNode findNodeByPath(String relativePath) {
         if (relativePath.isEmpty()) {
@@ -544,7 +544,7 @@ public class ProjectTree extends JTree {
     }
     
     /**
-     * Trova ricorsivamente un nodo per file.
+     * Recursively finds a node for a file.
      */
     private FileTreeNode findNodeByFileRecursive(DefaultMutableTreeNode node, File targetFile) {
         if (node instanceof FileTreeNode) {
@@ -582,7 +582,7 @@ public class ProjectTree extends JTree {
     }
     
     /**
-     * Aggiorna i percorsi espansi quando un file viene rinominato.
+     * Updates expanded paths when a file is renamed.
      */
     private void updateExpandedPathsForRename(File oldFile, File newFile) {
         String oldPath = getRelativePathFromRoot(oldFile);
@@ -605,7 +605,7 @@ public class ProjectTree extends JTree {
     }
     
     /**
-     * Ottiene il percorso relativo dalla radice del progetto.
+     * Gets the relative path from the project root.
      */
     private String getRelativePathFromRoot(File file) {
         if (projectRoot == null || !file.getAbsolutePath().startsWith(projectRoot.getAbsolutePath())) {

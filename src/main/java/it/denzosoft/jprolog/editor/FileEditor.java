@@ -32,7 +32,7 @@ public class FileEditor extends JPanel {
     private List<Runnable> modifiedListeners;
     private PrologSyntaxHighlighter syntaxHighlighter;
     
-    // Colori per syntax highlighting
+    // Colors for syntax highlighting
     private static final Color COMMENT_COLOR = new Color(0, 128, 0);
     private static final Color STRING_COLOR = new Color(0, 0, 255);
     private static final Color KEYWORD_COLOR = new Color(128, 0, 128);
@@ -41,14 +41,14 @@ public class FileEditor extends JPanel {
     private static final Color LINE_NUMBER_COLOR = new Color(128, 128, 128);
     private static final Color CURRENT_LINE_COLOR = new Color(255, 255, 220);
     
-    // Pattern per syntax highlighting
+    // Patterns for syntax highlighting
     private static final Pattern COMMENT_PATTERN = Pattern.compile("%.*");
     private static final Pattern STRING_PATTERN = Pattern.compile("\"[^\"]*\"|'[^']*'");
     private static final Pattern ATOM_PATTERN = Pattern.compile("\\b[a-z][a-zA-Z0-9_]*\\b");
     private static final Pattern VARIABLE_PATTERN = Pattern.compile("\\b[A-Z_][a-zA-Z0-9_]*\\b");
     private static final Pattern OPERATOR_PATTERN = Pattern.compile(":-|-->|\\\\\\+|=\\.\\.|\\\\\\/|/\\\\|@<|@=<|@>|@>=|=:=|=\\\\=|==|\\\\==|=<|>=|\\\\=|is|\\+|-|\\*|/|\\^|mod|rem|abs|sin|cos|tan|exp|log|sqrt");
     
-    // Parole chiave Prolog
+    // Prolog keywords
     private static final String[] PROLOG_KEYWORDS = {
         "true", "false", "fail", "cut", "call", "findall", "bagof", "setof",
         "assert", "asserta", "assertz", "retract", "retractall", "abolish",
@@ -78,7 +78,7 @@ public class FileEditor extends JPanel {
     private void initializeComponents() {
         setLayout(new BorderLayout());
         
-        // Area di testo principale con syntax highlighting
+        // Main text area with syntax highlighting
         textPane = new JTextPane();
         textPane.setFont(new Font("Consolas", Font.PLAIN, 14));
         
@@ -88,7 +88,7 @@ public class FileEditor extends JPanel {
         textPane.setSelectionColor(new Color(173, 214, 255));
         textPane.setSelectedTextColor(Color.BLACK);
         
-        // Area numerazione righe (adattata per JTextPane)
+        // Line numbering area (adapted for JTextPane)
         lineNumberArea = new LineNumberArea(textPane);
         
         // ScrollPane
@@ -97,7 +97,7 @@ public class FileEditor extends JPanel {
         scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
         scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
         
-        // Aggiungi listener per sincronizzare i numeri di riga durante lo scroll
+        // Add listener to synchronize line numbers during scroll
         scrollPane.getViewport().addChangeListener(e -> {
             if (lineNumberArea != null) {
                 lineNumberArea.repaint();
@@ -114,10 +114,10 @@ public class FileEditor extends JPanel {
     }
     
     /**
-     * Configura il syntax highlighting.
+     * Configure syntax highlighting.
      */
     private void setupSyntaxHighlighting() {
-        // Aggiungi listener per aggiornamenti del syntax highlighting
+        // Add listener for syntax highlighting updates
         textPane.getDocument().addDocumentListener(new DocumentListener() {
             @Override
             public void insertUpdate(DocumentEvent e) {
@@ -139,25 +139,25 @@ public class FileEditor extends JPanel {
             
             @Override
             public void changedUpdate(DocumentEvent e) {
-                // Ignorato per document listener
+                // Ignored for document listener
             }
         });
         
-        // Aggiungi listener per highlight della riga corrente
+        // Add listener for current line highlighting
         textPane.addCaretListener(e -> highlightCurrentLine());
     }
     
     /**
-     * Evidenzia la riga corrente.
+     * Highlight current line.
      */
     private void highlightCurrentLine() {
-        // Disabilitato per evitare problemi di performance
+        // Disabled to avoid performance issues
         // Current line highlighting can be implemented
-        // con un approccio diverso usando un Highlighter personalizzato
+        // with a different approach using a custom Highlighter
     }
     
     /**
-     * Carica il contenuto del file.
+     * Load file content.
      */
     private void loadFile() throws IOException {
         try {
@@ -166,7 +166,7 @@ public class FileEditor extends JPanel {
             textPane.setText(content);
             textPane.setCaretPosition(0);
             
-            // Applica syntax highlighting dopo il caricamento
+            // Apply syntax highlighting after loading
             if (syntaxHighlighter != null) {
                 SwingUtilities.invokeLater(() -> syntaxHighlighter.highlightSyntax());
             }
@@ -179,10 +179,10 @@ public class FileEditor extends JPanel {
     }
     
     /**
-     * Configura gli event handlers.
+     * Configure event handlers.
      */
     private void setupEventHandlers() {
-        // Listener per modifiche al documento (aggiunto a quello del syntax highlighting)
+        // Listener for document changes (added to the syntax highlighting one)
         textPane.getDocument().addDocumentListener(new DocumentListener() {
             @Override
             public void insertUpdate(DocumentEvent e) {
@@ -200,7 +200,7 @@ public class FileEditor extends JPanel {
             }
         });
         
-        // Shortcuts da tastiera
+        // Keyboard shortcuts
         textPane.addKeyListener(new KeyListener() {
             @Override
             public void keyPressed(KeyEvent e) {
@@ -217,7 +217,7 @@ public class FileEditor extends JPanel {
                     }
                 }
                 
-                // Auto-indentazione
+                // Auto-indentation
                 if (e.getKeyCode() == KeyEvent.VK_ENTER) {
                     autoIndent();
                 }
@@ -232,7 +232,7 @@ public class FileEditor extends JPanel {
     }
     
     /**
-     * Auto-indentazione quando si preme Enter.
+     * Auto-indentation when Enter is pressed.
      */
     private void autoIndent() {
         try {
@@ -246,7 +246,7 @@ public class FileEditor extends JPanel {
             
             String line = doc.getText(lineStart, lineEnd - lineStart);
             
-            // Conta gli spazi/tab all'inizio della riga
+            // Count spaces/tabs at the beginning of the line
             int indent = 0;
             for (char c : line.toCharArray()) {
                 if (c == ' ') indent++;
@@ -254,12 +254,12 @@ public class FileEditor extends JPanel {
                 else break;
             }
             
-            // Aggiungi indentazione extra per certe costruzioni
+            // Add extra indentation for certain constructions
             if (line.trim().endsWith(":-") || line.trim().endsWith("(")) {
                 indent += 4;
             }
             
-            // Inserisci l'indentazione
+            // Insert indentation
             final int finalIndent = indent;
             SwingUtilities.invokeLater(() -> {
                 StringBuilder indentStr = new StringBuilder("\n");
@@ -269,7 +269,7 @@ public class FileEditor extends JPanel {
                 try {
                     doc.insertString(textPane.getCaretPosition(), indentStr.toString(), null);
                 } catch (BadLocationException ex) {
-                    // Ignora
+                    // Ignore
                 }
             });
             
@@ -279,7 +279,7 @@ public class FileEditor extends JPanel {
     }
     
     /**
-     * Segna il file come modificato.
+     * Marks the file as modified.
      */
     private void markAsModified() {
         if (!isModified) {
@@ -290,7 +290,7 @@ public class FileEditor extends JPanel {
     }
     
     /**
-     * Aggiorna il titolo del tab.
+     * Updates the tab title.
      */
     private void updateTitle() {
         notifyModifiedListeners();
@@ -311,7 +311,7 @@ public class FileEditor extends JPanel {
             ide.getStatusBar().setMessage("File saved: " + file.getName());
             ide.getBottomTabbedPane().appendToOutput("Saved: " + file.getAbsolutePath() + "\n");
             
-            // Aggiorna i predicati dopo il salvataggio
+            // Update predicates after saving
             if (ide.getPredicatePanel() != null) {
                 ide.getPredicatePanel().updatePredicatesForFile(file);
             }
@@ -338,7 +338,7 @@ public class FileEditor extends JPanel {
                 int lineStart = lineElement.getStartOffset();
                 int lineEnd = lineElement.getEndOffset();
                 
-                // Evidenzia la riga con errore
+                // Highlight the error line
                 textPane.select(lineStart, lineEnd - 1);
                 textPane.setSelectionColor(ERROR_COLOR);
                 
@@ -374,7 +374,7 @@ public class FileEditor extends JPanel {
         int startPos = textPane.getCaretPosition();
         int foundPos = text.indexOf(search, startPos);
         
-        // Se non trovato dalla posizione corrente, cerca dall'inizio
+        // If not found from current position, search from beginning
         if (foundPos == -1) {
             foundPos = text.indexOf(search, 0);
         }
@@ -408,7 +408,7 @@ public class FileEditor extends JPanel {
     }
     
     /**
-     * Sostituisce tutto il testo nell'editor.
+     * Replaces all text in the editor.
      */
     public int replaceAllText(String searchText, String replaceText, boolean caseSensitive) {
         String content = textPane.getText();

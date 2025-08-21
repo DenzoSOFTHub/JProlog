@@ -14,7 +14,7 @@ import java.util.Date;
  */
 public class StatusBar extends JPanel {
     
-    // Componenti della barra di stato
+    // Status bar components
     private JLabel messageLabel;
     private JLabel fileStatusLabel;
     private JLabel positionLabel;
@@ -22,7 +22,7 @@ public class StatusBar extends JPanel {
     private JLabel timeLabel;
     private JProgressBar progressBar;
     
-    // Timer per aggiornamento orario
+    // Timer for clock update
     private Timer clockTimer;
     
     // Configuration
@@ -40,11 +40,11 @@ public class StatusBar extends JPanel {
     private void initializeComponents() {
         setBorder(new BevelBorder(BevelBorder.LOWERED));
         
-        // Label per messaggi generali
+        // Label for general messages
         messageLabel = new JLabel("Ready");
         messageLabel.setFont(messageLabel.getFont().deriveFont(Font.PLAIN, 11f));
         
-        // Label per stato del file
+        // Label for file status
         fileStatusLabel = new JLabel("No file");
         fileStatusLabel.setFont(fileStatusLabel.getFont().deriveFont(Font.PLAIN, 11f));
         fileStatusLabel.setHorizontalAlignment(SwingConstants.CENTER);
@@ -72,7 +72,7 @@ public class StatusBar extends JPanel {
     }
     
     /**
-     * Configura il layout della barra di stato.
+     * Configures the status bar layout.
      */
     private void setupLayout() {
         setLayout(new BorderLayout());
@@ -160,7 +160,7 @@ public class StatusBar extends JPanel {
     }
     
     /**
-     * Imposta un messaggio temporaneo che scompare dopo un timeout.
+     * Sets a temporary message that disappears after a timeout.
      */
     public void setTemporaryMessage(String message, int milliseconds) {
         setMessage(message);
@@ -234,7 +234,7 @@ public class StatusBar extends JPanel {
     }
     
     /**
-     * Imposta il valore della progress bar.
+     * Sets the progress bar value.
      */
     public void setProgress(int value) {
         SwingUtilities.invokeLater(() -> {
@@ -246,7 +246,7 @@ public class StatusBar extends JPanel {
     }
     
     /**
-     * Imposta il range della progress bar.
+     * Sets the progress bar range.
      */
     public void setProgressRange(int min, int max) {
         SwingUtilities.invokeLater(() -> {
@@ -287,7 +287,7 @@ public class StatusBar extends JPanel {
             messageLabel.setForeground(Color.RED);
             messageLabel.setToolTipText(message);
             
-            // Ripristina il colore normale dopo 5 secondi
+            // Restore normal color after 5 seconds
             Timer timer = new Timer(5000, e -> {
                 messageLabel.setForeground(Color.BLACK);
                 setMessage("Ready");
@@ -306,7 +306,7 @@ public class StatusBar extends JPanel {
             messageLabel.setForeground(new Color(0, 150, 0));
             messageLabel.setToolTipText(message);
             
-            // Ripristina il colore normale dopo 3 secondi
+            // Restore normal color after 3 seconds
             Timer timer = new Timer(3000, e -> {
                 messageLabel.setForeground(Color.BLACK);
                 setMessage("Ready");
@@ -325,7 +325,7 @@ public class StatusBar extends JPanel {
             messageLabel.setForeground(new Color(255, 140, 0));
             messageLabel.setToolTipText(message);
             
-            // Ripristina il colore normale dopo 4 secondi
+            // Restore normal color after 4 seconds
             Timer timer = new Timer(4000, e -> {
                 messageLabel.setForeground(Color.BLACK);
                 setMessage("Ready");
@@ -336,16 +336,16 @@ public class StatusBar extends JPanel {
     }
     
     /**
-     * Aggiunge informazioni aggiuntive alla barra di stato.
+     * Adds additional information to the status bar.
      */
     public void addStatusInfo(String key, String value) {
-        // Per estensioni future: potrebbe essere usato per mostrare
+        // For future extensions: could be used to show
         // informazioni specifiche del progetto o del file
         setMessage(key + ": " + value);
     }
     
     /**
-     * Ferma il timer dell'orologio quando il componente viene rimosso.
+     * Stops the clock timer when the component is removed.
      */
     public void dispose() {
         if (clockTimer != null && clockTimer.isRunning()) {

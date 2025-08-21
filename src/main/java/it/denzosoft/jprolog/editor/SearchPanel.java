@@ -57,33 +57,33 @@ public class SearchPanel extends JPanel {
      * Initializes panel components.
      */
     private void initializeComponents() {
-        // Campo di ricerca
+        // Search field
         searchField = new JTextField(20);
         searchField.setFont(searchField.getFont().deriveFont(Font.PLAIN, 12f));
         
-        // Campo di sostituzione
+        // Replace field
         replaceField = new JTextField(20);
         replaceField.setFont(replaceField.getFont().deriveFont(Font.PLAIN, 12f));
         
-        // Checkbox per opzioni
+        // Checkbox for options
         caseSensitiveBox = new JCheckBox("Case sensitive");
         caseSensitiveBox.setFont(caseSensitiveBox.getFont().deriveFont(Font.PLAIN, 11f));
         
-        wholeWordBox = new JCheckBox("Parola intera");
+        wholeWordBox = new JCheckBox("Whole word");
         wholeWordBox.setFont(wholeWordBox.getFont().deriveFont(Font.PLAIN, 11f));
         
         regexBox = new JCheckBox("Regex");
         regexBox.setFont(regexBox.getFont().deriveFont(Font.PLAIN, 11f));
         
-        // Pulsanti
-        findNextBtn = new JButton("Trova");
-        findPreviousBtn = new JButton("Precedente");
-        replaceBtn = new JButton("Sostituisci");
-        replaceAllBtn = new JButton("Sostituisci Tutto");
-        findInProjectBtn = new JButton("Trova nel Progetto");
+        // Buttons
+        findNextBtn = new JButton("Find");
+        findPreviousBtn = new JButton("Previous");
+        replaceBtn = new JButton("Replace");
+        replaceAllBtn = new JButton("Replace All");
+        findInProjectBtn = new JButton("Find in Project");
         closeBtn = new JButton("✕");
         
-        // Stile pulsanti
+        // Button style
         Dimension btnSize = new Dimension(100, 25);
         findNextBtn.setPreferredSize(btnSize);
         findPreviousBtn.setPreferredSize(btnSize);
@@ -95,7 +95,7 @@ public class SearchPanel extends JPanel {
         closeBtn.setMargin(new Insets(2, 2, 2, 2));
         closeBtn.setFont(closeBtn.getFont().deriveFont(Font.BOLD, 12f));
         
-        // Lista risultati per ricerca nel progetto
+        // Results list for project search
         resultsList = new JList<>();
         resultsList.setCellRenderer(new SearchResultCellRenderer());
         resultsList.setFont(resultsList.getFont().deriveFont(Font.PLAIN, 11f));
@@ -106,21 +106,21 @@ public class SearchPanel extends JPanel {
     }
     
     /**
-     * Configura il layout del pannello.
+     * Configures the panel layout.
      */
     private void setupLayout() {
         setLayout(new BorderLayout());
         setBorder(new EmptyBorder(5, 5, 5, 5));
         setBackground(new Color(245, 245, 245));
         
-        // Pannello principale
+        // Main panel
         JPanel mainPanel = new JPanel(new GridBagLayout());
         mainPanel.setOpaque(false);
         GridBagConstraints gbc = new GridBagConstraints();
         
-        // Prima riga: campo ricerca e pulsanti
+        // First row: search field and buttons
         gbc.gridx = 0; gbc.gridy = 0; gbc.insets = new Insets(2, 2, 2, 2);
-        mainPanel.add(new JLabel("Trova:"), gbc);
+        mainPanel.add(new JLabel("Find:"), gbc);
         
         gbc.gridx = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0;
         mainPanel.add(searchField, gbc);
@@ -137,9 +137,9 @@ public class SearchPanel extends JPanel {
         gbc.gridx = 5;
         mainPanel.add(closeBtn, gbc);
         
-        // Seconda riga: campo sostituzione e pulsanti
+        // Second row: replace field and buttons
         gbc.gridx = 0; gbc.gridy = 1;
-        mainPanel.add(new JLabel("Sostituisci:"), gbc);
+        mainPanel.add(new JLabel("Replace:"), gbc);
         
         gbc.gridx = 1; gbc.fill = GridBagConstraints.HORIZONTAL; gbc.weightx = 1.0;
         mainPanel.add(replaceField, gbc);
@@ -150,7 +150,7 @@ public class SearchPanel extends JPanel {
         gbc.gridx = 3;
         mainPanel.add(replaceAllBtn, gbc);
         
-        // Terza riga: opzioni
+        // Third row: options
         JPanel optionsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
         optionsPanel.setOpaque(false);
         optionsPanel.add(caseSensitiveBox);
@@ -166,10 +166,10 @@ public class SearchPanel extends JPanel {
     }
     
     /**
-     * Configura gli event handlers.
+     * Configures event handlers.
      */
     private void setupEventHandlers() {
-        // Enter nel campo di ricerca esegue ricerca
+        // Enter in search field executes search
         searchField.addKeyListener(new KeyListener() {
             @Override
             public void keyPressed(KeyEvent e) {
@@ -186,7 +186,7 @@ public class SearchPanel extends JPanel {
             public void keyReleased(KeyEvent e) {}
         });
         
-        // Enter nel campo sostituzione esegue sostituzione
+        // Enter in replace field executes replacement
         replaceField.addKeyListener(new KeyListener() {
             @Override
             public void keyPressed(KeyEvent e) {
@@ -203,7 +203,7 @@ public class SearchPanel extends JPanel {
             public void keyReleased(KeyEvent e) {}
         });
         
-        // Pulsanti
+        // Buttons
         findNextBtn.addActionListener(e -> findNext());
         findPreviousBtn.addActionListener(e -> findPrevious());
         replaceBtn.addActionListener(e -> replace());
@@ -211,7 +211,7 @@ public class SearchPanel extends JPanel {
         findInProjectBtn.addActionListener(e -> findInProject());
         closeBtn.addActionListener(e -> hidePanel());
         
-        // Click sulla lista risultati
+        // Click on results list
         resultsList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 SearchResult selected = resultsList.getSelectedValue();
@@ -223,7 +223,7 @@ public class SearchPanel extends JPanel {
     }
     
     /**
-     * Trova la prossima occorrenza.
+     * Finds the next occurrence.
      */
     private void findNext() {
         String searchText = searchField.getText();
@@ -233,27 +233,27 @@ public class SearchPanel extends JPanel {
         
         FileEditor currentEditor = ide.getEditorTabs().getCurrentEditor();
         if (currentEditor == null) {
-            showMessage("Nessun file aperto");
+            showMessage("No file open");
             return;
         }
         
         boolean found = currentEditor.findText(searchText, caseSensitiveBox.isSelected(), wholeWordBox.isSelected());
         if (!found) {
-            showMessage("Testo non trovato: " + searchText);
+            showMessage("Text not found: " + searchText);
         }
     }
     
     /**
-     * Trova l'occorrenza precedente.
+     * Finds the previous occurrence.
      */
     private void findPrevious() {
-        // Implementazione semplificata - in un'implementazione completa
-        // si dovrebbe cercare all'indietro
+        // Simplified implementation - in a complete implementation
+        // should search backwards
         findNext();
     }
     
     /**
-     * Sostituisce l'occorrenza corrente.
+     * Replaces the current occurrence.
      */
     private void replace() {
         String searchText = searchField.getText();
@@ -265,20 +265,20 @@ public class SearchPanel extends JPanel {
         
         FileEditor currentEditor = ide.getEditorTabs().getCurrentEditor();
         if (currentEditor == null) {
-            showMessage("Nessun file aperto");
+            showMessage("No file open");
             return;
         }
         
         boolean replaced = currentEditor.replaceText(searchText, replaceText, caseSensitiveBox.isSelected());
         if (replaced) {
-            showMessage("Testo sostituito");
+            showMessage("Text replaced");
         } else {
-            showMessage("Nessun testo selezionato da sostituire");
+            showMessage("No selected text to replace");
         }
     }
     
     /**
-     * Sostituisce tutte le occorrenze.
+     * Replaces all occurrences.
      */
     private void replaceAll() {
         String searchText = searchField.getText();
@@ -290,16 +290,16 @@ public class SearchPanel extends JPanel {
         
         FileEditor currentEditor = ide.getEditorTabs().getCurrentEditor();
         if (currentEditor == null) {
-            showMessage("Nessun file aperto");
+            showMessage("No file open");
             return;
         }
         
         int count = currentEditor.replaceAllText(searchText, replaceText, caseSensitiveBox.isSelected());
-        showMessage("Sostituite " + count + " occorrenze");
+        showMessage("Replaced " + count + " occurrences");
     }
     
     /**
-     * Cerca in tutti i file del progetto usando il nuovo SearchResultsPanel.
+     * Searches all project files using the new SearchResultsPanel.
      */
     private void findInProject() {
         String searchText = searchField.getText();
@@ -309,26 +309,26 @@ public class SearchPanel extends JPanel {
         
         File projectRoot = ide.getCurrentProjectRoot();
         if (projectRoot == null) {
-            showMessage("Nessun progetto aperto");
+            showMessage("No project open");
             return;
         }
         
-        // Usa il nuovo sistema di ricerca con SearchResultsPanel
+        // Use new search system with SearchResultsPanel
         java.util.Map<File, java.util.List<SearchResultsPanel.SearchMatch>> results = 
             new java.util.HashMap<>();
         findInDirectoryNew(projectRoot, searchText, results);
         
-        // Mostra i risultati nel tab Search
+        // Show results in Search tab
         ide.getBottomTabbedPane().setSearchResults(results, searchText);
         
-        // Calcola statistiche
+        // Calculate statistics
         int totalMatches = results.values().stream().mapToInt(java.util.List::size).sum();
         int fileCount = results.size();
-        showMessage("Trovate " + totalMatches + " occorrenze in " + fileCount + " file");
+        showMessage("Found " + totalMatches + " occurrences in " + fileCount + " files");
     }
     
     /**
-     * Ricerca ricorsiva in una directory (nuovo formato per SearchResultsPanel).
+     * Recursive search in a directory (new format for SearchResultsPanel).
      */
     private void findInDirectoryNew(File directory, String searchText, 
             java.util.Map<File, java.util.List<SearchResultsPanel.SearchMatch>> results) {
@@ -348,7 +348,7 @@ public class SearchPanel extends JPanel {
     }
     
     /**
-     * Ricerca ricorsiva in una directory (vecchia implementazione).
+     * Recursive search in a directory (old implementation).
      */
     private void findInDirectory(File directory, String searchText) {
         File[] files = directory.listFiles();
@@ -364,7 +364,7 @@ public class SearchPanel extends JPanel {
     }
     
     /**
-     * Ricerca in un singolo file (nuovo formato per SearchResultsPanel).
+     * Search in a single file (new format for SearchResultsPanel).
      */
     private java.util.List<SearchResultsPanel.SearchMatch> findInFileNew(File file, String searchText) {
         java.util.List<SearchResultsPanel.SearchMatch> matches = new ArrayList<>();
@@ -396,14 +396,14 @@ public class SearchPanel extends JPanel {
                 }
             }
         } catch (Exception e) {
-            // Ignora errori di lettura file
+            // Ignore file reading errors
         }
         
         return matches;
     }
     
     /**
-     * Ricerca in un singolo file.
+     * Search in a single file.
      */
     private void findInFile(File file, String searchText) {
         try {
@@ -435,12 +435,12 @@ public class SearchPanel extends JPanel {
             }
             
         } catch (Exception e) {
-            // Ignora errori di lettura file
+            // Ignore file reading errors
         }
     }
     
     /**
-     * Conta i file unici nei risultati.
+     * Counts unique files in results.
      */
     private int countUniqueFiles() {
         return (int) searchResults.stream()
@@ -450,7 +450,7 @@ public class SearchPanel extends JPanel {
     }
     
     /**
-     * Apre un risultato di ricerca nell'editor.
+     * Opens a search result in the editor.
      */
     private void openSearchResult(SearchResult result) {
         ide.getEditorTabs().openFile(result.getFile());
@@ -459,7 +459,7 @@ public class SearchPanel extends JPanel {
         if (editor != null) {
             editor.goToLine(result.getLineNumber());
             
-            // Evidenzia il testo trovato
+            // Highlight found text
             JTextArea textArea = editor.getTextArea();
             try {
                 int lineStart = textArea.getLineStartOffset(result.getLineNumber() - 1);
@@ -468,26 +468,26 @@ public class SearchPanel extends JPanel {
                 
                 textArea.select(highlightStart, highlightEnd);
             } catch (Exception e) {
-                // Ignora errori di posizionamento
+                // Ignore positioning errors
             }
         }
     }
     
     /**
-     * Mostra un messaggio di stato.
+     * Shows a status message.
      */
     private void showMessage(String message) {
         ide.getStatusBar().setMessage(message);
     }
     
     /**
-     * Nasconde il pannello di ricerca.
+     * Hides the search panel.
      */
     private void hidePanel() {
         setVisible(false);
         resultsScrollPane.setVisible(false);
         
-        // Restituisce focus all'editor
+        // Return focus to editor
         FileEditor currentEditor = ide.getEditorTabs().getCurrentEditor();
         if (currentEditor != null) {
             currentEditor.requestFocus();
@@ -495,7 +495,7 @@ public class SearchPanel extends JPanel {
     }
     
     /**
-     * Imposta il focus sul campo di ricerca.
+     * Sets focus on the search field.
      */
     public void focusSearchField() {
         searchField.requestFocus();
@@ -513,7 +513,7 @@ public class SearchPanel extends JPanel {
     }
     
     /**
-     * Classe per rappresentare un risultato di ricerca.
+     * Class to represent a search result.
      */
     private static class SearchResult {
         private File file;
@@ -547,7 +547,7 @@ public class SearchPanel extends JPanel {
     }
     
     /**
-     * Renderer personalizzato per i risultati di ricerca.
+     * Custom renderer for search results.
      */
     private static class SearchResultCellRenderer extends DefaultListCellRenderer {
         @Override
@@ -563,7 +563,7 @@ public class SearchPanel extends JPanel {
                 String lineNum = String.valueOf(result.getLineNumber());
                 String lineText = result.getLineText();
                 
-                // Limita la lunghezza del testo della riga
+                // Limit line text length
                 if (lineText.length() > 80) {
                     lineText = lineText.substring(0, 77) + "...";
                 }

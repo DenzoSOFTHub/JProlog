@@ -2030,3 +2030,218 @@ depth(D) --> [40], depth(D1), [41], depth(D2), { D is max(D1+1, D2) }.
 ---
 
 **Ultimo Aggiornamento**: 2025-08-20
+
+---
+
+### ISS-2025-0043: Missing unify_with_occurs_check/2 Built-in Predicate
+
+**Title**: Implement mandatory occurs check unification predicate  
+**Date Created**: 2025-08-21  
+**Status**: TO_ANALYZE  
+**Priority**: HIGH  
+
+#### Description
+The ISO Prolog standard requires `unify_with_occurs_check/2` predicate for unification with mandatory occurs check to prevent infinite structures.
+
+**Missing Implementation**: 
+```prolog
+?- unify_with_occurs_check/2
+% Should perform unification with occurs check enabled
+```
+
+**Expected Behavior**: Unify two terms with occurs check to prevent infinite structures like `X = f(X)`
+**Current Status**: Predicate not implemented
+**Impact**: ISO Prolog compliance gap for safe unification operations
+
+---
+
+### ISS-2025-0044: Missing Advanced Stream I/O Predicates
+
+**Title**: Implement missing stream property and positioning predicates  
+**Date Created**: 2025-08-21  
+**Status**: TO_ANALYZE  
+**Priority**: MEDIUM  
+
+#### Description
+Several ISO Prolog stream management predicates are not implemented:
+- `stream_property/2` - Query stream properties
+- `at_end_of_stream/0, at_end_of_stream/1` - End of stream testing
+- `set_stream_position/2` - Stream position manipulation
+
+**Missing Implementations**:
+```prolog
+% Stream property querying
+?- stream_property(Stream, Property).
+
+% End of stream testing  
+?- at_end_of_stream.
+?- at_end_of_stream(Stream).
+
+% Stream positioning
+?- set_stream_position(Stream, Position).
+```
+
+**Expected Behavior**: Full stream management capabilities per ISO standard
+**Current Status**: Stream system incomplete
+**Impact**: Limited I/O capabilities for advanced applications
+
+---
+
+### ISS-2025-0045: Missing Character and Byte Lookahead Predicates
+
+**Title**: Implement peek predicates for character and byte lookahead  
+**Date Created**: 2025-08-21  
+**Status**: TO_ANALYZE  
+**Priority**: MEDIUM  
+
+#### Description
+ISO Prolog lookahead predicates for non-consuming character and byte input are missing:
+- `peek_char/2, peek_char/1` - Character lookahead
+- `peek_code/2, peek_code/1` - Character code lookahead  
+- `peek_byte/2, peek_byte/1` - Byte lookahead
+
+**Missing Implementations**:
+```prolog
+% Character lookahead
+?- peek_char(Stream, Char).
+?- peek_char(Char).
+
+% Character code lookahead
+?- peek_code(Stream, Code).
+?- peek_code(Code).
+
+% Byte lookahead
+?- peek_byte(Stream, Byte).
+?- peek_byte(Byte).
+```
+
+**Expected Behavior**: Non-consuming input lookahead for parsing applications
+**Current Status**: Only consuming input predicates available
+**Impact**: Parsing applications cannot implement lookahead strategies
+
+---
+
+### ISS-2025-0046: Missing Byte Input/Output Predicates
+
+**Title**: Implement binary I/O predicates for byte operations  
+**Date Created**: 2025-08-21  
+**Status**: TO_ANALYZE  
+**Priority**: MEDIUM  
+
+#### Description
+Binary I/O predicates for byte-level operations are not implemented:
+- `get_byte/2, get_byte/1` - Byte input
+- `put_byte/2, put_byte/1` - Byte output
+
+**Missing Implementations**:
+```prolog
+% Byte input
+?- get_byte(Stream, Byte).
+?- get_byte(Byte).
+
+% Byte output
+?- put_byte(Stream, Byte).
+?- put_byte(Byte).
+```
+
+**Expected Behavior**: Binary I/O operations for file processing
+**Current Status**: Only character-based I/O available
+**Impact**: Cannot process binary files or perform byte-level operations
+
+---
+
+### ISS-2025-0047: Missing Advanced Term I/O Predicates
+
+**Title**: Implement advanced term reading and writing predicates with options  
+**Date Created**: 2025-08-21  
+**Status**: TO_ANALYZE  
+**Priority**: MEDIUM  
+
+#### Description
+Advanced term I/O predicates with formatting options are missing:
+- `read_term/3, read_term/2` - Term reading with options
+- `write_term/3, write_term/2` - Term writing with options
+- `writeq/1, writeq/2` - Quoted term writing
+- `write_canonical/1, write_canonical/2` - Canonical term writing
+
+**Missing Implementations**:
+```prolog
+% Advanced term reading
+?- read_term(Stream, Term, Options).
+?- read_term(Term, Options).
+
+% Advanced term writing
+?- write_term(Stream, Term, Options).
+?- write_term(Term, Options).
+
+% Quoted writing
+?- writeq(Term).
+?- writeq(Stream, Term).
+
+% Canonical writing
+?- write_canonical(Term).
+?- write_canonical(Stream, Term).
+```
+
+**Expected Behavior**: Full control over term I/O formatting and parsing options
+**Current Status**: Basic term I/O only
+**Impact**: Limited control over term representation in I/O operations
+
+---
+
+### ISS-2025-0048: Missing Operator Management Predicates
+
+**Title**: Implement operator querying and character conversion predicates  
+**Date Created**: 2025-08-21  
+**Status**: TO_ANALYZE  
+**Priority**: LOW  
+
+#### Description
+Operator management and character conversion predicates are missing:
+- `current_op/3` - Operator querying
+- `char_conversion/2` - Character conversion setup
+- `current_char_conversion/2` - Character conversion querying
+
+**Missing Implementations**:
+```prolog
+% Operator querying
+?- current_op(Precedence, Type, Name).
+
+% Character conversion
+?- char_conversion(From, To).
+?- current_char_conversion(From, To).
+```
+
+**Expected Behavior**: Complete operator and character conversion management
+**Current Status**: Operator definition available but not querying
+**Impact**: Limited introspection capabilities for operator and conversion settings
+
+---
+
+### ISS-2025-0049: Missing Advanced Clause Retrieval Implementation
+
+**Title**: Implement proper clause/2 predicate with indexing and variable handling  
+**Date Created**: 2025-08-21  
+**Status**: TO_ANALYZE  
+**Priority**: MEDIUM  
+
+#### Description
+The `clause/2` predicate needs proper implementation with:
+- Proper indexing for efficient clause retrieval
+- Correct variable scoping and renaming
+- Support for retrieving clauses with fresh variables
+
+**Current Limitations**:
+```prolog
+% Basic clause retrieval may not work correctly with complex patterns
+?- clause(Head, Body).
+% May have variable scoping issues or inefficient retrieval
+```
+
+**Expected Behavior**: Efficient clause retrieval with proper variable handling
+**Current Status**: Basic implementation may have limitations
+**Impact**: Meta-programming capabilities limited
+
+---
+
+**Ultimo Aggiornamento**: 2025-08-21

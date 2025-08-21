@@ -27,8 +27,8 @@ public class PrologSyntaxHighlighter {
     private static final Pattern COMMENT_PATTERN = Pattern.compile("%.*");
     private static final Pattern MULTILINE_COMMENT_PATTERN = Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL);
     
-    // Pattern aggiuntivi per commenti multilinea in stile Prolog
-    // Alcuni dialetti Prolog supportano anche commenti con /* senza chiusura obbligatoria */
+    // Additional patterns for Prolog-style multiline comments
+    // Some Prolog dialects also support /* comments without mandatory closing */
     private static final Pattern STRING_PATTERN = Pattern.compile("('[^']*'|\"[^\"]*\")");
     private static final Pattern ATOM_PATTERN = Pattern.compile("\\b[a-z][a-zA-Z0-9_]*\\b");
     private static final Pattern VARIABLE_PATTERN = Pattern.compile("\\b[A-Z_][a-zA-Z0-9_]*\\b");
@@ -36,13 +36,13 @@ public class PrologSyntaxHighlighter {
     private static final Pattern FUNCTOR_PATTERN = Pattern.compile("\\b[a-z][a-zA-Z0-9_]*(?=\\s*\\()");
     private static final Pattern DIRECTIVE_PATTERN = Pattern.compile(":-");
     
-    // Pattern per operatori Prolog
+    // Pattern for Prolog operators
     private static final Pattern OPERATOR_PATTERN = Pattern.compile(
         "(:-|-->|\\\\\\+|=\\.\\.|\\\\=|/\\\\|@<|@=<|@>|@>=|=:=|=\\\\=|==|\\\\==|=<|>=|\\\\=|" +
         "is|\\+|-|\\*|/|\\^|mod|rem|abs|sin|cos|tan|exp|log|sqrt|=|\\.|,|;|\\||!)"
     );
     
-    // Keywords Prolog comuni
+    // Common Prolog keywords
     private static final Pattern KEYWORD_PATTERN = Pattern.compile(
         "\\b(true|false|fail|cut|call|findall|bagof|setof|forall|once|repeat|" +
         "assert|asserta|assertz|retract|retractall|abolish|consult|reconsult|" +
@@ -156,13 +156,13 @@ public class PrologSyntaxHighlighter {
         try {
             String text = document.getText(0, document.getLength());
             
-            // Reset di tutti gli stili
+            // Reset all styles
             document.setCharacterAttributes(0, document.getLength(), defaultStyle, true);
             
-            // Prima identifica e memorizza tutte le aree commentate
+            // First identify and store all commented areas
             identifyCommentRanges(text);
             
-            // Applica highlighting per categoria (ordine importante!)
+            // Apply highlighting by category (order matters!)
             // I commenti vengono applicati per primi e proteggono le aree interne
             highlightComments(text);
             highlightStrings(text);
@@ -196,14 +196,14 @@ public class PrologSyntaxHighlighter {
             
             String lineText = document.getText(start, length);
             
-            // Reset stile della riga
+            // Reset line style
             document.setCharacterAttributes(start, length, defaultStyle, true);
             
-            // Riidentifica i commenti per questa riga
+            // Re-identify comments for this line
             String fullText = document.getText(0, document.getLength());
             identifyCommentRanges(fullText);
             
-            // Applica highlighting alla riga
+            // Apply highlighting to the line
             highlightCommentsInRange(lineText, start);
             highlightStringsInRange(lineText, start);
             highlightDirectivesInRange(lineText, start);
@@ -220,7 +220,7 @@ public class PrologSyntaxHighlighter {
     }
     
     /**
-     * Identifica e memorizza tutte le aree commentate nel testo.
+     * Identifies and stores all commented areas in the text.
      */
     private void identifyCommentRanges(String text) {
         commentRanges.clear();
@@ -237,8 +237,8 @@ public class PrologSyntaxHighlighter {
             commentRanges.add(new CommentRange(matcher.start(), matcher.end()));
         }
         
-        // Gestione commenti multilinea non chiusi (/* senza */)
-        // Cerca pattern /* che non hanno corrispondente */ nella stessa riga
+        // Handle unclosed multiline comments (/* without */)
+        // Look for /* patterns that don't have corresponding */ in the same line
         identifyUnclosedMultilineComments(text);
     }
     
@@ -258,10 +258,10 @@ public class PrologSyntaxHighlighter {
             }
             
             if (!alreadyCovered) {
-                // Cerca la chiusura */ dopo questa posizione
+                // Look for */ closure after this position
                 int closePos = text.indexOf("*/", pos + 2);
                 if (closePos == -1) {
-                    // Commento non chiuso - estende fino alla fine del file
+                    // Unclosed comment - extends to end of file
                     commentRanges.add(new CommentRange(pos, text.length()));
                 } else {
                     // This case should already be handled by the normal pattern,
@@ -510,7 +510,7 @@ public class PrologSyntaxHighlighter {
      */
     public void setEnabled(boolean enabled) {
         if (!enabled) {
-            // Rimuove tutto l'highlighting
+            // Remove all highlighting
             try {
                 document.setCharacterAttributes(0, document.getLength(), defaultStyle, true);
             } catch (Exception e) {
