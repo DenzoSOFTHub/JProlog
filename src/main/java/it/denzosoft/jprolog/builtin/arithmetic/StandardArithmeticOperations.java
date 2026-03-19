@@ -20,22 +20,34 @@ public class StandardArithmeticOperations {
             }
             return a / b;
         });
+        // START_CHANGE: ISS-2025-0057 - Fix mod vs rem and add integer division //
+        // ISO Prolog: mod(X,Y) = X - floor(X/Y) * Y (result has sign of Y)
         registerOperation("mod", (a, b) -> {
             if (b == 0.0) {
                 throw new PrologException(ISOErrorTerms.zeroDivisorError("mod/2"));
             }
-            return a % b;
+            return a - Math.floor(a / b) * b;
         });
         registerOperation("**", Math::pow);
-        
-        // START_CHANGE: ISS-2025-0017 - Add missing arithmetic operators
-        // ISO Prolog remainder operation
+
+        // ISO Prolog: rem(X,Y) = X - truncate(X/Y) * Y (result has sign of X)
+        // Java's % operator implements rem semantics
         registerOperation("rem", (a, b) -> {
             if (b == 0.0) {
                 throw new PrologException(ISOErrorTerms.zeroDivisorError("rem/2"));
             }
             return a % b;
-        }); // Same as mod in Java
+        });
+
+        // ISO Prolog: X // Y = truncate(X / Y) (integer division)
+        registerOperation("//", (a, b) -> {
+            if (b == 0.0) {
+                throw new PrologException(ISOErrorTerms.zeroDivisorError("(//)/2"));
+            }
+            double result = a / b;
+            return result >= 0 ? Math.floor(result) : Math.ceil(result);
+        });
+        // END_CHANGE: ISS-2025-0057
         
         // Bitwise operations (convert to int, operate, convert back)
         registerOperation("/\\", (a, b) -> (double)((int)a.doubleValue() & (int)b.doubleValue()));

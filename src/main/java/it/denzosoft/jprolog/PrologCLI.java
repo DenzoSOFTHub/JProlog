@@ -158,7 +158,26 @@ public class PrologCLI {
                     System.out.println("Example: :save my_session.pl");
                 }
                 break;
-                
+
+            // START_CHANGE: ISS-2025-0085 - Compiled format CLI commands
+            case ":compile":
+                if (parts.length > 1) {
+                    compileFile(parts[1].trim());
+                } else {
+                    System.out.println("Usage: :compile <filename.pl>");
+                }
+                break;
+
+            case ":consult_compiled":
+            case ":cc":
+                if (parts.length > 1) {
+                    consultCompiledFile(parts[1].trim());
+                } else {
+                    System.out.println("Usage: :consult_compiled <filename.jpc>");
+                }
+                break;
+            // END_CHANGE: ISS-2025-0085
+
             default:
                 System.out.println("Unknown command: " + command);
                 System.out.println("Use :help to see available commands.");
@@ -288,7 +307,36 @@ public class PrologCLI {
         }
     }
     // END_CHANGE: ISS-2025-0024
-    
+
+    // START_CHANGE: ISS-2025-0085 - Compiled format methods
+    private void compileFile(String filename) {
+        try {
+            long start = System.currentTimeMillis();
+            String jpcFile = prolog.compileFile(filename);
+            long elapsed = System.currentTimeMillis() - start;
+            java.io.File f = new java.io.File(jpcFile);
+            System.out.println("Compiled: " + jpcFile + " (" + f.length() + " bytes, " + elapsed + " ms)");
+        } catch (java.io.IOException e) {
+            System.err.println("Compilation error: " + e.getMessage());
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+    }
+
+    private void consultCompiledFile(String filename) {
+        try {
+            long start = System.currentTimeMillis();
+            prolog.consultCompiled(filename);
+            long elapsed = System.currentTimeMillis() - start;
+            System.out.println("Loaded compiled file: " + filename + " (" + elapsed + " ms)");
+        } catch (java.io.IOException e) {
+            System.err.println("Load error: " + e.getMessage());
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+    }
+    // END_CHANGE: ISS-2025-0085
+
     /**
      * Count rules in content for user feedback
      */

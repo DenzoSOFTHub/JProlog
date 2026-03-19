@@ -16,7 +16,9 @@ public class CompoundCheck implements BuiltIn {
             throw new PrologEvaluationException("compound/1 requires exactly one argument.");
         }
 
-        Term termArg = query.getArguments().get(0);
+        // START_CHANGE: ISS-2025-0080 - Resolve bindings before type/ground checks
+        Term termArg = query.getArguments().get(0).resolveBindings(bindings);
+        // END_CHANGE: ISS-2025-0080
 
         if (termArg.isGround()) {
             boolean isCompound = (termArg instanceof CompoundTerm);

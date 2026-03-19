@@ -18,8 +18,11 @@ public class NonVarCheck implements BuiltIn {
 
         Term termArg = query.getArguments().get(0);
 
-        boolean isNotAVariable = !(termArg instanceof Variable);
-        // Logic equivalent to checking boundness of Vars also
+        // START_CHANGE: ISS-2025-0051 - Fix nonvar/1 to check bindings map
+        // ISO Prolog: nonvar(X) succeeds if X is not an unbound variable.
+        Term resolved = termArg.resolveBindings(bindings);
+        boolean isNotAVariable = !(resolved instanceof Variable);
+        // END_CHANGE: ISS-2025-0051
 
         if (isNotAVariable) {
             solutions.add(bindings);

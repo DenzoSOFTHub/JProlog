@@ -22,23 +22,40 @@ public class Is implements BuiltIn {
         Term variableTerm = query.getArguments().get(0);
         Term expressionTerm = query.getArguments().get(1);
 
-        if (!(variableTerm instanceof Variable)) {
-            throw new PrologEvaluationException("First argument of 'is' must be a variable.");
-        }
+        // START_CHANGE: ISS-2025-0074 - Support bound variables and numbers in is/2
+        // Resolve bindings on the first argument for ISO compliance:
+        // - If unbound Variable, bind it to the result
+        // - If bound to a Number (or a Number literal), check equality with result
+        variableTerm = variableTerm.resolveBindings(bindings);
 
         try {
             double result = ArithmeticEvaluator.evaluate(expressionTerm, bindings);
-            Variable variable = (Variable) variableTerm;
-            
-            // Create a new bindings map with the variable bound to the result
-            Map<String, Term> newBindings = new HashMap<>(bindings);
-            newBindings.put(variable.getName(), new Number(result));
-            
-            solutions.add(newBindings);
-            return true;
+
+            if (variableTerm instanceof Variable) {
+                // Unbound variable: bind it to the result
+                Variable variable = (Variable) variableTerm;
+                Map<String, Term> newBindings = new HashMap<>(bindings);
+                newBindings.put(variable.getName(), new Number(result));
+                solutions.add(newBindings);
+                return true;
+            } else if (variableTerm instanceof Number) {
+                // Already bound to a number or a number literal: check equality
+                double existingValue = ((Number) variableTerm).getValue();
+                if (existingValue == result) {
+                    solutions.add(new HashMap<>(bindings));
+                    return true;
+                } else {
+                    return false;
+                }
+            } else {
+                // First argument resolved to a non-numeric term: type error per ISO
+                throw new PrologEvaluationException(
+                    "is/2: first argument must be a variable or a number, got: " + variableTerm);
+            }
         } catch (IllegalArgumentException e) {
             // Return false for arithmetic errors instead of throwing exception
             return false;
         }
+        // END_CHANGE: ISS-2025-0074
     }
 }

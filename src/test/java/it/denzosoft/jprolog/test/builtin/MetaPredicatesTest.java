@@ -61,18 +61,24 @@ public class MetaPredicatesTest {
     
     @Test
     public void testCallWithExtraArgs() {
-        // Test call/2, call/3, etc.
-        String program = 
-            "append([], L, L).\n" +
-            "append([H|T], L, [H|R]) :- append(T, L, R).\n" +
-            "test_call2(Result) :- call(append([1,2]), [3,4], Result).";
+        // START_CHANGE: ISS-2025-0085 - Test call/N with user-defined predicate
+        // Test call/2 and call/3 with extra arguments
+        String program =
+            "my_add(X, Y, Z) :- Z is X + Y.\n" +
+            "test_call2(Result) :- call(my_add(1), 2, Result).\n" +
+            "test_call1 :- call(my_add(1, 2, 3)).";
         prolog.consult(program);
-        
+
+        // Test call/3: call(my_add(1), 2, Result) -> my_add(1, 2, Result)
         List<Map<String, Term>> solutions = prolog.solve("test_call2(R)");
-        assertFalse("call/2 should work", solutions.isEmpty());
-        // Accept the Prolog list representation
+        assertFalse("call/3 should work", solutions.isEmpty());
         String result = solutions.get(0).get("R").toString();
-        assertTrue("Result should contain list elements", result.contains("1.0") && result.contains("2.0") && result.contains("3.0") && result.contains("4.0"));
+        assertTrue("call/3 result should be 3", result.equals("3.0") || result.equals("3"));
+
+        // Test call/1: call(my_add(1, 2, 3)) -> my_add(1, 2, 3)
+        solutions = prolog.solve("test_call1");
+        assertFalse("call/1 should work", solutions.isEmpty());
+        // END_CHANGE: ISS-2025-0085
     }
     
     @Test

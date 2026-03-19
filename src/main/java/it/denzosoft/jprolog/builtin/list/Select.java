@@ -2,9 +2,10 @@ package it.denzosoft.jprolog.builtin.list;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
-import it.denzosoft.jprolog.core.terms.Atom;
-import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
+// START_CHANGE: ISS-2025-0076 - Use centralized ListUtils
+import it.denzosoft.jprolog.core.util.ListUtils;
+// END_CHANGE: ISS-2025-0076
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -19,13 +20,17 @@ public class Select implements BuiltIn {
             throw new PrologEvaluationException("select/3 requires exactly 3 arguments.");
         }
 
-        Term element = query.getArguments().get(0);
-        Term inputList = query.getArguments().get(1);
+        // START_CHANGE: ISS-2025-0066 - Resolve bindings before checking groundness
+        Term element = query.getArguments().get(0).resolveBindings(bindings);
+        Term inputList = query.getArguments().get(1).resolveBindings(bindings);
         Term remainderList = query.getArguments().get(2);
+        // END_CHANGE: ISS-2025-0066
 
         if (inputList.isGround()) {
+            // START_CHANGE: ISS-2025-0076 - Use centralized ListUtils
             // Extract elements from the input list
-            List<Term> elements = extractElements(inputList);
+            List<Term> elements = ListUtils.extractElements(inputList);
+            // END_CHANGE: ISS-2025-0076
             boolean found = false;
             
             // Try removing each element from the list
@@ -34,10 +39,15 @@ public class Select implements BuiltIn {
                 
                 // Try to unify the selected element
                 if (element.unify(elements.get(i).copy(), newBindings)) {
-                    // Create remainder list without the selected element
-                    List<Term> remainderElements = new ArrayList<>(elements);
-                    remainderElements.remove(i);
-                    Term remainderListTerm = createList(remainderElements);
+                    // START_CHANGE: ISS-2025-0077 - Optimize Select remainder list construction
+                    // Build remainder by concatenating sublists, avoiding O(n) remove
+                    List<Term> remainderElements = new ArrayList<>(elements.size() - 1);
+                    remainderElements.addAll(elements.subList(0, i));
+                    remainderElements.addAll(elements.subList(i + 1, elements.size()));
+                    // END_CHANGE: ISS-2025-0077
+                    // START_CHANGE: ISS-2025-0076 - Use centralized ListUtils
+                    Term remainderListTerm = ListUtils.createList(remainderElements);
+                    // END_CHANGE: ISS-2025-0076
                     
                     // Unify with the remainder list
                     if (remainderList.unify(remainderListTerm, newBindings)) {
@@ -49,35 +59,10 @@ public class Select implements BuiltIn {
             
             return found;
         } else {
-            throw new PrologEvaluationException("select/3 requires a ground input list.");
+            // START_CHANGE: ISS-2025-0079 - Return false instead of throwing for normal failure
+            return false;
+            // END_CHANGE: ISS-2025-0079
         }
     }
 
-    private List<Term> extractElements(Term list) {
-        List<Term> elements = new ArrayList<>();
-        Term current = list;
-        
-        while (current instanceof CompoundTerm) {
-            CompoundTerm compound = (CompoundTerm) current;
-            if (compound.getName().equals(".") && compound.getArguments().size() == 2) {
-                elements.add(compound.getArguments().get(0));
-                current = compound.getArguments().get(1);
-            } else {
-                break;
-            }
-        }
-        
-        return elements;
-    }
-
-    private Term createList(List<Term> elements) {
-        Term result = new Atom("[]");
-        for (int i = elements.size() - 1; i >= 0; i--) {
-            List<Term> args = new ArrayList<>();
-            args.add(elements.get(i));
-            args.add(result);
-            result = new CompoundTerm(new Atom("."), args);
-        }
-        return result;
-    }
 }

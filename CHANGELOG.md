@@ -7,6 +7,154 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.3.0] - 2026-03-19
+
+### 100% ISO 13211-1 Compliance & 25+ New Predicates
+
+Major release achieving full ISO Prolog compliance and adding comprehensive higher-order, list utility, term I/O, and conversion predicates.
+
+### Added
+
+- **Higher-order list predicates** (BuiltInWithContext):
+  - `maplist/2,3,4` — apply goal to each list element, with 1-3 input/output lists
+  - `include/3` — filter list keeping elements where goal succeeds
+  - `exclude/3` — filter list keeping elements where goal fails
+  - `foldl/4,5,6` — left fold over 1-3 lists with accumulator
+
+- **List utility predicates**:
+  - `last/2` — last element of a list
+  - `flatten/2` — flatten nested lists
+  - `numlist/3` — generate integer range list
+  - `sum_list/2`, `sumlist/2` — sum of numeric elements
+  - `max_list/2`, `min_list/2` — max/min of numeric list
+  - `delete/3` — remove all occurrences of element
+  - `subtract/3`, `intersection/3`, `union/3` — set operations on lists
+
+- **Term I/O predicates**:
+  - `term_to_atom/2` — bidirectional term/atom conversion with parser
+  - `numbervars/3` — number unbound variables with `$VAR(N)` terms
+  - `tab/1` — output N space characters
+  - `with_output_to/2` — capture goal output as atom (BuiltInWithContext)
+
+- **Conversion predicates**:
+  - `string_to_atom/2` — bidirectional string/atom conversion
+  - `number_to_atom/2`, `atom_to_number/2` — number/atom conversion
+  - `string_code/3` — character code at 1-based index
+
+- **Module system** (CR-0002 completed):
+  - Module-qualified calls `Module:Goal` via `solveInModuleContext`
+  - Module-isolated rule storage in `consult()` and `asserta()`
+  - Unqualified call resolution: current module → global KB → imported modules
+
+- **Bug fixes**:
+  - `atom_concat/3` missing modes (+,-,+) and (-,+,+) for prefix/suffix extraction
+  - `atom_concat/3` verification mode (+,+,+)
+  - `float/1` arithmetic function (ISO: convert integer to float)
+  - 6 stale issues closed by triage (ISS-0008, 0012, 0014, 0015, 0016, 0021)
+
+### Quality Metrics
+- **100% ISO 13211-1 compliance** (111/111 core predicates)
+- **320 unit tests**: 0 failures, 0 errors
+- **20/20 example programs pass** (100%)
+- **0 active issues**, **0 active limitations**
+- **9/10 Change Requests completed** (only CR-0009 Debug Port Model remains)
+
+### Files Added
+- `src/main/java/it/denzosoft/jprolog/builtin/list/MapList.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/list/Include.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/list/Exclude.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/list/Foldl.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/list/Last.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/list/Flatten.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/list/Numlist.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/list/SumList.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/list/MaxList.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/list/MinList.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/list/Delete.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/list/Subtract.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/list/Intersection.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/list/Union.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/io/Tab.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/io/WithOutputTo.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/term/TermToAtom.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/term/NumberVars.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/conversion/StringToAtom.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/conversion/NumberToAtom.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/conversion/StringCode.java`
+
+---
+
+## [2.2.0] - 2026-03-18
+
+### Parser Hardening, Binary Compiled Format, and Bug Fixes
+
+Major release featuring a completely rewritten parser with unified operator table, a new binary compiled format for fast program loading, and numerous bug fixes.
+
+### Added
+- **Binary Compiled Format (.jpc)**: New `core.compiled` package with `JpcWriter`, `JpcReader`, and `JpcFormat`
+  - String interning for compact binary representation
+  - Varint encoding for space efficiency
+  - Source hash validation for cache invalidation
+  - Smart consult: auto-compiles and caches `.jpc` files
+- **CLI Commands**: `:compile <file>` and `:consult_compiled <file>` / `:cc <file>`
+- **Java API**: `Prolog.compile()`, `Prolog.compileFile()`, `Prolog.consultCompiled()`, `Prolog.consultSmart()`
+- **Module-qualified calls**: `Module:Goal` syntax now dispatched by QuerySolver
+- **call/1-8 support**: Extended `BuiltInRegistry` to recognize call at all arities
+
+### Changed
+- **TermParser rewritten**: Replaced static `OPERATOR_PRECEDENCE` maps with shared `OperatorTable` instance using proper Pratt parser algorithm
+- **Parser incremental processing**: `consult()` and `asserta()` now process `op/3` directives between clause parses
+- **Operator removal**: Precedence 0 in `op/3` now means "remove operator" per ISO standard
+- **Statistics/2**: Fixed to properly add solutions to output list
+
+### Fixed
+- Custom operators defined via `:- op(...)` now take effect immediately for subsequent clauses
+- `=..` operator tokenization in the new symbolic operator reader
+- Negative number vs prefix minus disambiguation in expression parser
+- Quoted atom parsing in `parsePrimary()`
+- `testInvalidPrecedence`: Updated for ISO-compliant precedence 0 behavior
+- `testCompleteISOFeatureSet`: Custom `means` operator now recognized
+- `testModuleQualifiedCall`: Module-qualified calls now dispatched
+- `testStatistics`: Solutions properly returned from `executeWithContext`
+- `testCallWithExtraArgs`: call/N now recognized at all arities
+
+### Added (continued)
+- **DCG fully operational** (CR-0003 completed): All 3 parser limitations resolved
+- **New I/O predicates** (CR-0005 completed):
+  - `at_end_of_stream/0-1`, `get_byte/1-2`, `put_byte/1-2`, `peek_byte/1-2`
+  - `write_canonical/1-2`, `char_conversion/2`, `current_char_conversion/2`
+- **10 issues closed** by triage (ISS-0040 through ISS-0049)
+
+### Quality Metrics
+- **320 unit tests**: 0 failures, 0 errors (up from 311 with 6 failures)
+- **20/20 example programs pass** (100%)
+- **94/94 MegaPredicateTest** passes
+- **0 active limitations** (down from 3)
+- **9 new JPC format tests** added
+
+### Files Added
+- `src/main/java/it/denzosoft/jprolog/core/compiled/JpcFormat.java`
+- `src/main/java/it/denzosoft/jprolog/core/compiled/JpcWriter.java`
+- `src/main/java/it/denzosoft/jprolog/core/compiled/JpcReader.java`
+- `src/test/java/it/denzosoft/jprolog/core/compiled/JpcFormatTest.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/io/AtEndOfStream.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/io/GetByte.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/io/PutByte.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/io/PeekByte.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/io/WriteCanonical.java`
+- `src/main/java/it/denzosoft/jprolog/builtin/system/CharConversion.java`
+
+---
+
+## [2.1.0] - 2026-03-17
+
+### Complete Italian-to-English Translation
+
+- Translated all CLI interface messages and documentation to English
+- Finalized documentation structure and naming conventions
+
+---
+
 ## [2.0.15] - 2025-08-20
 
 ### 🏁 Complete Session - Final Prolog Test File Organization

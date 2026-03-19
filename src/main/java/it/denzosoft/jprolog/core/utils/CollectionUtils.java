@@ -35,18 +35,27 @@ public final class CollectionUtils {
         }
 
         Term template = query.getArguments().get(0);
-        Term goal = query.getArguments().get(1);
+        Term rawGoal = query.getArguments().get(1);
         Term listVariable = query.getArguments().get(2);
+
+        // START_CHANGE: ISS-2025-0062 - Handle ^ existential quantification in bagof/setof
+        // Strip existential quantification: Var^Goal -> Goal (ignore Var for grouping)
+        Term goal = stripExistentialQuantification(rawGoal);
+        // END_CHANGE: ISS-2025-0062
 
         List<Term> collectedTerms = new ArrayList<>();
         List<Map<String, Term>> tempSolutions = new ArrayList<>();
         
         try {
             // Solve the goal to get all solutions
-            boolean success = querySolver.solve(goal, bindings, tempSolutions, CutStatus.notOccurred());
-            if (!success && tempSolutions.isEmpty()) {
+            querySolver.solve(goal, bindings, tempSolutions, CutStatus.notOccurred());
+            // START_CHANGE: ISS-2025-0072 - findall returns empty list on no solutions (ISO compliant)
+            // ISO Prolog: findall/3 succeeds with empty list when goal has no solutions.
+            // bagof/3 and setof/3 should fail when goal has no solutions.
+            if (tempSolutions.isEmpty() && !"findall".equals(collectorType)) {
                 return false;
             }
+            // END_CHANGE: ISS-2025-0072
         } catch (Exception e) {
             throw new PrologEvaluationException("Error solving goal in " + collectorType + ": " + e.getMessage(), e);
         }
@@ -66,6 +75,22 @@ public final class CollectionUtils {
         }
         return false;
     }
+
+    // START_CHANGE: ISS-2025-0062 - Strip existential quantification from goal
+    /**
+     * Strip existential quantification operators (^) from a goal.
+     * E.g., X^Y^goal(X,Y,Z) -> goal(X,Y,Z)
+     */
+    private static Term stripExistentialQuantification(Term goal) {
+        if (goal instanceof CompoundTerm) {
+            CompoundTerm ct = (CompoundTerm) goal;
+            if ("^".equals(ct.getName()) && ct.getArguments().size() == 2) {
+                return stripExistentialQuantification(ct.getArguments().get(1));
+            }
+        }
+        return goal;
+    }
+    // END_CHANGE: ISS-2025-0062
 
     /**
      * Create a Prolog list term from a Java list of terms.

@@ -1,8 +1,9 @@
 # JProlog Built-in Predicates Reference
 
-**Version**: JProlog v2.0.15  
-**Last Updated**: 2025-08-20  
-**Total Predicates**: 80+ predicates organized by functional category
+**Version**: JProlog v2.3.0
+**Last Updated**: 2026-03-19
+**Total Predicates**: 110+ predicates organized by functional category
+**ISO 13211-1 Compliance**: 100% (111/111 core predicates)
 
 This reference guide organizes JProlog's built-in predicates by their logical function and use case. Each section includes explanations suitable for users new to Prolog, with detailed examples showing practical applications.
 
@@ -552,6 +553,23 @@ templates([
 Match = person(john, _, _).
 ```
 
+### term_to_atom/2
+**Purpose**: Convert between a term and its atom representation. Bidirectional.
+```prolog
+?- term_to_atom(f(a, b), X).
+X = 'f(a, b)'.
+
+?- term_to_atom(T, 'f(a, b)').
+T = f(a, b).
+```
+
+### numbervars/3
+**Purpose**: Number unbound variables in a term with `$VAR(N)` terms.
+```prolog
+?- numbervars(f(X, Y, X), 0, End).
+X = '$VAR'(0), Y = '$VAR'(1), End = 2.
+```
+
 ---
 
 ## 3. List Operations
@@ -849,6 +867,100 @@ count_same(X, [X|T], Acc, Count, Rest) :-
     Acc1 is Acc + 1,
     count_same(X, T, Acc1, Count, Rest).
 count_same(_, List, Count, Count, List).
+```
+
+### last/2
+**Purpose**: True if Elem is the last element of List.
+```prolog
+?- last([1, 2, 3], X).
+X = 3.
+```
+
+### flatten/2
+**Purpose**: Flatten a nested list structure into a single flat list.
+```prolog
+?- flatten([1, [2, [3, 4]], 5], X).
+X = [1, 2, 3, 4, 5].
+```
+
+### numlist/3
+**Purpose**: Generate a list of consecutive integers from Low to High.
+```prolog
+?- numlist(1, 5, X).
+X = [1, 2, 3, 4, 5].
+```
+
+### sum_list/2, sumlist/2
+**Purpose**: Sum all numeric elements of a list.
+```prolog
+?- sum_list([1, 2, 3, 4], X).
+X = 10.
+```
+
+### max_list/2, min_list/2
+**Purpose**: Find the maximum/minimum numeric element in a list.
+```prolog
+?- max_list([3, 1, 4, 1, 5], X).
+X = 5.
+
+?- min_list([3, 1, 4, 1, 5], X).
+X = 1.
+```
+
+### delete/3
+**Purpose**: Remove all occurrences of an element from a list.
+```prolog
+?- delete([1, 2, 1, 3, 1], 1, X).
+X = [2, 3].
+```
+
+### subtract/3
+**Purpose**: Remove from Set all elements present in Delete.
+```prolog
+?- subtract([1, 2, 3, 4], [2, 4], X).
+X = [1, 3].
+```
+
+### intersection/3
+**Purpose**: Elements present in both sets.
+```prolog
+?- intersection([1, 2, 3], [2, 3, 4], X).
+X = [2, 3].
+```
+
+### union/3
+**Purpose**: Set1 plus elements from Set2 not already in Set1.
+```prolog
+?- union([1, 2, 3], [2, 3, 4], X).
+X = [1, 2, 3, 4].
+```
+
+### maplist/2, maplist/3, maplist/4
+**Purpose**: Apply a goal to each element of a list. Higher-order predicate.
+```prolog
+?- maplist(atom, [a, b, c]).
+true.
+
+?- maplist(succ, [1, 2, 3], Result).
+Result = [2, 3, 4].
+```
+
+### include/3, exclude/3
+**Purpose**: Filter a list by keeping (include) or removing (exclude) elements where Goal succeeds.
+```prolog
+?- include(atom, [a, 1, b, 2], X).
+X = [a, b].
+
+?- exclude(atom, [a, 1, b, 2], X).
+X = [1, 2].
+```
+
+### foldl/4, foldl/5, foldl/6
+**Purpose**: Left fold over a list with an accumulator.
+```prolog
+add(X, Y, Z) :- Z is X + Y.
+?- foldl(add, [1, 2, 3], 0, Sum).
+Sum = 6.
 ```
 
 ---
@@ -1737,6 +1849,66 @@ read_password_chars(Acc, Password) :-
     ).
 ```
 
+### Byte I/O
+
+### get_byte/1-2 and put_byte/1-2
+**Purpose**: Read or write single bytes for binary stream operations.
+
+```prolog
+% Read a byte from current input
+?- get_byte(B).
+
+% Read a byte from a specific stream
+?- get_byte(Stream, B).
+
+% Write a byte to current output
+?- put_byte(65).  % Writes 'A'
+
+% Write a byte to a specific stream
+?- put_byte(Stream, 65).
+```
+
+### peek_byte/1-2
+**Purpose**: Non-consuming byte lookahead.
+
+```prolog
+?- peek_byte(B).       % Peek from current input
+?- peek_byte(Stream, B). % Peek from specific stream
+```
+
+### at_end_of_stream/0-1
+**Purpose**: Test whether end of stream has been reached.
+
+```prolog
+?- at_end_of_stream.       % Current input
+?- at_end_of_stream(Stream). % Specific stream
+```
+
+### write_canonical/1-2
+**Purpose**: Write term in canonical (functor) notation that can be read back.
+
+```prolog
+?- write_canonical(1+2).
+% Outputs: '+'(1,2)
+
+?- write_canonical(Stream, Term).
+```
+
+### char_conversion/2 and current_char_conversion/2
+**Purpose**: Manage character conversion table used during term reading.
+
+```prolog
+% Define conversion: 'A' reads as 'a'
+?- char_conversion('A', a).
+
+% Query current conversion
+?- current_char_conversion('A', X).
+X = a.
+
+% Remove conversion (convert to self)
+?- char_conversion('A', 'A').
+```
+
 ### File I/O
 
 ### open/3 and close/1
@@ -1772,6 +1944,20 @@ append_to_log(Message) :-
     write(Stream, Time), write(Stream, ': '),
     writeln(Stream, Message),
     close(Stream).
+```
+
+### tab/1
+**Purpose**: Write N space characters to current output.
+```prolog
+?- write(hello), tab(5), write(world).
+hello     world
+```
+
+### with_output_to/2
+**Purpose**: Execute Goal, capturing its output as an atom.
+```prolog
+?- with_output_to(atom(X), write(hello)).
+X = hello.
 ```
 
 ---
@@ -2282,6 +2468,30 @@ format_message(Template, Args, Message) :-
 
 ?- format_message('Error', [404, 'Not Found'], Msg).
 Msg = 'Error: 404, Not Found'.
+```
+
+### string_to_atom/2
+**Purpose**: Convert between string and atom representations. Bidirectional.
+```prolog
+?- string_to_atom(hello, X).
+X = hello.
+```
+
+### number_to_atom/2, atom_to_number/2
+**Purpose**: Convert between number and atom representations.
+```prolog
+?- number_to_atom(42, X).
+X = '42'.
+
+?- atom_to_number('3.14', X).
+X = 3.14.
+```
+
+### string_code/3
+**Purpose**: Get the character code at a 1-based index in a string/atom.
+```prolog
+?- string_code(1, hello, X).
+X = 104.  % ASCII code for 'h'
 ```
 
 ---

@@ -33,9 +33,11 @@ public class Operator {
      * @param name The operator name
      */
     public Operator(int precedence, Type type, String name) {
-        if (precedence < 1 || precedence > 1200) {
-            throw new IllegalArgumentException("Precedence must be between 1 and 1200");
+        // START_CHANGE: ISS-2025-0085 - Allow precedence 0 for operator removal
+        if (precedence < 0 || precedence > 1200) {
+            throw new IllegalArgumentException("Precedence must be between 0 and 1200");
         }
+        // END_CHANGE: ISS-2025-0085
         
         this.precedence = precedence;
         this.type = Objects.requireNonNull(type, "Type cannot be null");

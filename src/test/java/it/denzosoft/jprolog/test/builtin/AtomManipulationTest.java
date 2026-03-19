@@ -30,10 +30,10 @@ public class AtomManipulationTest {
         
         // Check that we get the correct ASCII codes
         String result = solutions.get(0).get("X").toString();
-        assertTrue("Should contain ASCII code for 'h' (104)", result.contains("104.0"));
-        assertTrue("Should contain ASCII code for 'e' (101)", result.contains("101.0"));
-        assertTrue("Should contain ASCII code for 'l' (108)", result.contains("108.0"));
-        assertTrue("Should contain ASCII code for 'o' (111)", result.contains("111.0"));
+        assertTrue("Should contain ASCII code for 'h' (104)", result.contains("104"));
+        assertTrue("Should contain ASCII code for 'e' (101)", result.contains("101"));
+        assertTrue("Should contain ASCII code for 'l' (108)", result.contains("108"));
+        assertTrue("Should contain ASCII code for 'o' (111)", result.contains("111"));
     }
     
     @Test
@@ -61,8 +61,8 @@ public class AtomManipulationTest {
         assertFalse("atom_codes with spaces should succeed", solutions.isEmpty());
         
         String result = solutions.get(0).get("X").toString();
-        assertTrue("Should contain ASCII code for space (32)", result.contains("32.0"));
-        assertTrue("Should contain ASCII code for '!' (33)", result.contains("33.0"));
+        assertTrue("Should contain ASCII code for space (32)", result.contains("32"));
+        assertTrue("Should contain ASCII code for '!' (33)", result.contains("33"));
     }
     
     @Test
@@ -88,8 +88,8 @@ public class AtomManipulationTest {
         // Test finding position of known substring
         List<Map<String, Term>> solutions = prolog.solve("sub_atom(hello, X, 2, Y, el)");
         assertFalse("Finding position of 'el' should succeed", solutions.isEmpty());
-        assertEquals("1.0", solutions.get(0).get("X").toString());
-        assertEquals("2.0", solutions.get(0).get("Y").toString());
+        assertEquals("1", solutions.get(0).get("X").toString());
+        assertEquals("2", solutions.get(0).get("Y").toString());
         
         // Test finding all occurrences of 'l'
         solutions = prolog.solve("sub_atom(hello, X, 1, Y, l)");
@@ -161,6 +161,6 @@ public class AtomManipulationTest {
         
         List<Map<String, Term>> solutions = prolog.solve("first_char_code(hello, X)");
         assertFalse("first_char_code should succeed", solutions.isEmpty());
-        assertEquals("104.0", solutions.get(0).get("X").toString()); // ASCII for 'h'
+        assertEquals("104", solutions.get(0).get("X").toString()); // ASCII for 'h'
     }
 }

@@ -23,7 +23,7 @@ public class ConversionBuiltinsTest {
         assertEquals(1, solutions.size());
         Term nValue = solutions.get(0).get("N");
         assertNotNull(nValue);
-        assertEquals("123.0", nValue.toString());
+        assertEquals("123", nValue.toString());
         
         // Test atom_number with number to atom conversion
         solutions = prolog.solve("atom_number(A, 123.0).");
@@ -86,7 +86,7 @@ public class ConversionBuiltinsTest {
         assertEquals(1, solutions.size());
         Term nValue = solutions.get(0).get("N");
         assertNotNull(nValue);
-        assertEquals("123.0", nValue.toString());
+        assertEquals("123", nValue.toString());
         
         // Test with float number
         solutions = prolog.solve("number_chars(3.14, L).");

@@ -19,15 +19,15 @@ public class PrologTest {
         Prolog prolog = new Prolog();
         List<Map<String, Term>> solutions = prolog.solve("X is 2 + 3.");
         assertFalse(solutions.isEmpty());
-        assertEquals("5.0", solutions.get(0).get("X").toString());
+        assertEquals("5", solutions.get(0).get("X").toString());
 
         solutions = prolog.solve("X is 2 * (3 + 1).");
         assertFalse(solutions.isEmpty());
-        assertEquals("8.0", solutions.get(0).get("X").toString());
+        assertEquals("8", solutions.get(0).get("X").toString());
 
         solutions = prolog.solve("X is 10 / 2 - 1.");
         assertFalse(solutions.isEmpty());
-        assertEquals("4.0", solutions.get(0).get("X").toString());
+        assertEquals("4", solutions.get(0).get("X").toString());
     }
 
      @Test

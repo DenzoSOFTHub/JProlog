@@ -19,8 +19,10 @@ public class AtomLength implements BuiltIn {
             throw new PrologEvaluationException("atom_length/2 requires exactly two arguments.");
         }
 
-        Term atomArg = query.getArguments().get(0);
+        // START_CHANGE: ISS-2025-0080 - Resolve bindings before type/ground checks
+        Term atomArg = query.getArguments().get(0).resolveBindings(bindings);
         Term lengthArg = query.getArguments().get(1);
+        // END_CHANGE: ISS-2025-0080
 
         if (!atomArg.isGround()) {
             throw new PrologEvaluationException("atom_length/2: First argument (Atom) must be ground.");

@@ -38,11 +38,10 @@ public class ToCodes implements BuiltIn {
     
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        System.out.println("ToCodes.execute() called with query: " + query);
-        
+        // START_CHANGE: ISS-2025-0084 - Remove debug output from production code
         if (query.getArguments().size() != 2) {
-            System.out.println("ToCodes: Wrong number of arguments: " + query.getArguments().size());
             return false;
+        // END_CHANGE: ISS-2025-0084
         }
         
         Term sourceTerm = query.getArguments().get(0).resolveBindings(bindings);

@@ -2,13 +2,10 @@ package it.denzosoft.jprolog.builtin.list;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
-import it.denzosoft.jprolog.core.terms.Atom;
-import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
-import it.denzosoft.jprolog.core.terms.Variable;
+import it.denzosoft.jprolog.core.util.ListUtils;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,15 +19,19 @@ public class Nth1 implements BuiltIn {
             throw new PrologEvaluationException("nth1/3 requires exactly 3 arguments.");
         }
 
-        Term indexTerm = query.getArguments().get(0);
-        Term list = query.getArguments().get(1);
+        // START_CHANGE: ISS-2025-0080 - Resolve bindings before type/ground checks
+        Term indexTerm = query.getArguments().get(0).resolveBindings(bindings);
+        Term list = query.getArguments().get(1).resolveBindings(bindings);
         Term element = query.getArguments().get(2);
+        // END_CHANGE: ISS-2025-0080
 
         if (indexTerm.isGround() && list.isGround()) {
             // Case: nth1(GroundIndex, GroundList, Element)
             if (indexTerm instanceof Number) {
                 int index = (int) Math.round(((Number) indexTerm).getValue());
-                List<Term> elements = extractElements(list);
+                // START_CHANGE: ISS-2025-0084 - Consolidate to use ListUtils
+                List<Term> elements = ListUtils.extractElements(list);
+                // END_CHANGE: ISS-2025-0084
                 
                 // nth1 is 1-based indexing
                 if (index > 0 && index <= elements.size()) {
@@ -43,24 +44,10 @@ public class Nth1 implements BuiltIn {
             }
             return false; // Index out of bounds or invalid index type
         } else {
-            throw new PrologEvaluationException("nth1/3: unsupported argument pattern.");
+            // START_CHANGE: ISS-2025-0084 - Return false instead of throwing for normal failure
+            return false;
+            // END_CHANGE: ISS-2025-0084
         }
     }
 
-    private List<Term> extractElements(Term list) {
-        List<Term> elements = new ArrayList<>();
-        Term current = list;
-        
-        while (current instanceof CompoundTerm) {
-            CompoundTerm compound = (CompoundTerm) current;
-            if (compound.getName().equals(".") && compound.getArguments().size() == 2) {
-                elements.add(compound.getArguments().get(0));
-                current = compound.getArguments().get(1);
-            } else {
-                break;
-            }
-        }
-        
-        return elements;
-    }
 }

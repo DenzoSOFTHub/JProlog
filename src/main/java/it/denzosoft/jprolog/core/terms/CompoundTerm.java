@@ -1,6 +1,7 @@
 package it.denzosoft.jprolog.core.terms;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,10 +23,12 @@ public class CompoundTerm extends Term {
         return functor;
     }
 
+    // START_CHANGE: ISS-2025-0081 - Return unmodifiable view instead of copy
     @Override
     public List<Term> getArguments() {
-        return new ArrayList<>(arguments); // Return a copy
+        return Collections.unmodifiableList(arguments);
     }
+    // END_CHANGE: ISS-2025-0081
 
     @Override
     public String getName() {

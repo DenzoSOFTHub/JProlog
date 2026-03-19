@@ -2,11 +2,12 @@ package it.denzosoft.jprolog.builtin.list;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
-import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
+// START_CHANGE: ISS-2025-0076 - Use centralized ListUtils
+import it.denzosoft.jprolog.core.util.ListUtils;
+// END_CHANGE: ISS-2025-0076
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,7 +25,9 @@ public class Member implements BuiltIn {
 
         if (list.isGround()) {
             // Find all elements in the ground list and try to unify with the given element
-            List<Term> elements = extractElements(list);
+            // START_CHANGE: ISS-2025-0076 - Use centralized ListUtils
+            List<Term> elements = ListUtils.extractElements(list);
+            // END_CHANGE: ISS-2025-0076
             boolean found = false;
             
             for (Term listItem : elements) {
@@ -37,24 +40,32 @@ public class Member implements BuiltIn {
             
             return found;
         } else {
-            throw new PrologEvaluationException("member/2 with non-ground list not implemented.");
+            // START_CHANGE: ISS-2025-0053 - Fix member/2 to support non-ground lists
+            // Walk the list structure and unify element with each head
+            Term current = list.resolveBindings(bindings);
+            boolean found = false;
+
+            while (current instanceof CompoundTerm) {
+                CompoundTerm compound = (CompoundTerm) current;
+                if (compound.getName().equals(".") && compound.getArguments().size() == 2) {
+                    Term head = compound.getArguments().get(0);
+                    Term tail = compound.getArguments().get(1);
+
+                    Map<String, Term> newBindings = new HashMap<>(bindings);
+                    if (element.unify(head, newBindings)) {
+                        solutions.add(new HashMap<>(newBindings));
+                        found = true;
+                    }
+
+                    current = tail.resolveBindings(bindings);
+                } else {
+                    break;
+                }
+            }
+
+            return found;
+            // END_CHANGE: ISS-2025-0053
         }
     }
 
-    private List<Term> extractElements(Term list) {
-        List<Term> elements = new ArrayList<>();
-        Term current = list;
-        
-        while (current instanceof CompoundTerm) {
-            CompoundTerm compound = (CompoundTerm) current;
-            if (compound.getName().equals(".") && compound.getArguments().size() == 2) {
-                elements.add(compound.getArguments().get(0));
-                current = compound.getArguments().get(1);
-            } else {
-                break;
-            }
-        }
-        
-        return elements;
-    }
 }

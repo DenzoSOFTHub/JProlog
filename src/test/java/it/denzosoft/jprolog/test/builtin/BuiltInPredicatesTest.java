@@ -19,7 +19,7 @@ public class BuiltInPredicatesTest {
             // Test basic unification
             List<Map<String, Term>> solutions = prolog.solve("X = 5.");
             assertEquals(1, solutions.size());
-            assertEquals("5.0", solutions.get(0).get("X").toString());
+            assertEquals("5", solutions.get(0).get("X").toString());
             
             // Test atom unification
             solutions = prolog.solve("X = hello.");
@@ -129,7 +129,7 @@ public class BuiltInPredicatesTest {
             List<Map<String, Term>> solutions = prolog.solve("functor(f(a,b), F, A).");
             assertEquals(1, solutions.size());
             assertEquals("f", solutions.get(0).get("F").toString());
-            assertEquals("2.0", solutions.get(0).get("A").toString());
+            assertEquals("2", solutions.get(0).get("A").toString());
             
             // Test arg/3
             solutions = prolog.solve("arg(1, f(a,b,c), X).");
@@ -196,7 +196,7 @@ public class BuiltInPredicatesTest {
             // Test length/2
             solutions = prolog.solve("length([a,b,c], N).");
             assertEquals(1, solutions.size());
-            assertEquals("3.0", solutions.get(0).get("N").toString());
+            assertEquals("3", solutions.get(0).get("N").toString());
         } catch (Exception e) {
             fail("List operations should work: " + e.getMessage());
         }
@@ -210,7 +210,7 @@ public class BuiltInPredicatesTest {
             // Test atom_number/2
             List<Map<String, Term>> solutions = prolog.solve("atom_number('123', N).");
             assertEquals(1, solutions.size());
-            assertEquals("123.0", solutions.get(0).get("N").toString());
+            assertEquals("123", solutions.get(0).get("N").toString());
             
             // Test atom_chars/2
             solutions = prolog.solve("atom_chars(hello, L).");

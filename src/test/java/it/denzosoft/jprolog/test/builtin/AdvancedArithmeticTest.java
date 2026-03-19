@@ -28,9 +28,9 @@ public class AdvancedArithmeticTest {
         List<Map<String, Term>> solutions = prolog.solve("between(1, 3, X)");
         assertEquals("Should generate 3 solutions", 3, solutions.size());
         
-        assertEquals("1.0", solutions.get(0).get("X").toString());
-        assertEquals("2.0", solutions.get(1).get("X").toString());
-        assertEquals("3.0", solutions.get(2).get("X").toString());
+        assertEquals("1", solutions.get(0).get("X").toString());
+        assertEquals("2", solutions.get(1).get("X").toString());
+        assertEquals("3", solutions.get(2).get("X").toString());
         
         // Test generating with larger range
         solutions = prolog.solve("between(5, 8, X)");
@@ -66,7 +66,7 @@ public class AdvancedArithmeticTest {
         // Test single value range
         solutions = prolog.solve("between(5, 5, X)");
         assertEquals("Single value range should generate one solution", 1, solutions.size());
-        assertEquals("5.0", solutions.get(0).get("X").toString());
+        assertEquals("5", solutions.get(0).get("X").toString());
         
         // Test negative range
         solutions = prolog.solve("between(-2, 1, X)");
@@ -78,12 +78,12 @@ public class AdvancedArithmeticTest {
         // Test getting successor
         List<Map<String, Term>> solutions = prolog.solve("succ(1, X)");
         assertFalse("succ(1, X) should succeed", solutions.isEmpty());
-        assertEquals("2.0", solutions.get(0).get("X").toString());
+        assertEquals("2", solutions.get(0).get("X").toString());
         
         // Test getting predecessor
         solutions = prolog.solve("succ(X, 5)");
         assertFalse("succ(X, 5) should succeed", solutions.isEmpty());
-        assertEquals("4.0", solutions.get(0).get("X").toString());
+        assertEquals("4", solutions.get(0).get("X").toString());
         
         // Test checking relationship
         solutions = prolog.solve("succ(3, 4)");
@@ -116,17 +116,17 @@ public class AdvancedArithmeticTest {
         // Test addition
         List<Map<String, Term>> solutions = prolog.solve("plus(2, 3, X)");
         assertFalse("plus(2, 3, X) should succeed", solutions.isEmpty());
-        assertEquals("5.0", solutions.get(0).get("X").toString());
+        assertEquals("5", solutions.get(0).get("X").toString());
         
         // Test first subtraction
         solutions = prolog.solve("plus(X, 3, 8)");
         assertFalse("plus(X, 3, 8) should succeed", solutions.isEmpty());
-        assertEquals("5.0", solutions.get(0).get("X").toString());
+        assertEquals("5", solutions.get(0).get("X").toString());
         
         // Test second subtraction
         solutions = prolog.solve("plus(7, X, 10)");
         assertFalse("plus(7, X, 10) should succeed", solutions.isEmpty());
-        assertEquals("3.0", solutions.get(0).get("X").toString());
+        assertEquals("3", solutions.get(0).get("X").toString());
         
         // Test checking relationship
         solutions = prolog.solve("plus(4, 5, 9)");
@@ -141,15 +141,15 @@ public class AdvancedArithmeticTest {
         // Test with negative numbers
         List<Map<String, Term>> solutions = prolog.solve("plus(-2, 5, X)");
         assertFalse("plus(-2, 5, X) should succeed", solutions.isEmpty());
-        assertEquals("3.0", solutions.get(0).get("X").toString());
+        assertEquals("3", solutions.get(0).get("X").toString());
         
         solutions = prolog.solve("plus(X, -3, 2)");
         assertFalse("plus(X, -3, 2) should succeed", solutions.isEmpty());
-        assertEquals("5.0", solutions.get(0).get("X").toString());
+        assertEquals("5", solutions.get(0).get("X").toString());
         
         solutions = prolog.solve("plus(2, X, -1)");
         assertFalse("plus(2, X, -1) should succeed", solutions.isEmpty());
-        assertEquals("-3.0", solutions.get(0).get("X").toString());
+        assertEquals("-3", solutions.get(0).get("X").toString());
     }
     
     @Test
@@ -157,7 +157,7 @@ public class AdvancedArithmeticTest {
         // Test with floating point numbers
         List<Map<String, Term>> solutions = prolog.solve("plus(1.5, 2.5, X)");
         assertFalse("plus(1.5, 2.5, X) should succeed", solutions.isEmpty());
-        assertEquals("4.0", solutions.get(0).get("X").toString());
+        assertEquals("4", solutions.get(0).get("X").toString());
         
         solutions = prolog.solve("plus(X, 1.5, 3.7)");
         assertFalse("plus(X, 1.5, 3.7) should succeed", solutions.isEmpty());
@@ -180,8 +180,8 @@ public class AdvancedArithmeticTest {
         // Test basic arithmetic sequences
         List<Map<String, Term>> solutions = prolog.solve("plus(3, 3, B), succ(B, C)");
         assertFalse("Arithmetic sequence should succeed", solutions.isEmpty());
-        assertEquals("6.0", solutions.get(0).get("B").toString());
-        assertEquals("7.0", solutions.get(0).get("C").toString());
+        assertEquals("6", solutions.get(0).get("B").toString());
+        assertEquals("7", solutions.get(0).get("C").toString());
     }
     
     @Test
@@ -189,7 +189,7 @@ public class AdvancedArithmeticTest {
         // Test collecting arithmetic results
         List<Map<String, Term>> solutions = prolog.solve("findall(X, between(1, 5, X), L)");
         assertFalse("findall with between should succeed", solutions.isEmpty());
-        assertTrue("Should contain list of numbers", solutions.get(0).get("L").toString().contains("1.0"));
-        assertTrue("Should contain list of numbers", solutions.get(0).get("L").toString().contains("5.0"));
+        String listStr = solutions.get(0).get("L").toString();
+        assertTrue("Should contain list of numbers", listStr.contains("1") && listStr.contains("5"));
     }
 }

@@ -22,8 +22,10 @@ public class Length implements BuiltIn {
             throw new PrologEvaluationException("length/2 requires exactly 2 arguments.");
         }
 
-        Term list = query.getArguments().get(0);
-        Term lengthTerm = query.getArguments().get(1);
+        // START_CHANGE: ISS-2025-0080 - Resolve bindings before type/ground checks
+        Term list = query.getArguments().get(0).resolveBindings(bindings);
+        Term lengthTerm = query.getArguments().get(1).resolveBindings(bindings);
+        // END_CHANGE: ISS-2025-0080
 
         if (list.isGround()) {
             // Case: length(GroundList, Length)
@@ -48,7 +50,9 @@ public class Length implements BuiltIn {
             }
             return false;
         } else {
-            throw new PrologEvaluationException("length/2: unsupported argument pattern.");
+            // START_CHANGE: ISS-2025-0079 - Return false instead of throwing for normal failure
+            return false;
+            // END_CHANGE: ISS-2025-0079
         }
     }
 

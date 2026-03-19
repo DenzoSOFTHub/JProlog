@@ -32,12 +32,12 @@ public class FamousPrologProgramsTest {
         // Test factorial lookups
         List<Map<String, Term>> solutions = prolog.solve("factorial(3, X).");
         assertEquals(1, solutions.size());
-        assertEquals("6.0", solutions.get(0).get("X").toString());
+        assertEquals("6", solutions.get(0).get("X").toString());
         
         // Test factorial(5, X)
         solutions = prolog.solve("factorial(5, X).");
         assertEquals(1, solutions.size());
-        assertEquals("120.0", solutions.get(0).get("X").toString());
+        assertEquals("120", solutions.get(0).get("X").toString());
     }
 
     @Test
@@ -57,12 +57,12 @@ public class FamousPrologProgramsTest {
         // Test Fibonacci lookups
         List<Map<String, Term>> solutions = prolog.solve("fib(6, X).");
         assertEquals(1, solutions.size());
-        assertEquals("8.0", solutions.get(0).get("X").toString());
+        assertEquals("8", solutions.get(0).get("X").toString());
         
         // Test fib(7, X)
         solutions = prolog.solve("fib(7, X).");
         assertEquals(1, solutions.size());
-        assertEquals("13.0", solutions.get(0).get("X").toString());
+        assertEquals("13", solutions.get(0).get("X").toString());
     }
 
     @Test
@@ -120,7 +120,7 @@ public class FamousPrologProgramsTest {
         // Test list size
         solutions = prolog.solve("list_size([a, b, c], X).");
         assertEquals(1, solutions.size());
-        assertEquals("3.0", solutions.get(0).get("X").toString());
+        assertEquals("3", solutions.get(0).get("X").toString());
         
         // Test finding elements
         solutions = prolog.solve("list_element(X, [1, 2, 3]).");
@@ -214,7 +214,7 @@ public class FamousPrologProgramsTest {
         // Test queen positions
         List<Map<String, Term>> solutions = prolog.solve("queen_position(2, X).");
         assertEquals(1, solutions.size());
-        assertEquals("3.0", solutions.get(0).get("X").toString());
+        assertEquals("3", solutions.get(0).get("X").toString());
         
         // Test safe positions
         solutions = prolog.solve("safe_position(1, 1).");
@@ -286,7 +286,7 @@ public class FamousPrologProgramsTest {
         // Test finding solutions
         solutions = prolog.solve("equation(1, X, 5).");
         assertEquals(1, solutions.size());
-        assertEquals("4.0", solutions.get(0).get("X").toString());
+        assertEquals("4", solutions.get(0).get("X").toString());
     }
 
     @Test

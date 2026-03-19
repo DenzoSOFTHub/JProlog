@@ -48,7 +48,7 @@ public class TermBuiltinsTest {
         List<Map<String, Term>> solutions = prolog.solve("functor(f(a,b), F, A).");
         assertEquals(1, solutions.size());
         assertEquals("f", solutions.get(0).get("F").toString());
-        assertEquals("2.0", solutions.get(0).get("A").toString());
+        assertEquals("2", solutions.get(0).get("A").toString());
         
         // Test functor construction
         solutions = prolog.solve("functor(T, hello, 2).");

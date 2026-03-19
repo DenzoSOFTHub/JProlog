@@ -12,10 +12,16 @@ import java.util.Map;
 public class Repeat implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        if (query.getArguments().size() != 0) {
+        if (query.getArguments() != null && query.getArguments().size() != 0) {
             throw new PrologEvaluationException("repeat/0 takes no arguments.");
         }
-        solutions.add(new HashMap<>(bindings)); // Always succeeds once.
+        // START_CHANGE: ISS-2025-0052 - Fix repeat/0 to generate multiple choice points
+        // ISO Prolog: repeat/0 generates infinite solutions on backtracking.
+        // Since the architecture collects solutions eagerly, provide a large bound.
+        for (int i = 0; i < 1000; i++) {
+            solutions.add(new HashMap<>(bindings));
+        }
+        // END_CHANGE: ISS-2025-0052
         return true;
     }
 }

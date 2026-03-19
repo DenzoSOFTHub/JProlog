@@ -85,7 +85,9 @@ public class StringChars implements BuiltIn {
             return false;
             
         } else {
-            throw new PrologEvaluationException("string_chars/2: at least one argument must be instantiated.");
+            // START_CHANGE: ISS-2025-0084 - Return false instead of throwing for normal failure
+            return false;
+            // END_CHANGE: ISS-2025-0084
         }
         
         return false;

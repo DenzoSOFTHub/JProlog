@@ -81,6 +81,9 @@ public class BuiltInFactory {
         registerFactory("compare", it.denzosoft.jprolog.builtin.term.Compare::new);
         registerFactory("term_variables", it.denzosoft.jprolog.builtin.term.TermVariables::new);
         registerFactory("subsumes_term", it.denzosoft.jprolog.builtin.term.SubsumesTerm::new);
+        registerFactory("term_to_atom", it.denzosoft.jprolog.builtin.term.TermToAtom::new);
+        registerFactory("numbervars", it.denzosoft.jprolog.builtin.term.NumberVars::new);
+        registerFactory("number_vars", it.denzosoft.jprolog.builtin.term.NumberVars::new);
         
         // Arithmetic evaluation
         registerFactory("is", Is::new);
@@ -108,6 +111,29 @@ public class BuiltInFactory {
         registerFactory("reverse", Reverse::new);
         registerFactory("select", Select::new);
         registerFactory("sort", Sort::new);
+        // START_CHANGE: ISS-2025-0061 - Add keysort/2
+        registerFactory("keysort", it.denzosoft.jprolog.builtin.list.KeySort::new);
+        // START_CHANGE: CR-2025-0008 - List operations extension
+        registerFactory("permutation", it.denzosoft.jprolog.builtin.list.Permutation::new);
+        registerFactory("predsort", () -> new it.denzosoft.jprolog.builtin.list.PredSort(null));
+        registerFactory("last", it.denzosoft.jprolog.builtin.list.Last::new);
+        registerFactory("flatten", it.denzosoft.jprolog.builtin.list.Flatten::new);
+        registerFactory("numlist", it.denzosoft.jprolog.builtin.list.Numlist::new);
+        registerFactory("sum_list", it.denzosoft.jprolog.builtin.list.SumList::new);
+        registerFactory("sumlist", it.denzosoft.jprolog.builtin.list.SumList::new);
+        registerFactory("max_list", it.denzosoft.jprolog.builtin.list.MaxList::new);
+        registerFactory("min_list", it.denzosoft.jprolog.builtin.list.MinList::new);
+        registerFactory("delete", it.denzosoft.jprolog.builtin.list.Delete::new);
+        registerFactory("subtract", it.denzosoft.jprolog.builtin.list.Subtract::new);
+        registerFactory("intersection", it.denzosoft.jprolog.builtin.list.Intersection::new);
+        registerFactory("union", it.denzosoft.jprolog.builtin.list.Union::new);
+        // Higher-order list predicates (context-dependent)
+        registerFactory("maplist", () -> new it.denzosoft.jprolog.builtin.list.MapList(null));
+        registerFactory("include", () -> new it.denzosoft.jprolog.builtin.list.Include(null));
+        registerFactory("exclude", () -> new it.denzosoft.jprolog.builtin.list.Exclude(null));
+        registerFactory("foldl", () -> new it.denzosoft.jprolog.builtin.list.Foldl(null));
+        // END_CHANGE: CR-2025-0008
+        // END_CHANGE: ISS-2025-0061
         
         // Control
         registerFactory("!", Cut::new);
@@ -127,6 +153,8 @@ public class BuiltInFactory {
         registerFactory("writeln", Writeln::new);
         registerFactory("nl", Nl::new);
         registerFactory("read", Read::new);
+        registerFactory("tab", it.denzosoft.jprolog.builtin.io.Tab::new);
+        registerFactory("with_output_to", () -> new it.denzosoft.jprolog.builtin.io.WithOutputTo(null));
         
         // Character I/O (ISO Prolog)
         registerFactory("get_char", GetChar::new);
@@ -146,8 +174,13 @@ public class BuiltInFactory {
         registerFactory("flush_output", FlushOutput::new);
         registerFactory("peek_char", PeekChar::new);
         registerFactory("peek_code", PeekCode::new);
+        registerFactory("peek_byte", PeekByte::new);
+        registerFactory("get_byte", GetByte::new);
+        registerFactory("put_byte", PutByte::new);
+        registerFactory("at_end_of_stream", AtEndOfStream::new);
         registerFactory("stream_property", StreamProperty::new);
         registerFactory("writeq", WriteQ::new);
+        registerFactory("write_canonical", WriteCanonical::new);
         
         // Database
         registerFactory("listing", Listing0::new); // listing/0 - works with QuerySolver context
@@ -165,6 +198,10 @@ public class BuiltInFactory {
         registerFactory("number_codes", NumberCodes::new);
         // START_CHANGE: ISS-2025-0009 - Register missing to_codes/2 built-in (use simple version)
         registerFactory("to_codes", ToCodesSimple::new);
+        registerFactory("string_to_atom", it.denzosoft.jprolog.builtin.conversion.StringToAtom::new);
+        registerFactory("number_to_atom", it.denzosoft.jprolog.builtin.conversion.NumberToAtom::new);
+        registerFactory("atom_to_number", it.denzosoft.jprolog.builtin.conversion.NumberToAtom::new);
+        registerFactory("string_code", it.denzosoft.jprolog.builtin.conversion.StringCode::new);
         // END_CHANGE: ISS-2025-0009
         
         // String operations
@@ -217,6 +254,12 @@ public class BuiltInFactory {
         registerFactory("op", () -> new OperatorDefinition(OperatorDefinition.OperatorType.OP));
         registerFactory("current_op", () -> new OperatorDefinition(OperatorDefinition.OperatorType.CURRENT_OP));
         // END_CHANGE: ISS-2025-0049
+        // START_CHANGE: ISS-2025-0048 - Character conversion predicates
+        registerFactory("char_conversion", () -> new it.denzosoft.jprolog.builtin.system.CharConversion(
+            it.denzosoft.jprolog.builtin.system.CharConversion.Mode.DEFINE));
+        registerFactory("current_char_conversion", () -> new it.denzosoft.jprolog.builtin.system.CharConversion(
+            it.denzosoft.jprolog.builtin.system.CharConversion.Mode.QUERY));
+        // END_CHANGE: ISS-2025-0048
         
         // Advanced I/O predicates (ISO Prolog)
         registerFactory("read_term", () -> new ReadTerm(null)); // QuerySolver will be injected
@@ -245,7 +288,8 @@ public class BuiltInFactory {
         
         // Additional system predicates
         registerFactory("statistics", () -> new Statistics(null)); // QuerySolver will be injected
-        registerFactory("current_op", () -> new Op(null)); // Uses same implementation as op/3
+        // START_CHANGE: ISS-2025-0064 - Remove duplicate current_op registration (already at line 218)
+        // END_CHANGE: ISS-2025-0064
     }
     
     private static void registerFactory(String name, Supplier<BuiltIn> factory) {

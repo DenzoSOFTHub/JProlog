@@ -77,17 +77,16 @@ public class IfThenElse implements BuiltInWithContext {
         boolean conditionSuccess = solver.solve(condition, new HashMap<>(bindings), conditionSolutions, CutStatus.notOccurred());
         
         if (conditionSuccess && !conditionSolutions.isEmpty()) {
-            // Condition succeeded - execute Then part for each solution
-            boolean success = false;
-            for (Map<String, Term> conditionBinding : conditionSolutions) {
-                List<Map<String, Term>> thenSolutions = new ArrayList<>();
-                boolean thenSuccess = solver.solve(thenTerm, new HashMap<>(conditionBinding), thenSolutions, CutStatus.notOccurred());
-                if (thenSuccess) {
-                    solutions.addAll(thenSolutions);
-                    success = true;
-                }
+            // START_CHANGE: ISS-2025-0055 - Fix if-then-else to commit to first condition solution
+            // ISO Prolog: (Cond -> Then ; Else) commits to the FIRST solution of Cond
+            Map<String, Term> firstConditionBinding = conditionSolutions.get(0);
+            List<Map<String, Term>> thenSolutions = new ArrayList<>();
+            boolean thenSuccess = solver.solve(thenTerm, new HashMap<>(firstConditionBinding), thenSolutions, CutStatus.notOccurred());
+            if (thenSuccess) {
+                solutions.addAll(thenSolutions);
             }
-            return success;
+            return thenSuccess;
+            // END_CHANGE: ISS-2025-0055
         } else {
             // Condition failed - execute Else part
             List<Map<String, Term>> elseSolutions = new ArrayList<>();

@@ -19,9 +19,11 @@ public class Append extends ListPredicate {
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         validateArgumentCount(query, 3);
 
-        Term list1 = query.getArguments().get(0);
-        Term list2 = query.getArguments().get(1);
-        Term result = query.getArguments().get(2);
+        // START_CHANGE: ISS-2025-0070 - Resolve bindings before checking groundness
+        Term list1 = query.getArguments().get(0).resolveBindings(bindings);
+        Term list2 = query.getArguments().get(1).resolveBindings(bindings);
+        Term result = query.getArguments().get(2).resolveBindings(bindings);
+        // END_CHANGE: ISS-2025-0070
 
         if (list1.isGround() && list2.isGround()) {
             return handleConcatenate(list1, list2, result, bindings, solutions);

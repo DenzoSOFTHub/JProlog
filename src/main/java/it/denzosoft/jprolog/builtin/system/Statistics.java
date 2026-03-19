@@ -35,10 +35,35 @@ public class Statistics extends AbstractBuiltInWithContext {
         this.startTime = System.currentTimeMillis();
     }
     
+    // START_CHANGE: ISS-2025-0085 - Add solutions on success
     @Override
     public boolean execute(Term term, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        return solve(solver, bindings);
+        boolean result = solve(solver, bindings);
+        if (result) {
+            solutions.add(new java.util.HashMap<>(bindings));
+        }
+        return result;
     }
+
+    @Override
+    public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        this.solver = solver;
+        if (query instanceof it.denzosoft.jprolog.core.terms.CompoundTerm) {
+            it.denzosoft.jprolog.core.terms.CompoundTerm compound = (it.denzosoft.jprolog.core.terms.CompoundTerm) query;
+            this.arguments = new Term[compound.getArguments().size()];
+            for (int i = 0; i < compound.getArguments().size(); i++) {
+                this.arguments[i] = compound.getArguments().get(i);
+            }
+        } else {
+            this.arguments = new Term[0];
+        }
+        boolean result = solve(solver, bindings);
+        if (result) {
+            solutions.add(new java.util.HashMap<>(bindings));
+        }
+        return result;
+    }
+    // END_CHANGE: ISS-2025-0085
     
     @Override
     public boolean solve(QuerySolver solver, Map<String, Term> bindings) {

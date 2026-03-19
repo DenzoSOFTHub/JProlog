@@ -2,6 +2,8 @@ package it.denzosoft.jprolog.builtin.system;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.operator.Operator;
+import it.denzosoft.jprolog.core.operator.OperatorTable;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
@@ -10,6 +12,7 @@ import it.denzosoft.jprolog.core.terms.Term;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -38,10 +41,29 @@ public class OperatorDefinition implements BuiltIn {
     
     // Global operator registry - shared across all instances
     private static final Map<String, OperatorInfo> OPERATORS = new ConcurrentHashMap<>();
-    
+
+    // START_CHANGE: ISS-2025-0085 - Shared OperatorTable for parser integration
+    private static volatile OperatorTable sharedOperatorTable;
+
+    /**
+     * Set the shared OperatorTable that op/3 will update.
+     * This must be called during engine initialization to connect
+     * the op/3 predicate to the parser's operator table.
+     */
+    public static void setSharedOperatorTable(OperatorTable table) {
+        sharedOperatorTable = table;
+    }
+
+    /**
+     * Get the shared OperatorTable.
+     */
+    public static OperatorTable getSharedOperatorTable() {
+        return sharedOperatorTable;
+    }
+    // END_CHANGE: ISS-2025-0085
+
     // Initialize with standard ISO Prolog operators
     static {
-        // Initialize ISO standard operators
         initializeISOOperators();
     }
     
@@ -162,20 +184,41 @@ public class OperatorDefinition implements BuiltIn {
         String operatorType = ((Atom) typeTerm).getName();
         String name = ((Atom) nameTerm).getName();
         
-        // Validate precedence (1-1200)
-        if (precedence < 1 || precedence > 1200) {
-            throw new PrologEvaluationException("op/3: Precedence must be between 1 and 1200.");
+        // START_CHANGE: ISS-2025-0085 - Support precedence 0 for operator removal
+        // Validate precedence (0-1200, where 0 means remove)
+        if (precedence < 0 || precedence > 1200) {
+            throw new PrologEvaluationException("op/3: Precedence must be between 0 and 1200.");
         }
-        
+
         // Validate operator type
         if (!isValidOperatorType(operatorType)) {
             throw new PrologEvaluationException("op/3: Invalid operator type: " + operatorType);
         }
-        
-        // Register or update the operator
-        OPERATORS.put(name, new OperatorInfo(precedence, operatorType, name));
-        
-        // Success - operator defined
+
+        if (precedence == 0) {
+            // Remove operator
+            OPERATORS.remove(name);
+            if (sharedOperatorTable != null) {
+                // Remove all operators with this name and compatible type
+                Operator.Type type = Operator.parseType(operatorType);
+                Set<Operator> ops = sharedOperatorTable.getOperators(name);
+                for (Operator op : ops) {
+                    if (isCompatibleType(op.getType(), type)) {
+                        sharedOperatorTable.removeOperator(op.getPrecedence(), op.getType(), name);
+                    }
+                }
+            }
+        } else {
+            // Register or update the operator
+            OPERATORS.put(name, new OperatorInfo(precedence, operatorType, name));
+            if (sharedOperatorTable != null) {
+                Operator.Type type = Operator.parseType(operatorType);
+                sharedOperatorTable.defineOperator(precedence, type, name);
+            }
+        }
+        // END_CHANGE: ISS-2025-0085
+
+        // Success - operator defined/removed
         solutions.add(new HashMap<>(bindings));
         return true;
     }
@@ -224,10 +267,36 @@ public class OperatorDefinition implements BuiltIn {
     }
     
     private boolean isValidOperatorType(String type) {
-        return type.equals("fx") || type.equals("fy") || 
+        return type.equals("fx") || type.equals("fy") ||
                type.equals("xfx") || type.equals("xfy") || type.equals("yfx") ||
                type.equals("yf") || type.equals("xf");
     }
+
+    // START_CHANGE: ISS-2025-0085 - Helper for operator removal
+    /**
+     * Check if two operator types are compatible (same position class).
+     * For removal: infix types match infix, prefix match prefix, postfix match postfix.
+     */
+    private boolean isCompatibleType(Operator.Type existing, Operator.Type requested) {
+        if (existing == requested) return true;
+        // Infix types are interchangeable for removal
+        if (existing.name().contains("F") && existing.name().length() == 3 &&
+            requested.name().contains("F") && requested.name().length() == 3) {
+            return true; // both are XFX, XFY, or YFX
+        }
+        // Prefix types
+        if ((existing == Operator.Type.FX || existing == Operator.Type.FY) &&
+            (requested == Operator.Type.FX || requested == Operator.Type.FY)) {
+            return true;
+        }
+        // Postfix types
+        if ((existing == Operator.Type.XF || existing == Operator.Type.YF) &&
+            (requested == Operator.Type.XF || requested == Operator.Type.YF)) {
+            return true;
+        }
+        return false;
+    }
+    // END_CHANGE: ISS-2025-0085
     
     /**
      * Get operator information for a given operator name.

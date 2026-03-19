@@ -2,13 +2,12 @@ package it.denzosoft.jprolog.builtin.list;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
-import it.denzosoft.jprolog.core.terms.Atom;
-import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
-import it.denzosoft.jprolog.core.terms.Variable;
+// START_CHANGE: ISS-2025-0076 - Use centralized ListUtils
+import it.denzosoft.jprolog.core.util.ListUtils;
+// END_CHANGE: ISS-2025-0076
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,16 +21,20 @@ public class Nth0 implements BuiltIn {
             throw new PrologEvaluationException("nth0/3 requires exactly 3 arguments.");
         }
 
-        Term indexTerm = query.getArguments().get(0);
-        Term list = query.getArguments().get(1);
-        Term element = query.getArguments().get(2);
+        // START_CHANGE: ISS-2025-0080 - Resolve bindings before type/ground checks
+        Term indexTerm = query.getArguments().get(0).resolveBindings(bindings);
+        Term list = query.getArguments().get(1).resolveBindings(bindings);
+        Term element = query.getArguments().get(2).resolveBindings(bindings);
+        // END_CHANGE: ISS-2025-0080
 
         if (indexTerm.isGround() && list.isGround()) {
             // Case: nth0(GroundIndex, GroundList, Element)
             if (indexTerm instanceof Number) {
                 int index = (int) Math.round(((Number) indexTerm).getValue());
-                List<Term> elements = extractElements(list);
-                
+                // START_CHANGE: ISS-2025-0076 - Use centralized ListUtils
+                List<Term> elements = ListUtils.extractElements(list);
+                // END_CHANGE: ISS-2025-0076
+
                 if (index >= 0 && index < elements.size()) {
                     Term listElement = elements.get(index);
                     if (element.unify(listElement.copy(), bindings)) {
@@ -43,8 +46,10 @@ public class Nth0 implements BuiltIn {
             return false; // Index out of bounds or invalid index type
         } else if (list.isGround() && element.isGround()) {
             // Case: nth0(Index, GroundList, GroundElement)
-            List<Term> elements = extractElements(list);
-            
+            // START_CHANGE: ISS-2025-0076 - Use centralized ListUtils
+            List<Term> elements = ListUtils.extractElements(list);
+            // END_CHANGE: ISS-2025-0076
+
             for (int i = 0; i < elements.size(); i++) {
                 if (elements.get(i).unify(element.copy(), new HashMap<>())) {
                     Term indexVar = new Number(i);
@@ -60,20 +65,4 @@ public class Nth0 implements BuiltIn {
         }
     }
 
-    private List<Term> extractElements(Term list) {
-        List<Term> elements = new ArrayList<>();
-        Term current = list;
-        
-        while (current instanceof CompoundTerm) {
-            CompoundTerm compound = (CompoundTerm) current;
-            if (compound.getName().equals(".") && compound.getArguments().size() == 2) {
-                elements.add(compound.getArguments().get(0));
-                current = compound.getArguments().get(1);
-            } else {
-                break;
-            }
-        }
-        
-        return elements;
-    }
 }

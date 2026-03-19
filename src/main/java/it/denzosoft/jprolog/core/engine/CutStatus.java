@@ -1,11 +1,21 @@
 package it.denzosoft.jprolog.core.engine;
 
+// START_CHANGE: ISS-2025-0054 - Make CutStatus mutable for proper cut propagation
 public final class CutStatus {
-    private final boolean cutOccurred;
+    private boolean cutOccurred;
 
     private CutStatus(boolean cutOccurred) {
         this.cutOccurred = cutOccurred;
     }
+
+    /**
+     * Mark that cut has occurred. This allows cut in body goals
+     * to propagate back to the clause selection loop.
+     */
+    public void setCutOccurred() {
+        this.cutOccurred = true;
+    }
+    // END_CHANGE: ISS-2025-0054
 
     /**
      * Check if cut has occurred.

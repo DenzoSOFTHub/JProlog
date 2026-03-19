@@ -2,11 +2,11 @@ package it.denzosoft.jprolog.builtin.list;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
-import it.denzosoft.jprolog.core.terms.Atom;
-import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
+// START_CHANGE: ISS-2025-0076 - Use centralized ListUtils
+import it.denzosoft.jprolog.core.util.ListUtils;
+// END_CHANGE: ISS-2025-0076
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -20,18 +20,22 @@ public class Msort implements BuiltIn {
             throw new PrologEvaluationException("msort/2 requires exactly 2 arguments.");
         }
 
-        Term inputList = query.getArguments().get(0);
+        // START_CHANGE: ISS-2025-0080 - Resolve bindings before type/ground checks
+        Term inputList = query.getArguments().get(0).resolveBindings(bindings);
         Term sortedList = query.getArguments().get(1);
+        // END_CHANGE: ISS-2025-0080
 
         if (inputList.isGround()) {
+            // START_CHANGE: ISS-2025-0076 - Use centralized ListUtils
             // Extract elements from the input list (preserving duplicates)
-            List<Term> elements = extractElements(inputList);
-            
+            List<Term> elements = ListUtils.extractElements(inputList);
+
             // Sort while preserving duplicates
             Collections.sort(elements, (t1, t2) -> t1.toString().compareTo(t2.toString()));
-            
+
             // Create the sorted list term
-            Term sortedListTerm = createList(elements);
+            Term sortedListTerm = ListUtils.createList(elements);
+            // END_CHANGE: ISS-2025-0076
             
             // Unify with the output list
             if (sortedList.unify(sortedListTerm, bindings)) {
@@ -40,35 +44,10 @@ public class Msort implements BuiltIn {
             }
             return false;
         } else {
-            throw new PrologEvaluationException("msort/2 requires a ground input list.");
+            // START_CHANGE: ISS-2025-0079 - Return false instead of throwing for normal failure
+            return false;
+            // END_CHANGE: ISS-2025-0079
         }
     }
 
-    private List<Term> extractElements(Term list) {
-        List<Term> elements = new ArrayList<>();
-        Term current = list;
-        
-        while (current instanceof CompoundTerm) {
-            CompoundTerm compound = (CompoundTerm) current;
-            if (compound.getName().equals(".") && compound.getArguments().size() == 2) {
-                elements.add(compound.getArguments().get(0));
-                current = compound.getArguments().get(1);
-            } else {
-                break;
-            }
-        }
-        
-        return elements;
-    }
-
-    private Term createList(List<Term> elements) {
-        Term result = new Atom("[]");
-        for (int i = elements.size() - 1; i >= 0; i--) {
-            List<Term> args = new ArrayList<>();
-            args.add(elements.get(i));
-            args.add(result);
-            result = new CompoundTerm(new Atom("."), args);
-        }
-        return result;
-    }
 }

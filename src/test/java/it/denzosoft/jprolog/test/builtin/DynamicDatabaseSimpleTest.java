@@ -91,9 +91,9 @@ public class DynamicDatabaseSimpleTest {
         
         List<Map<String, Term>> solutions = prolog.solve("order(X)");
         assertEquals("Should have 3 solutions", 3, solutions.size());
-        assertEquals("0.0", solutions.get(0).get("X").toString()); // asserta puts at beginning
-        assertEquals("1.0", solutions.get(1).get("X").toString());
-        assertEquals("2.0", solutions.get(2).get("X").toString());
+        assertEquals("0", solutions.get(0).get("X").toString()); // asserta puts at beginning
+        assertEquals("1", solutions.get(1).get("X").toString());
+        assertEquals("2", solutions.get(2).get("X").toString());
     }
     
     @Test

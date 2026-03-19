@@ -21,8 +21,10 @@ public class CallableCheck implements BuiltIn {
             throw new PrologEvaluationException("callable/1 requires exactly one argument.");
         }
 
-        Term termArg = query.getArguments().get(0);
-        
+        // START_CHANGE: ISS-2025-0080 - Resolve bindings before type/ground checks
+        Term termArg = query.getArguments().get(0).resolveBindings(bindings);
+        // END_CHANGE: ISS-2025-0080
+
         // A term is callable if it's an atom or compound term
         boolean isCallable = (termArg instanceof Atom) || (termArg instanceof CompoundTerm);
 

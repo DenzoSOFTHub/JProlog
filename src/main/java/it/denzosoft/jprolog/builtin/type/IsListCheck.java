@@ -22,8 +22,10 @@ public class IsListCheck implements BuiltIn {
             throw new PrologEvaluationException("is_list/1 requires exactly one argument.");
         }
 
-        Term termArg = query.getArguments().get(0);
-        
+        // START_CHANGE: ISS-2025-0073 - Resolve bindings before checking list structure
+        Term termArg = query.getArguments().get(0).resolveBindings(bindings);
+        // END_CHANGE: ISS-2025-0073
+
         boolean isList = isProperList(termArg);
 
         if (isList) {

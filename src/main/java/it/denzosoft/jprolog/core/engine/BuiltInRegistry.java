@@ -142,7 +142,9 @@ public class BuiltInRegistry {
             // START_CHANGE: ISS-2025-0028 - Add missing control predicates
             case "once": return arity == 1;    // once/1
             case "forall": return arity == 2;  // forall/2
-            case "call": return arity == 1;    // call/1 (basic form)
+            // START_CHANGE: ISS-2025-0085 - Support call/1 through call/8
+            case "call": return arity >= 1 && arity <= 8;
+            // END_CHANGE: ISS-2025-0085
             case "ignore": return arity == 1;  // ignore/1
             case "repeat": return arity == 0;  // repeat/0
             case "\\+": return arity == 1;     // \+/1 (negation as failure)
@@ -180,9 +182,21 @@ public class BuiltInRegistry {
             case "throw": return arity == 1;       // throw/1
             case "catch": return arity == 3;       // catch/3
             // END_CHANGE: ISS-2025-0044
+            // START_CHANGE: ISS-2025-0063 - Add missing built-ins to arity check
+            case "keysort": return arity == 2;  // keysort/2
+            case "succ": return arity == 2;     // succ/2
+            case "plus": return arity == 3;     // plus/3
+            case "clause": return arity == 2;   // clause/2
+            case "compare": return arity == 3;  // compare/3
+            case "term_variables": return arity == 2; // term_variables/2
+            case "subsumes_term": return arity == 2;  // subsumes_term/2
+            // END_CHANGE: ISS-2025-0063
             default:
-                // For unknown predicates, assume arity 1 is the most common
-                return arity == 1;
+                // START_CHANGE: ISS-2025-0063 - Fix default: allow all arities for registered builtins
+                // Instead of assuming arity 1, accept any arity for registered built-ins.
+                // The built-in's execute() method will validate arity itself.
+                return true;
+                // END_CHANGE: ISS-2025-0063
         }
     }
 }

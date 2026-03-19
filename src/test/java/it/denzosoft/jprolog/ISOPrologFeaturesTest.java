@@ -49,29 +49,29 @@ public class ISOPrologFeaturesTest {
         // max/min
         List<Map<String, Term>> solutions = prolog.solve("X is max(5, 3).");
         assertFalse(solutions.isEmpty());
-        assertEquals("5.0", solutions.get(0).get("X").toString());
+        assertEquals("5", solutions.get(0).get("X").toString());
         
         solutions = prolog.solve("X is min(5, 3).");
         assertFalse(solutions.isEmpty());
-        assertEquals("3.0", solutions.get(0).get("X").toString());
+        assertEquals("3", solutions.get(0).get("X").toString());
         
         // div/rem
         solutions = prolog.solve("X is div(7, 3).");
         assertFalse(solutions.isEmpty());
-        assertEquals("2.0", solutions.get(0).get("X").toString());
+        assertEquals("2", solutions.get(0).get("X").toString());
         
         solutions = prolog.solve("X is rem(7, 3).");
         assertFalse(solutions.isEmpty());
-        assertEquals("1.0", solutions.get(0).get("X").toString());
+        assertEquals("1", solutions.get(0).get("X").toString());
         
         // sign
         solutions = prolog.solve("X is sign(5).");
         assertFalse(solutions.isEmpty());
-        assertEquals("1.0", solutions.get(0).get("X").toString());
+        assertEquals("1", solutions.get(0).get("X").toString());
         
         solutions = prolog.solve("X is sign(-5).");
         assertFalse(solutions.isEmpty());
-        assertEquals("-1.0", solutions.get(0).get("X").toString());
+        assertEquals("-1", solutions.get(0).get("X").toString());
         
         // Constants
         solutions = prolog.solve("X is pi.");
@@ -122,26 +122,26 @@ public class ISOPrologFeaturesTest {
         // xor
         List<Map<String, Term>> solutions = prolog.solve("X is xor(5, 3).");
         assertFalse(solutions.isEmpty());
-        assertEquals("6.0", solutions.get(0).get("X").toString());
+        assertEquals("6", solutions.get(0).get("X").toString());
         
         // Bitwise OR
         solutions = prolog.solve("X is \\/(5, 3).");
         assertFalse(solutions.isEmpty());
-        assertEquals("7.0", solutions.get(0).get("X").toString());
+        assertEquals("7", solutions.get(0).get("X").toString());
         
         // Bitwise AND
         solutions = prolog.solve("X is /\\(5, 3).");
         assertFalse(solutions.isEmpty());
-        assertEquals("1.0", solutions.get(0).get("X").toString());
+        assertEquals("1", solutions.get(0).get("X").toString());
         
         // Bit shifts
         solutions = prolog.solve("X is <<(5, 1).");
         assertFalse(solutions.isEmpty());
-        assertEquals("10.0", solutions.get(0).get("X").toString());
+        assertEquals("10", solutions.get(0).get("X").toString());
         
         solutions = prolog.solve("X is >>(10, 1).");
         assertFalse(solutions.isEmpty());
-        assertEquals("5.0", solutions.get(0).get("X").toString());
+        assertEquals("5", solutions.get(0).get("X").toString());
     }
 
     @Test
@@ -154,7 +154,7 @@ public class ISOPrologFeaturesTest {
         // Arithmetic still works
         List<Map<String, Term>> solutions = prolog.solve("X is 3 + 2.");
         assertFalse(solutions.isEmpty());
-        assertEquals("5.0", solutions.get(0).get("X").toString());
+        assertEquals("5", solutions.get(0).get("X").toString());
         
         // Unification still works
         assertFalse(prolog.solve("X = hello, X = hello.").isEmpty());

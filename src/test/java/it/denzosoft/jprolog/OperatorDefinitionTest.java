@@ -70,14 +70,18 @@ public class OperatorDefinitionTest {
     
     @Test
     public void testInvalidPrecedence() {
-        // Test precedence out of range (0 and 1201)
+        // START_CHANGE: ISS-2025-0085 - Precedence 0 is valid (operator removal per ISO)
+        // Test precedence 0 succeeds (operator removal)
         Term query1 = createOpQuery(0, "xfx", "badop1");
-        assertThrows(Exception.class, () -> 
-            opDefinition.execute(query1, bindings, solutions));
-        
+        boolean result = opDefinition.execute(query1, bindings, solutions);
+        assertTrue("Precedence 0 should succeed (remove operator)", result);
+
+        // Test precedence out of range (> 1200)
+        solutions.clear();
         Term query2 = createOpQuery(1201, "xfx", "badop2");
-        assertThrows(Exception.class, () -> 
+        assertThrows(Exception.class, () ->
             opDefinition.execute(query2, bindings, solutions));
+        // END_CHANGE: ISS-2025-0085
     }
     
     @Test

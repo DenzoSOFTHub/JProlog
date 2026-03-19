@@ -20,6 +20,9 @@ public class QuerySolver {
     private BuiltInRegistry builtInRegistry;
     private boolean traceEnabled = false;
     private Prolog prologContext;
+    // START_CHANGE: CR-2025-0002 - Track current module context for resolution
+    private it.denzosoft.jprolog.core.module.Module currentModuleContext = null;
+    // END_CHANGE: CR-2025-0002
 
     /**
      * Create a query solver.
@@ -50,12 +53,51 @@ public class QuerySolver {
     public List<Map<String, Term>> solve(Term query) {
         List<Map<String, Term>> solutions = new ArrayList<>();
         solve(query, new HashMap<>(), solutions, CutStatus.notOccurred());
+        // START_CHANGE: ISS-2025-0069 - Deep-resolve variable chains in returned solutions
+        // After solving, variable bindings may contain chains like X→Y→Z→hello.
+        // Resolve all chains so the caller gets final values.
+        for (Map<String, Term> solution : solutions) {
+            deepResolveSolution(solution);
+        }
+        // END_CHANGE: ISS-2025-0069
         return solutions;
     }
 
+    // START_CHANGE: ISS-2025-0078 - Optimize deepResolveSolution with two-pass approach
+    /**
+     * Resolve all variable chains in a solution map.
+     * Uses a two-pass approach: first resolves Variables and CompoundTerms,
+     * then a second pass catches any remaining Variable chains.
+     */
+    private void deepResolveSolution(Map<String, Term> solution) {
+        // Single-pass resolution: resolve each value through the binding map
+        for (Map.Entry<String, Term> entry : solution.entrySet()) {
+            Term value = entry.getValue();
+            if (value instanceof Variable || value instanceof CompoundTerm) {
+                Term resolved = value.resolveBindings(solution);
+                if (resolved != value) {
+                    entry.setValue(resolved);
+                }
+            }
+        }
+        // Second pass for any remaining chains (e.g., X→Y→Z where Y was resolved after X)
+        for (Map.Entry<String, Term> entry : solution.entrySet()) {
+            Term value = entry.getValue();
+            if (value instanceof Variable) {
+                Term resolved = value.resolveBindings(solution);
+                if (resolved != value) {
+                    entry.setValue(resolved);
+                }
+            }
+        }
+    }
+    // END_CHANGE: ISS-2025-0078
+
     // START_CHANGE: ISS-2025-0013 - Add recursion depth limiting to prevent StackOverflowError
     private static final ThreadLocal<Integer> recursionDepth = new ThreadLocal<>();
-    private static final int MAX_RECURSION_DEPTH = 100;
+    // START_CHANGE: ISS-2025-0050 - Increase recursion depth for larger programs
+    private static final int MAX_RECURSION_DEPTH = 1000;
+    // END_CHANGE: ISS-2025-0050
     
     /**
      * Solve a goal with current bindings.
@@ -118,8 +160,28 @@ public class QuerySolver {
             return true;
         }
 
+        // START_CHANGE: ISS-2025-0085 - Handle module-qualified calls Module:Goal
+        if (goal.getName() != null && ":".equals(goal.getName()) &&
+            goal.getArguments() != null && goal.getArguments().size() == 2) {
+            Term moduleTerm = goal.getArguments().get(0).resolveBindings(bindings);
+            Term innerGoal = goal.getArguments().get(1).resolveBindings(bindings);
+
+            // Try module-specific lookup if we have a Prolog context with ModuleManager
+            if (moduleTerm instanceof Atom && prologContext != null) {
+                String moduleName = ((Atom) moduleTerm).getName();
+                it.denzosoft.jprolog.core.module.Module module =
+                    prologContext.getModuleManager().getModule(moduleName);
+                if (module != null) {
+                    return solveInModuleContext(innerGoal, module, bindings, solutions, cutStatus);
+                }
+            }
+            // Fallback: solve inner goal in global context
+            return solveInternal(innerGoal, bindings, solutions, cutStatus);
+        }
+        // END_CHANGE: ISS-2025-0085
+
         // Special handling for conjunction operator ,(A,B)
-        if (goal.getName() != null && ",".equals(goal.getName()) && 
+        if (goal.getName() != null && ",".equals(goal.getName()) &&
             goal.getArguments() != null && goal.getArguments().size() == 2) {
             return handleConjunction(goal, bindings, solutions, cutStatus);
         }
@@ -167,11 +229,45 @@ public class QuerySolver {
         return false;
     }
 
-    private boolean solveAgainstKnowledgeBase(Term goal, Map<String, Term> bindings, 
+    // START_CHANGE: ISS-2025-0067 - Preserve input bindings in knowledge base solutions
+    private boolean solveAgainstKnowledgeBase(Term goal, Map<String, Term> bindings,
                                               List<Map<String, Term>> solutions, CutStatus cutStatus) {
         boolean foundMatch = false;
-        
-        for (Rule rule : knowledgeBase.getRules()) {
+
+        // START_CHANGE: CR-2025-0002 - Check module context first for rule lookup
+        String functor = goal.getName();
+        int arity = it.denzosoft.jprolog.util.TermUtils.getArity(goal);
+        List<Rule> candidateRules;
+
+        if (currentModuleContext != null && functor != null) {
+            it.denzosoft.jprolog.core.module.PredicateSignature sig =
+                new it.denzosoft.jprolog.core.module.PredicateSignature(functor, arity);
+            candidateRules = currentModuleContext.getRulesForPredicate(sig);
+            if (candidateRules.isEmpty()) {
+                // Fall back to global KB
+                candidateRules = knowledgeBase.getRulesForPredicate(functor, arity);
+            }
+        } else if (functor != null) {
+            // START_CHANGE: ISS-2025-0075 - Use functor/arity indexing for O(1) rule lookup
+            candidateRules = knowledgeBase.getRulesForPredicate(functor, arity);
+            // END_CHANGE: ISS-2025-0075
+            // START_CHANGE: CR-2025-0002 - Check imported module predicates for unqualified calls
+            if (candidateRules.isEmpty() && prologContext != null) {
+                it.denzosoft.jprolog.core.module.ModuleManager mm = prologContext.getModuleManager();
+                it.denzosoft.jprolog.core.module.PredicateSignature sig =
+                    new it.denzosoft.jprolog.core.module.PredicateSignature(functor, arity);
+                it.denzosoft.jprolog.core.module.Module resolved = mm.getCurrentModule().resolvePredicate(sig);
+                if (resolved != null) {
+                    candidateRules = resolved.getRulesForPredicate(sig);
+                }
+            }
+            // END_CHANGE: CR-2025-0002
+        } else {
+            candidateRules = knowledgeBase.getRules();
+        }
+        // END_CHANGE: CR-2025-0002
+
+        for (Rule rule : candidateRules) {
             if(traceEnabled) {
                 LOGGER.info("Trying rule: " + rule);
             }
@@ -208,9 +304,16 @@ public class QuerySolver {
                     if (solveBodyGoals(body, attemptBindings, bodySolutions, newCutStatus)) {
                         // Map rule variable bindings back to query variables
                         for (Map<String, Term> bodySolution : bodySolutions) {
-                            Map<String, Term> mappedSolution = mapRuleVariablesToQueryVariables(
-                                goal, head, headUnificationBindings, bodySolution);
+                            // START_CHANGE: ISS-2025-0071 - Use bodySolution as base to preserve transitive bindings
+                            // Use the full body solution (which contains all accumulated bindings
+                            // including transitive variable mappings from recursive calls) as base,
+                            // then overlay with the mapped query variables. This ensures that
+                            // variable chains like X->_R1_G->_R2_G->4 are fully resolved.
+                            Map<String, Term> mappedSolution = new HashMap<>(bodySolution);
+                            mappedSolution.putAll(mapRuleVariablesToQueryVariables(
+                                goal, head, headUnificationBindings, bodySolution));
                             solutions.add(mappedSolution);
+                            // END_CHANGE: ISS-2025-0071
                         }
                         foundMatch = true;
                     }
@@ -229,7 +332,26 @@ public class QuerySolver {
         }
         return foundMatch;
     }
-    
+
+    // START_CHANGE: CR-2025-0002 - Module-isolated rule lookup
+    /**
+     * Solve a goal in the context of a specific module.
+     * First tries built-ins, then looks up rules from the module's local rules.
+     */
+    private boolean solveInModuleContext(Term goal, it.denzosoft.jprolog.core.module.Module module,
+                                         Map<String, Term> bindings, List<Map<String, Term>> solutions,
+                                         CutStatus cutStatus) {
+        // Set module context so that body goal resolution uses module rules
+        it.denzosoft.jprolog.core.module.Module savedContext = currentModuleContext;
+        currentModuleContext = module;
+        try {
+            return solveInternal(goal, bindings, solutions, cutStatus);
+        } finally {
+            currentModuleContext = savedContext;
+        }
+    }
+    // END_CHANGE: CR-2025-0002
+
     /**
      * Map rule variable bindings back to query variables.
      * When a rule head unifies with a query, query variables get mapped to rule variables.
@@ -269,8 +391,11 @@ public class QuerySolver {
                 LOGGER.info("Processing query variable: " + queryVarName);
             }
             
-            // Simple approach: look through head bindings to find which rule var maps to this query var
+            // START_CHANGE: ISS-2025-0065 - Fix variable mapping to handle both unification directions
+            // Look through head bindings to find which rule var maps to this query var.
+            // Unification can produce either direction: ruleVar -> queryVar OR queryVar -> ruleVar.
             String ruleVarName = null;
+            // Direction 1: ruleVar -> Variable(queryVar)
             for (Map.Entry<String, Term> entry : headUnificationBindings.entrySet()) {
                 if (entry.getValue() instanceof Variable) {
                     Variable mappedVar = (Variable) entry.getValue();
@@ -280,19 +405,48 @@ public class QuerySolver {
                     }
                 }
             }
+            // Direction 2: queryVar -> Variable(ruleVar)
+            if (ruleVarName == null && headUnificationBindings.containsKey(queryVarName)) {
+                Term mappedValue = headUnificationBindings.get(queryVarName);
+                if (mappedValue instanceof Variable) {
+                    ruleVarName = ((Variable) mappedValue).getName();
+                } else {
+                    // Query variable was directly unified to a value (not a variable)
+                    // Deep-resolve using combined bindings (body solution + head unification)
+                    // Body solution may not contain all variables (after recursive mapping),
+                    // but headUnificationBindings has the complete set from the current rule level.
+                    Map<String, Term> combinedBindings = new HashMap<>(headUnificationBindings);
+                    combinedBindings.putAll(bodySolution);
+                    Term resolved = mappedValue.resolveBindings(combinedBindings);
+                    if (traceEnabled) {
+                        LOGGER.info("Direction 2 non-var: " + queryVarName + " -> resolved=" + resolved);
+                    }
+                    result.put(queryVarName, resolved);
+                }
+            }
+            // END_CHANGE: ISS-2025-0065
             
             if (traceEnabled) {
                 LOGGER.info("Query var " + queryVarName + " maps to rule var " + ruleVarName);
             }
             
-            // If we found the rule variable, look up its value in body solution
-            if (ruleVarName != null && bodySolution.containsKey(ruleVarName)) {
-                Term value = bodySolution.get(ruleVarName);
+            // If we found the rule variable, look up its value in body solution or head bindings
+            // START_CHANGE: ISS-2025-0065 - Deep-resolve value through combined bindings
+            Map<String, Term> combinedForResolve = null;
+            if (ruleVarName != null && (bodySolution.containsKey(ruleVarName) || headUnificationBindings.containsKey(ruleVarName))) {
+                Term value = bodySolution.containsKey(ruleVarName) ? bodySolution.get(ruleVarName) : headUnificationBindings.get(ruleVarName);
+                // Deep resolve using combined bindings
+                if (combinedForResolve == null) {
+                    combinedForResolve = new HashMap<>(headUnificationBindings);
+                    combinedForResolve.putAll(bodySolution);
+                }
+                value = value.resolveBindings(combinedForResolve);
                 result.put(queryVarName, value);
                 if (traceEnabled) {
                     LOGGER.info("Mapped " + queryVarName + " -> " + value);
                 }
             }
+            // END_CHANGE: ISS-2025-0065
         }
         
         if (traceEnabled) {
@@ -303,6 +457,26 @@ public class QuerySolver {
         return result;
     }
     
+    // START_CHANGE: ISS-2025-0065 - Follow binding chain to resolve variables
+    /**
+     * Follow a binding chain to resolve a term to its final value.
+     * If the term is a Variable and it has a binding in the solution, follow it.
+     * Uses a visited set to prevent infinite loops.
+     */
+    private Term resolveBindingChain(Term value, Map<String, Term> bindings) {
+        java.util.Set<String> visited = new java.util.HashSet<>();
+        while (value instanceof Variable) {
+            String varName = ((Variable) value).getName();
+            if (visited.contains(varName) || !bindings.containsKey(varName)) {
+                break;
+            }
+            visited.add(varName);
+            value = bindings.get(varName);
+        }
+        return value;
+    }
+    // END_CHANGE: ISS-2025-0065
+
     /**
      * Extract all variables from a term and return them as a map.
      */
@@ -389,17 +563,23 @@ public class QuerySolver {
         for (Term bodyTerm : body) {
             List<Map<String, Term>> nextSolutions = new ArrayList<>();
             
-            // Special handling for cut
-            if (bodyTerm.getName() != null && 
+            // START_CHANGE: ISS-2025-0054 - Fix cut semantics: continue body, prevent clause backtracking
+            // ISO Prolog: cut (!) commits to the current clause choice and succeeds.
+            // Remaining body goals AFTER cut must still be executed.
+            // Cut only prevents backtracking to alternative clauses.
+            if (bodyTerm.getName() != null &&
                 (bodyTerm.getName().equals("!") || bodyTerm.getName().equals("cut"))) {
                 if (!bodySolutions.isEmpty()) {
-                    // Add the first solution - cut commits to first choice
+                    // Commit to first choice point only
                     nextSolutions.add(bodySolutions.get(0));
                 }
                 bodySolutions = nextSolutions;
-                // Cut prevents backtracking - stop processing remaining goals in normal order
-                break;
+                // Signal cut to prevent backtracking to alternative clauses
+                cutStatus.setCutOccurred();
+                // Continue executing remaining body goals (do NOT break)
+                continue;
             }
+            // END_CHANGE: ISS-2025-0054
             
             for (Map<String, Term> currentBindings : bodySolutions) {
                 List<Map<String, Term>> termSolutions = new ArrayList<>();

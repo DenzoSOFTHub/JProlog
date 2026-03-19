@@ -20,8 +20,10 @@ public class AtomChars implements BuiltIn {
             throw new PrologEvaluationException("atom_chars/2 requires exactly 2 arguments.");
         }
 
-        Term atomTerm = query.getArguments().get(0);
-        Term charsTerm = query.getArguments().get(1);
+        // START_CHANGE: ISS-2025-0084 - Resolve bindings before type/ground checks
+        Term atomTerm = query.getArguments().get(0).resolveBindings(bindings);
+        Term charsTerm = query.getArguments().get(1).resolveBindings(bindings);
+        // END_CHANGE: ISS-2025-0084
 
         if (atomTerm.isGround() && !charsTerm.isGround()) {
             // Convert atom to character list
@@ -74,7 +76,9 @@ public class AtomChars implements BuiltIn {
             }
             return false;
         } else {
-            throw new PrologEvaluationException("atom_chars/2: at least one argument must be ground.");
+            // START_CHANGE: ISS-2025-0084 - Return false instead of throwing for normal failure
+            return false;
+            // END_CHANGE: ISS-2025-0084
         }
         
         return false;

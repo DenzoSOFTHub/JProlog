@@ -69,15 +69,18 @@ public class ISOArithmeticFunctions {
             }
         });
         
-        // rem/2 - Remainder (different from mod for negative numbers)
+        // START_CHANGE: ISS-2025-0057 - Fix rem to use truncation (sign of dividend), not floor (sign of divisor)
+        // ISO Prolog: rem(X,Y) = X - truncate(X/Y) * Y (result has sign of X)
         StandardArithmeticOperations.registerCustomOperation("rem", new ArithmeticOperation() {
             @Override
             public double apply(double left, double right) {
                 if (right == 0) {
                     throw new ArithmeticException("Division by zero");
                 }
-                return left - (Math.floor(left / right) * right);
+                // Java % is the remainder operation (truncation towards zero)
+                return left % right;
             }
+            // END_CHANGE: ISS-2025-0057
             
             @Override
             public String getSymbol() {

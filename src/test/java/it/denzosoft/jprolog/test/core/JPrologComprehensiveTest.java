@@ -47,12 +47,12 @@ public class JPrologComprehensiveTest {
         List<Map<String, Term>> solutions = prolog.solve("X is 2 + 3");
         assertEquals(1, solutions.size());
         Term xValue = solutions.get(0).get("X");
-        assertEquals("5.0", xValue.toString());
+        assertEquals("5", xValue.toString());
         
         solutions = prolog.solve("X is 10 / 2 - 1");
         assertEquals(1, solutions.size());
         xValue = solutions.get(0).get("X");
-        assertEquals("4.0", xValue.toString());
+        assertEquals("4", xValue.toString());
     }
 
     @Test
@@ -100,7 +100,7 @@ public class JPrologComprehensiveTest {
         assertEquals(1, solutions.size());
         Term nValue = solutions.get(0).get("N");
         assertNotNull(nValue);
-        assertEquals("123.0", nValue.toString());
+        assertEquals("123", nValue.toString());
         
         // Test atom_chars conversion
         solutions = prolog.solve("atom_chars('hello', L).");

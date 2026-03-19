@@ -17,12 +17,15 @@ public class FloatCheck implements BuiltIn {
             throw new PrologEvaluationException("float/1 requires exactly one argument.");
         }
 
-        Term termArg = query.getArguments().get(0);
+        // START_CHANGE: ISS-2025-0080 - Resolve bindings before type/ground checks
+        Term resolvedTerm = query.getArguments().get(0).resolveBindings(bindings);
+        // END_CHANGE: ISS-2025-0080
 
-        if (termArg.isGround()) {
-            boolean isFloat = (termArg instanceof Number) && 
-                             !(((Number) termArg).getValue() == Math.floor(((Number) termArg).getValue()) &&
-                               !Double.isInfinite(((Number) termArg).getValue()));
+        if (resolvedTerm.isGround()) {
+            // START_CHANGE: ISS-2025-0056 - Use Number.isFloat() for proper type distinction
+            boolean isFloat = (resolvedTerm instanceof Number) &&
+                             ((Number) resolvedTerm).isFloat();
+            // END_CHANGE: ISS-2025-0056
             
             if (isFloat) {
                 solutions.add(bindings);

@@ -40,7 +40,7 @@ public class ListBuiltinsTest {
         assertEquals(1, solutions.size());
         Term length = solutions.get(0).get("L");
         assertNotNull(length);
-        assertEquals("3.0", length.toString());
+        assertEquals("3", length.toString());
         
         // Test length with generated list
         solutions = prolog.solve("length(List, 3).");
@@ -78,7 +78,7 @@ public class ListBuiltinsTest {
         assertEquals(1, solutions.size());
         Term index = solutions.get(0).get("Index");
         assertNotNull(index);
-        assertEquals("1.0", index.toString());
+        assertEquals("1", index.toString());
     }
 
     @Test

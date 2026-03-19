@@ -12,6 +12,10 @@ import java.util.ArrayList;
  * must map to the same new variable instance.
  */
 public class TermCopier {
+
+    // START_CHANGE: ISS-2025-0082 - Use AtomicLong counter instead of System.nanoTime()
+    private static final java.util.concurrent.atomic.AtomicLong COPY_COUNTER = new java.util.concurrent.atomic.AtomicLong(0);
+    // END_CHANGE: ISS-2025-0082
     
     /**
      * Copy a term while preserving variable sharing relationships.
@@ -53,11 +57,13 @@ public class TermCopier {
      */
     public static RuleCopy copyRule(Term head, List<Term> body) {
         Map<String, Variable> variableMap = new HashMap<>();
-        long timestamp = System.nanoTime(); // Use timestamp to ensure uniqueness
-        Term copiedHead = copyTermInternal(head, variableMap, "_R" + timestamp + "_");
+        // START_CHANGE: ISS-2025-0082 - Use AtomicLong counter instead of System.nanoTime()
+        long counter = COPY_COUNTER.getAndIncrement();
+        // END_CHANGE: ISS-2025-0082
+        Term copiedHead = copyTermInternal(head, variableMap, "_R" + counter + "_");
         List<Term> copiedBody = new ArrayList<>();
         for (Term term : body) {
-            copiedBody.add(copyTermInternal(term, variableMap, "_R" + timestamp + "_"));
+            copiedBody.add(copyTermInternal(term, variableMap, "_R" + counter + "_"));
         }
         return new RuleCopy(copiedHead, copiedBody);
     }

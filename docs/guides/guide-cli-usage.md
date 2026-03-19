@@ -79,6 +79,8 @@ All special commands start with a colon (`:`) and are case-insensitive:
 | `:clear` | | Clear knowledge base and reload examples |
 | `:consult <file>` | `:c <file>` | Load facts/rules from a file |
 | `:save <file>` | `:s <file>` | Save current knowledge base to file |
+| `:compile <file>` | | Compile `.pl` file to binary `.jpc` format |
+| `:consult_compiled <file>` | `:cc <file>` | Load a compiled `.jpc` file |
 
 ### Examples:
 ```
@@ -86,6 +88,8 @@ All special commands start with a colon (`:`) and are case-insensitive:
 ?- :consult family.pl
 ?- :save my_session.pl
 ?- :listing
+?- :compile family.pl
+?- :cc family.jpc
 ```
 
 ## Query Examples
@@ -295,8 +299,8 @@ JProlog CLI implements approximately 95% of ISO Prolog standard features:
 
 ### ⚠️ Partially Implemented
 - Exception handling (basic support)
-- DCG (Definite Clause Grammar) - limited
-- Module system - not implemented
+- DCG (Definite Clause Grammar) - 85% success rate
+- Module system - basic module-qualified calls supported (`Module:Goal`)
 
 ### 📋 Known Limitations
 - Rule resolution in QuerySolver may have issues with complex clause structures
@@ -369,9 +373,23 @@ For more information about Prolog programming and ISO standard compliance, consu
 
 ## Version Information
 
-This guide is current as of **JProlog v2.0.6**. The CLI functionality and examples described have been tested with this version. Note that some mathematical functions (like `sqrt/1`) mentioned in examples may require implementation as they are part of ongoing development.
+This guide is current as of **JProlog v2.2.0**. All CLI functionality and examples described have been tested with this version.
 
-**Launch Command (updated for v2.0.6):**
+**Launch Command:**
 ```bash
 java -cp target/classes it.denzosoft.jprolog.PrologCLI
 ```
+
+### Binary Compilation (v2.2.0+)
+
+Compile Prolog files to binary `.jpc` format for faster loading:
+
+```
+?- :compile my_program.pl
+Compiled: my_program.jpc (1234 bytes, 5 ms)
+
+?- :cc my_program.jpc
+Loaded compiled file: my_program.jpc (1 ms)
+```
+
+The `.jpc` format uses string interning and varint encoding for compact representation. Source hash validation ensures the compiled file matches the original source.

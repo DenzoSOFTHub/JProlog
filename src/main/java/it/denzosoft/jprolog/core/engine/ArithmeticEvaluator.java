@@ -86,6 +86,7 @@ public class ArithmeticEvaluator {
         UNARY_FUNCTIONS.put("float_fractional_part", x -> x - (Math.floor(Math.abs(x)) * Math.signum(x)));
         UNARY_FUNCTIONS.put("\\", x -> (double)(~(x.longValue()))); // Bitwise NOT
         UNARY_FUNCTIONS.put("random", x -> Math.random()); // Random number (ignores argument)
+        UNARY_FUNCTIONS.put("float", x -> x.doubleValue()); // ISO: convert to float
         
         // Register ISO arithmetic functions
         ISOArithmeticFunctions.registerAll();

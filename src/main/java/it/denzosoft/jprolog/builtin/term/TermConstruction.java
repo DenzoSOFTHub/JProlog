@@ -7,6 +7,7 @@ import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
+import it.denzosoft.jprolog.core.util.ListUtils;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -59,13 +60,15 @@ public class TermConstruction implements BuiltIn {
             throw new PrologEvaluationException("functor/3 requires exactly 3 arguments.");
         }
 
-        Term term = query.getArguments().get(0);
-        Term functor = query.getArguments().get(1);
-        Term arity = query.getArguments().get(2);
-        
+        // START_CHANGE: ISS-2025-0084 - Resolve bindings before type/ground checks
+        Term term = query.getArguments().get(0).resolveBindings(bindings);
+        Term functor = query.getArguments().get(1).resolveBindings(bindings);
+        Term arity = query.getArguments().get(2).resolveBindings(bindings);
+        // END_CHANGE: ISS-2025-0084
+
         if (term.isGround()) {
             // Extract functor and arity
-            Term resolvedTerm = term.resolveBindings(bindings);
+            Term resolvedTerm = term;
             Map<String, Term> newBindings = new HashMap<>(bindings);
             
             if (resolvedTerm instanceof Atom) {
@@ -85,8 +88,8 @@ public class TermConstruction implements BuiltIn {
             return false;
         } else {
             // Construct term from functor and arity
-            Term resolvedFunctor = functor.resolveBindings(bindings);
-            Term resolvedArity = arity.resolveBindings(bindings);
+            Term resolvedFunctor = functor;
+            Term resolvedArity = arity;
             
             if (resolvedFunctor instanceof Atom && resolvedArity instanceof Number) {
                 int arityValue = (int) Math.round(((Number) resolvedArity).getValue());
@@ -118,16 +121,18 @@ public class TermConstruction implements BuiltIn {
             throw new PrologEvaluationException("arg/3 requires exactly 3 arguments.");
         }
 
-        Term indexTerm = query.getArguments().get(0);
-        Term term = query.getArguments().get(1);
+        // START_CHANGE: ISS-2025-0084 - Resolve bindings before type/ground checks
+        Term indexTerm = query.getArguments().get(0).resolveBindings(bindings);
+        Term term = query.getArguments().get(1).resolveBindings(bindings);
         Term arg = query.getArguments().get(2);
-        
+        // END_CHANGE: ISS-2025-0084
+
         if (!indexTerm.isGround() || !term.isGround()) {
-            throw new PrologEvaluationException("arg/3: First two arguments must be ground.");
+            return false;
         }
-        
-        Term resolvedIndex = indexTerm.resolveBindings(bindings);
-        Term resolvedTerm = term.resolveBindings(bindings);
+
+        Term resolvedIndex = indexTerm;
+        Term resolvedTerm = term;
         
         if (resolvedIndex instanceof Number && resolvedTerm instanceof CompoundTerm) {
             int index = (int) Math.round(((Number) resolvedIndex).getValue());
@@ -149,12 +154,14 @@ public class TermConstruction implements BuiltIn {
             throw new PrologEvaluationException("=../2 requires exactly 2 arguments.");
         }
 
-        Term term = query.getArguments().get(0);
-        Term list = query.getArguments().get(1);
-        
+        // START_CHANGE: ISS-2025-0084 - Resolve bindings before type/ground checks
+        Term term = query.getArguments().get(0).resolveBindings(bindings);
+        Term list = query.getArguments().get(1).resolveBindings(bindings);
+        // END_CHANGE: ISS-2025-0084
+
         if (term.isGround()) {
             // Convert term to list
-            Term resolvedTerm = term.resolveBindings(bindings);
+            Term resolvedTerm = term;
             Term listRepresentation = termToList(resolvedTerm);
             Map<String, Term> newBindings = new HashMap<>(bindings);
             
@@ -165,7 +172,7 @@ public class TermConstruction implements BuiltIn {
             return false;
         } else if (list.isGround()) {
             // Convert list to term
-            Term resolvedList = list.resolveBindings(bindings);
+            Term resolvedList = list;
             Term termRepresentation = listToTerm(resolvedList);
             if (termRepresentation != null) {
                 Map<String, Term> newBindings = new HashMap<>(bindings);
@@ -211,33 +218,15 @@ public class TermConstruction implements BuiltIn {
         return null;
     }
     
+    // START_CHANGE: ISS-2025-0084 - Consolidate to use ListUtils
     private List<Term> extractElements(Term list) {
-        List<Term> elements = new ArrayList<>();
-        Term current = list;
-        
-        while (current instanceof CompoundTerm) {
-            CompoundTerm compound = (CompoundTerm) current;
-            if (compound.getName().equals(".") && compound.getArguments().size() == 2) {
-                elements.add(compound.getArguments().get(0));
-                current = compound.getArguments().get(1);
-            } else {
-                break;
-            }
-        }
-        
-        return elements;
+        return ListUtils.extractElements(list);
     }
-    
+
     private Term buildList(List<Term> elements) {
-        Term result = new Atom("[]");
-        for (int i = elements.size() - 1; i >= 0; i--) {
-            List<Term> args = new ArrayList<>();
-            args.add(elements.get(i));
-            args.add(result);
-            result = new CompoundTerm(new Atom("."), args);
-        }
-        return result;
+        return ListUtils.createList(elements);
     }
+    // END_CHANGE: ISS-2025-0084
     
     private boolean handleCopyTerm(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {

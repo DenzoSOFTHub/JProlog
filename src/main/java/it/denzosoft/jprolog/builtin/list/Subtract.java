@@ -1,0 +1,49 @@
+package it.denzosoft.jprolog.builtin.list;
+
+import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.util.ListUtils;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * subtract(+Set, +Delete, -Result) - Remove from Set elements in Delete.
+ */
+public class Subtract implements BuiltIn {
+    @Override
+    public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        if (query.getArguments().size() != 3) return false;
+
+        Term set = query.getArguments().get(0).resolveBindings(bindings);
+        Term del = query.getArguments().get(1).resolveBindings(bindings);
+        Term result = query.getArguments().get(2);
+
+        List<Term> setElems = ListUtils.extractElements(set);
+        List<Term> delElems = ListUtils.extractElements(del);
+        List<Term> filtered = new ArrayList<>();
+
+        for (Term e : setElems) {
+            if (!memberOf(e, delElems)) {
+                filtered.add(e);
+            }
+        }
+
+        Map<String, Term> newBindings = new HashMap<>(bindings);
+        if (result.unify(ListUtils.createList(filtered), newBindings)) {
+            solutions.add(newBindings);
+            return true;
+        }
+        return false;
+    }
+
+    static boolean memberOf(Term elem, List<Term> list) {
+        for (Term e : list) {
+            Map<String, Term> test = new HashMap<>();
+            if (e.unify(elem, test)) return true;
+        }
+        return false;
+    }
+}

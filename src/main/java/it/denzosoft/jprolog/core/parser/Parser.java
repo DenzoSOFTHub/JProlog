@@ -2,6 +2,7 @@ package it.denzosoft.jprolog.core.parser;
 
 import it.denzosoft.jprolog.core.engine.Rule;
 import it.denzosoft.jprolog.core.exceptions.PrologParserException;
+import it.denzosoft.jprolog.core.operator.OperatorTable;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -22,9 +23,18 @@ public class Parser {
         this(new TermParser());
     }
 
+    // START_CHANGE: ISS-2025-0085 - Accept shared OperatorTable
+    /**
+     * Create a parser with a shared operator table.
+     */
+    public Parser(OperatorTable operatorTable) {
+        this(new TermParser(operatorTable));
+    }
+    // END_CHANGE: ISS-2025-0085
+
     /**
      * Create a parser with specified term parser.
-     * 
+     *
      * @param termParser The term parser to use
      */
     public Parser(TermParser termParser) {
@@ -59,10 +69,11 @@ public class Parser {
         return rules;
     }
     
+    // START_CHANGE: ISS-2025-0085 - Make extractClauses/parseRule accessible for incremental parsing
     /**
-     * Estrae le clausole dal programma gestendo correttamente commenti e stringhe.
+     * Extract clause strings from a Prolog program, handling comments and quotes.
      */
-    private List<String> extractClauses(String program) {
+    public List<String> extractClauses(String program) {
         List<String> clauses = new ArrayList<>();
         StringBuilder currentClause = new StringBuilder();
         
@@ -163,7 +174,11 @@ public class Parser {
         return clauses;
     }
 
-    private Rule parseRule(String ruleString) throws PrologParserException {
+    /**
+     * Parse a single clause string into a Rule.
+     */
+    public Rule parseRule(String ruleString) throws PrologParserException {
+    // END_CHANGE: ISS-2025-0085
         // Remove trailing '.' if present
         String cleanRule = ruleString.trim();
         if (cleanRule.endsWith(".")) {

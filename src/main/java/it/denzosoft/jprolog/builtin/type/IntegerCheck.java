@@ -23,9 +23,10 @@ public class IntegerCheck implements BuiltIn {
         Term resolvedTerm = termArg.resolveBindings(bindings);
         
         if (resolvedTerm.isGround()) {
-            boolean isInteger = (resolvedTerm instanceof Number) && 
-                               ((Number) resolvedTerm).getValue() == Math.floor(((Number) resolvedTerm).getValue()) &&
-                               !Double.isInfinite(((Number) resolvedTerm).getValue());
+            // START_CHANGE: ISS-2025-0056 - Use Number.isInteger() for proper type distinction
+            boolean isInteger = (resolvedTerm instanceof Number) &&
+                               ((Number) resolvedTerm).isInteger();
+            // END_CHANGE: ISS-2025-0056
             
             if (isInteger) {
                 solutions.add(bindings);

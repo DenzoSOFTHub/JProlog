@@ -5,23 +5,32 @@ import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public final class ListUtils {
-    
+
+    // START_CHANGE: ISS-2025-0076 - Optimize list construction
+    /** Cached empty list atom to avoid repeated allocations */
+    private static final Atom EMPTY_LIST = new Atom("[]");
+
+    /** Cached dot functor atom to avoid repeated allocations */
+    private static final Atom DOT_FUNCTOR = new Atom(".");
+    // END_CHANGE: ISS-2025-0076
+
     // Prevent instantiation
     private ListUtils() {}
-    
+
     /**
      * Extract elements from a Prolog list term.
-     * 
+     *
      * @param list The list term to extract elements from
      * @return List of elements, or empty list for malformed lists
      */
     public static List<Term> extractElements(Term list) {
         List<Term> elements = new ArrayList<>();
         Term current = list;
-        
+
         while (current instanceof CompoundTerm) {
             CompoundTerm compound = (CompoundTerm) current;
             if (compound.getName().equals(".") && compound.getArguments().size() == 2) {
@@ -31,40 +40,40 @@ public final class ListUtils {
                 break;
             }
         }
-        
+
         return elements;
     }
-    
+
     /**
      * Check if a term represents the empty list.
-     * 
+     *
      * @param term The term to check
      * @return true if term is the empty list atom []
      */
     public static boolean isEmptyList(Term term) {
         return term instanceof Atom && ((Atom) term).getName().equals("[]");
     }
-    
+
+    // START_CHANGE: ISS-2025-0076 - Optimize list construction
     /**
      * Create a Prolog list term from a list of elements.
-     * 
+     * Uses cached atoms and Arrays.asList to avoid per-element ArrayList allocation.
+     *
      * @param elements The elements to include in the list
      * @return The list term representation
      */
     public static Term createList(List<Term> elements) {
-        Term result = new Atom("[]");
+        Term result = EMPTY_LIST;
         for (int i = elements.size() - 1; i >= 0; i--) {
-            List<Term> args = new ArrayList<>();
-            args.add(elements.get(i));
-            args.add(result);
-            result = new CompoundTerm(new Atom("."), args);
+            result = new CompoundTerm(DOT_FUNCTOR, Arrays.asList(elements.get(i), result));
         }
         return result;
     }
-    
+
     /**
      * Create a Prolog list term from a list of elements with a custom tail.
-     * 
+     * Uses cached atoms and Arrays.asList to avoid per-element ArrayList allocation.
+     *
      * @param elements The elements to include in the list
      * @param tail The tail of the list
      * @return The list term representation
@@ -72,11 +81,9 @@ public final class ListUtils {
     public static Term createListWithTail(List<Term> elements, Term tail) {
         Term result = tail;
         for (int i = elements.size() - 1; i >= 0; i--) {
-            List<Term> args = new ArrayList<>();
-            args.add(elements.get(i));
-            args.add(result);
-            result = new CompoundTerm(new Atom("."), args);
+            result = new CompoundTerm(DOT_FUNCTOR, Arrays.asList(elements.get(i), result));
         }
         return result;
     }
+    // END_CHANGE: ISS-2025-0076
 }

@@ -16,11 +16,14 @@
 
 JProlog provides a comprehensive Java API for integrating Prolog reasoning capabilities into Java applications. This guide shows simple, complete examples that actually work with the current codebase structure.
 
-### Current Features (v2.0.6)
+### Current Features (v2.2.0)
 - **Full Prolog Engine**: Complete ISO Prolog implementation
 - **Built-in Predicates**: 90+ standard predicates available
+- **Robust Parser**: Unified Pratt parser with dynamic `op/3` support
+- **Binary Compiled Format**: `.jpc` files for fast program loading
 - **DCG Support**: Definite Clause Grammar parsing
 - **Dynamic Database**: Runtime assert/retract operations
+- **Module-Qualified Calls**: `Module:Goal` syntax supported
 - **String Handling**: Support for both atoms and strings
 - **Exception System**: Full Prolog exception handling
 
@@ -30,7 +33,7 @@ JProlog provides a comprehensive Java API for integrating Prolog reasoning capab
 <dependency>
     <groupId>it.denzosoft</groupId>
     <artifactId>jprolog</artifactId>
-    <version>2.0.6</version>
+    <version>2.2.0</version>
 </dependency>
 ```
 
@@ -605,9 +608,66 @@ public class PrologCalculator {
 
 ---
 
+## Binary Compiled Format (v2.2.0+)
+
+JProlog supports compiling Prolog programs to a binary `.jpc` format for faster loading.
+
+### Compiling Programs
+
+```java
+Prolog prolog = new Prolog();
+
+// Compile a source string to binary
+try (FileOutputStream fos = new FileOutputStream("program.jpc")) {
+    prolog.compile(sourceCode, fos);
+}
+
+// Or compile a file directly
+String jpcPath = prolog.compileFile("program.pl");
+// Creates program.jpc alongside program.pl
+```
+
+### Loading Compiled Programs
+
+```java
+Prolog prolog = new Prolog();
+
+// Load from file path
+prolog.consultCompiled("program.jpc");
+
+// Load from input stream
+try (FileInputStream fis = new FileInputStream("program.jpc")) {
+    prolog.consultCompiled(fis);
+}
+```
+
+### Smart Consult (Recommended)
+
+The `consultSmart` method automatically handles caching:
+1. If a `.jpc` file exists and is up-to-date, loads the binary version
+2. Otherwise, parses from source and compiles to `.jpc` for next time
+3. Uses MD5 hash of the source to detect changes
+
+```java
+Prolog prolog = new Prolog();
+prolog.consultSmart("large_knowledge_base.pl");
+// First call: parses + compiles to .jpc
+// Subsequent calls: loads .jpc directly (much faster)
+```
+
+### JPC Format Details
+
+The `.jpc` binary format features:
+- **String interning**: All atom names, variable names, and strings stored once in a string table
+- **Varint encoding**: Compact variable-length integer encoding
+- **Source hash**: MD5-based hash for cache invalidation
+- **Operator storage**: Custom operators serialized alongside rules
+
+---
+
 ## Notes
 
-- **Current Version**: This guide is updated for JProlog v2.0.6
+- **Current Version**: This guide is updated for JProlog v2.2.0
 - **Package Structure**: All classes use the `it.denzosoft.jprolog.core.*` package structure
 - **Built-in Predicates**: Over 90 standard Prolog predicates are available
 - **Testing**: All examples have been verified to work with the current codebase

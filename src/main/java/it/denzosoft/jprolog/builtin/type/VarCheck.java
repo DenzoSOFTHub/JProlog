@@ -18,12 +18,12 @@ public class VarCheck implements BuiltIn {
 
         Term termArg = query.getArguments().get(0);
 
-        // DO NOT check if .isGround; if unbound then Var.isTrue always independent of content.
-        boolean isVar = (termArg instanceof Variable);
-        // More nuanced test:
-        // !(bindings.containsKey(((Variable)termArg).getName()); // That tests bound-ness
-        // But prolog var(_) checks pointer type inspectively.
-        // Keep: Java object identity to define presence.
+        // START_CHANGE: ISS-2025-0051 - Fix var/1 to check bindings map
+        // ISO Prolog: var(X) succeeds only if X is an unbound variable.
+        // Must resolve through bindings first - a bound variable is not var.
+        Term resolved = termArg.resolveBindings(bindings);
+        boolean isVar = (resolved instanceof Variable);
+        // END_CHANGE: ISS-2025-0051
 
         if (isVar) {
             solutions.add(bindings);

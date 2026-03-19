@@ -9,7 +9,9 @@ import it.denzosoft.jprolog.core.terms.Variable;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.module.ModuleManager;
+import it.denzosoft.jprolog.core.operator.OperatorTable;
 import it.denzosoft.jprolog.core.dcg.DCGTransformer;
+import it.denzosoft.jprolog.builtin.system.OperatorDefinition;
 import it.denzosoft.jprolog.util.TermUtils;
 import java.util.*;
 import java.util.logging.Logger;
@@ -25,6 +27,9 @@ public class Prolog {
     private final Parser parser;
     private final ModuleManager moduleManager;
     private final DCGTransformer dcgTransformer;
+    // START_CHANGE: ISS-2025-0085 - Shared operator table for parser/predicate integration
+    private final OperatorTable operatorTable;
+    // END_CHANGE: ISS-2025-0085
     private boolean traceEnabled = false;
 
     /**
@@ -35,9 +40,13 @@ public class Prolog {
         this.builtInRegistry = new BuiltInRegistry();
         this.moduleManager = new ModuleManager();
         this.dcgTransformer = new DCGTransformer();
+        // START_CHANGE: ISS-2025-0085 - Create shared OperatorTable
+        this.operatorTable = new OperatorTable();
+        this.parser = new Parser(operatorTable);
+        OperatorDefinition.setSharedOperatorTable(operatorTable);
+        // END_CHANGE: ISS-2025-0085
         this.querySolver = new QuerySolver(knowledgeBase, builtInRegistry);
         this.querySolver.setPrologContext(this);
-        this.parser = new Parser();
         registerBuiltInPredicates();
     }
 
@@ -53,7 +62,9 @@ public class Prolog {
                          name.equals("ignore") || name.equals("forall") ||
                          name.equals("asserta") || name.equals("assertz") || name.equals("retract") ||
                          name.equals("retractall") || name.equals("abolish") || name.equals("current_predicate") ||
-                         name.equals("clause") || name.equals("listing") || name.equals("\\+") || name.equals("phrase"))) {
+                         name.equals("clause") || name.equals("listing") || name.equals("\\+") || name.equals("phrase") ||
+                         name.equals("maplist") || name.equals("include") || name.equals("exclude") ||
+                         name.equals("foldl") || name.equals("with_output_to"))) {
                         // Special handling for context-dependent predicates
                         builtInRegistry.registerBuiltIn(name, new CollectionBuiltInAdapter((BuiltInWithContext) builtIn, querySolver));
                     } else if (name.equals("listing")) {
@@ -83,30 +94,42 @@ public class Prolog {
      */
     public void consult(String program) {
         try {
-            List<Rule> rules = parser.parse(program);
-            for (Rule rule : rules) {
-                // Check if this is a directive (starts with :-)
+            // START_CHANGE: ISS-2025-0085 - Parse clauses incrementally so op directives
+            // take effect before subsequent clauses are parsed
+            List<java.lang.String> clauses = parser.extractClauses(program);
+            for (java.lang.String clause : clauses) {
+                java.lang.String trimmed = clause.trim();
+                if (trimmed.isEmpty()) continue;
+
+                Rule rule;
+                try {
+                    rule = parser.parseRule(trimmed);
+                } catch (PrologParserException e) {
+                    throw new PrologParserException("Error parsing clause: " + e.getMessage(), e);
+                }
+
                 if (isDirective(rule)) {
                     processDirective(rule);
                 } else if (isDCGRule(rule)) {
-                    // Transform DCG rule to standard Prolog rule
                     Rule transformedRule = transformDCGRule(rule);
-                    
-                    // Check if the transformed rule would conflict with a built-in
                     checkBuiltInConflict(transformedRule);
-                    
                     moduleManager.addRule(transformedRule);
-                    knowledgeBase.addRule(transformedRule);
-                    LOGGER.log(Level.INFO, "DCG rule transformed: " + rule.getHead() + " --> " + transformedRule.getHead());
+                    // START_CHANGE: CR-2025-0002 - Module-isolated rule storage
+                    if ("user".equals(moduleManager.getCurrentModule().getName())) {
+                        knowledgeBase.addRule(transformedRule);
+                    }
+                    // END_CHANGE: CR-2025-0002
                 } else {
-                    // Check if this rule would conflict with a built-in
                     checkBuiltInConflict(rule);
-                    
-                    // Add regular rule to current module
                     moduleManager.addRule(rule);
-                    knowledgeBase.addRule(rule);
+                    // START_CHANGE: CR-2025-0002 - Module-isolated rule storage
+                    if ("user".equals(moduleManager.getCurrentModule().getName())) {
+                        knowledgeBase.addRule(rule);
+                    }
+                    // END_CHANGE: CR-2025-0002
                 }
             }
+            // END_CHANGE: ISS-2025-0085
         } catch (PrologParserException e) {
             throw new PrologException("Error parsing program: " + e.getMessage(), e);
         }
@@ -159,6 +182,11 @@ public class Prolog {
                     case "use_module":
                         processUseModuleDirective(directive);
                         break;
+                    // START_CHANGE: ISS-2025-0085 - Handle op/3 directives during consult
+                    case "op":
+                        processOpDirective(directive);
+                        break;
+                    // END_CHANGE: ISS-2025-0085
                     default:
                         LOGGER.log(Level.INFO, "Unknown directive ignored: " + directive);
                 }
@@ -184,6 +212,45 @@ public class Prolog {
         }
     }
     
+    // START_CHANGE: ISS-2025-0085 - Process op/3 directives to update shared OperatorTable
+    /**
+     * Process an op/3 directive during consult.
+     * This immediately updates the shared OperatorTable so subsequent
+     * parsing can use the new operator.
+     */
+    private void processOpDirective(Term directive) {
+        if (directive instanceof CompoundTerm && TermUtils.getArity(directive) == 3) {
+            CompoundTerm ct = (CompoundTerm) directive;
+            Term precTerm = ct.getArguments().get(0);
+            Term typeTerm = ct.getArguments().get(1);
+            Term nameTerm = ct.getArguments().get(2);
+
+            if (precTerm instanceof it.denzosoft.jprolog.core.terms.Number &&
+                typeTerm instanceof Atom && nameTerm instanceof Atom) {
+                int precedence = (int) Math.round(((it.denzosoft.jprolog.core.terms.Number) precTerm).getValue());
+                java.lang.String type = ((Atom) typeTerm).getName();
+                java.lang.String name = ((Atom) nameTerm).getName();
+
+                try {
+                    if (precedence == 0) {
+                        // Remove operator — remove all definitions with this name
+                        for (it.denzosoft.jprolog.core.operator.Operator op : operatorTable.getOperators(name)) {
+                            operatorTable.removeOperator(op.getPrecedence(), op.getType(), name);
+                        }
+                    } else {
+                        it.denzosoft.jprolog.core.operator.Operator.Type opType =
+                            it.denzosoft.jprolog.core.operator.Operator.parseType(type);
+                        operatorTable.defineOperator(precedence, opType, name);
+                    }
+                    LOGGER.log(Level.INFO, "Operator directive processed: op(" + precedence + ", " + type + ", " + name + ")");
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING, "Failed to process op directive: " + e.getMessage());
+                }
+            }
+        }
+    }
+    // END_CHANGE: ISS-2025-0085
+
     /**
      * Check if a rule is a DCG rule (uses --> operator).
      */
@@ -208,16 +275,43 @@ public class Prolog {
      * 
      * @param clauseString The clause as a string
      */
+    // START_CHANGE: ISS-2025-0085 - Process directives and DCG rules in asserta
     public void asserta(String clauseString) {
         try {
-            List<Rule> rules = parser.parse(clauseString);
-            for (Rule rule : rules) {
-                knowledgeBase.asserta(rule);
+            List<java.lang.String> clauses = parser.extractClauses(clauseString);
+            for (java.lang.String clause : clauses) {
+                java.lang.String trimmed = clause.trim();
+                if (trimmed.isEmpty()) continue;
+
+                Rule rule = parser.parseRule(trimmed);
+
+                if (isDirective(rule)) {
+                    processDirective(rule);
+                } else if (isDCGRule(rule)) {
+                    Rule transformedRule = transformDCGRule(rule);
+                    checkBuiltInConflict(transformedRule);
+                    moduleManager.addRule(transformedRule);
+                    // START_CHANGE: CR-2025-0002 - Module-isolated rule storage
+                    // Only add to global KB if in user module (default)
+                    if ("user".equals(moduleManager.getCurrentModule().getName())) {
+                        knowledgeBase.asserta(transformedRule);
+                    }
+                    // END_CHANGE: CR-2025-0002
+                } else {
+                    // START_CHANGE: CR-2025-0002 - Module-isolated rule storage
+                    if ("user".equals(moduleManager.getCurrentModule().getName())) {
+                        knowledgeBase.asserta(rule);
+                    } else {
+                        moduleManager.addRule(rule);
+                    }
+                    // END_CHANGE: CR-2025-0002
+                }
             }
         } catch (PrologParserException e) {
             throw new PrologException("Error parsing clause: " + e.getMessage(), e);
         }
     }
+    // END_CHANGE: ISS-2025-0085
     
     /**
      * Retract a fact or rule from the knowledge base.
@@ -565,10 +659,166 @@ public class Prolog {
     
     /**
      * Get the module manager.
-     * 
+     *
      * @return The module manager
      */
     public ModuleManager getModuleManager() {
         return moduleManager;
     }
+
+    // START_CHANGE: ISS-2025-0085 - Expose shared OperatorTable
+    /**
+     * Get the shared operator table.
+     */
+    public OperatorTable getOperatorTable() {
+        return operatorTable;
+    }
+    // END_CHANGE: ISS-2025-0085
+
+    // START_CHANGE: ISS-2025-0085 - Compiled binary format support
+    /**
+     * Compile a Prolog source string to binary JPC format.
+     *
+     * @param source the Prolog source text
+     * @param out    output stream to write the compiled format
+     */
+    public void compile(String source, java.io.OutputStream out) throws java.io.IOException {
+        try {
+            List<Rule> rules = new ArrayList<>();
+            List<java.lang.String> clauses = parser.extractClauses(source);
+            for (java.lang.String clause : clauses) {
+                java.lang.String trimmed = clause.trim();
+                if (trimmed.isEmpty()) continue;
+                Rule rule = parser.parseRule(trimmed);
+                if (isDirective(rule)) {
+                    processDirective(rule);
+                }
+                rules.add(rule);
+            }
+            long hash = it.denzosoft.jprolog.core.compiled.JpcWriter.computeSourceHash(source);
+            new it.denzosoft.jprolog.core.compiled.JpcWriter()
+                .write(rules, operatorTable, hash, out);
+        } catch (PrologParserException e) {
+            throw new java.io.IOException("Parse error during compilation: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Compile a Prolog source file to a .jpc file (same name, different extension).
+     *
+     * @param sourceFile path to the .pl source file
+     * @return path to the generated .jpc file
+     */
+    public java.lang.String compileFile(java.lang.String sourceFile) throws java.io.IOException {
+        java.lang.String source = new java.lang.String(
+            java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(sourceFile)),
+            java.nio.charset.StandardCharsets.UTF_8);
+        java.lang.String jpcFile = sourceFile.replaceAll("\\.[^.]+$", "") +
+            it.denzosoft.jprolog.core.compiled.JpcFormat.EXTENSION;
+        try (java.io.FileOutputStream fos = new java.io.FileOutputStream(jpcFile)) {
+            compile(source, fos);
+        }
+        return jpcFile;
+    }
+
+    /**
+     * Load a compiled JPC file into the engine.
+     * Falls back to source consult if the JPC is stale or missing.
+     *
+     * @param jpcFile path to the .jpc file
+     */
+    public void consultCompiled(java.lang.String jpcFile) throws java.io.IOException {
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(jpcFile)) {
+            consultCompiled(fis);
+        }
+    }
+
+    /**
+     * Load compiled rules from an input stream.
+     *
+     * @param in input stream containing JPC data
+     */
+    public void consultCompiled(java.io.InputStream in) throws java.io.IOException {
+        it.denzosoft.jprolog.core.compiled.JpcReader reader = new it.denzosoft.jprolog.core.compiled.JpcReader();
+        it.denzosoft.jprolog.core.compiled.JpcReader.CompiledProgram program = reader.read(in);
+        // Register operators
+        for (it.denzosoft.jprolog.core.operator.Operator op : program.operators) {
+            operatorTable.defineOperator(op.getPrecedence(), op.getType(), op.getName());
+        }
+        // Load rules
+        for (Rule rule : program.rules) {
+            if (isDirective(rule)) {
+                processDirective(rule);
+            } else if (isDCGRule(rule)) {
+                checkBuiltInConflict(rule);
+                moduleManager.addRule(rule);
+                knowledgeBase.addRule(rule);
+            } else {
+                checkBuiltInConflict(rule);
+                moduleManager.addRule(rule);
+                knowledgeBase.addRule(rule);
+            }
+        }
+    }
+
+    /**
+     * Smart consult: uses compiled .jpc if available and up-to-date, otherwise
+     * parses from source and optionally compiles for next time.
+     *
+     * @param sourceFile path to the .pl source file
+     */
+    public void consultSmart(java.lang.String sourceFile) throws java.io.IOException {
+        java.lang.String jpcFile = sourceFile.replaceAll("\\.[^.]+$", "") +
+            it.denzosoft.jprolog.core.compiled.JpcFormat.EXTENSION;
+        java.io.File jpc = new java.io.File(jpcFile);
+        java.io.File src = new java.io.File(sourceFile);
+
+        if (jpc.exists() && jpc.lastModified() >= src.lastModified()) {
+            // Try compiled version
+            try {
+                java.lang.String source = new java.lang.String(
+                    java.nio.file.Files.readAllBytes(src.toPath()),
+                    java.nio.charset.StandardCharsets.UTF_8);
+                long currentHash = it.denzosoft.jprolog.core.compiled.JpcWriter.computeSourceHash(source);
+
+                it.denzosoft.jprolog.core.compiled.JpcReader reader = new it.denzosoft.jprolog.core.compiled.JpcReader();
+                it.denzosoft.jprolog.core.compiled.JpcReader.CompiledProgram program;
+                try (java.io.FileInputStream fis = new java.io.FileInputStream(jpcFile)) {
+                    program = reader.read(fis);
+                }
+                if (program.sourceHash == currentHash) {
+                    // Hash matches — load compiled
+                    for (it.denzosoft.jprolog.core.operator.Operator op : program.operators) {
+                        operatorTable.defineOperator(op.getPrecedence(), op.getType(), op.getName());
+                    }
+                    for (Rule rule : program.rules) {
+                        if (isDirective(rule)) {
+                            processDirective(rule);
+                        } else {
+                            checkBuiltInConflict(rule);
+                            moduleManager.addRule(rule);
+                            knowledgeBase.addRule(rule);
+                        }
+                    }
+                    LOGGER.log(Level.INFO, "Loaded compiled: " + jpcFile);
+                    return;
+                }
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Failed to load compiled file, falling back to source: " + e.getMessage());
+            }
+        }
+
+        // Fall back to source consult + compile for next time
+        java.lang.String source = new java.lang.String(
+            java.nio.file.Files.readAllBytes(src.toPath()),
+            java.nio.charset.StandardCharsets.UTF_8);
+        consult(source);
+        try {
+            compileFile(sourceFile);
+            LOGGER.log(Level.INFO, "Compiled: " + jpcFile);
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Failed to compile: " + e.getMessage());
+        }
+    }
+    // END_CHANGE: ISS-2025-0085
 }

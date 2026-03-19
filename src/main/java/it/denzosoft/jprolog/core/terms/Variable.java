@@ -190,25 +190,45 @@ public class Variable extends Term {
         }
     }
     
+    // START_CHANGE: ISS-2025-0083 - Fast-path resolveBindings without HashSet allocation
     @Override
     public Term resolveBindings(Map<String, Term> bindings) {
-        return resolveBindings(bindings, new java.util.HashSet<String>());
+        // Fast path: direct lookup without HashSet allocation
+        if (!bindings.containsKey(this.name)) {
+            return this;
+        }
+        Term bound = bindings.get(this.name);
+        if (!(bound instanceof Variable)) {
+            return bound.resolveBindings(bindings);
+        }
+        // Second level: still avoid HashSet
+        Variable boundVar = (Variable) bound;
+        if (!bindings.containsKey(boundVar.getName())) {
+            return boundVar;
+        }
+        Term bound2 = bindings.get(boundVar.getName());
+        if (!(bound2 instanceof Variable)) {
+            return bound2.resolveBindings(bindings);
+        }
+        // Deep chain: fall back to HashSet-based cycle detection
+        return resolveBindingsWithCycleDetection(bindings, new java.util.HashSet<>());
     }
-    
+    // END_CHANGE: ISS-2025-0083
+
     /**
      * Resolve bindings with cycle detection to prevent infinite recursion.
      */
-    private Term resolveBindings(Map<String, Term> bindings, java.util.Set<String> visited) {
+    private Term resolveBindingsWithCycleDetection(Map<String, Term> bindings, java.util.Set<String> visited) {
         if (visited.contains(this.name)) {
             // Circular reference detected - return this variable
             return this;
         }
-        
+
         if (bindings.containsKey(this.name)) {
             visited.add(this.name);
             Term bound = bindings.get(this.name);
             if (bound instanceof Variable) {
-                return ((Variable) bound).resolveBindings(bindings, visited);
+                return ((Variable) bound).resolveBindingsWithCycleDetection(bindings, visited);
             } else {
                 return bound.resolveBindings(bindings);
             }
