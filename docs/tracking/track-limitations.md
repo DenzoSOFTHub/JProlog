@@ -3,7 +3,7 @@
 This document describes current limitations in JProlog implementation.
 When an issue is resolved, the corresponding limitation should be removed from this file.
 
-**Last updated**: 2026-03-18 (v2.2.0)
+**Last updated**: 2026-03-19 (v2.4.0)
 
 ---
 

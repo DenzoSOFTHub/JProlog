@@ -13,9 +13,9 @@ import java.util.ArrayList;
  */
 public class TermCopier {
 
-    // START_CHANGE: ISS-2025-0082 - Use AtomicLong counter instead of System.nanoTime()
-    private static final java.util.concurrent.atomic.AtomicLong COPY_COUNTER = new java.util.concurrent.atomic.AtomicLong(0);
-    // END_CHANGE: ISS-2025-0082
+    // START_CHANGE: ISS-2025-0091 - Use simple counter (single-threaded execution)
+    private static long COPY_COUNTER = 0;
+    // END_CHANGE: ISS-2025-0091
     
     /**
      * Copy a term while preserving variable sharing relationships.
@@ -57,13 +57,13 @@ public class TermCopier {
      */
     public static RuleCopy copyRule(Term head, List<Term> body) {
         Map<String, Variable> variableMap = new HashMap<>();
-        // START_CHANGE: ISS-2025-0082 - Use AtomicLong counter instead of System.nanoTime()
-        long counter = COPY_COUNTER.getAndIncrement();
-        // END_CHANGE: ISS-2025-0082
-        Term copiedHead = copyTermInternal(head, variableMap, "_R" + counter + "_");
-        List<Term> copiedBody = new ArrayList<>();
+        // START_CHANGE: ISS-2025-0091 - Cache prefix string to avoid repeated concatenation
+        String prefix = "_R" + (COPY_COUNTER++) + "_";
+        // END_CHANGE: ISS-2025-0091
+        Term copiedHead = copyTermInternal(head, variableMap, prefix);
+        List<Term> copiedBody = new ArrayList<>(body.size());
         for (Term term : body) {
-            copiedBody.add(copyTermInternal(term, variableMap, "_R" + counter + "_"));
+            copiedBody.add(copyTermInternal(term, variableMap, prefix));
         }
         return new RuleCopy(copiedHead, copiedBody);
     }
@@ -98,21 +98,24 @@ public class TermCopier {
             }
             return variableMap.get(name);
             
+        // START_CHANGE: ISS-2025-0091 - Reuse immutable Atom and Number instances
         } else if (term instanceof Atom) {
-            // Atoms are immutable, just return a new instance
-            return new Atom(((Atom) term).getName());
-            
+            // Atoms are immutable - reuse the same instance (no copy needed)
+            return term;
+
         } else if (term instanceof it.denzosoft.jprolog.core.terms.Number) {
-            // Numbers are immutable, just return a new instance
-            return new it.denzosoft.jprolog.core.terms.Number(((it.denzosoft.jprolog.core.terms.Number) term).getValue());
-            
+            // Numbers are immutable - reuse the same instance (no copy needed)
+            return term;
+
         } else if (term instanceof CompoundTerm) {
             CompoundTerm compound = (CompoundTerm) term;
-            List<Term> copiedArgs = new ArrayList<>();
+            List<Term> copiedArgs = new ArrayList<>(compound.getArguments().size());
             for (Term arg : compound.getArguments()) {
                 copiedArgs.add(copyTermInternal(arg, variableMap, prefix));
             }
-            return new CompoundTerm(new Atom(compound.getName()), copiedArgs);
+            // Reuse the functor Atom since it's immutable
+            return new CompoundTerm(compound.getFunctor(), copiedArgs);
+        // END_CHANGE: ISS-2025-0091
             
         } else {
             // Fallback to the term's own copy method

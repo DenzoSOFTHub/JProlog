@@ -791,9 +791,20 @@ public class TermParser {
         return buildList(elements);
     }
 
+    // START_CHANGE: ISS-2025-0091 - Handle '.' as atom inside lists (e.g., [.] in DCG terminals)
     private Term parseListElement() throws PrologParserException {
+        skipWhitespace();
+        // Special case: '.' inside a list is an atom, not end-of-clause
+        if (currentChar() == '.' && position + 1 < input.length()) {
+            char next = input.charAt(position + 1);
+            if (next == ']' || next == ',' || next == '|' || Character.isWhitespace(next)) {
+                nextChar(); // consume '.'
+                return new Atom(".");
+            }
+        }
         return parseExpression(999);
     }
+    // END_CHANGE: ISS-2025-0091
 
     private Term buildList(List<Term> elements) {
         if (elements.isEmpty()) {

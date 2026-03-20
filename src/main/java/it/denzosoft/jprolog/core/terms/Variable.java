@@ -42,71 +42,94 @@ public class Variable extends Term {
         // Dereference this variable iteratively to avoid recursion
         Term derefThis = dereferenceIterative(this, substitution);
         Term derefTerm = dereferenceIterative(term, substitution);
-        
+
         // If both sides are the same after dereferencing, they unify
         if (derefThis.equals(derefTerm)) {
             return true;
         }
-        
+
         // If the dereferenced term is still a variable, handle variable-to-term binding
         if (derefThis instanceof Variable) {
             Variable var = (Variable) derefThis;
-            
+
             // Occurs check: prevent circular references
             if (occursCheckIterative(var, derefTerm, substitution)) {
                 return false; // Unification fails if variable occurs in the term
             }
-            
+
             // Bind the variable to the term
             substitution.put(var.name, derefTerm);
             return true;
         }
-        
+
         // If dereferenced term is also a variable, bind to the non-variable side
         if (derefTerm instanceof Variable) {
             Variable var = (Variable) derefTerm;
-            
+
             // Occurs check: prevent circular references
             if (occursCheckIterative(var, derefThis, substitution)) {
                 return false; // Unification fails if variable occurs in the term
             }
-            
+
             // Bind the variable to the term
             substitution.put(var.name, derefThis);
             return true;
         }
-        
+
         // Both sides are non-variables, delegate to standard unification
         return derefThis.unify(derefTerm, substitution);
    }
-   
+
+   // START_CHANGE: ISS-2025-0091 - Fast-path dereferencing without HashSet allocation
    /**
     * Iteratively dereference a term following substitution chains.
-    * Avoids recursion to prevent StackOverflowError.
+    * Uses a fast path for short chains (typical case: 1-3 levels) that avoids
+    * HashSet allocation. Falls back to HashSet-based cycle detection only for
+    * deep chains (>16 levels), which are extremely rare.
     */
    private Term dereferenceIterative(Term term, Map<String, Term> substitution) {
-        java.util.Set<String> visited = new java.util.HashSet<>();
         Term current = term;
-        
+        int depth = 0;
+
+        // Fast path: no allocation for typical short variable chains
         while (current instanceof Variable) {
             String varName = ((Variable) current).name;
-            
-            // Cycle detection
-            if (visited.contains(varName)) {
-                break; // Return current to break the cycle
-            }
-            
-            // If no substitution exists, we've reached the end
-            if (!substitution.containsKey(varName)) {
+            Term bound = substitution.get(varName);
+            if (bound == null) {
                 break;
             }
-            
-            visited.add(varName);
-            current = substitution.get(varName);
+            current = bound;
+            if (++depth > 16) {
+                // Deep chain: fall back to HashSet-based cycle detection
+                return dereferenceWithCycleDetection(current, substitution);
+            }
         }
-        
+
         return current;
    }
+
+   /**
+    * Fallback dereference with HashSet cycle detection for deep chains.
+    */
+   private Term dereferenceWithCycleDetection(Term term, Map<String, Term> substitution) {
+        java.util.Set<String> visited = new java.util.HashSet<>();
+        Term current = term;
+
+        while (current instanceof Variable) {
+            String varName = ((Variable) current).name;
+            if (!visited.add(varName)) {
+                break; // Cycle detected
+            }
+            Term bound = substitution.get(varName);
+            if (bound == null) {
+                break;
+            }
+            current = bound;
+        }
+
+        return current;
+   }
+   // END_CHANGE: ISS-2025-0091
    // END_CHANGE: ISS-2025-0012
 
     // START_CHANGE: ISS-2025-0012 - Implement iterative occurs check
@@ -190,50 +213,49 @@ public class Variable extends Term {
         }
     }
     
-    // START_CHANGE: ISS-2025-0083 - Fast-path resolveBindings without HashSet allocation
+    // START_CHANGE: ISS-2025-0091 - Fully iterative resolveBindings without HashSet
     @Override
     public Term resolveBindings(Map<String, Term> bindings) {
-        // Fast path: direct lookup without HashSet allocation
-        if (!bindings.containsKey(this.name)) {
+        // Iterative variable chain resolution - no allocation for typical chains
+        Term current = bindings.get(this.name);
+        if (current == null) {
             return this;
         }
-        Term bound = bindings.get(this.name);
-        if (!(bound instanceof Variable)) {
-            return bound.resolveBindings(bindings);
+
+        int depth = 0;
+        while (current instanceof Variable) {
+            Term next = bindings.get(((Variable) current).getName());
+            if (next == null) {
+                return current; // Unbound variable at end of chain
+            }
+            current = next;
+            if (++depth > 16) {
+                // Extremely deep chain - fall back to cycle detection
+                return resolveBindingsWithCycleDetection(bindings, new java.util.HashSet<>());
+            }
         }
-        // Second level: still avoid HashSet
-        Variable boundVar = (Variable) bound;
-        if (!bindings.containsKey(boundVar.getName())) {
-            return boundVar;
-        }
-        Term bound2 = bindings.get(boundVar.getName());
-        if (!(bound2 instanceof Variable)) {
-            return bound2.resolveBindings(bindings);
-        }
-        // Deep chain: fall back to HashSet-based cycle detection
-        return resolveBindingsWithCycleDetection(bindings, new java.util.HashSet<>());
+
+        // current is now a non-variable term - resolve its bindings too
+        return current.resolveBindings(bindings);
     }
-    // END_CHANGE: ISS-2025-0083
+    // END_CHANGE: ISS-2025-0091
 
     /**
      * Resolve bindings with cycle detection to prevent infinite recursion.
      */
     private Term resolveBindingsWithCycleDetection(Map<String, Term> bindings, java.util.Set<String> visited) {
-        if (visited.contains(this.name)) {
-            // Circular reference detected - return this variable
-            return this;
+        if (!visited.add(this.name)) {
+            return this; // Circular reference
         }
 
-        if (bindings.containsKey(this.name)) {
-            visited.add(this.name);
-            Term bound = bindings.get(this.name);
-            if (bound instanceof Variable) {
-                return ((Variable) bound).resolveBindingsWithCycleDetection(bindings, visited);
-            } else {
-                return bound.resolveBindings(bindings);
-            }
+        Term bound = bindings.get(this.name);
+        if (bound == null) {
+            return this;
         }
-        return this;
+        if (bound instanceof Variable) {
+            return ((Variable) bound).resolveBindingsWithCycleDetection(bindings, visited);
+        }
+        return bound.resolveBindings(bindings);
     }
     
     @Override

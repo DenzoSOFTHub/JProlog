@@ -210,11 +210,16 @@ public class PrologIDE extends JFrame {
         JMenuItem toggleTrace = new JMenuItem("Toggle Trace", KeyEvent.VK_T);
         toggleTrace.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F8, 0));
         toggleTrace.addActionListener(e -> toggleTrace());
-        
+
+        JMenuItem debugQuery = new JMenuItem("Debug Query...", KeyEvent.VK_D);
+        debugQuery.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F5, ActionEvent.SHIFT_MASK));
+        debugQuery.addActionListener(e -> showDebugPanel());
+
         prologMenu.add(compileFile);
         prologMenu.add(compileProject);
         prologMenu.addSeparator();
         prologMenu.add(runQuery);
+        prologMenu.add(debugQuery);
         prologMenu.add(toggleTrace);
         prologMenu.addSeparator();
         
@@ -264,13 +269,25 @@ public class PrologIDE extends JFrame {
     private void setupGlobalShortcuts() {
         InputMap inputMap = getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
         ActionMap actionMap = getRootPane().getActionMap();
-        
-        // Escape per chiudere pannello ricerca
+
+        // Escape to close search panel
         inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "hideSearch");
         actionMap.put("hideSearch", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
                 hideSearchPanel();
+            }
+        });
+
+        // F7 - Step Into (when debug is active)
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_F7, 0), "debugStepInto");
+        actionMap.put("debugStepInto", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                DebugPanel dp = getDebugPanel();
+                if (dp != null && dp.isDebugMode()) {
+                    bottomTabbedPane.showDebugTab();
+                }
             }
         });
     }
@@ -507,32 +524,46 @@ public class PrologIDE extends JFrame {
     }
     
     /**
-     * Compile single file: parsing and loading into knowledge base.
+     * Compile single file with diagnostic error reporting.
+     * Uses consultWithDiagnostics for per-clause error collection.
      */
     private boolean compileFile(File file) {
         try {
             bottomTabbedPane.appendToBuild("Parsing and loading: " + file.getName() + " ... ");
-            
-            // Read file content
+
             String content = readFileContent(file);
-            
-            // Complete content parsing through JProlog parser (which now handles comments)
-            try {
-                prologEngine.consult(content);
-                bottomTabbedPane.appendBuildSuccess("OK\n");
+            FileEditor editor = editorTabs.getEditor(file);
+
+            // Clear previous error highlights
+            if (editor != null) {
+                editor.clearAllHighlights();
+                editor.clearErrorHighlighting();
+            }
+
+            // Use diagnostics-based compilation
+            Prolog.CompilationResult result = prologEngine.consultWithDiagnostics(content, file.getName());
+
+            if (result.success) {
+                bottomTabbedPane.appendBuildSuccess("OK (" + result.totalClauses + " clauses)\n");
                 return true;
-            } catch (Exception e) {
-                bottomTabbedPane.appendBuildError("ERROR\n");
-                bottomTabbedPane.appendBuildError("  " + e.getMessage() + "\n");
-                
-                // Highlight error in editor if file is open
-                FileEditor editor = editorTabs.getEditor(file);
-                if (editor != null) {
-                    editor.highlightError(1, e.getMessage());
+            } else {
+                bottomTabbedPane.appendBuildError("ERRORS\n");
+                for (Prolog.CompilationError error : result.errors) {
+                    String errorLine = "  Line " + error.lineNumber + ": " + error.message + "\n";
+                    bottomTabbedPane.appendBuildError(errorLine);
+
+                    // Highlight error in editor
+                    if (editor != null) {
+                        editor.highlightErrorLine(error.lineNumber, error.message);
+                    }
+                }
+                if (result.totalClauses > 0) {
+                    bottomTabbedPane.appendBuildWarning(
+                        "  (" + result.totalClauses + " clauses loaded successfully before errors)\n");
                 }
                 return false;
             }
-            
+
         } catch (Exception e) {
             bottomTabbedPane.appendBuildError("ERROR: " + e.getMessage() + "\n");
             return false;
@@ -812,8 +843,19 @@ public class PrologIDE extends JFrame {
         System.exit(0);
     }
     
+    /**
+     * Show the debug panel and start a debug session.
+     */
+    private void showDebugPanel() {
+        bottomTabbedPane.showDebugTab();
+        DebugPanel dp = bottomTabbedPane.getDebugPanel();
+        if (!dp.isDebugMode()) {
+            dp.startDebugging();
+        }
+    }
+
     // ===================== GETTERS =====================
-    
+
     public Prolog getPrologEngine() {
         return prologEngine;
     }

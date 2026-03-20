@@ -1,5 +1,51 @@
 # JProlog - Release Notes
 
+## Release 2.4.0 - 2026-03-19
+
+### Integrated Debugger & Compilation Diagnostics
+
+This release implements the full ISO four-port debug model with interactive IDE integration, completing all 10 Change Requests.
+
+### Debug Engine (CR-0009 completed)
+- **Four-port model**: CALL, EXIT, FAIL, REDO port events with full goal/depth/bindings data
+- **DebugController**: Thread-safe orchestrator with wait/notify synchronization between solver thread and Swing EDT
+- **Step execution**: Step Into, Step Over, Step Out, Continue modes
+- **Breakpoints**: Predicate/arity-based breakpoint management
+- **QuerySolver hooks**: Zero-overhead instrumentation (`if (debugController != null)` guard)
+
+### DebugPanel (complete rewrite)
+- Colored trace output (blue=CALL, green=EXIT, red=FAIL, orange=REDO)
+- Real-time call stack tree with per-frame variable inspection
+- Variables table filtered to user-visible variables only
+- Integrated query input for debug-mode execution
+- All step buttons wired to actual debug controller
+
+### FileEditor Enhancements
+- Breakpoint gutter: click line numbers to toggle breakpoints (red circle markers)
+- Debug line highlighting: green background + arrow for current execution point
+- Error line highlighting: persistent light red background via Highlighter
+
+### Compilation Diagnostics
+- `consultWithDiagnostics()` for per-clause error collection with file/line/message
+- Build panel shows per-line errors with inline editor highlighting
+- Clause count reporting on successful compilation
+
+### IDE Enhancements
+- "Debug Query..." menu item (Shift+F5)
+- Enhanced compile output with clause counts and per-error line numbers
+
+### Quality Metrics
+- **320 unit tests, 0 failures**
+- **20/20 example programs pass** (100%)
+- **10/10 Change Requests completed** (all CRs closed)
+
+### Repository Information
+- **Tag**: v2.4.0
+- **Release Date**: 2026-03-19
+- **Compatibility**: Java 8+, Maven 3.6+
+
+---
+
 ## Release 2.3.0 - 2026-03-19
 
 ### 100% ISO 13211-1 Compliance & 25+ New Predicates

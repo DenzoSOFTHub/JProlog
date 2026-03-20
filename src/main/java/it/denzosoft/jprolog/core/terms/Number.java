@@ -68,13 +68,12 @@ public class Number extends Term {
 
     @Override
     public String toString() {
-        // START_CHANGE: ISS-2025-0056 - Display integers without decimal point
-        if (isInteger && value == Math.floor(value) && !Double.isInfinite(value)) {
-            long lv = (long) value;
-            return Long.toString(lv);
+        // START_CHANGE: ISS-2025-0091 - Trust isInteger flag, skip redundant floor check
+        if (isInteger) {
+            return Long.toString((long) value);
         }
         return Double.toString(value);
-        // END_CHANGE: ISS-2025-0056
+        // END_CHANGE: ISS-2025-0091
     }
 
     @Override

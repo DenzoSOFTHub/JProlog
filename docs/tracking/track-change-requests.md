@@ -322,11 +322,12 @@ ISO error term structure already implemented in `ISOErrorTerms.java` with all st
 
 ## CR-2025-0009: Debugging Port Model Implementation
 
-**Titolo**: Implementazione completa del debugging port model ISO  
-**Data Richiesta**: 2025-08-19  
-**Status**: RICHIESTA  
-**Priorità**: LOW  
-**Complessità Stimata**: HIGH  
+**Titolo**: Implementazione completa del debugging port model ISO
+**Data Richiesta**: 2025-08-19
+**Status**: COMPLETED
+**Data Completamento**: 2026-03-19
+**Priorità**: LOW
+**Complessità Stimata**: HIGH
 
 ### Descrizione
 Implementare il modello completo di debugging con ports ISO Prolog:
@@ -335,6 +336,44 @@ Implementare il modello completo di debugging con ports ISO Prolog:
 - Predicati di controllo trace avanzati
 - Stack trace visualization
 - Performance profiling integration
+
+### Resolution (2026-03-19)
+
+**Full implementation of the ISO four-port debug model with interactive IDE integration:**
+
+1. **Engine debug infrastructure** (3 new classes):
+   - `DebugEvent` — data carrier for port events (CALL/EXIT/FAIL/REDO) with goal, depth, bindings, call stack
+   - `DebugStackEntry` — call stack frame with goal, depth, bindings snapshot
+   - `DebugController` — orchestrator with thread-safe wait/notify synchronization, breakpoint management, step modes (Step Into/Over/Out/Continue), call stack tracking
+
+2. **QuerySolver instrumentation**:
+   - CALL port notification at entry to `solveInternalProtected()`
+   - EXIT/FAIL port notification in `handleBuiltIn()` and `solveAgainstKnowledgeBase()`
+   - All hooks guarded by `if (debugController != null)` — zero overhead when not debugging
+
+3. **DebugPanel complete rewrite**:
+   - Implements `DebugController.DebugListener` with EDT-safe callbacks
+   - Colored trace output (blue=CALL, green=EXIT, red=FAIL, orange=REDO)
+   - Real-time call stack tree with per-frame variable bindings
+   - Variables table filtered to user-visible variables
+   - Query input field for debug-mode queries
+   - All step buttons wired to `DebugController.resumeWithAction()`
+
+4. **FileEditor breakpoint gutter**:
+   - Click in line number area toggles breakpoint (red circle marker)
+   - Debug line highlighting (green background + arrow)
+   - Error line highlighting via Highlighter (light red background)
+   - Automatic predicate name extraction for breakpoint registration
+
+5. **Compilation diagnostics**:
+   - `Prolog.consultWithDiagnostics()` — per-clause error collection with file/line/message
+   - `CompilationResult` and `CompilationError` classes
+   - IDE Build panel shows per-line errors with clickable locations
+   - Inline error highlighting in editor
+
+**Files Created**: `DebugEvent.java`, `DebugStackEntry.java`, `DebugController.java`
+**Files Modified**: `QuerySolver.java`, `Prolog.java`, `DebugPanel.java`, `FileEditor.java`, `PrologIDE.java`
+**Tests**: 320 pass, 0 failures. 20/20 examples pass (100%).
 
 ### Impatto
 - Estensione significativa del QuerySolver per port tracking
@@ -505,11 +544,11 @@ Migliorare il sistema di syntax highlighting dell'IDE JProlog per supportare:
 ## Statistiche Change Request
 
 **Total CR**: 10
-**Requested**: 1
+**Requested**: 0
 **In Analysis**: 0
 **Approved**: 0
 **In Development**: 0
-**Completed**: 9
+**Completed**: 10
 **Rejected**: 0
 
 ### Breakdown by Priority

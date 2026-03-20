@@ -341,14 +341,17 @@ public class Prolog {
             if (queryString.endsWith(".")) {
                 queryString = queryString.substring(0, queryString.length() - 1);
             }
-            
+
             Term query = parser.parseTerm(queryString);
             List<Map<String, Term>> solutions = querySolver.solve(query);
-            
+
             // START_CHANGE: ISS-2025-0010 - Fix variable name mapping
             // Post-process solutions to map internal variable names back to query variables
             return mapInternalVariablesToQueryVariables(query, solutions);
             // END_CHANGE: ISS-2025-0010
+        } catch (DebugController.DebugStopException e) {
+            // Re-throw debug stop so DebugPanel can catch it
+            throw e;
         } catch (PrologParserException e) {
             throw new PrologException("Error parsing query: " + e.getMessage(), e);
         }
@@ -658,6 +661,15 @@ public class Prolog {
     }
     
     /**
+     * Get the query solver (for debug controller integration).
+     *
+     * @return The query solver
+     */
+    public QuerySolver getQuerySolver() {
+        return querySolver;
+    }
+
+    /**
      * Get the module manager.
      *
      * @return The module manager
@@ -674,6 +686,102 @@ public class Prolog {
         return operatorTable;
     }
     // END_CHANGE: ISS-2025-0085
+
+    // START_CHANGE: ISS-2025-0090 - Compilation with diagnostics for IDE error reporting
+    /**
+     * Result of compiling a Prolog source with diagnostic information.
+     */
+    public static class CompilationResult {
+        public final boolean success;
+        public final List<CompilationError> errors;
+        public final int totalClauses;
+
+        public CompilationResult(boolean success, List<CompilationError> errors, int totalClauses) {
+            this.success = success;
+            this.errors = errors;
+            this.totalClauses = totalClauses;
+        }
+    }
+
+    /**
+     * Represents a compilation error with location information.
+     */
+    public static class CompilationError {
+        public final String file;
+        public final int lineNumber;
+        public final String message;
+        public final String severity; // "error" or "warning"
+
+        public CompilationError(String file, int lineNumber, String message, String severity) {
+            this.file = file;
+            this.lineNumber = lineNumber;
+            this.message = message;
+            this.severity = severity;
+        }
+    }
+
+    /**
+     * Consult a Prolog program with error collection instead of throwing.
+     * Returns all errors found, allowing the IDE to display them inline.
+     *
+     * @param program The Prolog source
+     * @param filename The source file name (for error reporting)
+     * @return CompilationResult with success flag and error list
+     */
+    public CompilationResult consultWithDiagnostics(String program, String filename) {
+        List<CompilationError> errors = new ArrayList<>();
+        int clauseCount = 0;
+
+        try {
+            List<java.lang.String> clauses = parser.extractClauses(program);
+            int lineEstimate = 1;
+
+            for (java.lang.String clause : clauses) {
+                java.lang.String trimmed = clause.trim();
+                if (trimmed.isEmpty()) {
+                    // Count newlines in skipped content for line tracking
+                    for (char c : clause.toCharArray()) {
+                        if (c == '\n') lineEstimate++;
+                    }
+                    continue;
+                }
+
+                try {
+                    Rule rule = parser.parseRule(trimmed);
+
+                    if (isDirective(rule)) {
+                        processDirective(rule);
+                    } else if (isDCGRule(rule)) {
+                        Rule transformedRule = transformDCGRule(rule);
+                        checkBuiltInConflict(transformedRule);
+                        moduleManager.addRule(transformedRule);
+                        if ("user".equals(moduleManager.getCurrentModule().getName())) {
+                            knowledgeBase.addRule(transformedRule);
+                        }
+                    } else {
+                        checkBuiltInConflict(rule);
+                        moduleManager.addRule(rule);
+                        if ("user".equals(moduleManager.getCurrentModule().getName())) {
+                            knowledgeBase.addRule(rule);
+                        }
+                    }
+                    clauseCount++;
+                } catch (Exception e) {
+                    errors.add(new CompilationError(filename, lineEstimate, e.getMessage(), "error"));
+                }
+
+                // Estimate line number from clause content
+                for (char c : clause.toCharArray()) {
+                    if (c == '\n') lineEstimate++;
+                }
+            }
+        } catch (Exception e) {
+            errors.add(new CompilationError(filename, 1, e.getMessage(), "error"));
+        }
+
+        return new CompilationResult(errors.isEmpty(), errors, clauseCount);
+    }
+    // END_CHANGE: ISS-2025-0090
 
     // START_CHANGE: ISS-2025-0085 - Compiled binary format support
     /**

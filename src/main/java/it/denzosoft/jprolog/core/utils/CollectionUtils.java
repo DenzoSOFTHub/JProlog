@@ -18,6 +18,11 @@ public final class CollectionUtils {
     // Prevent instantiation
     private CollectionUtils() {}
 
+    // START_CHANGE: ISS-2025-0091 - Cache immutable atoms for list construction
+    private static final Atom EMPTY_LIST = new Atom("[]");
+    private static final Atom DOT = new Atom(".");
+    // END_CHANGE: ISS-2025-0091
+
     /**
      * Generic list collector implementation for collection predicates.
      * 
@@ -98,19 +103,18 @@ public final class CollectionUtils {
      * @param terms The terms to include in the list
      * @return The list term representation
      */
+    // START_CHANGE: ISS-2025-0091 - Reuse cached Atom instances, use Arrays.asList
     public static Term createListTerm(List<Term> terms) {
         if (terms == null || terms.isEmpty()) {
-            return new Atom("[]");  // Empty list
+            return EMPTY_LIST;
         }
-        
-        // Start with empty list and build up
-        Term result = new Atom("[]");
+
+        // Start with empty list and build up using cached atoms
+        Term result = EMPTY_LIST;
         for (int i = terms.size() - 1; i >= 0; i--) {
-            List<Term> args = new ArrayList<>();
-            args.add(terms.get(i));
-            args.add(result);
-            result = new CompoundTerm(new Atom("."), args);
+            result = new CompoundTerm(DOT, java.util.Arrays.asList(terms.get(i), result));
         }
         return result;
     }
+    // END_CHANGE: ISS-2025-0091
 }

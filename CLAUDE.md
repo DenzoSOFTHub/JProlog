@@ -83,9 +83,29 @@ Context-dependent built-ins are wrapped in `CollectionBuiltInAdapter` to bridge 
 - `editor/` — Swing IDE: `PrologIDE`, `FileEditor`, `DebugPanel`, `ConsolePanel`
 - `PrologCLI` — CLI with `:consult`, `:trace`, `:help`, `:quit` commands
 
+### Debug System Architecture
+
+The debugger uses a **two-thread model** with blocking synchronization:
+
+1. **Solver Thread**: Runs `QuerySolver.solve()` in a background `Thread`
+2. **Swing EDT**: Handles UI updates and button clicks
+3. **Synchronization**: `DebugController` uses `wait()/notify()` on a `pauseLock` object
+
+Key classes:
+- `DebugController` (`core.engine`) — orchestrator with breakpoint management, step mode logic, call stack tracking
+- `DebugEvent` (`core.engine`) — data carrier for port events (CALL/EXIT/FAIL/REDO)
+- `DebugStackEntry` (`core.engine`) — single call stack frame
+- `DebugPanel` (`editor`) — implements `DebugController.DebugListener`, receives callbacks via `SwingUtilities.invokeLater()`
+
+QuerySolver hooks are guarded by `if (debugController != null)` — zero overhead when not debugging.
+
+### Compilation Diagnostics
+
+`Prolog.consultWithDiagnostics(program, filename)` compiles per-clause, collecting errors with line numbers instead of throwing on first error. Returns `CompilationResult` with `List<CompilationError>`.
+
 ### Key Design Decisions
 
-- **Single-threaded** execution (Prolog semantics)
+- **Single-threaded** execution (Prolog semantics), debug uses separate thread with blocking sync
 - **Immutable terms** with external substitution maps for bindings
 - Variable scoping handled by `util.TermCopier` which renames variables when copying rules
 - ISO 13211-1 compliance where possible (exception handling, arithmetic functions, error terms)

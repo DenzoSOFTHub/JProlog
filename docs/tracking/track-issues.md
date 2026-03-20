@@ -2,6 +2,35 @@
 
 ## Active and Resolved Issues
 
+### ISS-2025-0090: Integrated Debugger with Four-Port Model
+
+**Title**: Full ISO four-port debug model with interactive IDE integration
+**Date Created**: 2026-03-19
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-19
+**Priority**: HIGH
+
+#### Description
+Implement a complete interactive debugger for the IDE with real breakpoints, step execution (Step Into/Over/Out), call stack inspection, and variable monitoring. The existing DebugPanel had all UI scaffolding but every action method was a stub (TODO).
+
+#### Resolution (2026-03-19)
+
+**New classes**: `DebugEvent.java`, `DebugStackEntry.java`, `DebugController.java`
+
+**Engine changes**:
+- QuerySolver instrumented with CALL/EXIT/FAIL port hooks, guarded by `if (debugController != null)` for zero overhead when not debugging
+- `Prolog.getQuerySolver()` exposed for debug controller wiring
+- `Prolog.consultWithDiagnostics()` for per-clause error collection with line numbers
+
+**UI changes**:
+- `DebugPanel` complete rewrite: colored trace, call stack tree, variables table, step buttons all wired to DebugController
+- `FileEditor` breakpoint gutter with click-to-toggle, debug line highlighting, error line highlighting
+- `PrologIDE` enhanced compilation with per-line error reporting
+
+**Tests**: 320 pass, 0 failures. 20/20 examples pass (100%).
+
+---
+
 ### ISS-2025-0085: Parser Hardening and Binary Compiled Format
 
 **Title**: Unified operator table, robust parsing, and JPC binary format

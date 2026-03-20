@@ -33,10 +33,10 @@ digits([D|Ds]) --> digit(D), digits(Ds).
 digits([D]) --> digit(D).
 
 % String literals
-string_literal(Chars) --> [39], string_chars(Chars), [39].  % 'string'
+string_literal(Chars) --> [39], sql_string_chars(Chars), [39].  % 'string'
 
-string_chars([]) --> [].
-string_chars([C|Cs]) --> [C], { C \= 39 }, string_chars(Cs).
+sql_string_chars([]) --> [].
+sql_string_chars([C|Cs]) --> [C], { C \= 39 }, sql_string_chars(Cs).
 
 % Operators
 equals --> [61].

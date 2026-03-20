@@ -32,6 +32,10 @@ public class FileEditor extends JPanel {
     private List<Runnable> modifiedListeners;
     private PrologSyntaxHighlighter syntaxHighlighter;
     
+    // Breakpoints and debug state
+    private java.util.Set<Integer> breakpointLines = new java.util.HashSet<>();
+    private int debugHighlightLine = -1; // Currently executing line during debug (-1 = none)
+
     // Colors for syntax highlighting
     private static final Color COMMENT_COLOR = new Color(0, 128, 0);
     private static final Color STRING_COLOR = new Color(0, 0, 255);
@@ -40,6 +44,10 @@ public class FileEditor extends JPanel {
     private static final Color ERROR_COLOR = new Color(255, 0, 0);
     private static final Color LINE_NUMBER_COLOR = new Color(128, 128, 128);
     private static final Color CURRENT_LINE_COLOR = new Color(255, 255, 220);
+    private static final Color BREAKPOINT_COLOR = new Color(200, 50, 50);
+    private static final Color BREAKPOINT_GUTTER_COLOR = new Color(255, 200, 200);
+    private static final Color DEBUG_LINE_COLOR = new Color(198, 219, 174); // Green highlight for current debug line
+    private static final Color ERROR_LINE_COLOR = new Color(255, 220, 220); // Light red for error lines
     
     // Patterns for syntax highlighting
     private static final Pattern COMMENT_PATTERN = Pattern.compile("%.*");
@@ -512,81 +520,274 @@ public class FileEditor extends JPanel {
         return textPane.requestFocusInWindow();
     }
     
+    // ===================== BREAKPOINT SUPPORT =====================
+
+    /**
+     * Toggle a breakpoint on the given line.
+     * @return true if breakpoint was added, false if removed
+     */
+    public boolean toggleBreakpoint(int lineNumber) {
+        if (breakpointLines.contains(lineNumber)) {
+            breakpointLines.remove(lineNumber);
+            lineNumberArea.repaint();
+            return false;
+        } else {
+            breakpointLines.add(lineNumber);
+            lineNumberArea.repaint();
+            return true;
+        }
+    }
+
+    public java.util.Set<Integer> getBreakpointLines() {
+        return java.util.Collections.unmodifiableSet(breakpointLines);
+    }
+
+    public void clearBreakpoints() {
+        breakpointLines.clear();
+        lineNumberArea.repaint();
+    }
+
+    // ===================== DEBUG LINE HIGHLIGHTING =====================
+
+    /**
+     * Highlight a specific line during debug (shows green background).
+     * @param lineNumber 1-based line number, or -1 to clear
+     */
+    public void setDebugHighlightLine(int lineNumber) {
+        this.debugHighlightLine = lineNumber;
+        if (lineNumber > 0) {
+            goToLine(lineNumber);
+        }
+        lineNumberArea.repaint();
+        textPane.repaint();
+    }
+
+    public void clearDebugHighlighting() {
+        this.debugHighlightLine = -1;
+        lineNumberArea.repaint();
+        textPane.repaint();
+    }
+
+    /**
+     * Highlight an error line with red underline/background.
+     * Enhanced version that uses a Highlighter.
+     */
+    public void highlightErrorLine(int lineNumber, String errorMessage) {
+        try {
+            Document doc = textPane.getDocument();
+            Element root = doc.getDefaultRootElement();
+            if (lineNumber > 0 && lineNumber <= root.getElementCount()) {
+                Element lineElement = root.getElement(lineNumber - 1);
+                int lineStart = lineElement.getStartOffset();
+                int lineEnd = lineElement.getEndOffset();
+
+                // Use Highlighter for persistent error marking
+                textPane.getHighlighter().addHighlight(
+                    lineStart, Math.min(lineEnd, doc.getLength()),
+                    new javax.swing.text.DefaultHighlighter.DefaultHighlightPainter(ERROR_LINE_COLOR));
+
+                textPane.setCaretPosition(lineStart);
+                textPane.setToolTipText("Line " + lineNumber + ": " + errorMessage);
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+    }
+
+    /**
+     * Clear all error highlights.
+     */
+    public void clearAllHighlights() {
+        textPane.getHighlighter().removeAllHighlights();
+        textPane.setToolTipText(null);
+    }
+
     /**
      * Componente per la numerazione delle righe.
      */
-    private static class LineNumberArea extends JComponent {
+    private class LineNumberArea extends JComponent {
         private static final int MARGIN = 5;
         private JTextPane textPane;
         
         public LineNumberArea(JTextPane textPane) {
             this.textPane = textPane;
-            setPreferredSize(new Dimension(50, 0));
+            setPreferredSize(new Dimension(55, 0));
             setBackground(new Color(240, 240, 240));
             setBorder(new EmptyBorder(0, MARGIN, 0, MARGIN));
             setFont(new Font("Consolas", Font.PLAIN, 12));
-            
-            // Aggiungi mouse wheel listener per propagare eventi di scroll al textPane
-            addMouseWheelListener(e -> {
-                // Propaga l'evento di scroll wheel al JScrollPane parent
-                Component parent = getParent();
-                while (parent != null && !(parent instanceof JScrollPane)) {
-                    parent = parent.getParent();
-                }
-                if (parent instanceof JScrollPane) {
-                    JScrollPane scrollPane = (JScrollPane) parent;
-                    scrollPane.dispatchEvent(e);
+
+            // Click in gutter toggles breakpoint
+            addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent e) {
+                    int lineNum = getLineAtPoint(e.getY());
+                    if (lineNum > 0) {
+                        boolean added = toggleBreakpoint(lineNum);
+                        // Notify IDE debug panel if available
+                        if (ide != null && ide.getDebugPanel() != null) {
+                            // Extract predicate on this line for the breakpoint
+                            String predicateName = extractPredicateAtLine(lineNum);
+                            if (predicateName != null) {
+                                if (added) {
+                                    ide.getDebugPanel().addBreakpointProgrammatic(predicateName);
+                                } else {
+                                    ide.getDebugPanel().removeBreakpointProgrammatic(predicateName);
+                                }
+                            }
+                        }
+                    }
                 }
             });
+
+            // Propagate scroll events
+            addMouseWheelListener(ev -> {
+                Component par = getParent();
+                while (par != null && !(par instanceof JScrollPane)) {
+                    par = par.getParent();
+                }
+                if (par instanceof JScrollPane) {
+                    ((JScrollPane) par).dispatchEvent(ev);
+                }
+            });
+        }
+
+        /**
+         * Get the 1-based line number at a Y coordinate.
+         */
+        private int getLineAtPoint(int y) {
+            try {
+                Document doc = textPane.getDocument();
+                Element root = doc.getDefaultRootElement();
+                // Find the line element at this y position
+                int pos = textPane.viewToModel(new Point(0, y));
+                return root.getElementIndex(pos) + 1;
+            } catch (Exception e) {
+                return -1;
+            }
+        }
+
+        /**
+         * Extract predicate name/arity from a line (for breakpoint registration).
+         * Looks for patterns like "name(" or "name :-"
+         */
+        private String extractPredicateAtLine(int lineNum) {
+            try {
+                Document doc = textPane.getDocument();
+                Element root = doc.getDefaultRootElement();
+                if (lineNum > 0 && lineNum <= root.getElementCount()) {
+                    Element lineElem = root.getElement(lineNum - 1);
+                    int start = lineElem.getStartOffset();
+                    int end = lineElem.getEndOffset();
+                    String line = doc.getText(start, end - start).trim();
+
+                    // Skip comments and empty lines
+                    if (line.isEmpty() || line.startsWith("%")) return null;
+
+                    // Match predicate head: name(arg1, arg2, ...)
+                    java.util.regex.Matcher m = java.util.regex.Pattern
+                        .compile("^([a-z_][a-zA-Z0-9_]*)\\(([^)]*)\\)").matcher(line);
+                    if (m.find()) {
+                        String name = m.group(1);
+                        String args = m.group(2).trim();
+                        int arity = args.isEmpty() ? 0 :
+                            args.split(",").length;
+                        return name + "/" + arity;
+                    }
+
+                    // Match fact without args: name.  or  name :-
+                    m = java.util.regex.Pattern
+                        .compile("^([a-z_][a-zA-Z0-9_]*)\\s*[.:]").matcher(line);
+                    if (m.find()) {
+                        return m.group(1) + "/0";
+                    }
+                }
+            } catch (Exception e) {
+                // ignore
+            }
+            return null;
         }
         
         @Override
         protected void paintComponent(Graphics g) {
             super.paintComponent(g);
-            
+
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            
-            // Sfondo
+
+            // Background
             g2.setColor(getBackground());
             g2.fillRect(0, 0, getWidth(), getHeight());
-            
-            // Numeri di riga
-            g2.setColor(LINE_NUMBER_COLOR);
+
             g2.setFont(getFont());
-            
             FontMetrics fm = g2.getFontMetrics();
             int fontHeight = fm.getHeight();
-            
+
             try {
                 Document doc = textPane.getDocument();
                 Element root = doc.getDefaultRootElement();
                 int lineCount = root.getElementCount();
-                
+
                 Point viewStart = new Point(0, 0);
                 Point viewEnd = new Point(0, getHeight());
                 int start = textPane.viewToModel(viewStart);
                 int end = textPane.viewToModel(viewEnd);
-                
+
                 int startLine = root.getElementIndex(start);
                 int endLine = root.getElementIndex(end);
-                
+
                 for (int line = startLine; line <= Math.min(endLine, lineCount - 1); line++) {
                     Element lineElement = root.getElement(line);
                     int lineStart = lineElement.getStartOffset();
                     Rectangle rect = textPane.modelToView(lineStart);
-                    
+
                     if (rect != null) {
-                        String lineNum = String.valueOf(line + 1);
+                        int lineNum1Based = line + 1;
+                        int lineY = rect.y;
+                        int lineHeight = fontHeight;
+
+                        // Draw debug highlight line (green background)
+                        if (debugHighlightLine == lineNum1Based) {
+                            g2.setColor(DEBUG_LINE_COLOR);
+                            g2.fillRect(0, lineY, getWidth(), lineHeight);
+                        }
+
+                        // Draw breakpoint background
+                        if (breakpointLines.contains(lineNum1Based)) {
+                            g2.setColor(BREAKPOINT_GUTTER_COLOR);
+                            g2.fillRect(0, lineY, getWidth(), lineHeight);
+
+                            // Draw red circle for breakpoint
+                            int circleSize = 10;
+                            int circleX = 3;
+                            int circleY = lineY + (lineHeight - circleSize) / 2;
+                            g2.setColor(BREAKPOINT_COLOR);
+                            g2.fillOval(circleX, circleY, circleSize, circleSize);
+                            g2.setColor(BREAKPOINT_COLOR.darker());
+                            g2.drawOval(circleX, circleY, circleSize, circleSize);
+                        }
+
+                        // Draw debug arrow (current execution point)
+                        if (debugHighlightLine == lineNum1Based) {
+                            int arrowX = 2;
+                            int arrowY = lineY + lineHeight / 2;
+                            g2.setColor(new Color(0, 160, 0));
+                            int[] xPoints = {arrowX, arrowX + 8, arrowX};
+                            int[] yPoints = {arrowY - 4, arrowY, arrowY + 4};
+                            g2.fillPolygon(xPoints, yPoints, 3);
+                        }
+
+                        // Draw line number
+                        g2.setColor(LINE_NUMBER_COLOR);
+                        String lineNum = String.valueOf(lineNum1Based);
                         int x = getWidth() - fm.stringWidth(lineNum) - MARGIN;
                         int y = rect.y + fontHeight - fm.getDescent();
                         g2.drawString(lineNum, x, y);
                     }
                 }
             } catch (BadLocationException e) {
-                // Ignora
+                // ignore
             }
-            
+
             g2.dispose();
         }
         

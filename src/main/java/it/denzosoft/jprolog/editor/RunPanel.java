@@ -394,6 +394,19 @@ public class RunPanel extends JPanel {
             return;
         }
         
+        // START_CHANGE: ISS-2025-0090 - Route queries through debugger when debug mode active
+        if (ide.isDebugMode() && ide.getDebugPanel() != null) {
+            appendText("% Routing query to Debug panel (debug mode active).\n", commentStyle);
+            SwingUtilities.invokeLater(() -> {
+                ide.getBottomTabbedPane().showDebugTab();
+                ide.getDebugPanel().debugQueryExternal(query);
+                isProcessingQuery = false;
+                showPrompt();
+            });
+            return;
+        }
+        // END_CHANGE: ISS-2025-0090
+
         // Execute in separate thread to keep UI responsive
         queryThread = new Thread(() -> {
             executeNormalQuery(query);

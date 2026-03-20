@@ -96,6 +96,7 @@ public class OperatorTable {
         
         // Add to main operators map
         operators.computeIfAbsent(name, k -> new HashSet<>()).add(operator);
+        cachedOperatorNames = null; // Invalidate cache
         
         // Add to specialized maps
         if (operator.isPrefix()) {
@@ -122,6 +123,7 @@ public class OperatorTable {
         
         Set<Operator> ops = operators.get(name);
         if (ops != null && ops.remove(toRemove)) {
+            cachedOperatorNames = null; // Invalidate cache
             if (ops.isEmpty()) {
                 operators.remove(name);
             }
@@ -226,14 +228,24 @@ public class OperatorTable {
         return operators.containsKey(name);
     }
     
+    // START_CHANGE: ISS-2025-0091 - Cache operator names set; invalidate on define/remove
+    private volatile Set<String> cachedOperatorNames = null;
+
     /**
      * Get all defined operator names.
-     * 
+     * Returns a cached unmodifiable view; invalidated when operators change.
+     *
      * @return Set of all operator names
      */
     public Set<String> getAllOperatorNames() {
-        return new HashSet<>(operators.keySet());
+        Set<String> cached = cachedOperatorNames;
+        if (cached == null) {
+            cached = Collections.unmodifiableSet(new HashSet<>(operators.keySet()));
+            cachedOperatorNames = cached;
+        }
+        return cached;
     }
+    // END_CHANGE: ISS-2025-0091
     
     /**
      * Get current operator definitions for current_op/3.

@@ -317,8 +317,9 @@ public class BuiltInFactory {
         return FACTORY_MAP.containsKey(name);
     }
     
-    // Add a getter method for package access
+    // START_CHANGE: ISS-2025-0091 - Return unmodifiable view instead of defensive copy
     static Map<String, Supplier<BuiltIn>> getFactoryMap() {
-        return new HashMap<>(FACTORY_MAP);
+        return java.util.Collections.unmodifiableMap(FACTORY_MAP);
     }
+    // END_CHANGE: ISS-2025-0091
 }

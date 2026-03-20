@@ -40,10 +40,12 @@ public class Atom extends Term {
         return name;
     }
 
+    // START_CHANGE: ISS-2025-0091 - Atoms are immutable, no need to copy
     @Override
     public Term copy() {
-        return new Atom(this.name); // Return a new Atom with the same name
+        return this;
     }
+    // END_CHANGE: ISS-2025-0091
     
     @Override
     public boolean equals(Object obj) {

@@ -20,6 +20,9 @@ public class QuerySolver {
     private BuiltInRegistry builtInRegistry;
     private boolean traceEnabled = false;
     private Prolog prologContext;
+    // START_CHANGE: ISS-2025-0090 - Debug controller for step-by-step execution
+    private DebugController debugController;
+    // END_CHANGE: ISS-2025-0090
     // START_CHANGE: CR-2025-0002 - Track current module context for resolution
     private it.denzosoft.jprolog.core.module.Module currentModuleContext = null;
     // END_CHANGE: CR-2025-0002
@@ -43,6 +46,24 @@ public class QuerySolver {
     public void setTraceEnabled(boolean traceEnabled) {
         this.traceEnabled = traceEnabled;
     }
+
+    // START_CHANGE: ISS-2025-0090 - Debug controller for interactive debugging
+    /**
+     * Set the debug controller for step-by-step execution.
+     * When set, the solver will notify the controller at each debug port.
+     * @param debugController the controller, or null to disable debugging
+     */
+    public void setDebugController(DebugController debugController) {
+        this.debugController = debugController;
+    }
+
+    /**
+     * Get the current debug controller.
+     */
+    public DebugController getDebugController() {
+        return debugController;
+    }
+    // END_CHANGE: ISS-2025-0090
 
     /**
      * Solve a query and return all solutions.
@@ -93,11 +114,10 @@ public class QuerySolver {
     }
     // END_CHANGE: ISS-2025-0078
 
-    // START_CHANGE: ISS-2025-0013 - Add recursion depth limiting to prevent StackOverflowError
-    private static final ThreadLocal<Integer> recursionDepth = new ThreadLocal<>();
-    // START_CHANGE: ISS-2025-0050 - Increase recursion depth for larger programs
-    private static final int MAX_RECURSION_DEPTH = 1000;
-    // END_CHANGE: ISS-2025-0050
+    // START_CHANGE: ISS-2025-0091 - Replace ThreadLocal with instance field for faster access
+    private int recursionDepth = 0;
+    private static final int MAX_RECURSION_DEPTH = 10000;
+    // END_CHANGE: ISS-2025-0091
     
     /**
      * Solve a goal with current bindings.
@@ -116,39 +136,32 @@ public class QuerySolver {
     /**
      * Internal solve method with recursion protection.
      */
+    // START_CHANGE: ISS-2025-0091 - Use instance field instead of ThreadLocal for recursion depth
     private boolean solveInternal(Term goal, Map<String, Term> bindings, List<Map<String, Term>> solutions, CutStatus cutStatus) {
-        // START_CHANGE: ISS-2025-0013 - Add recursion depth protection to solveInternal
-        Integer depth = recursionDepth.get();
-        if (depth == null) depth = 0;
-        
-        if (depth > MAX_RECURSION_DEPTH) {
-            // Always log this warning, not just when traceEnabled
+        if (recursionDepth > MAX_RECURSION_DEPTH) {
             System.err.println("WARNING: Maximum recursion depth " + MAX_RECURSION_DEPTH + " reached for goal: " + goal);
-            return false; // Prevent infinite recursion
+            return false;
         }
-        
+
+        recursionDepth++;
         try {
-            recursionDepth.set(depth + 1);
             return solveInternalProtected(goal, bindings, solutions, cutStatus);
         } finally {
-            if (depth == 0) {
-                recursionDepth.remove();
-            } else {
-                recursionDepth.set(depth);
-            }
+            recursionDepth--;
         }
     }
+    // END_CHANGE: ISS-2025-0091
     
     /**
      * Internal solve method - actual implementation without recursion protection.
      */
     private boolean solveInternalProtected(Term goal, Map<String, Term> bindings, List<Map<String, Term>> solutions, CutStatus cutStatus) {
         // END_CHANGE: ISS-2025-0013
-        
+
         if (traceEnabled) {
             LOGGER.info("Attempting to solve: " + goal + " with " + bindings);
         }
-        
+
         // Check for cut
         if (cutStatus.isCutOccurred()) {
             return false;
@@ -159,6 +172,17 @@ public class QuerySolver {
             solutions.add(new HashMap<>(bindings));
             return true;
         }
+
+        // START_CHANGE: ISS-2025-0090 - Debug CALL port notification
+        if (debugController != null && goal.getName() != null &&
+            !",".equals(goal.getName()) && !":".equals(goal.getName())) {
+            try {
+                debugController.notifyPort(DebugEvent.Port.CALL, goal, bindings, recursionDepth);
+            } catch (DebugController.DebugStopException e) {
+                return false;
+            }
+        }
+        // END_CHANGE: ISS-2025-0090
 
         // START_CHANGE: ISS-2025-0085 - Handle module-qualified calls Module:Goal
         if (goal.getName() != null && ":".equals(goal.getName()) &&
@@ -209,24 +233,37 @@ public class QuerySolver {
 
     private boolean handleBuiltIn(Term goal, Map<String, Term> bindings, List<Map<String, Term>> solutions, CutStatus cutStatus) {
         BuiltIn predicate = builtInRegistry.getBuiltIn(goal.getName());
-        
+
         // Special handling for cut
         if (goal.getName().equals("cut") || goal.getName().equals("!")) {
             solutions.add(new HashMap<>(bindings));
-            // The cut behavior is handled by returning a special CutStatus in the calling context
             return true;
         }
-        
+
+        boolean result;
         // Handle context-dependent built-ins
         if (predicate instanceof BuiltInWithContext) {
-            return ((BuiltInWithContext) predicate).executeWithContext(this, goal, bindings, solutions);
+            result = ((BuiltInWithContext) predicate).executeWithContext(this, goal, bindings, solutions);
+        } else if (predicate != null) {
+            result = predicate.execute(goal, bindings, solutions);
+        } else {
+            result = false;
         }
-        
-        if (predicate != null) {
-            return predicate.execute(goal, bindings, solutions);
+
+        // START_CHANGE: ISS-2025-0090 - Debug EXIT/FAIL port for built-ins
+        if (debugController != null && goal.getName() != null &&
+            !",".equals(goal.getName()) && !":".equals(goal.getName())) {
+            try {
+                debugController.notifyPort(
+                    result ? DebugEvent.Port.EXIT : DebugEvent.Port.FAIL,
+                    goal, bindings, recursionDepth);
+            } catch (DebugController.DebugStopException e) {
+                return false;
+            }
         }
-        
-        return false;
+        // END_CHANGE: ISS-2025-0090
+
+        return result;
     }
 
     // START_CHANGE: ISS-2025-0067 - Preserve input bindings in knowledge base solutions
@@ -267,16 +304,40 @@ public class QuerySolver {
         }
         // END_CHANGE: CR-2025-0002
 
+        // START_CHANGE: ISS-2025-0090 - Track rule attempts for REDO port
+        boolean isFirstAttempt = true;
+        // END_CHANGE: ISS-2025-0090
+
         for (Rule rule : candidateRules) {
             if(traceEnabled) {
                 LOGGER.info("Trying rule: " + rule);
             }
-            
-            // Create fresh copies for this attempt, preserving variable sharing
-            TermCopier.RuleCopy copiedRule = TermCopier.copyRule(rule.getHead(), rule.getBody());
-            Term head = copiedRule.head;
-            List<Term> body = copiedRule.body;
-            
+
+            // START_CHANGE: ISS-2025-0090 - Emit REDO port on second+ rule attempts
+            if (debugController != null && !isFirstAttempt && goal.getName() != null &&
+                !",".equals(goal.getName()) && !":".equals(goal.getName())) {
+                try {
+                    debugController.notifyPort(DebugEvent.Port.REDO, goal, bindings, recursionDepth);
+                } catch (DebugController.DebugStopException e) {
+                    return false;
+                }
+            }
+            isFirstAttempt = false;
+            // END_CHANGE: ISS-2025-0090
+
+            // START_CHANGE: ISS-2025-0092 - Skip TermCopier for ground facts (no variables to rename)
+            Term head;
+            List<Term> body;
+            if (rule.isGroundFact()) {
+                head = rule.getHead();
+                body = rule.getBody();
+            } else {
+                TermCopier.RuleCopy copiedRule = TermCopier.copyRule(rule.getHead(), rule.getBody());
+                head = copiedRule.head;
+                body = copiedRule.body;
+            }
+            // END_CHANGE: ISS-2025-0092
+
             // Create a working copy of bindings for this rule attempt
             Map<String, Term> attemptBindings = new HashMap<>(bindings);
 
@@ -284,43 +345,34 @@ public class QuerySolver {
                 if(traceEnabled) {
                     LOGGER.info("Head unified. New substitution: " + attemptBindings);
                 }
-                
+
                 if (body.isEmpty()) {
                     // Fact case - add solution
                     solutions.add(new HashMap<>(attemptBindings));
                     foundMatch = true;
-                    
+
                     // Check if cut occurred
                     if (cutStatus.isCutOccurred()) {
                         break;
                     }
                 } else {
                     // Rule case - solve body goals
-                    // Save the initial bindings after head unification (maps query vars to rule vars)
                     Map<String, Term> headUnificationBindings = new HashMap<>(attemptBindings);
-                    
+
                     CutStatus newCutStatus = CutStatus.notOccurred();
                     List<Map<String, Term>> bodySolutions = new ArrayList<>();
                     if (solveBodyGoals(body, attemptBindings, bodySolutions, newCutStatus)) {
-                        // Map rule variable bindings back to query variables
+                        Map<String, Variable> queryVars = extractVariables(goal);
                         for (Map<String, Term> bodySolution : bodySolutions) {
-                            // START_CHANGE: ISS-2025-0071 - Use bodySolution as base to preserve transitive bindings
-                            // Use the full body solution (which contains all accumulated bindings
-                            // including transitive variable mappings from recursive calls) as base,
-                            // then overlay with the mapped query variables. This ensures that
-                            // variable chains like X->_R1_G->_R2_G->4 are fully resolved.
                             Map<String, Term> mappedSolution = new HashMap<>(bodySolution);
-                            mappedSolution.putAll(mapRuleVariablesToQueryVariables(
-                                goal, head, headUnificationBindings, bodySolution));
+                            mappedSolution.putAll(mapRuleVariablesToQueryVariablesCached(
+                                queryVars, head, headUnificationBindings, bodySolution));
                             solutions.add(mappedSolution);
-                            // END_CHANGE: ISS-2025-0071
                         }
                         foundMatch = true;
                     }
-                    
-                    // Check if cut occurred in body solving
+
                     if (newCutStatus.isCutOccurred()) {
-                        // Break out of rule matching loop
                         break;
                     }
                 }
@@ -330,6 +382,20 @@ public class QuerySolver {
                 }
             }
         }
+
+        // START_CHANGE: ISS-2025-0090 - Debug EXIT/FAIL port for KB goals
+        if (debugController != null && goal.getName() != null &&
+            !",".equals(goal.getName()) && !":".equals(goal.getName())) {
+            try {
+                debugController.notifyPort(
+                    foundMatch ? DebugEvent.Port.EXIT : DebugEvent.Port.FAIL,
+                    goal, bindings, recursionDepth);
+            } catch (DebugController.DebugStopException e) {
+                return false;
+            }
+        }
+        // END_CHANGE: ISS-2025-0090
+
         return foundMatch;
     }
 
@@ -352,130 +418,71 @@ public class QuerySolver {
     }
     // END_CHANGE: CR-2025-0002
 
+    // START_CHANGE: ISS-2025-0091 - Optimized: reverse index O(N), lazy combinedBindings, no double lookups
     /**
-     * Map rule variable bindings back to query variables.
-     * When a rule head unifies with a query, query variables get mapped to rule variables.
-     * After solving the body, rule variables have values, but we need to map these back
-     * to the original query variable names.
+     * Optimized version of mapRuleVariablesToQueryVariables that:
+     * 1. Accepts pre-extracted query variables (no redundant extractVariables)
+     * 2. Builds a reverse index (queryVarName -> ruleVarName) in O(N) instead of O(N²) linear scan
+     * 3. Creates combined bindings map at most once (lazy)
+     * 4. Uses get() + null check instead of containsKey() + get()
      */
-    private Map<String, Term> mapRuleVariablesToQueryVariables(
-            Term query, Term ruleHead, 
-            Map<String, Term> headUnificationBindings, 
+    private Map<String, Term> mapRuleVariablesToQueryVariablesCached(
+            Map<String, Variable> queryVars, Term ruleHead,
+            Map<String, Term> headUnificationBindings,
             Map<String, Term> bodySolution) {
-        
-        if (traceEnabled) {
-            LOGGER.info("=== MAPPING DEBUG ===");
-            LOGGER.info("Query: " + query);
-            LOGGER.info("Rule head: " + ruleHead);
-            LOGGER.info("Head unification bindings: " + headUnificationBindings);
-            LOGGER.info("Body solution: " + bodySolution);
-        }
-        
+
         Map<String, Term> result = new HashMap<>();
-        
-        // Extract variables from the query
-        Map<String, Variable> queryVars = extractVariables(query);
-        
-        if (traceEnabled) {
-            LOGGER.info("Query variables: " + queryVars.keySet());
-            LOGGER.info("Query variables size: " + queryVars.size());
-            LOGGER.info("Query variables isEmpty: " + queryVars.isEmpty());
-            for (String key : queryVars.keySet()) {
-                LOGGER.info("Key: '" + key + "'");
+
+        // Build reverse index once: queryVarName -> ruleVarName (Direction 1)
+        // This replaces O(N²) linear scan with O(N) build + O(1) lookups
+        Map<String, String> reverseIndex = new HashMap<>();
+        for (Map.Entry<String, Term> entry : headUnificationBindings.entrySet()) {
+            if (entry.getValue() instanceof Variable) {
+                reverseIndex.put(((Variable) entry.getValue()).getName(), entry.getKey());
             }
         }
-        
-        // For each query variable, find its value by following the mapping chain
+
+        Map<String, Term> combinedBindings = null;
+
         for (String queryVarName : queryVars.keySet()) {
-            if (traceEnabled) {
-                LOGGER.info("Processing query variable: " + queryVarName);
-            }
-            
-            // START_CHANGE: ISS-2025-0065 - Fix variable mapping to handle both unification directions
-            // Look through head bindings to find which rule var maps to this query var.
-            // Unification can produce either direction: ruleVar -> queryVar OR queryVar -> ruleVar.
-            String ruleVarName = null;
-            // Direction 1: ruleVar -> Variable(queryVar)
-            for (Map.Entry<String, Term> entry : headUnificationBindings.entrySet()) {
-                if (entry.getValue() instanceof Variable) {
-                    Variable mappedVar = (Variable) entry.getValue();
-                    if (queryVarName.equals(mappedVar.getName())) {
-                        ruleVarName = entry.getKey();
-                        break;
-                    }
-                }
-            }
-            // Direction 2: queryVar -> Variable(ruleVar)
-            if (ruleVarName == null && headUnificationBindings.containsKey(queryVarName)) {
+            // O(1) reverse lookup instead of O(N) linear scan
+            String ruleVarName = reverseIndex.get(queryVarName);
+
+            // Direction 2: queryVar -> Variable(ruleVar) or direct value
+            if (ruleVarName == null) {
                 Term mappedValue = headUnificationBindings.get(queryVarName);
-                if (mappedValue instanceof Variable) {
-                    ruleVarName = ((Variable) mappedValue).getName();
-                } else {
-                    // Query variable was directly unified to a value (not a variable)
-                    // Deep-resolve using combined bindings (body solution + head unification)
-                    // Body solution may not contain all variables (after recursive mapping),
-                    // but headUnificationBindings has the complete set from the current rule level.
-                    Map<String, Term> combinedBindings = new HashMap<>(headUnificationBindings);
-                    combinedBindings.putAll(bodySolution);
-                    Term resolved = mappedValue.resolveBindings(combinedBindings);
-                    if (traceEnabled) {
-                        LOGGER.info("Direction 2 non-var: " + queryVarName + " -> resolved=" + resolved);
+                if (mappedValue != null) {
+                    if (mappedValue instanceof Variable) {
+                        ruleVarName = ((Variable) mappedValue).getName();
+                    } else {
+                        if (combinedBindings == null) {
+                            combinedBindings = new HashMap<>(headUnificationBindings);
+                            combinedBindings.putAll(bodySolution);
+                        }
+                        result.put(queryVarName, mappedValue.resolveBindings(combinedBindings));
                     }
-                    result.put(queryVarName, resolved);
                 }
             }
-            // END_CHANGE: ISS-2025-0065
-            
-            if (traceEnabled) {
-                LOGGER.info("Query var " + queryVarName + " maps to rule var " + ruleVarName);
-            }
-            
-            // If we found the rule variable, look up its value in body solution or head bindings
-            // START_CHANGE: ISS-2025-0065 - Deep-resolve value through combined bindings
-            Map<String, Term> combinedForResolve = null;
-            if (ruleVarName != null && (bodySolution.containsKey(ruleVarName) || headUnificationBindings.containsKey(ruleVarName))) {
-                Term value = bodySolution.containsKey(ruleVarName) ? bodySolution.get(ruleVarName) : headUnificationBindings.get(ruleVarName);
-                // Deep resolve using combined bindings
-                if (combinedForResolve == null) {
-                    combinedForResolve = new HashMap<>(headUnificationBindings);
-                    combinedForResolve.putAll(bodySolution);
+
+            if (ruleVarName != null) {
+                // Use get + null check instead of containsKey + get (avoids double hash)
+                Term value = bodySolution.get(ruleVarName);
+                if (value == null) {
+                    value = headUnificationBindings.get(ruleVarName);
                 }
-                value = value.resolveBindings(combinedForResolve);
-                result.put(queryVarName, value);
-                if (traceEnabled) {
-                    LOGGER.info("Mapped " + queryVarName + " -> " + value);
+                if (value != null) {
+                    if (combinedBindings == null) {
+                        combinedBindings = new HashMap<>(headUnificationBindings);
+                        combinedBindings.putAll(bodySolution);
+                    }
+                    result.put(queryVarName, value.resolveBindings(combinedBindings));
                 }
             }
-            // END_CHANGE: ISS-2025-0065
         }
-        
-        if (traceEnabled) {
-            LOGGER.info("Final mapped result: " + result);
-            LOGGER.info("=== END MAPPING DEBUG ===");
-        }
-        
+
         return result;
     }
-    
-    // START_CHANGE: ISS-2025-0065 - Follow binding chain to resolve variables
-    /**
-     * Follow a binding chain to resolve a term to its final value.
-     * If the term is a Variable and it has a binding in the solution, follow it.
-     * Uses a visited set to prevent infinite loops.
-     */
-    private Term resolveBindingChain(Term value, Map<String, Term> bindings) {
-        java.util.Set<String> visited = new java.util.HashSet<>();
-        while (value instanceof Variable) {
-            String varName = ((Variable) value).getName();
-            if (visited.contains(varName) || !bindings.containsKey(varName)) {
-                break;
-            }
-            visited.add(varName);
-            value = bindings.get(varName);
-        }
-        return value;
-    }
-    // END_CHANGE: ISS-2025-0065
+    // END_CHANGE: ISS-2025-0091
 
     /**
      * Extract all variables from a term and return them as a map.
@@ -498,111 +505,49 @@ public class QuerySolver {
         }
     }
     
-    /**
-     * Find the value of a query variable by following the mapping chain:
-     * ruleVar -> queryVar (from head unification) -> value (from body solution)
-     */
-    private Term findVariableValue(String queryVarName, 
-                                  Map<String, Term> headUnificationBindings, 
-                                  Map<String, Term> bodySolution) {
-        
-        if (traceEnabled) {
-            LOGGER.info("Finding value for query var: " + queryVarName);
-        }
-        
-        // Look for a rule variable that maps to this query variable
-        for (Map.Entry<String, Term> entry : headUnificationBindings.entrySet()) {
-            String ruleVarName = entry.getKey();
-            Term mappedValue = entry.getValue();
-            
-            if (traceEnabled) {
-                LOGGER.info("Checking rule var " + ruleVarName + " -> " + mappedValue + 
-                           " (type: " + mappedValue.getClass().getSimpleName() + ")");
-            }
-            
-            // Check if this rule variable maps to our query variable
-            if (mappedValue instanceof Variable && 
-                queryVarName.equals(((Variable) mappedValue).getName())) {
-                
-                if (traceEnabled) {
-                    LOGGER.info("Found mapping: " + ruleVarName + " -> " + queryVarName);
-                    LOGGER.info("Looking for " + ruleVarName + " in body solution: " + bodySolution.containsKey(ruleVarName));
-                }
-                
-                // Found the mapping: ruleVar -> queryVar
-                // Now look up the rule variable's value in the body solution
-                if (bodySolution.containsKey(ruleVarName)) {
-                    Term value = bodySolution.get(ruleVarName);
-                    if (traceEnabled) {
-                        LOGGER.info("Found value: " + value);
-                    }
-                    return value;
-                }
-            }
-        }
-        
-        // Also check if the query variable is directly in the body solution
-        if (bodySolution.containsKey(queryVarName)) {
-            return bodySolution.get(queryVarName);
-        }
-        
-        if (traceEnabled) {
-            LOGGER.info("No value found for " + queryVarName);
-        }
-        
-        return null;
-    }
-
     private boolean solveBodyGoals(List<Term> body, Map<String, Term> attemptBindings,
                                    List<Map<String, Term>> solutions, CutStatus cutStatus) {
         boolean bodySucceeded = true;
         List<Map<String, Term>> bodySolutions = new ArrayList<>();
         bodySolutions.add(new HashMap<>(attemptBindings));
-        
+
         // For each body term, find all solutions
         for (Term bodyTerm : body) {
             List<Map<String, Term>> nextSolutions = new ArrayList<>();
-            
+
             // START_CHANGE: ISS-2025-0054 - Fix cut semantics: continue body, prevent clause backtracking
-            // ISO Prolog: cut (!) commits to the current clause choice and succeeds.
-            // Remaining body goals AFTER cut must still be executed.
-            // Cut only prevents backtracking to alternative clauses.
             if (bodyTerm.getName() != null &&
                 (bodyTerm.getName().equals("!") || bodyTerm.getName().equals("cut"))) {
                 if (!bodySolutions.isEmpty()) {
-                    // Commit to first choice point only
                     nextSolutions.add(bodySolutions.get(0));
                 }
                 bodySolutions = nextSolutions;
-                // Signal cut to prevent backtracking to alternative clauses
                 cutStatus.setCutOccurred();
-                // Continue executing remaining body goals (do NOT break)
                 continue;
             }
             // END_CHANGE: ISS-2025-0054
-            
+
             for (Map<String, Term> currentBindings : bodySolutions) {
                 List<Map<String, Term>> termSolutions = new ArrayList<>();
                 CutStatus bodyCutStatus = CutStatus.notOccurred();
-                
+
                 if (solveInternal(bodyTerm, currentBindings, termSolutions, bodyCutStatus)) {
                     nextSolutions.addAll(termSolutions);
-                    
-                    // If cut occurred, stop processing
+
                     if (bodyCutStatus.isCutOccurred()) {
                         break;
                     }
                 }
             }
-            
+
             bodySolutions = nextSolutions;
-            
+
             if (bodySolutions.isEmpty()) {
                 bodySucceeded = false;
                 break;
             }
         }
-        
+
         if (bodySucceeded && !bodySolutions.isEmpty()) {
             solutions.addAll(bodySolutions);
             return true;
@@ -613,15 +558,16 @@ public class QuerySolver {
     /**
      * Handle conjunction ,(A,B) - solve A, then solve B with the results from A.
      */
-    private boolean handleConjunction(Term conjunction, Map<String, Term> bindings, 
+    // START_CHANGE: ISS-2025-0091 - Use Arrays.asList to avoid ArrayList allocation
+    private boolean handleConjunction(Term conjunction, Map<String, Term> bindings,
                                      List<Map<String, Term>> solutions, CutStatus cutStatus) {
-        List<Term> goals = new ArrayList<>();
-        goals.add(conjunction.getArguments().get(0)); // A
-        goals.add(conjunction.getArguments().get(1)); // B
-        
-        // Use the existing solveBodyGoals logic which handles conjunctions properly
+        List<Term> goals = java.util.Arrays.asList(
+            conjunction.getArguments().get(0),  // A
+            conjunction.getArguments().get(1)   // B
+        );
         return solveBodyGoals(goals, bindings, solutions, cutStatus);
     }
+    // END_CHANGE: ISS-2025-0091
 
     /**
      * Get the knowledge base.

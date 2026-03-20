@@ -189,11 +189,15 @@ public class ArithmeticEvaluator {
         }
     }
 
+    // START_CHANGE: ISS-2025-0091 - Iterative variable resolution to prevent stack overflow
     private static Term resolveVariable(Variable variable, Map<String, Term> substitution) {
-        Term value = substitution.get(variable.getName());
-        if (value instanceof Variable && value != variable) {
-            return resolveVariable((Variable) value, substitution); // Recursive resolution
+        Term current = substitution.get(variable.getName());
+        while (current instanceof Variable && current != variable) {
+            Term next = substitution.get(((Variable) current).getName());
+            if (next == null) break;
+            current = next;
         }
-        return value;
+        return current;
     }
+    // END_CHANGE: ISS-2025-0091
 }

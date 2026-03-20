@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.4.0] - 2026-03-19
+
+### Integrated Debugger & Compilation Diagnostics
+
+Major release implementing the full ISO four-port debug model with interactive IDE integration.
+
+### Added
+
+- **Debug engine infrastructure** (CR-0009 completed):
+  - `DebugEvent` — data carrier for CALL/EXIT/FAIL/REDO port events with goal, depth, bindings, call stack
+  - `DebugStackEntry` — call stack frame with goal, depth, bindings snapshot
+  - `DebugController` — thread-safe debug orchestrator with wait/notify synchronization
+  - Step modes: Step Into, Step Over, Step Out, Continue
+  - Breakpoint management (predicate/arity format)
+  - `DebugStopException` for clean stack unwinding on user stop
+
+- **QuerySolver debug hooks**:
+  - CALL port notification at `solveInternalProtected()` entry
+  - EXIT/FAIL port notification in `handleBuiltIn()` and `solveAgainstKnowledgeBase()`
+  - Zero overhead when debugger not attached (`if (debugController != null)` guard)
+  - `Prolog.getQuerySolver()` exposed for debug controller wiring
+
+- **DebugPanel complete rewrite**:
+  - Implements `DebugController.DebugListener` with EDT-safe callbacks
+  - Colored trace output (blue=CALL, green=EXIT, red=FAIL, orange=REDO)
+  - Real-time call stack tree with per-frame variable bindings
+  - Variables table filtered to user-visible variables only
+  - Query input field for debug-mode queries
+  - All step buttons wired to `DebugController.resumeWithAction()`
+
+- **FileEditor breakpoint gutter**:
+  - Click in line number area toggles breakpoint (red circle marker)
+  - Debug line highlighting (green background + arrow for current execution point)
+  - Error line highlighting via `Highlighter` (persistent light red background)
+  - Automatic predicate name extraction for breakpoint registration
+
+- **Compilation diagnostics**:
+  - `Prolog.consultWithDiagnostics(program, filename)` for per-clause error collection
+  - `CompilationResult` and `CompilationError` classes with file, line number, message, severity
+  - IDE Build panel shows per-line errors with inline editor highlighting
+  - Clause count reporting on successful compilation
+
+- **IDE enhancements**:
+  - "Debug Query..." menu item (Shift+F5)
+  - Enhanced compilation output with clause count and per-error line numbers
+
+### Changed
+
+- `DebugPanel.java` — complete rewrite from TODO stubs to working debugger
+- `FileEditor.LineNumberArea` — now instance class (from static) with breakpoint/debug rendering
+- `PrologIDE.compileFile()` — uses `consultWithDiagnostics()` for detailed error reporting
+
+### Quality Metrics
+- **320 unit tests, 0 failures**
+- **20/20 example programs pass** (100%)
+- **10/10 Change Requests completed** (all CRs now closed)
+
+---
+
 ## [2.3.0] - 2026-03-19
 
 ### 100% ISO 13211-1 Compliance & 25+ New Predicates

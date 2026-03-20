@@ -5,7 +5,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 
 
@@ -13,6 +12,9 @@ public class CompoundTerm extends Term {
 
     private Atom functor;
     private List<Term> arguments;
+    // START_CHANGE: ISS-2025-0091 - Cache unmodifiable view to avoid wrapping on every call
+    private List<Term> unmodifiableArguments;
+    // END_CHANGE: ISS-2025-0091
 
     public CompoundTerm(Atom functor, List<Term> arguments) {
         this.functor = functor;
@@ -23,45 +25,55 @@ public class CompoundTerm extends Term {
         return functor;
     }
 
-    // START_CHANGE: ISS-2025-0081 - Return unmodifiable view instead of copy
+    // START_CHANGE: ISS-2025-0091 - Cache unmodifiable view, create once on first access
     @Override
     public List<Term> getArguments() {
-        return Collections.unmodifiableList(arguments);
+        if (unmodifiableArguments == null) {
+            unmodifiableArguments = Collections.unmodifiableList(arguments);
+        }
+        return unmodifiableArguments;
     }
-    // END_CHANGE: ISS-2025-0081
+    // END_CHANGE: ISS-2025-0091
 
     @Override
     public String getName() {
         return functor.getName();
     }
 
+    // START_CHANGE: ISS-2025-0091 - Optimize unification with key-snapshot rollback
+    // Instead of copying the entire HashMap (keys + values + rehash), we snapshot
+    // only the key set. On success (common case), we save the putAll cost entirely.
+    // On failure, we rollback by removing keys not in the snapshot.
     @Override
     public boolean unify(Term term, Map<String, Term> substitution) {
         if (term instanceof Variable) {
             return term.unify(this, substitution);
         } else if (term instanceof CompoundTerm) {
             CompoundTerm otherCompound = (CompoundTerm) term;
-            if (!this.functor.getName().equals(otherCompound.functor.getName()) || 
+            if (!this.functor.getName().equals(otherCompound.functor.getName()) ||
                 this.arguments.size() != otherCompound.arguments.size()) {
                 return false;
             }
 
-            // Create a working copy of the substitution
-            Map<String, Term> workingSubstitution = new HashMap<>(substitution);
-            
+            // Snapshot existing keys for rollback (cheaper than full HashMap copy)
+            java.util.Set<String> savedKeys = new java.util.HashSet<>(substitution.keySet());
+
             for (int i = 0; i < this.arguments.size(); i++) {
-                if (!this.arguments.get(i).unify(otherCompound.arguments.get(i), workingSubstitution)) {
+                if (!this.arguments.get(i).unify(otherCompound.arguments.get(i), substitution)) {
+                    // Rollback: remove all bindings added during this compound unification
+                    if (substitution.size() > savedKeys.size()) {
+                        substitution.keySet().retainAll(savedKeys);
+                    }
                     return false;
                 }
             }
-            
-            // If we get here, all arguments unified successfully
-            substitution.putAll(workingSubstitution);
+            // Success: all bindings already in the map, no putAll needed
             return true;
         } else {
             return false;
         }
     }
+    // END_CHANGE: ISS-2025-0091
 
     @Override
     public boolean isGround() {
@@ -86,7 +98,15 @@ public class CompoundTerm extends Term {
         }
         // END_CHANGE: ISS-2025-0019
         
-        return functor.getName() + "(" + arguments.stream().map(Term::toString).collect(Collectors.joining(", ")) + ")";
+        // START_CHANGE: ISS-2025-0091 - Use StringBuilder instead of stream for toString
+        StringBuilder sb = new StringBuilder(functor.getName()).append('(');
+        for (int i = 0; i < arguments.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(arguments.get(i).toString());
+        }
+        sb.append(')');
+        return sb.toString();
+        // END_CHANGE: ISS-2025-0091
     }
     
     // START_CHANGE: ISS-2025-0019 - Helper method for formatting lists in ISO-compliant way

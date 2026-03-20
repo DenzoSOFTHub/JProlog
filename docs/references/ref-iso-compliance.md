@@ -114,12 +114,13 @@ char_code/2, char_type/2 (partial)
 current_prolog_flag/2, set_prolog_flag/2, statistics/2 (partial)
 ```
 
-#### Debugging Support (40% ISO Compliant)
+#### Debugging Support (90% ISO Compliant) - Implemented v2.4.0
 ```prolog
-% Basic debugging:
+% Full debugging with four-port model:
 trace/0, notrace/0, spy/1, nospy/1
+% IDE: CALL/EXIT/FAIL/REDO ports, step execution, breakpoints, call stack, variable inspection
 ```
-**Missing**: Full port model debugging (see CR-2025-0009)
+**Status**: CR-2025-0009 completed. Full four-port debug model implemented in IDE with DebugController.
 
 ### ❌ NOT IMPLEMENTED (0% Compliance)
 
@@ -163,8 +164,8 @@ Based on this comprehensive analysis, **9 formal Change Requests** have been cre
 - **CR-2025-0007**: Standard ISO Exception Terms (MEDIUM complexity)
 
 ### Low Priority CRs (Completeness Features)
-- **CR-2025-0008**: List Operations Extension (LOW complexity)
-- **CR-2025-0009**: Debugging Port Model Implementation (HIGH complexity)
+- **CR-2025-0008**: List Operations Extension (LOW complexity) - ✅ COMPLETED
+- **CR-2025-0009**: Debugging Port Model Implementation (HIGH complexity) - ✅ COMPLETED v2.4.0
 - **CR-2025-0010**: Binary I/O Operations (MEDIUM complexity)
 
 ## Implementation Roadmap
@@ -214,7 +215,7 @@ Based on this comprehensive analysis, **9 formal Change Requests** have been cre
 | Module System | 0% | 90% | 🚀 New Feature |
 | DCG Support | 0% | 90% | 🚀 New Feature |
 | Exception Handling | 90% | 100% | 🔧 Enhancement |
-| Debugging | 40% | 85% | 📈 Major Improvement |
+| Debugging | 90% | 95% | ✅ Excellent |
 
 ## Conclusion
 

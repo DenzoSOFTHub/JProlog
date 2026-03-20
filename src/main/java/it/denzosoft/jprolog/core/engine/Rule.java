@@ -9,16 +9,20 @@ import java.util.stream.Collectors;
 public class Rule {
     private final Term head;
     private final List<Term> body;
+    // START_CHANGE: ISS-2025-0092 - Cache ground status for ground fact optimization
+    private final boolean groundFact;
+    // END_CHANGE: ISS-2025-0092
 
     /**
      * Create a new rule.
-     * 
+     *
      * @param head The rule head (required)
      * @param body The rule body (can be empty for facts)
      */
     public Rule(Term head, List<Term> body) {
         this.head = Objects.requireNonNull(head, "Rule head cannot be null");
         this.body = body != null ? Collections.unmodifiableList(body) : Collections.emptyList();
+        this.groundFact = this.body.isEmpty() && this.head.isGround();
     }
 
     /**
@@ -38,6 +42,16 @@ public class Rule {
     public List<Term> getBody() {
         return body;
     }
+
+    // START_CHANGE: ISS-2025-0092 - Ground fact detection for TermCopier optimization
+    /**
+     * Check if this rule is a ground fact (fact with no variables in the head).
+     * Ground facts don't need TermCopier variable renaming.
+     */
+    public boolean isGroundFact() {
+        return groundFact;
+    }
+    // END_CHANGE: ISS-2025-0092
 
     @Override
     public String toString() {

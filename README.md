@@ -42,12 +42,14 @@ A professional IDE specifically designed for Prolog development:
 - **Project Management**: Structured project organization with directory trees
 - **Syntax Highlighting**: Full Prolog syntax highlighting with keywords, operators, and comments
 - **Advanced Editor**: Multi-tab interface with auto-indentation, bracket matching, and line numbering
-- **Visual Debugger**: Professional debugging interface with breakpoints and step execution
-- **Build System**: Real-time compilation with error detection and reporting
+- **Interactive Debugger**: Full ISO four-port debug model (CALL/EXIT/FAIL/REDO) with Step Into/Over/Out, breakpoints, call stack inspection, and variable monitoring
+- **Breakpoint Gutter**: Click line numbers to toggle breakpoints with visual red circle markers
+- **Build System**: Per-clause compilation diagnostics with inline error highlighting and line-level reporting
 - **Query Console**: Interactive Prolog execution environment within the IDE
+- **Debug Query Mode**: Run queries with step-by-step execution and colored trace output
 - **Search & Navigation**: Find/replace with regex support and project-wide search
 
-**Key Classes**: `PrologIDE.java`, `FileEditor.java`, `DebugPanel.java`, `ProjectTree.java`
+**Key Classes**: `PrologIDE.java`, `FileEditor.java`, `DebugPanel.java`, `DebugController.java`, `ProjectTree.java`
 
 ### 3. 📟 Command Line Interface (`PrologCLI.java`)
 
