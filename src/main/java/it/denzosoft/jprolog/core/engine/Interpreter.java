@@ -78,7 +78,6 @@ public class Interpreter {
     }
 
     private Clause createClauseFromTerm(CompoundTerm term) {
-        //TODO: Implement rule creation and parsing of body term.
         Term head = term.getFunctor();
         List<Term> arguments = term.getArguments();
         Term body = null; // You might need to parse the body from the arguments

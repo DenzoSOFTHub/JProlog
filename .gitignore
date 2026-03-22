@@ -88,6 +88,9 @@ desktop.ini
 /sessions/
 *.properties.backup
 
+# Claude Code
+.claude/
+
 # Temporary files
 *.tmp
 *.temp

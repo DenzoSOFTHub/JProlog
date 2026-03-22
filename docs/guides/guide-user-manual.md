@@ -600,7 +600,7 @@ debug.trace.enabled=false
 
 #### **Documentation**
 - **User Manual**: This document
-- **Debug Guide**: [DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)
+- **Debug Guide**: [DEBUGGING_GUIDE.md](guide-debugging.md)
 - **Example Files**: Check `debug_test.pl` for examples
 
 #### **Support Resources**

@@ -212,9 +212,9 @@ sum_list([H|T], Sum) :-
 ## Getting Help
 
 ### Documentation
-- **Full Manual**: [USER_MANUAL.md](USER_MANUAL.md)
-- **Debug Guide**: [DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)
-- **Feature Summary**: [DEBUG_FEATURES_SUMMARY.md](DEBUG_FEATURES_SUMMARY.md)
+- **Full Manual**: [USER_MANUAL.md](guide-user-manual.md)
+- **Debug Guide**: [DEBUGGING_GUIDE.md](guide-debugging.md)
+- **Feature Summary**: [DEBUG_FEATURES_SUMMARY.md](guide-debug-tracing.md)
 
 ### Common Issues
 - **"No project open"**: Create or open a project first
@@ -232,8 +232,8 @@ sum_list([H|T], Sum) :-
 
 **You're ready to start Prolog development with JProlog Editor from DenzoSOFT!**
 
-*For complete documentation, see [USER_MANUAL.md](USER_MANUAL.md)*
-*For debugging help, see [DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)*
+*For complete documentation, see [USER_MANUAL.md](guide-user-manual.md)*
+*For debugging help, see [DEBUGGING_GUIDE.md](guide-debugging.md)*
 
 ---
 

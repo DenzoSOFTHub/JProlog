@@ -7,6 +7,7 @@ import it.denzosoft.jprolog.core.terms.Term;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
 
@@ -14,6 +15,8 @@ import java.util.stream.Collectors;
 
 
 public class ListTerm extends Term {
+
+    private static final Logger LOGGER = Logger.getLogger(ListTerm.class.getName());
 
     private final List<Term> elements;
 
@@ -34,12 +37,12 @@ public class ListTerm extends Term {
         if (term instanceof ListTerm) {
             ListTerm otherList = (ListTerm) term;
             if (this.elements.size() != otherList.elements.size()) {
-            	System.out.println("List sizes differ, unification failed: " + this.elements.size() + " != " + otherList.elements.size());
+            	LOGGER.fine("List sizes differ, unification failed: " + this.elements.size() + " != " + otherList.elements.size());
                 return false;
             }
             for (int i = 0; i < this.elements.size(); i++) {
                 if (!this.elements.get(i).unify(otherList.elements.get(i), substitution)) {
-                	System.out.println("Element " + i + " failed to unify: " + this.elements.get(i) + " with " + otherList.elements.get(i));
+                	LOGGER.fine("Element " + i + " failed to unify: " + this.elements.get(i) + " with " + otherList.elements.get(i));
                     return false;
                 }
             }

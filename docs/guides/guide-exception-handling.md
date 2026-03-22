@@ -630,4 +630,4 @@ debug_catch(Goal, Catcher, Recovery) :-
 - [Built-in Predicates Reference](../references/BUILTIN_PREDICATES_REFERENCE.md)
 - [ISO Compliance Analysis](../reports/report-iso-compliance.md)  
 - [Developer Guide](guide-developer-exception-handling.md)
-- [JProlog User Manual](../../USER_MANUAL.md)
+- [JProlog User Manual](guide-user-manual.md)

@@ -915,4 +915,4 @@ java -cp target/classes it.denzosoft.jprolog.editor.PrologIDE
 
 ---
 
-*This guide is part of the JProlog documentation series. For more information, see the [User Manual](../USER_MANUAL.md) or [Quick Start Guide](guide-quick-start.md).*
+*This guide is part of the JProlog documentation series. For more information, see the [User Manual](guide-user-manual.md) or [Quick Start Guide](guide-quick-start.md).*
