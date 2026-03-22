@@ -7,6 +7,440 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.5.5] - 2026-03-22
+
+### Code Quality, Documentation, Dual-Arity Operators
+
+Final cleanup release resolving remaining issues from the v2.5.x improvement cycle.
+
+#### Fixed
+- **ISS-2025-0177**: Dual-arity operator handling — operators like `+`/`-` can now be both prefix (fy) and infix (yfx) with composite key storage in OperatorTable
+- **ISS-2025-0178**: Dead code removal — deleted unused `SimplePrologEngine.java`, `PrologEngine.java`, `MainProlog.java`; removed legacy `Variable.occurs()` method; converted System.out.println to Logger in `PhraseWithOptions.java`
+- **ISS-2025-0179**: Documentation updates — updated `guide-prolog-intro.md` with implemented features; added 14 missing predicates to `BUILTIN_PREDICATES_REFERENCE.md` (count now 265+)
+- Stale class file issue causing `Phase1FeaturesTest$Variable` NoClassDefFoundError resolved with clean build
+
+#### Tests
+- 320/320 JUnit tests passing
+- 20/20 example programs passing
+
+---
+
+## [2.5.4] - 2026-03-22
+
+### Memory Safety, Security, CLP(FD), Usability
+
+Comprehensive release fixing resource leaks, security vulnerabilities, improving CLP(FD) constraint solving, and adding new features.
+
+### Fixed — Phase 12: Memory Leaks (ISS-2025-0173)
+
+- **JavaFFI reference management**: Added `java_release_ref/1` and `java_gc/0` predicates for explicit reference cleanup. Warning logged when refTable exceeds 10000 entries.
+- **BufferedReader caching**: I/O predicates (ReadTerm, GetChar, GetCode) now use a cached static reader for System.in instead of creating new BufferedReader per call
+- **TableStore cache eviction**: Memoization cache limited to 10000 entries with automatic eviction
+- **HTTP request queue bounds**: Request queues bounded to 1000 entries per handler with oldest-first eviction
+- **JDBC stream cleanup**: FileInputStream operations wrapped in try-with-resources
+
+### Fixed — Phase 13: Security (ISS-2025-0174)
+
+- **Regex injection**: Added `re_escape/2` predicate using `Pattern.quote()`. `re_replace` uses `Matcher.quoteReplacement()`. All `Pattern.compile()` wrapped in try-catch with proper Prolog error
+- **XML XXE hardening**: Comprehensive XXE protection on all DocumentBuilderFactory instances (external entities, DTDs, entity expansion all disabled)
+
+### Improved — Phase 14: CLP(FD) and Persistence (ISS-2025-0175)
+
+- **CLP(FD) bounds consistency**: Added bounds inference for arithmetic constraints (#=, #<, #>, #=<, #>=) before AC-3 filtering
+- **Persistence transactions**: Added `db_transaction/1` for atomic database operations with automatic rollback on failure
+
+### Added — Phase 15: Usability (ISS-2025-0176)
+
+- **CLI command history**: Command history with navigation in OutputConsole
+- **Error message context**: Improved error term context strings with predicate and detail info
+- **Graph SCC**: Added `graph_scc/2` implementing Tarjan's algorithm for strongly connected components
+- **Crypto AES/PBKDF2**: Added `crypto_aes_encrypt/4`, `crypto_aes_decrypt/4`, `crypto_hash_password/2`, `crypto_verify_password/2`
+- **Debug leash control**: Added `leash/1` predicate for fine-grained port filtering (full/half/loose/none or explicit port list)
+
+### Quality Metrics
+- **320 JUnit tests, 0 failures**
+- **20/20 example programs pass** (100%)
+- **16/16 new specialized tests pass** (test_31 through test_34)
+- **All previous tests pass**
+
+---
+
+## [2.5.3] - 2026-03-21
+
+### Bug Fixes, ISO Predicates, I/O Hardening, Performance
+
+Final hardening release with 14 improvements: 5 bug fixes, 3 new ISO predicates/functions, 3 I/O/exception fixes, and 2 performance optimizations.
+
+### Fixed — Phase 8: Bug Fixes (ISS-2025-0169)
+
+- **Unicode truncation**: `atom_codes/2` and `string_codes/2` now throw `representation_error(character_code)` for codepoints > 65535 instead of silently truncating
+- **Flatten cycle detection**: `flatten/2` now detects cyclic lists (depth limit 10000) instead of infinite recursion
+- **succ/2 accepts 0**: `succ(0, 1)` now succeeds correctly (0 is non-negative)
+- **random_between uniform distribution**: Fixed modulo bias with proper range-based random generation
+- **Bitwise NOT integer validation**: `(\)/1` now validates integer input, throwing `type_error(integer, X)` for non-integer floats
+
+### Added — Phase 9: ISO Predicates (ISS-2025-0170)
+
+- **`acyclic_term/1`**: Detects cyclic terms using identity-based visited set
+- **`proper_list/1`**: Succeeds only for lists terminating with `[]`
+- **`msb/1`, `lsb/1`, `popcount/1`**: Bitwise analysis arithmetic functions (most/least significant bit, population count)
+
+### Fixed — Phase 10: I/O and Exception Handling (ISS-2025-0171)
+
+- **catch/3 recovery propagation**: Recovery goal exceptions now properly propagate to outer catch
+- **StreamProperty existence_error**: Ground stream arguments that don't match known streams now throw `existence_error(stream, S)`
+- **Exception logging**: Java-layer exceptions (NPE, etc.) now logged with full stack trace before conversion to system_error
+
+### Improved — Phase 11: Performance (ISS-2025-0172)
+
+- **sub_atom/5 constraint-aware optimization**: When Before/Length/SubAtom are bound, skips unnecessary iterations (O(1) instead of O(n^2) for fully bound case)
+- **Debug leash/spy filtering**: Added `leash/1` predicate for fine-grained port control (call/exit/fail/redo)
+
+### Quality Metrics
+- **320 JUnit tests, 0 failures**
+- **20/20 example programs pass** (100%)
+- **47/47 new specialized tests pass** (test_27 through test_30)
+- **All previous specialized tests pass** (robustness, LCO, FFI, modules, tabling, etc.)
+
+---
+
+## [2.5.2] - 2026-03-21
+
+### Database Safety, Module System, Parser Robustness, Test Coverage
+
+Comprehensive hardening release with 14 improvements across 4 areas: database safety during execution, module system completion, parser/operator robustness, and expanded test coverage.
+
+### Fixed — Phase 4: Database Safety (ISS-2025-0166)
+
+- **Copy-on-read protection**: Candidate rule lists in `solveAgainstKnowledgeBase` are now snapshot-copied before iteration, preventing iterator invalidation from concurrent assert/retract
+- **Circular variable binding detection**: `resolveChainWithCompression` (QuerySolver) and `resolveVariable` (ArithmeticEvaluator) now detect circular binding chains (depth limit 64) and throw `error(resource_error(circular_binding), ...)`
+
+### Added — Phase 5: Module System Completion (ISS-2025-0167)
+
+- **`meta_predicate/1` declarations**: Modules can declare argument modes for meta-predicates via `:- meta_predicate` directives
+- **`module_transparent/1`**: Transparent predicates inherit the caller's module context during resolution
+- **Re-export mechanism**: `Module.reexport()` allows importing and re-exporting predicates from other modules
+- **Per-module operator scope**: Each module has a local `OperatorTable`; `:- op(...)` inside a module registers operators locally
+- **Name collision detection**: `ModuleManager` warns when importing predicates that conflict with existing local or imported predicates
+
+### Fixed — Phase 6: Parser/Operator Robustness (ISS-2025-0168)
+
+- **Operator precedence validation**: `defineOperator()` now validates ISO range (0-1200), valid specifiers, and logs warnings for standard operator redefinition. Precedence 0 removes the operator per ISO
+- **Multi-error parser recovery**: `consult()` now collects all parse errors across clauses instead of stopping at the first error
+- **Occurs check flag**: Added `occurs_check` Prolog flag (default: false). When false, occurs check is skipped in standard unification for performance. `unify_with_occurs_check/2` always checks regardless
+
+### Added — Phase 7: Test Coverage (ISS-2025-0166/0167)
+
+- `test_23_assert_retract_active.pl` — 6 tests for assert/retract during active execution
+- `test_24_modules_advanced.pl` — 4 tests for module export, qualified calls, imports
+- `test_25_recursion_bindings.pl` — 7 tests for recursion depth, binding chains, mutual recursion
+- `test_26_tabling_advanced.pl` — 5 tests for fibonacci tabling, path finding, abolish/recompute
+
+### Quality Metrics
+- **320 JUnit tests, 0 failures**
+- **20/20 example programs pass** (100%)
+- **22/22 new specialized tests pass** (test_23 through test_26)
+- **5/5 core robustness, 3/3 LCO, 39/39 FFI tests pass**
+
+---
+
+## [2.5.1] - 2026-03-21
+
+### Core Robustness and ISO Compliance Improvements
+
+Bug fixes and hardening across the Prolog core engine, improving ISO 13211-1 compliance and thread safety.
+
+### Fixed
+
+- **Unknown atoms in arithmetic throw type_error** (ISS-2025-0163): `foo + 1` now throws `error(type_error(evaluable, foo/0), is/2)` instead of silently returning 0.0
+- **PrologException preserved through ArithmeticEvaluator** (ISS-2025-0163): ISO error terms now pass through `evaluate()` without being wrapped, enabling `catch/3` to match them
+- **CompoundTerm unification rollback correctness** (ISS-2025-0163): Full snapshot/restore instead of `retainAll` for HashMap-based substitution maps
+- **LayeredMap mark/rollback journal** (ISS-2025-0163): Change journal tracks both additions and overwrites for correct rollback of compound term unification
+- **Cut propagation from disjunction/if-then-else** (ISS-2025-0163): Cut inside Then/Else/disjunction branches now propagates to the enclosing clause per ISO 7.8.8
+- **Recursion depth limit throws ISO resource_error** (ISS-2025-0163): Reduced limit from 10000 to 2000, added StackOverflowError catch, throws `error(resource_error(max_recursion_depth), ...)` instead of silent failure
+- **Arithmetic overflow detection** (ISS-2025-0164): Multiplication and division now detect overflow (finite inputs producing infinite result) and throw `error(evaluation_error(float_overflow), ...)`
+- **retract/1 propagates unification bindings** (ISS-2025-0122): `retract(counter(N))` now correctly binds `N` to the matched value
+
+### Improved
+
+- **KnowledgeBase thread safety** (ISS-2025-0164): All public methods synchronized for concurrent access safety
+- **Variable anonymous counter thread safety** (ISS-2025-0164): Changed to `AtomicInteger` for safe concurrent anonymous variable creation
+
+### Quality Metrics
+- **320 JUnit tests, 0 failures**
+- **20/20 example programs pass** (100%)
+- **5/5 core robustness tests pass**
+- **3/3 LCO tests pass**
+- **39/39 FFI tests pass**
+
+---
+
+## [2.5.0] - 2026-03-21
+
+### Package Cleanup, Last Call Optimization, Java FFI
+
+Focused release that removes 31 toy/academic packages to streamline the codebase, adds Last Call Optimization (LCO) for stack-safe tail recursion, and introduces a Java Foreign Function Interface (FFI) with 12 new built-in predicates.
+
+### Removed
+
+- **31 toy/academic built-in packages** (ISS-2025-0160):
+  - AI/Knowledge: NLP, Expert Systems, Inference Engine, AI Planner, Fuzzy Logic, Bayesian Networks
+  - Computational Intelligence: Genetic Algorithms, Neural Networks, Optimization, Simulation, Workflow Engine
+  - Advanced Logic: CLP(R), Knowledge Graphs, Parsing/DSL, Datalog, Semantic Web/RDF, Model Checking, CHR, BDI Agents, ASP, Explainable AI
+  - Classic Prolog: Type Inference, Theorem Proving, Symbolic Mathematics, Meta-Interpretation, Temporal Logic, ProbLog, SAT Solving, Game Playing, Term Rewriting, Description Logic
+  - Kept 16 useful infrastructure packages: CLP(FD), Tabling, HTTP, JSON, XML, CSV, Regex, Crypto, DateTime, Filesystem, OS, Threading, Logging, Persistence, Graph, Concurrent
+
+### Added
+
+- **Last Call Optimization (LCO)** via trampoline in QuerySolver (ISS-2025-0161):
+  - Tail-recursive predicates with single-candidate matching now run iteratively
+  - Eliminates stack overflow for deep recursion (e.g., `count_down(10000)` works)
+  - 3/3 LCO-specific tests pass
+
+- **Java Foreign Function Interface (FFI)** - 12 new built-in predicates (ISS-2025-0162):
+  - Object lifecycle: `java_new/3`, `java_class/2`, `java_instanceof/2`
+  - Method/field access: `java_call/4`, `java_get_field/3`, `java_set_field/3`
+  - Array operations: `java_array_new/3`, `java_array_get/3`, `java_array_set/3`, `java_array_length/2`
+  - Conversion: `java_to_term/2`, `java_from_term/2`
+  - Package: `builtin/ffi/`
+  - 40/40 FFI tests pass
+
+### Quality Metrics
+- **320 JUnit tests, 0 failures**
+- **20/20 example programs pass** (100%)
+- **40/40 FFI tests pass**
+- **3/3 LCO tests pass**
+
+### Repository Information
+- **Tag**: v2.5.0
+- **Release Date**: 2026-03-21
+- **Compatibility**: Java 8+, Maven 3.6+
+
+---
+
+## [3.0.0] - 2026-03-21
+
+### 47 New Built-in Packages (555+ Predicates), AI/ML Engine, Concurrent Execution, Advanced Logic Programming & Classic Prolog Packages
+
+Major release adding 47 new built-in predicate packages across core infrastructure, AI/knowledge engineering, computational intelligence, SWI-Prolog compatible concurrent execution, advanced logic programming (CLP(R), knowledge graphs, parsing/DSL, Datalog, semantic web/RDF, model checking, CHR, BDI agents, ASP, explainable AI), and classic Prolog packages (type inference, theorem proving, symbolic math, meta-interpretation, temporal logic, probabilistic logic, SAT solving, game playing, term rewriting, description logic). Includes 665+ built-in predicates total, 46 test files with 1100+ test cases, and 47 documentation guides.
+
+### Added
+
+- **Crypto predicates** (10 predicates, ISS-2025-0112):
+  - Hashing, HMAC, encryption, decryption, random byte generation
+  - Package: `builtin/crypto/`
+
+- **JSON predicates** (6 predicates, ISS-2025-0113):
+  - JSON parsing, generation, and manipulation
+  - Package: `builtin/json/`
+
+- **DateTime predicates** (10 predicates, ISS-2025-0114):
+  - Date/time operations, formatting, arithmetic
+  - Package: `builtin/datetime/`
+
+- **Filesystem predicates** (15 predicates, ISS-2025-0115):
+  - File and directory operations, path manipulation
+  - Package: `builtin/filesystem/`
+
+- **OS predicates** (12 predicates, ISS-2025-0116):
+  - Environment variables, process execution, system information
+  - Package: `builtin/os/`
+
+- **Regex predicates** (5 predicates, ISS-2025-0117):
+  - Regular expression matching, replacement, splitting
+  - Package: `builtin/regex/`
+
+- **XML predicates** (3 predicates, ISS-2025-0118):
+  - XML parsing and generation
+  - Package: `builtin/xml/`
+
+- **Threading predicates** (10 predicates, ISS-2025-0119):
+  - Thread creation, joining, message passing, mutexes
+  - Thread safety review completed
+  - Package: `builtin/threading/`
+
+- **CSV predicates** (4 predicates, ISS-2025-0120):
+  - CSV reading, writing, and parsing
+  - Package: `builtin/csv/`
+
+- **Logging predicates** (6 predicates, ISS-2025-0121):
+  - Structured logging with configurable levels
+  - Package: `builtin/logging/`
+
+- **aggregate_all/3** meta-predicate (ISS-2025-0122):
+  - Collect aggregated results over backtracking
+  - Registered as BuiltInWithContext
+
+- **CLP(FD) constraint predicates** (13 predicates, ISS-2025-0123):
+  - Constraint posting: `in/2`, `#=/2`, `#\=/2`, `#</2`, `#>/2`, `#=</2`, `#>=/2`
+  - Global constraints: `all_different/1`
+  - Labeling: `label/1`, `labeling/2`, `indomain/1`
+  - Domain inspection: `fd_dom/2`, `fd_size/2`
+  - AC-3 arc consistency propagation, snapshot/restore backtracking
+  - Package: `builtin/clpfd/`
+
+- **Tabling predicates** (3 predicates, ISS-2025-0124):
+  - `table/1`, `abolish_all_tables/0`, `abolish_table/1`
+  - Loop detection, variant tabling (memo table keyed on call variants)
+  - Package: `builtin/tabling/`
+
+- **HTTP predicates** (11 predicates, ISS-2025-0125):
+  - Server: `http_server/2`, `http_stop/1`, `http_handler/3`, `http_get_request/2`, `http_reply/4`, `http_reply_json/3`
+  - Client: `http_client_get/2`, `http_client_post/3`, `http_open/3`
+  - Utility: `url_encode/2`, `url_decode/2`
+  - Package: `builtin/http/`
+
+- **Persistence predicates** (10 predicates, ISS-2025-0126):
+  - Database save/load, predicate-level export, JSON import/export, snapshots
+  - `db_save/1`, `db_load/1`, `db_save_predicate/2`, `persist/1`, `unpersist/1`, `db_export_json/1`, `db_import_json/1`, `db_snapshot/1`, `db_restore/1`, `db_clear/0`
+  - Package: `builtin/persistence/`
+
+- **Graph algorithm predicates** (12 predicates, ISS-2025-0127):
+  - Path finding, shortest path, connectivity, topological sort, MST, cycle detection
+  - `graph_path/4`, `shortest_path/4`, `graph_connected/2`, `graph_vertices/2`, `graph_edges/2`, `graph_neighbors/3`, `topological_sort/2`, `graph_components/2`, `minimum_spanning_tree/2`, `graph_degree/3`, `graph_has_cycle/1`, `graph_reachable/3`
+  - Package: `builtin/graph/`
+
+- **Expert system predicates** (16 predicates, ISS-2025-0128):
+  - Forward/backward chaining, certainty factors, explanation, conflict resolution
+  - Package: `builtin/expert/`
+
+- **NLP predicates** (15 predicates, ISS-2025-0129):
+  - Tokenization, stemming, n-grams, TF-IDF, Levenshtein, Soundex, sentiment analysis
+  - Package: `builtin/nlp/`
+
+- **Inference engine predicates** (13 predicates, ISS-2025-0130):
+  - Abduction, ILP, non-monotonic reasoning, frame-based KR with inheritance
+  - Package: `builtin/inference/`
+
+- **AI planner predicates** (11 predicates, ISS-2025-0131):
+  - STRIPS planning with A*, BFS, DFS, iterative deepening, best-first search
+  - Package: `builtin/planner/`
+
+- **Fuzzy logic predicates** (14 predicates, ISS-2025-0132):
+  - Mamdani fuzzy inference, fuzzification, defuzzification, hedge operators
+  - Package: `builtin/fuzzy/`
+
+- **Bayesian network predicates** (14 predicates, ISS-2025-0133):
+  - Enumeration-based exact inference, Naive Bayes with Laplace smoothing
+  - Package: `builtin/bayesian/`
+
+- **Genetic algorithm predicates** (12 predicates, ISS-2025-0134):
+  - Tournament/roulette/rank selection, multiple crossover and mutation operators
+  - Package: `builtin/genetic/`
+
+- **Neural network predicates** (14 predicates, ISS-2025-0135):
+  - Feedforward with backpropagation, Xavier init, sigmoid/tanh/relu/linear
+  - Package: `builtin/neural/`
+
+- **Optimization predicates** (8 predicates, ISS-2025-0136):
+  - LP (simplex), 0/1 knapsack, TSP, simulated annealing, tabu search, max flow
+  - Package: `builtin/optimization/`
+
+- **Simulation predicates** (12 predicates, ISS-2025-0137):
+  - Discrete event simulation, random variates, histograms, statistics
+  - Package: `builtin/simulation/`
+
+- **Workflow engine predicates** (12 predicates, ISS-2025-0138):
+  - State machines, transitions, rules, instance management, history tracking
+  - Package: `builtin/workflow/`
+
+- **Concurrent execution predicates** (7 predicates, ISS-2025-0139):
+  - SWI-Prolog compatible: `concurrent/3`, `concurrent_maplist/2,3,4`, `first_solution/3`, `concurrent_and/2`, `concurrent_or/2`
+  - Real thread-level parallelism via Java ExecutorService
+  - Package: `builtin/threading/`
+
+- **CLP(R) predicates** (8 predicates, ISS-2025-0140):
+  - Constraint logic programming over reals with simplex optimization
+  - Package: `builtin/clpr/`
+
+- **Knowledge Graph predicates** (15 predicates, ISS-2025-0141):
+  - Triple store, ontological reasoning, transitive closure, path finding
+  - Package: `builtin/knowledge/`
+
+- **Parsing/DSL predicates** (15 predicates, ISS-2025-0142):
+  - Tokenization, grammar definition, AST manipulation, code generation, DSL evaluation
+  - Package: `builtin/parsing/`
+
+- **Datalog predicates** (13 predicates, ISS-2025-0143):
+  - Bottom-up evaluation, semi-naive fixpoint, stratification, incremental maintenance
+  - Package: `builtin/datalog/`
+
+- **Semantic Web/RDF predicates** (15 predicates, ISS-2025-0144):
+  - RDF triple store, RDFS reasoning, prefix management, Turtle export
+  - Package: `builtin/semweb/`
+
+- **Model Checking predicates** (15 predicates, ISS-2025-0145):
+  - CTL model checking, reachability, deadlock detection, bisimulation
+  - Package: `builtin/verification/`
+
+- **CHR predicates** (12 predicates, ISS-2025-0146):
+  - Constraint Handling Rules, simplification/propagation, constraint store
+  - Package: `builtin/chr/`
+
+- **BDI Agent predicates** (15 predicates, ISS-2025-0147):
+  - Belief-Desire-Intention architecture, agent lifecycle, inter-agent messaging
+  - Package: `builtin/agent/`
+
+- **ASP predicates** (13 predicates, ISS-2025-0148):
+  - Answer Set Programming, choice rules, brave/cautious reasoning, optimization
+  - Package: `builtin/asp/`
+
+- **XAI predicates** (15 predicates, ISS-2025-0149):
+  - Explainable AI: goal tracing, counterfactual reasoning, feature importance, decision paths
+  - Package: `builtin/xai/`
+
+- **Type Inference predicates** (12 predicates, ISS-2025-0150):
+  - Hindley-Milner type inference, unification, generalization, instantiation
+  - Package: `builtin/typeinfer/`
+
+- **Theorem Proving predicates** (13 predicates, ISS-2025-0151):
+  - Resolution-based proving, CNF/DNF/NNF conversion, tautology/satisfiability checking
+  - Package: `builtin/theorem/`
+
+- **Symbolic Math predicates** (12 predicates, ISS-2025-0152):
+  - Differentiation, simplification, expansion, integration, equation solving
+  - Package: `builtin/symmath/`
+
+- **Meta-Interpretation predicates** (12 predicates, ISS-2025-0153):
+  - Meta-interpreters with bounded/iterative deepening, tracing, partial evaluation
+  - Package: `builtin/meta/`
+
+- **Temporal Logic predicates** (13 predicates, ISS-2025-0154):
+  - Event calculus, fluent initiation/termination, Allen temporal intervals
+  - Package: `builtin/temporal/`
+
+- **Probabilistic Logic predicates** (12 predicates, ISS-2025-0155):
+  - ProbLog-style probabilistic facts/rules, exact inference, entropy, KL divergence
+  - Package: `builtin/problog/`
+
+- **SAT Solving predicates** (12 predicates, ISS-2025-0156):
+  - DPLL SAT solver, unit propagation, pure elimination, backbone computation
+  - Package: `builtin/sat/`
+
+- **Game Playing predicates** (13 predicates, ISS-2025-0157):
+  - Minimax, alpha-beta pruning, negamax, MCTS game tree search
+  - Package: `builtin/game/`
+
+- **Term Rewriting predicates** (12 predicates, ISS-2025-0158):
+  - Term rewriting systems, normalization, confluence/termination analysis
+  - Package: `builtin/rewriting/`
+
+- **Description Logic predicates** (14 predicates, ISS-2025-0159):
+  - ALC description logic, concept/role assertions, subsumption, satisfiability
+  - Package: `builtin/desclogic/`
+
+- **Test programs**:
+  - 46 comprehensive test files (test_31 through test_77) covering all new packages
+  - 1100+ individual test cases
+
+### Fixed
+
+- **copy_term/2**: Now uses `TermCopier.copyWithFreshVariables` for proper fresh variable names (ISS-2025-0122)
+- **retract/1**: Now correctly returns unification bindings to the caller (ISS-2025-0122)
+- **Goal directives**: Fixed `:- Goal.` execution during consult (ISS-2025-0122)
+
+---
+
 ## [2.4.0] - 2026-03-19
 
 ### Integrated Debugger & Compilation Diagnostics

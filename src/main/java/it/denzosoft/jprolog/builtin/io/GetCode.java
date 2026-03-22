@@ -29,7 +29,10 @@ import java.util.Map;
  */
 public class GetCode implements BuiltIn {
     
-    private static BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+    // START_CHANGE: ISS-2025-0173 - Make stdin reader final to prevent reassignment and document non-closure
+    /** Cached BufferedReader for System.in - must not be closed as that would close System.in */
+    private static final BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+    // END_CHANGE: ISS-2025-0173
     
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {

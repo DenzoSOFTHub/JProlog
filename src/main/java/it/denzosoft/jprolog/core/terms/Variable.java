@@ -1,18 +1,51 @@
 package it.denzosoft.jprolog.core.terms;
 
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 
 public class Variable extends Term {
 
     private String name;
-    private static int anonymousCounter = 0;
+    // START_CHANGE: ISS-2025-0164 - Thread-safe anonymous variable counter
+    private static final AtomicInteger anonymousCounter = new AtomicInteger(0);
+    // END_CHANGE: ISS-2025-0164
     private final boolean isAnonymous;
+
+    // START_CHANGE: ISS-2025-0168 - Occurs check flag (default: false for performance)
+    /**
+     * Global flag controlling whether the occurs check is performed during
+     * standard unification. When false (default), the occurs check is skipped
+     * for performance, matching most Prolog implementations. When true, the
+     * occurs check is always performed. The unify_with_occurs_check/2 built-in
+     * always performs the check regardless of this flag.
+     */
+    private static final AtomicBoolean occursCheckEnabled = new AtomicBoolean(false);
+
+    /**
+     * Set the global occurs_check flag.
+     *
+     * @param enabled true to enable occurs check in standard unification
+     */
+    public static void setOccursCheckEnabled(boolean enabled) {
+        occursCheckEnabled.set(enabled);
+    }
+
+    /**
+     * Get the current state of the global occurs_check flag.
+     *
+     * @return true if occurs check is enabled
+     */
+    public static boolean isOccursCheckEnabled() {
+        return occursCheckEnabled.get();
+    }
+    // END_CHANGE: ISS-2025-0168
 
     public Variable(String name) {
         if ("_".equals(name)) {
             // Anonymous variable - each instance gets a unique name
-            this.name = "_G" + (++anonymousCounter);
+            this.name = "_G" + anonymousCounter.incrementAndGet();
             this.isAnonymous = true;
         } else {
             this.name = name;
@@ -52,10 +85,12 @@ public class Variable extends Term {
         if (derefThis instanceof Variable) {
             Variable var = (Variable) derefThis;
 
-            // Occurs check: prevent circular references
-            if (occursCheckIterative(var, derefTerm, substitution)) {
+            // START_CHANGE: ISS-2025-0168 - Conditional occurs check based on global flag
+            // Occurs check: prevent circular references (only when flag is enabled)
+            if (occursCheckEnabled.get() && occursCheckIterative(var, derefTerm, substitution)) {
                 return false; // Unification fails if variable occurs in the term
             }
+            // END_CHANGE: ISS-2025-0168
 
             // Bind the variable to the term
             substitution.put(var.name, derefTerm);
@@ -66,10 +101,12 @@ public class Variable extends Term {
         if (derefTerm instanceof Variable) {
             Variable var = (Variable) derefTerm;
 
-            // Occurs check: prevent circular references
-            if (occursCheckIterative(var, derefThis, substitution)) {
+            // START_CHANGE: ISS-2025-0168 - Conditional occurs check based on global flag
+            // Occurs check: prevent circular references (only when flag is enabled)
+            if (occursCheckEnabled.get() && occursCheckIterative(var, derefThis, substitution)) {
                 return false; // Unification fails if variable occurs in the term
             }
+            // END_CHANGE: ISS-2025-0168
 
             // Bind the variable to the term
             substitution.put(var.name, derefThis);
@@ -185,10 +222,9 @@ public class Variable extends Term {
         }
     }
     
-    // Legacy occurs method for backwards compatibility
-    private boolean occurs(Variable variable, Term term, Map<String, Term> substitution) {
-        return occursCheckIterative(variable, term, substitution);
-    }
+    // START_CHANGE: ISS-2025-0178 - Remove dead legacy occurs() stub
+    // Removed unused backwards-compatibility occurs() method that just delegated to occursCheckIterative()
+    // END_CHANGE: ISS-2025-0178
     // END_CHANGE: ISS-2025-0012
 
 

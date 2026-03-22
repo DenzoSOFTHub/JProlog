@@ -1,6 +1,6 @@
-# Missing Built-in Predicates Fixes - JProlog v2.0.6
+# Missing Built-in Predicates Fixes - JProlog v2.5.5
 
-**Date**: August 2025  
+**Date**: 2026-03-22
 **Issues Resolved**: ISS-2025-0026, ISS-2025-0027, ISS-2025-0028, ISS-2025-0029, ISS-2025-0030, ISS-2025-0031
 
 ## Problem Description

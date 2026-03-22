@@ -2,6 +2,8 @@ package it.denzosoft.jprolog.builtin.conversion;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
+import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -69,8 +71,14 @@ public class AtomCodes implements BuiltIn {
                 if (codeValue != Math.floor(codeValue) || codeValue < 0 || codeValue > 1114111) {
                     throw new PrologEvaluationException("atom_codes/2: invalid character code: " + codeValue);
                 }
-                
-                atomBuilder.append((char) (int) codeValue);
+
+                // START_CHANGE: ISS-2025-0169 - Fix Unicode truncation for codes > 65535
+                int intCode = (int) codeValue;
+                if (intCode > Character.MAX_VALUE) {
+                    throw new PrologException(ISOErrorTerms.representationError("character_code", "atom_codes/2"));
+                }
+                // END_CHANGE: ISS-2025-0169
+                atomBuilder.append((char) intCode);
             }
             
             Term atomResult = new Atom(atomBuilder.toString());

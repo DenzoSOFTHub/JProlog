@@ -2,6 +2,1063 @@
 
 ## Active and Resolved Issues
 
+### ISS-2025-0179: Documentation Updates
+
+**Title**: Update intro guide, add missing predicates to reference
+**Date Created**: 2026-03-22
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-22
+**Priority**: LOW
+
+---
+
+### ISS-2025-0178: Dead Code Removal
+
+**Title**: Remove unused classes, legacy methods, convert System.out to Logger
+**Date Created**: 2026-03-22
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-22
+**Priority**: LOW
+
+---
+
+### ISS-2025-0177: Dual-Arity Operator Bug
+
+**Title**: Operators like +/- cannot be both prefix and infix simultaneously
+**Date Created**: 2026-03-22
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-22
+**Priority**: MEDIUM
+
+---
+
+### ISS-2025-0176: Usability Improvements
+
+**Title**: CLI history, error messages, graph SCC, crypto AES/PBKDF2, debug leash
+**Date Created**: 2026-03-22
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-22
+**Priority**: LOW
+
+---
+
+### ISS-2025-0175: CLP(FD) and Persistence
+
+**Title**: CLP(FD) bounds consistency, persistence transactions
+**Date Created**: 2026-03-22
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-22
+**Priority**: MEDIUM
+
+---
+
+### ISS-2025-0174: Security Fixes
+
+**Title**: Regex injection prevention, XML XXE hardening
+**Date Created**: 2026-03-22
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-22
+**Priority**: HIGH
+
+---
+
+### ISS-2025-0173: Memory Leak Fixes
+
+**Title**: JavaFFI refTable, BufferedReader, TableStore cache, HTTP queue, JDBC streams
+**Date Created**: 2026-03-22
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-22
+**Priority**: CRITICAL
+
+---
+
+### ISS-2025-0172: Performance Optimizations
+
+**Title**: sub_atom/5 constraint-aware optimization and debug leash/spy filtering
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: LOW
+
+#### Resolution (2026-03-21)
+sub_atom/5 optimized for bound arguments (O(1) vs O(n^2)). Added leash/1 predicate for debug port filtering.
+
+---
+
+### ISS-2025-0171: I/O and Exception Handling Fixes
+
+**Title**: catch/3 recovery propagation, StreamProperty existence_error, exception logging
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Resolution (2026-03-21)
+Fixed catch/3 recovery exception propagation. StreamProperty throws existence_error for unknown streams. Java exceptions logged with stack trace before conversion.
+
+---
+
+### ISS-2025-0170: Missing ISO Predicates
+
+**Title**: acyclic_term/1, proper_list/1, msb/1, lsb/1, popcount/1
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Resolution (2026-03-21)
+Added acyclic_term/1, proper_list/1 as type check predicates. Added msb/1, lsb/1, popcount/1 as arithmetic functions.
+
+---
+
+### ISS-2025-0169: Bug Fixes Phase 8
+
+**Title**: Unicode truncation, flatten cycles, succ/2, random_between, bitwise NOT
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: HIGH
+
+#### Resolution (2026-03-21)
+Fixed 5 bugs: Unicode codepoint validation, flatten cycle detection, succ(0,1), random uniform distribution, bitwise NOT integer validation.
+
+---
+
+### ISS-2025-0168: Parser/Operator Robustness
+
+**Title**: Operator validation, multi-error parser recovery, occurs check flag
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+1. OperatorTable.defineOperator() doesn't validate ISO precedence range (0-1200) or specifiers
+2. Parser stops at first error instead of collecting all errors
+3. Occurs check always enabled in standard unification (performance overhead)
+
+#### Resolution (2026-03-21)
+Fix 8: ISO validation for precedence/specifier, precedence 0 removes operator. Fix 9: consult() collects all parse errors. Fix 10: occurs_check flag (default: false).
+
+---
+
+### ISS-2025-0167: Module System Completion
+
+**Title**: meta_predicate, module_transparent, re-export, per-module operators, collision detection
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Module system missing: meta_predicate/1, module_transparent/1, re-export, per-module operator scope, name collision detection.
+
+#### Resolution (2026-03-21)
+All 5 features implemented in Module.java, ModuleManager.java, QuerySolver.java, OperatorTable.java, Prolog.java.
+
+---
+
+### ISS-2025-0166: Database Safety and Circular Binding Detection
+
+**Title**: Copy-on-read for rule iteration, circular variable binding detection
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: HIGH
+
+#### Description
+1. Rule list iteration during resolution can be invalidated by concurrent assert/retract
+2. Circular variable bindings cause infinite loops in chain resolution
+
+#### Resolution (2026-03-21)
+Fix 1: Snapshot copy of candidate rules before iteration. Fix 2: Depth-64 cycle detection in resolveChainWithCompression and ArithmeticEvaluator.resolveVariable.
+
+---
+
+### ISS-2025-0165: Module Visibility Enforcement
+
+**Title**: Enforce module export visibility in predicate resolution
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Module.resolvePredicate() returns any locally defined predicate regardless of export status. ModuleManager and QuerySolver do not check exports when resolving unqualified calls through imported modules, violating module encapsulation.
+
+#### Resolution (2026-03-21)
+Added Module.resolvePredicateForExternalAccess() that only returns exported predicates. Updated ModuleManager.resolvePredicate() and QuerySolver.solveAgainstKnowledgeBase() to use external-access resolution when looking up predicates from imported (non-current) modules. Internal module access (within the same module) continues to see all local predicates.
+
+---
+
+### ISS-2025-0164: Thread Safety and Arithmetic Overflow
+
+**Title**: Thread safety for KnowledgeBase/Variable + arithmetic overflow detection
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+KnowledgeBase methods lack synchronization for concurrent access. Variable anonymous counter uses non-atomic increment. Arithmetic multiplication/division do not detect overflow producing infinite results.
+
+#### Resolution (2026-03-21)
+Added `synchronized` to all public KnowledgeBase methods. Changed Variable counter to `AtomicInteger`. Added overflow detection for `*` and `/` in ArithmeticEvaluator.
+
+---
+
+### ISS-2025-0163: Core Robustness Phase 1 - ISO Error Terms and Bug Fixes
+
+**Title**: Five critical bug fixes for ISO compliance and engine robustness
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: HIGH
+
+#### Description
+1. Unknown atoms in arithmetic silently return 0.0 instead of type_error
+2. PrologException wrapped by ArithmeticEvaluator.evaluate(), breaking catch/3
+3. CompoundTerm unification rollback uses retainAll (incorrect)
+4. LayeredMap mark/rollback doesn't track overwrites
+5. Recursion depth limit too high (10000) and doesn't throw ISO resource_error
+
+#### Resolution (2026-03-21)
+All 5 fixes implemented. Unknown atoms throw type_error, PrologException passes through, CompoundTerm uses full snapshot/restore, LayeredMap uses change journal, recursion limit reduced to 2000 with StackOverflowError catch. Cut propagation from disjunction/if-then-else also fixed. 5/5 robustness tests pass.
+
+---
+
+### ISS-2025-0162: Java Foreign Function Interface (FFI)
+
+**Title**: Java Foreign Function Interface - 12 built-in predicates for Java interoperability
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: HIGH
+
+#### Description
+Implement a Java FFI allowing Prolog programs to instantiate Java objects, call methods, access fields, manipulate arrays, and convert between Java objects and Prolog terms. 12 predicates: java_new/3, java_call/4, java_get_field/3, java_set_field/3, java_instanceof/2, java_class/2, java_array_new/3, java_array_get/3, java_array_set/3, java_array_length/2, java_to_term/2, java_from_term/2.
+
+#### Resolution (2026-03-21)
+Implemented 12 predicates in `builtin/ffi/`. All 40 FFI tests pass.
+
+---
+
+### ISS-2025-0161: Last Call Optimization (LCO) via trampoline
+
+**Title**: Last Call Optimization for stack-safe tail recursion
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: HIGH
+
+#### Description
+Deep tail recursion (e.g., count_down(10000)) causes StackOverflowError due to recursive solve() calls in QuerySolver. Implement Last Call Optimization using a trampoline pattern so that tail-recursive predicates with single-candidate matching run iteratively instead of recursively.
+
+#### Resolution (2026-03-21)
+Implemented LCO via trampoline in QuerySolver.java. Tail-recursive predicates with single-candidate matching now run iteratively. count_down(10000) works without stack overflow. 3/3 LCO tests pass.
+
+---
+
+### ISS-2025-0160: Remove toy/academic built-in packages
+
+**Title**: Remove 31 toy/academic built-in packages, keep 16 useful infrastructure packages
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: HIGH
+
+#### Description
+The v3.0.0 release added 47 built-in packages, but 31 of them are toy/academic implementations not suitable for real-world use (NLP, Expert Systems, Planner, Bayesian, Inference, Fuzzy, Genetic, Neural, Optimization, Simulation, Workflow, CLP(R), KnowledgeGraph, Parsing, Datalog, SemWeb, Verification, CHR, Agent, ASP, XAI, TypeInfer, Theorem, SymMath, MetaInterp, Temporal, ProbLog, SAT, Game, Rewriting, DescLogic). These should be removed to keep the codebase focused and maintainable. The 16 useful infrastructure packages (CLP(FD), Tabling, HTTP, JSON, XML, CSV, Regex, Crypto, DateTime, Filesystem, OS, Threading, Logging, Persistence, Graph, Concurrent) are kept.
+
+#### Resolution (2026-03-21)
+Removed 31 toy/academic packages. Retained 16 infrastructure packages. All existing tests continue to pass.
+
+---
+
+### ISS-2025-0159: Description Logic predicates package
+
+**Title**: Description Logic predicates package (14 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+ALC description logic with concept/role definitions, individual assertions, subsumption, equivalence, satisfiability checking, instance retrieval, and concept constructors (and, or, not, some, all). Predicates: dl_concept, dl_role, dl_individual, dl_role_assertion, dl_subsumes, dl_equivalent, dl_satisfiable, dl_instances, dl_concept_and, dl_concept_or, dl_concept_not, dl_some, dl_all, dl_reset.
+
+#### Resolution (2026-03-21)
+Implemented 14 predicates in `builtin/desclogic/DescLogicPredicates.java`. 40 tests pass (test_77_desclogic.pl).
+
+---
+
+### ISS-2025-0158: Term Rewriting Systems predicates package
+
+**Title**: Term Rewriting Systems predicates package (12 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Term rewriting systems with rule management, single-step and multi-step rewriting, normalization, confluence/termination analysis, critical pair computation, and pattern matching. Predicates: trs_add_rule, trs_rewrite, trs_normalize, trs_is_normal_form, trs_rewrite_all, trs_trace_rewrite, trs_confluent, trs_terminating, trs_critical_pairs, trs_rules, trs_match, trs_reset.
+
+#### Resolution (2026-03-21)
+Implemented 12 predicates in `builtin/rewriting/RewritingPredicates.java`. 43 tests pass (test_76_rewriting.pl).
+
+---
+
+### ISS-2025-0157: Game Playing predicates package
+
+**Title**: Game Playing predicates package (13 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Game tree search with game creation, move/terminal state management, minimax, alpha-beta pruning, negamax, Monte Carlo tree search, best move selection, and automated play. Predicates: game_create, game_add_move, game_add_terminal, game_moves, game_is_terminal, game_score, game_minimax, game_alphabeta, game_negamax, game_mcts, game_best_move, game_play, game_reset.
+
+#### Resolution (2026-03-21)
+Implemented 13 predicates in `builtin/game/GamePredicates.java`. 39 tests pass (test_75_game.pl).
+
+---
+
+### ISS-2025-0156: SAT Solving predicates package
+
+**Title**: SAT Solving predicates package (12 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+DPLL-based SAT solver with clause/variable management, solving (single/all solutions), satisfiability checking, unit propagation, pure literal elimination, model counting, implication, backbone computation, and minimization. Predicates: sat_add_clause, sat_solve, sat_solve_all, sat_is_satisfiable, sat_add_variable, sat_unit_propagate, sat_pure_eliminate, sat_model_count, sat_implies, sat_backbone, sat_minimize, sat_reset.
+
+#### Resolution (2026-03-21)
+Implemented 12 predicates in `builtin/sat/SatPredicates.java`. 25 tests pass (test_74_sat.pl).
+
+---
+
+### ISS-2025-0155: Probabilistic Logic / ProbLog predicates package
+
+**Title**: Probabilistic Logic predicates package (12 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+ProbLog-style probabilistic logic programming with probabilistic facts/rules, exact inference over possible worlds, evidence conditioning, marginal/conditional probability, most probable explanation, sampling, entropy, and KL divergence. Predicates: prob_fact, prob_rule, prob_query, prob_evidence, prob_conditional, prob_marginal, prob_most_probable, prob_sample, prob_entropy, prob_kl_divergence, prob_facts, prob_reset.
+
+#### Resolution (2026-03-21)
+Implemented 12 predicates in `builtin/problog/ProbLogPredicates.java`. 34 tests pass (test_73_problog.pl).
+
+---
+
+### ISS-2025-0154: Temporal Logic / Event Calculus predicates package
+
+**Title**: Temporal Logic / Event Calculus predicates package (13 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Event calculus with event/fluent management, initiation/termination rules, holds-at queries, timeline generation, Allen temporal interval relations. Predicates: ec_assert_event, ec_assert_fluent, ec_initiates, ec_terminates, ec_holds_at, ec_happens, ec_timeline, ec_fluents_at, interval_before, interval_meets, interval_overlaps, interval_during, ec_reset.
+
+#### Resolution (2026-03-21)
+Implemented 13 predicates in `builtin/temporal/TemporalPredicates.java`. 48 tests pass (test_72_temporal.pl).
+
+---
+
+### ISS-2025-0153: Meta-Interpretation predicates package
+
+**Title**: Meta-Interpretation predicates package (12 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Meta-interpreters for Prolog with vanilla solve, bounded depth, iterative deepening, tracing, program transformation, partial evaluation, clause collection, unfolding, folding, and program size analysis. Predicates: meta_solve, meta_solve_bounded, meta_solve_iterative, meta_solve_trace, meta_transform, meta_partial_eval, meta_interpret_with, meta_collect_clauses, meta_unfold, meta_fold, meta_program_size, meta_reset.
+
+#### Resolution (2026-03-21)
+Implemented 12 predicates in `builtin/meta/MetaInterpPredicates.java` as BuiltInWithContext. 37 tests pass (test_71_metainterp.pl).
+
+---
+
+### ISS-2025-0152: Symbolic Mathematics predicates package
+
+**Title**: Symbolic Mathematics predicates package (12 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Symbolic mathematics with differentiation, simplification, expansion, factoring, evaluation, substitution, integration, equation solving, polynomial degree/coefficients, and GCD computation. Predicates: sym_diff, sym_simplify, sym_expand, sym_factor, sym_eval, sym_substitute, sym_integrate, sym_solve_equation, sym_polynomial_degree, sym_coefficients, sym_gcd, sym_reset.
+
+#### Resolution (2026-03-21)
+Implemented 12 predicates in `builtin/symmath/SymMathPredicates.java`. 60 tests pass (test_70_symmath.pl).
+
+---
+
+### ISS-2025-0151: Theorem Proving predicates package
+
+**Title**: Theorem Proving predicates package (13 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Resolution-based theorem proving with axiom/rule management, proof search, proof by contradiction, resolution step, normal form conversion (CNF/DNF/NNF), tautology/satisfiability/validity checking. Predicates: thm_assert_axiom, thm_assert_rule, thm_prove, thm_prove_by_contradiction, thm_resolution, thm_cnf, thm_dnf, thm_nnf, thm_tautology, thm_satisfiable, thm_axioms, thm_valid, thm_reset.
+
+#### Resolution (2026-03-21)
+Implemented 13 predicates in `builtin/theorem/TheoremPredicates.java`. 43 tests pass (test_69_theorem.pl).
+
+---
+
+### ISS-2025-0150: Type Inference predicates package
+
+**Title**: Type Inference predicates package (12 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Hindley-Milner type inference with type constructors (var, const, fun, list, tuple), type unification, inference, checking, environment management, generalization, and instantiation. Predicates: type_var, type_const, type_fun, type_list, type_tuple, type_unify, type_infer, type_check, type_env, type_generalize, type_instantiate, type_reset.
+
+#### Resolution (2026-03-21)
+Implemented 12 predicates in `builtin/typeinfer/TypeInferPredicates.java`. 44 tests pass (test_68_typeinfer.pl).
+
+---
+
+### ISS-2025-0143: NPE in ParsingPredicates.execute() for zero-arity parsing_reset/0
+
+**Title**: NullPointerException when calling parsing_reset/0 via ParsingPredicates
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: HIGH
+
+#### Description
+`parsing_reset/0` is a zero-arity predicate. When called as a goal, the query term is an `Atom` instance. `Term.getArguments()` returns `null` for `Atom` (not an empty list). The arity check in `ParsingPredicates.execute()` called `query.getArguments().size()` unconditionally, causing a NullPointerException. This caused all test files that called `parsing_reset` to fail with "Goal directive error: ... - null".
+
+#### Resolution (2026-03-21)
+Added null guard before `.size()` call in `ParsingPredicates.execute()`: `int actualArity = (query.getArguments() == null) ? 0 : query.getArguments().size();`. Also rewrote `examples/test_60_parsing.pl` to avoid parser-hostile syntax (embedded double-quotes in atoms, JSON/CSV special chars) and to avoid recursive grammar rules in `grammar_generate` tests.
+
+---
+
+### ISS-2025-0149: Explainable AI (XAI) predicates package
+
+**Title**: Explainable AI predicates package (15 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Explainable AI predicates for goal tracing, explanation generation, counterfactual reasoning, feature importance, decision paths, confidence scores, and sensitivity analysis. Predicates: xai_trace_goal, xai_explain, xai_why, xai_why_not, xai_counterfactual, xai_feature_importance, xai_decision_path, xai_confidence, xai_alternatives, xai_compare, xai_rule_used, xai_assumption, xai_sensitivity, xai_log, xai_reset.
+
+#### Resolution (2026-03-21)
+Implemented 15 XAI predicates in `builtin/xai/XaiPredicates.java` as BuiltInWithContext.
+
+---
+
+### ISS-2025-0148: Answer Set Programming (ASP) predicates package
+
+**Title**: Answer Set Programming predicates package (13 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Answer Set Programming with rules, constraints, choice rules, grounding, solving, brave/cautious reasoning, and optimization. Predicates: asp_rule, asp_constraint, asp_choice, asp_fact, asp_show, asp_solve, asp_solve_one, asp_ground, asp_models_count, asp_brave, asp_cautious, asp_optimize, asp_reset.
+
+#### Resolution (2026-03-21)
+Implemented 13 ASP predicates in `builtin/asp/AspPredicates.java`.
+
+---
+
+### ISS-2025-0147: BDI Agent predicates package
+
+**Title**: BDI Agent predicates package (15 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+BDI (Belief-Desire-Intention) agent architecture with agent creation, beliefs, desires, intentions, plans, perception, deliberation, execution cycles, and inter-agent messaging. Predicates: agent_create, agent_believe, agent_desire, agent_intend, agent_plan, agent_beliefs, agent_desires, agent_intentions, agent_perceive, agent_deliberate, agent_execute, agent_cycle, agent_send, agent_receive, agent_reset.
+
+#### Resolution (2026-03-21)
+Implemented 15 BDI agent predicates in `builtin/agent/AgentPredicates.java`.
+
+---
+
+### ISS-2025-0146: Constraint Handling Rules (CHR) predicates package
+
+**Title**: CHR predicates package (12 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: HIGH
+
+#### Description
+Constraint Handling Rules with constraint declaration, simplification/propagation rules, constraint store operations, rule firing with history tracking. Predicates: chr_constraint, chr_rule, chr_propagation, chr_simplification, chr_add, chr_remove, chr_find, chr_store, chr_ask, chr_fire, chr_history, chr_reset.
+
+#### Resolution (2026-03-21)
+Implemented 12 CHR predicates in `builtin/chr/ChrPredicates.java` as BuiltInWithContext.
+
+---
+
+### ISS-2025-0145: Model Checking predicates package
+
+**Title**: Model Checking predicates package (15 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+CTL model checking with state/transition definitions, initial states, labeling, reachability analysis, deadlock detection, counterexample generation, bisimulation, invariants, and fairness constraints. Predicates: mc_state, mc_transition, mc_initial, mc_label, mc_check_ef, mc_check_af, mc_check_eg, mc_check_ag, mc_reachable, mc_deadlock, mc_counterexample, mc_bisimilar, mc_invariant, mc_fairness, mc_reset.
+
+#### Resolution (2026-03-21)
+Implemented 15 model checking predicates in `builtin/verification/VerificationPredicates.java`.
+
+---
+
+### ISS-2025-0144: Semantic Web/RDF predicates package
+
+**Title**: Semantic Web/RDF predicates package (15 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+RDF triple store with RDFS reasoning, subclass/subproperty inference, prefix management, and Turtle export. Predicates: rdf_assert, rdf, rdf_retract, rdf_has, rdfs_subclass_of, rdfs_subproperty_of, rdfs_class_of, rdf_global_id, rdf_register_prefix, rdf_triples, rdf_subjects, rdf_predicates, rdf_objects, rdf_save_turtle, rdf_reset.
+
+#### Resolution (2026-03-21)
+Implemented 15 Semantic Web predicates in `builtin/semweb/SemWebPredicates.java`.
+
+---
+
+### ISS-2025-0143: Datalog predicates package
+
+**Title**: Datalog predicates package (13 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: HIGH
+
+#### Description
+Bottom-up Datalog evaluation with semi-naive fixpoint, stratification, incremental maintenance, and provenance/explanation. Predicates: datalog_assert, datalog_rule, datalog_query, datalog_retract, datalog_facts, datalog_rules, datalog_stratify, datalog_materialize, datalog_derived, datalog_incremental_assert, datalog_incremental_retract, datalog_explain, datalog_reset.
+
+#### Resolution (2026-03-21)
+Implemented 13 Datalog predicates in `builtin/datalog/DatalogPredicates.java`.
+
+---
+
+### ISS-2025-0142: Parsing/DSL predicates package
+
+**Title**: Parsing/DSL predicates package (15 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: HIGH
+
+#### Description
+Parsing utilities, grammar definition, AST manipulation, code generation, and DSL evaluation. Predicates: tokenize_string, parse_integer, parse_float, parse_csv_line, parse_json_value, grammar_rule, grammar_parse, grammar_generate, ast_node, ast_transform, code_emit, dsl_define, dsl_eval, format_code, parsing_reset.
+
+#### Resolution (2026-03-21)
+Implemented 15 Parsing/DSL predicates in `builtin/parsing/ParsingPredicates.java`.
+
+---
+
+### ISS-2025-0141: Knowledge Graph predicates package
+
+**Title**: Knowledge Graph predicates package (15 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: HIGH
+
+#### Description
+Knowledge graph with triple store, ontological reasoning (is-a, subclass, part-of), transitive closure, path finding, neighbor queries, and DOT export. Predicates: kg_triple, kg_query, kg_retract_triple, kg_isa, kg_subclass, kg_is_instance, kg_part_of, kg_has_part, kg_property, kg_get_property, kg_transitive_closure, kg_path, kg_neighbors, kg_export, kg_reset.
+
+#### Resolution (2026-03-21)
+Implemented 15 Knowledge Graph predicates in `builtin/knowledge/KnowledgeGraphPredicates.java`.
+
+---
+
+### ISS-2025-0140: CLP(R) predicates package
+
+**Title**: CLP(R) predicates package (8 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: HIGH
+
+#### Description
+Constraint Logic Programming over Reals with linear constraints, simplex optimization, entailment checking, and constraint dumping. Predicates: clpr_constraint, clpr_maximize, clpr_minimize, clpr_sup, clpr_inf, clpr_entailed, clpr_dump, clpr_reset.
+
+#### Resolution (2026-03-21)
+Implemented 8 CLP(R) predicates in `builtin/clpr/ClprPredicates.java`.
+
+---
+
+### ISS-2025-0139: SWI-Prolog compatible concurrent execution predicates
+
+**Title**: Concurrent execution predicates (7 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+SWI-Prolog compatible concurrent execution predicates for parallel goal evaluation. Uses Java ExecutorService for real thread-level parallelism. Predicates: concurrent/3, concurrent_maplist/2, concurrent_maplist3/3, concurrent_maplist4/4, first_solution/3, concurrent_and/2, concurrent_or/2.
+
+#### Resolution (2026-03-21)
+Implemented 7 concurrent execution predicates in `builtin/threading/ConcurrentPredicates.java` as BuiltInWithContext. All 35 tests pass.
+
+---
+
+### ISS-2025-0138: Workflow engine predicates package
+
+**Title**: Workflow engine predicates package (12 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Rule-based workflow engine with state machines, transitions, instance management, history tracking, and rule firing. Predicates: wf_create/2, wf_state/3, wf_transition/4, wf_start/2, wf_advance/2, wf_current_state/2, wf_history/2, wf_is_complete/1, wf_instances/2, wf_rule/3, wf_fire_rules/2, wf_reset/1.
+
+#### Resolution (2026-03-21)
+Implemented 12 workflow predicates in `builtin/workflow/`. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0137: Discrete event simulation predicates package
+
+**Title**: Discrete event simulation predicates package (12 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Discrete event simulation engine with entities, events, time-based execution, random variates, histograms, and statistics. Predicates: sim_create/2, sim_entity/3, sim_event/3, sim_run/2, sim_step/1, sim_queue_size/2, sim_time/2, sim_random_exp/2, sim_random_normal/3, sim_histogram/3, sim_statistics/2, sim_reset/1.
+
+#### Resolution (2026-03-21)
+Implemented 12 simulation predicates in `builtin/simulation/`. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0136: Optimization and operations research predicates package
+
+**Title**: Optimization and operations research predicates package (8 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Optimization predicates including linear programming (simplex), 0/1 knapsack (dynamic programming), TSP (nearest-neighbor + 2-opt), simulated annealing, tabu search, and max flow (Ford-Fulkerson). Predicates: lp_maximize/4, lp_minimize/4, knapsack/3, tsp_solve/2, simulated_annealing/2, tabu_search/2, max_flow/4, optimize_reset/0.
+
+#### Resolution (2026-03-21)
+Implemented 8 optimization predicates in `builtin/optimization/`. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0135: Neural network predicates package
+
+**Title**: Neural network predicates package (14 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Feedforward neural networks with backpropagation, Xavier initialization, multiple activation functions (sigmoid, tanh, relu, linear), batch/epoch training, prediction and classification. Predicates: nn_create/2, nn_activation/2, nn_learning_rate/2, nn_train/3, nn_train_batch/2, nn_train_epoch/3, nn_predict/3, nn_classify/3, nn_weights/2, nn_set_weights/2, nn_error/3, nn_info/2, nn_reset/1, nn_delete/1.
+
+#### Resolution (2026-03-21)
+Implemented 14 neural network predicates in `builtin/neural/`. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0134: Genetic algorithm predicates package
+
+**Title**: Genetic algorithm predicates package (12 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Genetic algorithms with configurable selection (tournament, roulette, rank), crossover (one_point, two_point, uniform, order), mutation (bit_flip, swap, insert, gaussian), and chromosome types (binary, permutation, real). Predicates: ga_config/2, ga_chromosome/3, ga_fitness/2, ga_run/2, ga_population/2, ga_generation/2, ga_statistics/2, ga_crossover/2, ga_mutate/2, ga_select/2, ga_reset/1, ga_seed/2.
+
+#### Resolution (2026-03-21)
+Implemented 12 genetic algorithm predicates in `builtin/genetic/`. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0133: Bayesian network predicates package
+
+**Title**: Bayesian network predicates package (14 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Bayesian networks with enumeration-based exact inference and Naive Bayes classifier with Laplace smoothing. Predicates: bn_node/1, bn_parent/2, bn_cpt/2, bn_evidence/2, bn_query/2, bn_clear_evidence/0, bn_reset/0, bn_nodes/1, bn_parents/2, bn_joint/2, bn_marginal/3, bn_naive_bayes_train/3, bn_naive_bayes_classify/2, bn_map/2.
+
+#### Resolution (2026-03-21)
+Implemented 14 Bayesian network predicates in `builtin/bayesian/`. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0132: Fuzzy logic predicates package
+
+**Title**: Fuzzy logic predicates package (14 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Mamdani fuzzy inference system with fuzzification, rule evaluation (min AND), clipped consequent aggregation (max), and centroid defuzzification. Predicates: fuzzy_variable/2, fuzzy_set/3, fuzzy_rule/2, fuzzy_infer/2, fuzzy_defuzzify/2, fuzzy_fuzzify/3, fuzzy_and/3, fuzzy_or/3, fuzzy_not/2, fuzzy_hedge/3, fuzzy_compose/3, fuzzy_plot/1, fuzzy_reset/0, fuzzy_variables/1.
+
+#### Resolution (2026-03-21)
+Implemented 14 fuzzy logic predicates in `builtin/fuzzy/`. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0131: AI planner predicates package
+
+**Title**: AI planner predicates package (11 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+STRIPS-style AI planning with multiple search strategies: A*, BFS, DFS, iterative deepening, and best-first. Predicates: plan_state/2, plan_goal/2, plan_action/2, plan_solve/2, plan_solve_astar/2, plan_solve_bfs/2, plan_solve_dfs/2, plan_solve_ids/2, plan_solve_best/2, plan_heuristic/2, plan_reset/1.
+
+#### Resolution (2026-03-21)
+Implemented 11 planner predicates in `builtin/planner/`. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0130: Inference engine predicates package
+
+**Title**: Inference engine predicates package (13 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Advanced inference with abductive reasoning, inductive logic programming (ILP), non-monotonic reasoning with defaults, and frame-based knowledge representation with inheritance. Predicates: abduce/3, abductive_explain/3, inductive_learn/3, ilp_learn/3, default_rule/3, default_query/2, non_monotonic_assert/1, non_monotonic_retract/1, frame_create/2, frame_slot/3, frame_inherit/3, reasoning_mode/1, reasoning_query/2.
+
+#### Resolution (2026-03-21)
+Implemented 13 inference predicates in `builtin/inference/`. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0129: NLP predicates package
+
+**Title**: NLP predicates package (15 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Natural language processing with tokenization, stemming, lemmatization, POS tagging, n-grams, string similarity (Levenshtein, Soundex, Metaphone), stopword removal, TF-IDF, sentiment analysis, and language detection. Predicates: nlp_tokenize/2, nlp_stem/2, nlp_lemmatize/2, nlp_pos_tag/2, nlp_ngrams/3, nlp_similarity/3, nlp_levenshtein/3, nlp_soundex/2, nlp_metaphone/2, nlp_stopwords/2, nlp_frequency/2, nlp_tfidf/3, nlp_sentiment/2, nlp_language_detect/2, nlp_normalize/2.
+
+#### Resolution (2026-03-21)
+Implemented 15 NLP predicates in `builtin/nlp/`. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0128: Expert system predicates package
+
+**Title**: Expert system predicates package (16 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Expert system engine with forward and backward chaining, certainty factors, explanation facilities, conflict resolution, and rule/fact management. Predicates: es_rule/4, es_fact/2, es_ask/3, es_forward_chain/1, es_backward_chain/3, es_explain/2, es_certainty/2, es_cf_combine/3, es_reset/0, es_rules_list/1, es_facts_list/1, es_why/2, es_how/2, es_conflict_set/1, es_priority/2, es_retract_fact/1.
+
+#### Resolution (2026-03-21)
+Implemented 16 expert system predicates in `builtin/expert/`. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0127: Graph algorithm predicates package
+
+**Title**: Graph algorithm predicates package (12 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+New graph algorithm predicates package providing path finding, shortest path, connectivity analysis, topological sort, minimum spanning tree, cycle detection, and reachability. Predicates: graph_path/4, shortest_path/4, graph_connected/2, graph_vertices/2, graph_edges/2, graph_neighbors/3, topological_sort/2, graph_components/2, minimum_spanning_tree/2, graph_degree/3, graph_has_cycle/1, graph_reachable/3.
+
+#### Resolution (2026-03-21)
+Implemented 12 graph algorithm predicates in the `builtin/graph/` package. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0126: Persistence predicates package
+
+**Title**: Persistence predicates package (10 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+New persistence predicates package providing database save/load, predicate-level export, JSON import/export, snapshot/restore, and database clearing. Predicates: db_save/1, db_load/1, db_save_predicate/2, persist/1, unpersist/1, db_export_json/1, db_import_json/1, db_snapshot/1, db_restore/1, db_clear/0.
+
+#### Resolution (2026-03-21)
+Implemented 10 persistence predicates in the `builtin/persistence/` package. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0125: HTTP server/client package
+
+**Title**: HTTP server/client package (11 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+New HTTP predicates package providing both server-side and client-side HTTP capabilities. Server predicates: http_server/2, http_stop/1, http_handler/3, http_get_request/2, http_reply/4, http_reply_json/3. Client predicates: http_client_get/2, http_client_post/3, http_open/3. Utility predicates: url_encode/2, url_decode/2.
+
+#### Resolution (2026-03-21)
+Implemented 11 HTTP predicates in the `builtin/http/` package. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0124: Tabling/memoization package
+
+**Title**: Tabling/memoization package (3 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+New tabling predicates package providing memoization of predicate calls with loop detection and variant tabling. Predicates: table/1, abolish_all_tables/0, abolish_table/1.
+
+#### Resolution (2026-03-21)
+Implemented 3 tabling predicates in the `builtin/tabling/` package with loop detection and variant tabling. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0123: CLP(FD) constraint package
+
+**Title**: CLP(FD) constraint logic programming over finite domains (13 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: HIGH
+
+#### Description
+New CLP(FD) package providing constraint logic programming over finite domains. Constraint predicates: in/2, #=/2, #\=/2, #</2, #>/2, #=</2, #>=/2. Global constraint: all_different/1. Labeling: label/1, labeling/2, indomain/1. Domain inspection: fd_dom/2, fd_size/2. Uses AC-3 arc consistency propagation with snapshot/restore backtracking.
+
+#### Resolution (2026-03-21)
+Implemented 13 CLP(FD) predicates in the `builtin/clpfd/` package with AC-3 propagation and snapshot/restore backtracking. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0122: aggregate_all/3 + copy_term fix + retract bindings fix
+
+**Title**: aggregate_all/3 meta-predicate, copy_term/2 fresh variables, retract/1 bindings
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+Three fixes bundled together: (1) new aggregate_all/3 meta-predicate for collecting aggregated results, (2) copy_term/2 now uses TermCopier.copyWithFreshVariables for proper fresh variable names, (3) retract/1 now correctly returns unification bindings, and (4) goal directive execution (:- Goal.) during consult now works correctly.
+
+#### Resolution (2026-03-21)
+All three items implemented and tested. aggregate_all/3 registered as BuiltInWithContext. copy_term/2 uses fresh variable generation via TermCopier. retract/1 returns proper bindings.
+
+---
+
+### ISS-2025-0121: Logging predicates package
+
+**Title**: Logging predicates package (6 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+New logging predicates package providing structured logging capabilities for Prolog programs.
+
+#### Resolution (2026-03-21)
+Implemented 6 logging predicates in the `builtin/logging/` package. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0120: CSV predicates package
+
+**Title**: CSV predicates package (4 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+New CSV predicates package for reading and writing CSV data.
+
+#### Resolution (2026-03-21)
+Implemented 4 CSV predicates in the `builtin/csv/` package. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0119: Threading predicates package
+
+**Title**: Threading predicates package (10 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+New threading predicates package providing concurrent execution capabilities with thread safety review.
+
+#### Resolution (2026-03-21)
+Implemented 10 threading predicates in the `builtin/threading/` package with thread safety review. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0118: XML predicates package
+
+**Title**: XML predicates package (3 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+New XML predicates package for parsing and generating XML content.
+
+#### Resolution (2026-03-21)
+Implemented 3 XML predicates in the `builtin/xml/` package. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0117: Regex predicates package
+
+**Title**: Regex predicates package (5 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+New regular expression predicates package for pattern matching and text manipulation.
+
+#### Resolution (2026-03-21)
+Implemented 5 regex predicates in the `builtin/regex/` package. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0116: OS predicates package
+
+**Title**: OS predicates package (12 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+New operating system predicates package for interacting with the host OS environment.
+
+#### Resolution (2026-03-21)
+Implemented 12 OS predicates in the `builtin/os/` package. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0115: Filesystem predicates package
+
+**Title**: Filesystem predicates package (15 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+New filesystem predicates package for file and directory operations.
+
+#### Resolution (2026-03-21)
+Implemented 15 filesystem predicates in the `builtin/filesystem/` package. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0114: DateTime predicates package
+
+**Title**: DateTime predicates package (10 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+New date/time predicates package for temporal operations.
+
+#### Resolution (2026-03-21)
+Implemented 10 datetime predicates in the `builtin/datetime/` package. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0113: JSON predicates package
+
+**Title**: JSON predicates package (6 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+New JSON predicates package for parsing and generating JSON data.
+
+#### Resolution (2026-03-21)
+Implemented 6 JSON predicates in the `builtin/json/` package. Registered in BuiltInFactory.
+
+---
+
+### ISS-2025-0112: Crypto predicates package
+
+**Title**: Crypto predicates package (10 predicates)
+**Date Created**: 2026-03-21
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-21
+**Priority**: MEDIUM
+
+#### Description
+New cryptographic predicates package providing hashing, HMAC, encryption, and random byte generation.
+
+#### Resolution (2026-03-21)
+Implemented 10 crypto predicates in the `builtin/crypto/` package. Registered in BuiltInFactory.
+
+---
+
 ### ISS-2025-0090: Integrated Debugger with Four-Port Model
 
 **Title**: Full ISO four-port debug model with interactive IDE integration

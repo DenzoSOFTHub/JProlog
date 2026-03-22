@@ -213,14 +213,20 @@ public class ReadTerm extends AbstractBuiltInWithContext {
         return term instanceof CompoundTerm && "stream".equals(TermUtils.getFunctorName(term));
     }
     
+    // START_CHANGE: ISS-2025-0173 - Cache stdin BufferedReader to prevent resource leak
+    /** Cached BufferedReader for System.in - must not be closed as that would close System.in */
+    private static final BufferedReader STDIN_READER = new BufferedReader(new InputStreamReader(System.in));
+    // END_CHANGE: ISS-2025-0173
+
     /**
      * Get current input stream.
-     * 
+     *
      * @return BufferedReader for current input
      */
     private BufferedReader getCurrentInputStream() {
-        // Simplified - in full implementation, use StreamManager
-        return new BufferedReader(new InputStreamReader(System.in));
+        // START_CHANGE: ISS-2025-0173 - Reuse cached reader instead of creating new one each call
+        return STDIN_READER;
+        // END_CHANGE: ISS-2025-0173
     }
     
     /**

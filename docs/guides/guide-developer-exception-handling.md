@@ -1,7 +1,7 @@
 # JProlog Exception Handling Developer Guide
 
-**Version**: JProlog v2.0.9  
-**Last Updated**: 2025-08-20  
+**Version**: JProlog v2.5.5
+**Last Updated**: 2026-03-22
 **Audience**: JProlog developers and contributors  
 **Prerequisite**: [Exception Handling User Guide](guide-exception-handling.md)
 

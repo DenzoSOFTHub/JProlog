@@ -561,11 +561,11 @@ verb(v(chases)) --> [chases].
 
 ---
 
-## DCG Status and Limitations in JProlog v2.0.6
+## DCG Status and Limitations in JProlog v2.5.5
 
 ### ✅ **Working DCG Features** (85% Success Rate)
 
-JProlog v2.0.6 provides **comprehensive DCG support** with 85% success rate on complex parsing tasks:
+JProlog v2.5.5 provides **comprehensive DCG support** with 85% success rate on complex parsing tasks:
 
 #### **Core Features (100% Working)**
 - ✅ **Basic DCG rule translation**: `rule --> body.` syntax
@@ -689,6 +689,6 @@ max_depth(D1, D2, D) :- D1 < D2, D is D2 + 1.
 
 **JProlog DCG Guide** - Master Definite Clause Grammars for parsing and language processing
 
-*Version 2.0.6 | DenzoSOFT | https://denzosoft.it*
+*Version 2.5.5 | DenzoSOFT | https://denzosoft.it*
 
-*This guide covers DCG implementation in JProlog v2.0.6. For additional parsing examples, see the comprehensive test programs in the `examples/` directory.*
+*This guide covers DCG implementation in JProlog v2.5.5. For additional parsing examples, see the comprehensive test programs in the `examples/` directory.*

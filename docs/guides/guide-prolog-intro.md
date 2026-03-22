@@ -693,12 +693,23 @@ JProlog implements a subset of ISO Prolog, focusing on:
 - Basic I/O operations
 - List processing predicates
 
-Some advanced ISO features not implemented:
-- Full stream I/O system
-- Module system
-- Constraint handling
-- Tabling/memoization
-- Some meta-predicates
+<!-- START_CHANGE: ISS-2025-0179 - Update implemented features list -->
+Advanced features now implemented:
+- Stream I/O (open/4, close/1, read_term/3, write_term/3)
+- Module system (module/2, use_module/1, meta_predicate/1, module_transparent/1)
+- Constraint handling -- CLP(FD) with bounds consistency
+- Tabling/memoization (table/1, abolish_all_tables/0)
+- Meta-predicates (findall/3, bagof/3, setof/3, call/N)
+- Exception handling (catch/3, throw/1)
+- DCG support (phrase/2, phrase/3, --> rules)
+- Java FFI (java_new/3, java_call/4, java_get_field/3)
+- HTTP/JSON/XML libraries
+- Cryptographic predicates (AES, PBKDF2, HMAC)
+- Persistence (db_save/1, db_load/1, db_transaction/1)
+- Graph algorithms (graph_path/4, graph_scc/2, topological_sort/2)
+- Regex (re_match/2, re_replace/4, re_escape/2)
+- Debug/trace (trace/0, spy/1, leash/1)
+<!-- END_CHANGE: ISS-2025-0179 -->
 
 ---
 

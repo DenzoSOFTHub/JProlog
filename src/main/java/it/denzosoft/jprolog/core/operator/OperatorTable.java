@@ -2,18 +2,41 @@ package it.denzosoft.jprolog.core.operator;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Logger;
+import java.util.logging.Level;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
+import it.denzosoft.jprolog.core.terms.Atom;
+import it.denzosoft.jprolog.core.terms.CompoundTerm;
 
 /**
  * Manages operator definitions for ISO Prolog compliance.
  * Maintains operator precedence and associativity information.
  */
 public class OperatorTable {
-    
+
+    private static final Logger LOGGER = Logger.getLogger(OperatorTable.class.getName());
+
+    // START_CHANGE: ISS-2025-0168 - Standard operator names for redefinition warnings
+    private static final Set<String> STANDARD_OPERATORS = new HashSet<>(Arrays.asList(
+        ":-", "-->", "?-", ";", "->", ",", "\\+",
+        "=", "\\=", "==", "\\==", "@<", "@=<", "@>", "@>=",
+        "=..", "is", "=:=", "=\\=", "<", "=<", ">", ">=",
+        ":", "+", "-", "/\\", "\\/", "xor",
+        "*", "/", "//", "rem", "mod", "<<", ">>",
+        "**", "^", "\\"
+    ));
+
+    private static final Set<String> VALID_SPECIFIERS = new HashSet<>(Arrays.asList(
+        "xf", "yf", "xfx", "xfy", "yfx", "fy", "fx"
+    ));
+    // END_CHANGE: ISS-2025-0168
+
     private final Map<String, Set<Operator>> operators;
     private final Map<String, Operator> prefixOperators;
     private final Map<String, Operator> postfixOperators;
     private final Map<String, Operator> infixOperators;
-    
+    private boolean initializing = false;
+
     /**
      * Create a new operator table with standard ISO operators.
      */
@@ -22,14 +45,33 @@ public class OperatorTable {
         this.prefixOperators = new ConcurrentHashMap<>();
         this.postfixOperators = new ConcurrentHashMap<>();
         this.infixOperators = new ConcurrentHashMap<>();
-        
+
         initializeStandardOperators();
     }
+
+    // START_CHANGE: ISS-2025-0167 - Factory method for empty operator table (per-module scope)
+    /**
+     * Create an empty operator table without standard ISO operators.
+     * Used for per-module local operator definitions.
+     *
+     * @return An empty OperatorTable
+     */
+    public static OperatorTable createEmpty() {
+        OperatorTable table = new OperatorTable();
+        table.operators.clear();
+        table.prefixOperators.clear();
+        table.postfixOperators.clear();
+        table.infixOperators.clear();
+        table.cachedOperatorNames = null;
+        return table;
+    }
+    // END_CHANGE: ISS-2025-0167
     
     /**
      * Initialize standard ISO Prolog operators.
      */
     private void initializeStandardOperators() {
+        initializing = true;
         // Standard ISO operators
         defineOperator(1200, Operator.Type.XFX, ":-");
         defineOperator(1200, Operator.Type.XFX, "-->");
@@ -82,22 +124,69 @@ public class OperatorTable {
         defineOperator(200, Operator.Type.FY, "-");
         defineOperator(200, Operator.Type.FY, "+");
         defineOperator(200, Operator.Type.FY, "\\");
+        initializing = false;
     }
     
     /**
-     * Define a new operator.
-     * 
-     * @param precedence The operator precedence
+     * Define a new operator with ISO 13211-1 Section 6.3.4 validation.
+     *
+     * @param precedence The operator precedence (0-1200; 0 removes the operator)
      * @param type The operator type
      * @param name The operator name
+     * @throws PrologException if precedence or specifier is invalid
      */
+    // START_CHANGE: ISS-2025-0168 - Operator precedence validation per ISO 13211-1 Section 6.3.4
     public void defineOperator(int precedence, Operator.Type type, String name) {
+        // Validate precedence range (0-1200)
+        if (precedence < 0 || precedence > 1200) {
+            throw new PrologException(
+                new CompoundTerm(new Atom("error"), Arrays.asList(
+                    new CompoundTerm(new Atom("domain_error"), Arrays.asList(
+                        new Atom("operator_priority"),
+                        new it.denzosoft.jprolog.core.terms.Number((double) precedence, true)
+                    )),
+                    new CompoundTerm(new Atom("/"), Arrays.asList(
+                        new Atom("op"),
+                        new it.denzosoft.jprolog.core.terms.Number(3.0, true)
+                    ))
+                ))
+            );
+        }
+
+        // Validate specifier
+        if (!VALID_SPECIFIERS.contains(type.name().toLowerCase())) {
+            throw new PrologException(
+                new CompoundTerm(new Atom("error"), Arrays.asList(
+                    new CompoundTerm(new Atom("domain_error"), Arrays.asList(
+                        new Atom("operator_specifier"),
+                        new Atom(type.name().toLowerCase())
+                    )),
+                    new CompoundTerm(new Atom("/"), Arrays.asList(
+                        new Atom("op"),
+                        new it.denzosoft.jprolog.core.terms.Number(3.0, true)
+                    ))
+                ))
+            );
+        }
+
+        // ISO standard: precedence 0 removes the operator
+        if (precedence == 0) {
+            removeOperatorByNameAndClass(type, name);
+            return;
+        }
+
+        // Warn if redefining a standard operator (skip during initialization)
+        if (!initializing && STANDARD_OPERATORS.contains(name) && operators.containsKey(name)) {
+            LOGGER.log(Level.WARNING, "Redefining standard operator: " + name +
+                " with op(" + precedence + ", " + type.name().toLowerCase() + ", " + name + ")");
+        }
+
         Operator operator = new Operator(precedence, type, name);
-        
+
         // Add to main operators map
         operators.computeIfAbsent(name, k -> new HashSet<>()).add(operator);
         cachedOperatorNames = null; // Invalidate cache
-        
+
         // Add to specialized maps
         if (operator.isPrefix()) {
             prefixOperators.put(name, operator);
@@ -109,6 +198,39 @@ public class OperatorTable {
             infixOperators.put(name, operator);
         }
     }
+
+    /**
+     * Remove all operator definitions for a name matching the given type class
+     * (prefix, infix, or postfix).
+     */
+    private void removeOperatorByNameAndClass(Operator.Type type, String name) {
+        Set<Operator> ops = operators.get(name);
+        if (ops == null) return;
+
+        Iterator<Operator> it = ops.iterator();
+        while (it.hasNext()) {
+            Operator op = it.next();
+            boolean match = false;
+            if (type == Operator.Type.FX || type == Operator.Type.FY) {
+                match = op.isPrefix();
+            } else if (type == Operator.Type.XF || type == Operator.Type.YF) {
+                match = op.isPostfix();
+            } else {
+                match = op.isInfix();
+            }
+            if (match) {
+                it.remove();
+                if (op.isPrefix()) prefixOperators.remove(name);
+                if (op.isPostfix()) postfixOperators.remove(name);
+                if (op.isInfix()) infixOperators.remove(name);
+            }
+        }
+        if (ops.isEmpty()) {
+            operators.remove(name);
+        }
+        cachedOperatorNames = null;
+    }
+    // END_CHANGE: ISS-2025-0168
     
     /**
      * Remove an operator definition.
@@ -271,6 +393,7 @@ public class OperatorTable {
         prefixOperators.clear();
         postfixOperators.clear();
         infixOperators.clear();
+        cachedOperatorNames = null;
         initializeStandardOperators();
     }
     

@@ -20,7 +20,7 @@ public class DirectiveProcessor {
     private final DirectiveContext context;
     private final List<InitializationDirective> initializations;
     
-    public DirectiveProcessor(PrologEngine engine) {
+    public DirectiveProcessor(Prolog engine) {
         this.handlers = new HashMap<>();
         this.context = new DirectiveContext(engine);
         this.initializations = new ArrayList<>();
@@ -1602,7 +1602,7 @@ public class ExecutionInitializer {
     private final FlagManager flagManager;
     private final OperatorRegistry operatorRegistry;
     
-    public void initialize(PrologEngine engine) {
+    public void initialize(Prolog engine) {
         // Initialize system flags
         initializeSystemFlags();
         
@@ -1631,7 +1631,7 @@ public class ExecutionInitializer {
         flagManager.setFlag("double_quotes", "codes");
     }
     
-    private void executeInitializationGoals(PrologEngine engine) {
+    private void executeInitializationGoals(Prolog engine) {
         for (InitializationGoal goal : initGoals) {
             try {
                 ExecutionResult result = engine.execute(goal.getTerm());

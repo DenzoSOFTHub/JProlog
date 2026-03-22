@@ -1,7 +1,9 @@
 package it.denzosoft.jprolog.builtin.io;
 
+import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -19,6 +21,7 @@ import java.util.Map;
  * Relates a stream to its properties.
  * stream_property(?Stream, ?Property)
  */
+// START_CHANGE: ISS-2025-0171 - Throw existence_error for unknown ground streams
 public class StreamProperty implements BuiltIn {
 
     @Override
@@ -73,10 +76,13 @@ public class StreamProperty implements BuiltIn {
         }
 
         String streamAlias = ((Atom) streamTerm).getName();
-        
+
         if (!StreamManager.hasStream(streamAlias)) {
-            throw new PrologEvaluationException("Stream does not exist: " + streamAlias);
+            // ISO 13211-1: existence_error(stream, StreamTerm) when stream does not exist
+            throw new PrologException(
+                    ISOErrorTerms.existenceError("stream", streamTerm, "stream_property/2"));
         }
+        // END_CHANGE: ISS-2025-0171
 
         List<Term> properties = getStreamProperties(streamAlias);
         

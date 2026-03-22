@@ -30,6 +30,9 @@ public class Prolog {
     // START_CHANGE: ISS-2025-0085 - Shared operator table for parser/predicate integration
     private final OperatorTable operatorTable;
     // END_CHANGE: ISS-2025-0085
+    // START_CHANGE: ISS-2025-0092 - Tabling (memoization) support
+    private final TableStore tableStore;
+    // END_CHANGE: ISS-2025-0092
     private boolean traceEnabled = false;
 
     /**
@@ -45,6 +48,9 @@ public class Prolog {
         this.parser = new Parser(operatorTable);
         OperatorDefinition.setSharedOperatorTable(operatorTable);
         // END_CHANGE: ISS-2025-0085
+        // START_CHANGE: ISS-2025-0092 - Initialize table store
+        this.tableStore = new TableStore();
+        // END_CHANGE: ISS-2025-0092
         this.querySolver = new QuerySolver(knowledgeBase, builtInRegistry);
         this.querySolver.setPrologContext(this);
         registerBuiltInPredicates();
@@ -64,7 +70,29 @@ public class Prolog {
                          name.equals("retractall") || name.equals("abolish") || name.equals("current_predicate") ||
                          name.equals("clause") || name.equals("listing") || name.equals("\\+") || name.equals("phrase") ||
                          name.equals("maplist") || name.equals("include") || name.equals("exclude") ||
-                         name.equals("foldl") || name.equals("with_output_to"))) {
+                         name.equals("foldl") || name.equals("with_output_to") ||
+                         name.equals("table") || name.equals("abolish_all_tables") ||
+                         name.equals("abolish_table") ||
+                         name.equals("aggregate_all") ||
+                         // START_CHANGE: ISS-2025-0123 - CLP(FD) context-dependent predicates
+                         name.equals("in") || name.equals("#=") || name.equals("#\\=") ||
+                         name.equals("#<") || name.equals("#>") || name.equals("#=<") || name.equals("#>=") ||
+                         name.equals("all_different") || name.equals("label") || name.equals("labeling") ||
+                         name.equals("indomain") || name.equals("fd_dom") || name.equals("fd_size") ||
+                         // END_CHANGE: ISS-2025-0123
+                         // START_CHANGE: ISS-2025-0126 - Persistence context-dependent predicates
+                         name.equals("db_save") || name.equals("db_load") || name.equals("db_save_predicate") ||
+                         name.equals("persist") || name.equals("unpersist") ||
+                         name.equals("db_export_json") || name.equals("db_import_json") ||
+                         name.equals("db_snapshot") || name.equals("db_restore") || name.equals("db_clear") ||
+                         // END_CHANGE: ISS-2025-0126
+                         // START_CHANGE: ISS-2025-0139 - Concurrent execution predicates
+                         name.equals("concurrent") || name.equals("concurrent_maplist") ||
+                         name.equals("concurrent_maplist3") || name.equals("concurrent_maplist4") ||
+                         name.equals("first_solution") || name.equals("concurrent_and") ||
+                         name.equals("concurrent_or")
+                         // END_CHANGE: ISS-2025-0139
+                         )) {
                         // Special handling for context-dependent predicates
                         builtInRegistry.registerBuiltIn(name, new CollectionBuiltInAdapter((BuiltInWithContext) builtIn, querySolver));
                     } else if (name.equals("listing")) {
@@ -92,7 +120,9 @@ public class Prolog {
      *
      * @param program The Prolog program as a string.
      */
+    // START_CHANGE: ISS-2025-0168 - Multi-error parser recovery: collect all errors instead of stopping at first
     public void consult(String program) {
+        List<java.lang.String> errors = new ArrayList<>();
         try {
             // START_CHANGE: ISS-2025-0085 - Parse clauses incrementally so op directives
             // take effect before subsequent clauses are parsed
@@ -101,39 +131,58 @@ public class Prolog {
                 java.lang.String trimmed = clause.trim();
                 if (trimmed.isEmpty()) continue;
 
-                Rule rule;
                 try {
-                    rule = parser.parseRule(trimmed);
-                } catch (PrologParserException e) {
-                    throw new PrologParserException("Error parsing clause: " + e.getMessage(), e);
-                }
+                    Rule rule;
+                    try {
+                        rule = parser.parseRule(trimmed);
+                    } catch (PrologParserException e) {
+                        errors.add("Error parsing clause: '" + trimmed + "' - " + e.getMessage());
+                        continue; // Skip this clause and continue with the next
+                    }
 
-                if (isDirective(rule)) {
-                    processDirective(rule);
-                } else if (isDCGRule(rule)) {
-                    Rule transformedRule = transformDCGRule(rule);
-                    checkBuiltInConflict(transformedRule);
-                    moduleManager.addRule(transformedRule);
-                    // START_CHANGE: CR-2025-0002 - Module-isolated rule storage
-                    if ("user".equals(moduleManager.getCurrentModule().getName())) {
-                        knowledgeBase.addRule(transformedRule);
+                    if (isDirective(rule)) {
+                        processDirective(rule);
+                    } else if (isDCGRule(rule)) {
+                        Rule transformedRule = transformDCGRule(rule);
+                        checkBuiltInConflict(transformedRule);
+                        moduleManager.addRule(transformedRule);
+                        // START_CHANGE: CR-2025-0002 - Module-isolated rule storage
+                        if ("user".equals(moduleManager.getCurrentModule().getName())) {
+                            knowledgeBase.addRule(transformedRule);
+                        }
+                        // END_CHANGE: CR-2025-0002
+                    } else {
+                        checkBuiltInConflict(rule);
+                        moduleManager.addRule(rule);
+                        // START_CHANGE: CR-2025-0002 - Module-isolated rule storage
+                        if ("user".equals(moduleManager.getCurrentModule().getName())) {
+                            knowledgeBase.addRule(rule);
+                        }
+                        // END_CHANGE: CR-2025-0002
                     }
-                    // END_CHANGE: CR-2025-0002
-                } else {
-                    checkBuiltInConflict(rule);
-                    moduleManager.addRule(rule);
-                    // START_CHANGE: CR-2025-0002 - Module-isolated rule storage
-                    if ("user".equals(moduleManager.getCurrentModule().getName())) {
-                        knowledgeBase.addRule(rule);
-                    }
-                    // END_CHANGE: CR-2025-0002
+                } catch (Exception e) {
+                    errors.add("Error processing clause: '" + trimmed + "' - " + e.getMessage());
+                    // Continue with next clause
                 }
             }
             // END_CHANGE: ISS-2025-0085
-        } catch (PrologParserException e) {
-            throw new PrologException("Error parsing program: " + e.getMessage(), e);
+        } catch (Exception e) {
+            errors.add("Error extracting clauses: " + e.getMessage());
+        }
+
+        // If there were errors, report them all
+        if (!errors.isEmpty()) {
+            StringBuilder sb = new StringBuilder("Errors encountered during consult (")
+                .append(errors.size()).append(" error(s)):\n");
+            for (int i = 0; i < errors.size(); i++) {
+                sb.append("  ").append(i + 1).append(". ").append(errors.get(i));
+                if (i < errors.size() - 1) sb.append("\n");
+            }
+            LOGGER.log(Level.WARNING, sb.toString());
+            throw new PrologException(sb.toString());
         }
     }
+    // END_CHANGE: ISS-2025-0168
     
     /**
      * Check if a rule conflicts with a built-in predicate.
@@ -187,13 +236,117 @@ public class Prolog {
                         processOpDirective(directive);
                         break;
                     // END_CHANGE: ISS-2025-0085
+                    // START_CHANGE: ISS-2025-0092 - Handle table/1 directive during consult
+                    case "table":
+                        processTableDirective(directive);
+                        break;
+                    // END_CHANGE: ISS-2025-0092
+                    // START_CHANGE: ISS-2025-0167 - Handle meta_predicate/1 directive
+                    case "meta_predicate":
+                        processMetaPredicateDirective(directive);
+                        break;
+                    // END_CHANGE: ISS-2025-0167
+                    // START_CHANGE: ISS-2025-0167 - Handle module_transparent/1 directive
+                    case "module_transparent":
+                        processModuleTransparentDirective(directive);
+                        break;
+                    // END_CHANGE: ISS-2025-0167
+                    // START_CHANGE: ISS-2025-0122 - Handle dynamic directive and execute goal directives
+                    case "dynamic":
+                    case "discontiguous":
+                    case "ensure_loaded":
+                        // These are declaration directives - acknowledge and continue
+                        LOGGER.log(Level.FINE, "Declaration directive processed: " + directive);
+                        break;
                     default:
-                        LOGGER.log(Level.INFO, "Unknown directive ignored: " + directive);
+                        // ISO Prolog: unknown directives are executed as goals
+                        executeGoalDirective(directive);
+                    // END_CHANGE: ISS-2025-0122
                 }
+            } else if (directive instanceof Atom) {
+                // START_CHANGE: ISS-2025-0122 - Execute atom directives as goals (e.g., :- run_all_tests.)
+                executeGoalDirective(directive);
+                // END_CHANGE: ISS-2025-0122
             }
         }
     }
     
+    // START_CHANGE: ISS-2025-0122 - Execute goal directives during consult (ISO Prolog behavior)
+    /**
+     * Execute a directive as a Prolog goal during consult.
+     * This implements ISO Prolog behavior where :- Goal. directives
+     * are executed at load time (e.g., :- run_all_tests. or :- assert(fact).)
+     */
+    private void executeGoalDirective(Term goal) {
+        try {
+            List<Map<String, Term>> solutions = querySolver.solve(goal);
+            if (solutions.isEmpty()) {
+                LOGGER.log(Level.FINE, "Goal directive failed (no solutions): " + goal);
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Goal directive error: " + goal + " - " + e.getMessage());
+        }
+    }
+    // END_CHANGE: ISS-2025-0122
+
+    // START_CHANGE: ISS-2025-0167 - Process meta_predicate/1 directive
+    /**
+     * Process a meta_predicate/1 directive during consult.
+     * Parses the meta-predicate specification and registers it in the current module.
+     * Example: :- meta_predicate maplist(2, +, -).
+     */
+    private void processMetaPredicateDirective(Term directive) {
+        if (directive instanceof CompoundTerm && TermUtils.getArity(directive) >= 1) {
+            Term spec = TermUtils.getArgument((CompoundTerm) directive, 0);
+            if (spec instanceof CompoundTerm) {
+                String functor = TermUtils.getFunctorName(spec);
+                int arity = TermUtils.getArity(spec);
+                it.denzosoft.jprolog.core.module.PredicateSignature sig =
+                    new it.denzosoft.jprolog.core.module.PredicateSignature(functor, arity);
+                List<String> argSpecs = new ArrayList<>();
+                for (int i = 0; i < arity; i++) {
+                    Term arg = TermUtils.getArgument((CompoundTerm) spec, i);
+                    argSpecs.add(arg.toString());
+                }
+                moduleManager.getCurrentModule().declareMetaPredicate(sig, argSpecs);
+                LOGGER.log(Level.INFO, "Meta-predicate directive processed: " + functor + "/" + arity);
+            } else if (spec instanceof Atom) {
+                String functor = ((Atom) spec).getName();
+                it.denzosoft.jprolog.core.module.PredicateSignature sig =
+                    new it.denzosoft.jprolog.core.module.PredicateSignature(functor, 0);
+                moduleManager.getCurrentModule().declareMetaPredicate(sig, new ArrayList<>());
+                LOGGER.log(Level.INFO, "Meta-predicate directive processed: " + functor + "/0");
+            }
+        }
+    }
+    // END_CHANGE: ISS-2025-0167
+
+    // START_CHANGE: ISS-2025-0167 - Process module_transparent/1 directive
+    /**
+     * Process a module_transparent/1 directive during consult.
+     * Marks a predicate as transparent so it uses the caller's module context.
+     * Example: :- module_transparent maplist/2.
+     */
+    private void processModuleTransparentDirective(Term directive) {
+        if (directive instanceof CompoundTerm && TermUtils.getArity(directive) == 1) {
+            Term arg = TermUtils.getArgument((CompoundTerm) directive, 0);
+            if (arg instanceof CompoundTerm && "/".equals(TermUtils.getFunctorName(arg))
+                && TermUtils.getArity(arg) == 2) {
+                Term functorTerm = TermUtils.getArgument((CompoundTerm) arg, 0);
+                Term arityTerm = TermUtils.getArgument((CompoundTerm) arg, 1);
+                if (functorTerm instanceof Atom && arityTerm instanceof it.denzosoft.jprolog.core.terms.Number) {
+                    String functor = ((Atom) functorTerm).getName();
+                    int arity = (int) Math.round(((it.denzosoft.jprolog.core.terms.Number) arityTerm).getValue());
+                    it.denzosoft.jprolog.core.module.PredicateSignature sig =
+                        new it.denzosoft.jprolog.core.module.PredicateSignature(functor, arity);
+                    moduleManager.getCurrentModule().declareTransparent(sig);
+                    LOGGER.log(Level.INFO, "Module transparent directive processed: " + functor + "/" + arity);
+                }
+            }
+        }
+    }
+    // END_CHANGE: ISS-2025-0167
+
     /**
      * Process a use_module directive.
      */
@@ -241,6 +394,12 @@ public class Prolog {
                         it.denzosoft.jprolog.core.operator.Operator.Type opType =
                             it.denzosoft.jprolog.core.operator.Operator.parseType(type);
                         operatorTable.defineOperator(precedence, opType, name);
+                        // START_CHANGE: ISS-2025-0167 - Per-module operator scope
+                        it.denzosoft.jprolog.core.module.Module currentMod = moduleManager.getCurrentModule();
+                        if (!"user".equals(currentMod.getName())) {
+                            currentMod.defineOperator(precedence, type, name);
+                        }
+                        // END_CHANGE: ISS-2025-0167
                     }
                     LOGGER.log(Level.INFO, "Operator directive processed: op(" + precedence + ", " + type + ", " + name + ")");
                 } catch (Exception e) {
@@ -250,6 +409,38 @@ public class Prolog {
         }
     }
     // END_CHANGE: ISS-2025-0085
+
+    // START_CHANGE: ISS-2025-0092 - Process table/1 directive during consult
+    /**
+     * Process a table/1 directive to declare a predicate as tabled (memoized).
+     * Usage: :- table Functor/Arity.
+     */
+    private void processTableDirective(Term directive) {
+        if (directive instanceof CompoundTerm && TermUtils.getArity(directive) == 1) {
+            Term arg = TermUtils.getArgument((CompoundTerm) directive, 0);
+            if (arg instanceof CompoundTerm && "/".equals(TermUtils.getFunctorName(arg))
+                && TermUtils.getArity(arg) == 2) {
+                Term functorTerm = TermUtils.getArgument((CompoundTerm) arg, 0);
+                Term arityTerm = TermUtils.getArgument((CompoundTerm) arg, 1);
+                if (functorTerm instanceof Atom && arityTerm instanceof it.denzosoft.jprolog.core.terms.Number) {
+                    String functor = ((Atom) functorTerm).getName();
+                    int arity = (int) Math.round(((it.denzosoft.jprolog.core.terms.Number) arityTerm).getValue());
+                    tableStore.declareTable(functor, arity);
+                    LOGGER.log(Level.INFO, "Table directive processed: " + functor + "/" + arity);
+                    return;
+                }
+            }
+        }
+        LOGGER.log(Level.WARNING, "Invalid table directive: " + directive);
+    }
+
+    /**
+     * Get the table store for tabling/memoization support.
+     */
+    public TableStore getTableStore() {
+        return tableStore;
+    }
+    // END_CHANGE: ISS-2025-0092
 
     /**
      * Check if a rule is a DCG rule (uses --> operator).
@@ -450,10 +641,34 @@ public class Prolog {
         this.traceEnabled = traceEnabled;
         querySolver.setTraceEnabled(traceEnabled);
     }
-    
+
+    // START_CHANGE: ISS-2025-0168 - Occurs check flag support
+    /**
+     * Set the occurs_check Prolog flag.
+     * When true, the occurs check is performed during standard unification.
+     * When false (default), the occurs check is skipped for performance.
+     * The unify_with_occurs_check/2 built-in always performs the check
+     * regardless of this flag.
+     *
+     * @param enabled true to enable occurs check
+     */
+    public void setOccursCheck(boolean enabled) {
+        Variable.setOccursCheckEnabled(enabled);
+    }
+
+    /**
+     * Get the current value of the occurs_check flag.
+     *
+     * @return true if occurs check is enabled
+     */
+    public boolean getOccursCheck() {
+        return Variable.isOccursCheckEnabled();
+    }
+    // END_CHANGE: ISS-2025-0168
+
     /**
      * Get all rules in the knowledge base.
-     * 
+     *
      * @return List of rules
      */
     public List<Rule> getRules() {
@@ -629,10 +844,22 @@ public class Prolog {
     public boolean retractClauses(Term term) {
         return knowledgeBase.retractClauses(term);
     }
-    
+
+    // START_CHANGE: ISS-2025-0122 - Retract with unification bindings
+    public Map<String, Term> retractClauseWithBindings(Term term, Map<String, Term> bindings) {
+        return knowledgeBase.retractClauseWithBindings(term, bindings);
+    }
+    // END_CHANGE: ISS-2025-0122
+
+    // START_CHANGE: ISS-2025-0164 - Non-deterministic retract/1
+    public List<Map<String, Term>> retractAllClausesWithBindings(Term term, Map<String, Term> bindings) {
+        return knowledgeBase.retractAllClausesWithBindings(term, bindings);
+    }
+    // END_CHANGE: ISS-2025-0164
+
     /**
      * Remove all clauses that match the given term.
-     * 
+     *
      * @param term The term to match for retraction
      * @return Number of clauses removed
      */

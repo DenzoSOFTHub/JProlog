@@ -5,6 +5,7 @@ import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.*;
 
 import java.util.*;
+import java.util.logging.Logger;
 
 /**
  * Implementation of phrase/4 predicate with options support
@@ -20,6 +21,9 @@ import java.util.*;
  * - debug(Boolean) - Enable/disable DCG debugging
  */
 public class PhraseWithOptions implements BuiltIn {
+    // START_CHANGE: ISS-2025-0178 - Replace System.out.println with Logger
+    private static final Logger LOGGER = Logger.getLogger(PhraseWithOptions.class.getName());
+    // END_CHANGE: ISS-2025-0178
     
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
@@ -154,12 +158,16 @@ public class PhraseWithOptions implements BuiltIn {
         
         // Apply tracing if enabled
         if (options.trace) {
-            System.out.println("DCG TRACE: Executing " + dcgBody + " on " + inputList);
+            // START_CHANGE: ISS-2025-0178 - Replace System.out.println with Logger
+            LOGGER.fine("DCG TRACE: Executing " + dcgBody + " on " + inputList);
+            // END_CHANGE: ISS-2025-0178
         }
         
         // Apply debugging if enabled
         if (options.debug) {
-            System.out.println("DCG DEBUG: Body=" + dcgBody + ", Input=" + inputList + ", Rest=" + restList);
+            // START_CHANGE: ISS-2025-0178 - Replace System.out.println with Logger
+            LOGGER.fine("DCG DEBUG: Body=" + dcgBody + ", Input=" + inputList + ", Rest=" + restList);
+            // END_CHANGE: ISS-2025-0178
         }
         
         try {
@@ -186,7 +194,9 @@ public class PhraseWithOptions implements BuiltIn {
             }
             
             if (options.trace) {
-                System.out.println("DCG TRACE: Result=" + result);
+                // START_CHANGE: ISS-2025-0178 - Replace System.out.println with Logger
+                LOGGER.fine("DCG TRACE: Result=" + result);
+                // END_CHANGE: ISS-2025-0178
             }
             
             return result;

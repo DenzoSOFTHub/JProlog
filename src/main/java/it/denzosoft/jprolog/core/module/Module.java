@@ -1,6 +1,8 @@
 package it.denzosoft.jprolog.core.module;
 
 import it.denzosoft.jprolog.core.engine.Rule;
+import it.denzosoft.jprolog.core.operator.Operator;
+import it.denzosoft.jprolog.core.operator.OperatorTable;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.util.TermUtils;
@@ -19,10 +21,22 @@ public class Module {
     private final List<Rule> localRules;
     private final Map<String, Module> importedModules;
     private final Set<String> metaPredicates;
-    
+    // START_CHANGE: ISS-2025-0167 - meta_predicate/1 declarations with argument specs
+    private final Map<PredicateSignature, List<String>> metaPredicateDeclarations;
+    // END_CHANGE: ISS-2025-0167
+    // START_CHANGE: ISS-2025-0167 - module_transparent/1 support
+    private final Set<PredicateSignature> transparentPredicates;
+    // END_CHANGE: ISS-2025-0167
+    // START_CHANGE: ISS-2025-0167 - Re-export mechanism
+    private final Map<PredicateSignature, Module> reexports;
+    // END_CHANGE: ISS-2025-0167
+    // START_CHANGE: ISS-2025-0167 - Per-module operator scope
+    private final OperatorTable localOperators;
+    // END_CHANGE: ISS-2025-0167
+
     /**
      * Create a new module.
-     * 
+     *
      * @param name The module name
      */
     public Module(String name) {
@@ -32,6 +46,12 @@ public class Module {
         this.localRules = new ArrayList<>();
         this.importedModules = new HashMap<>();
         this.metaPredicates = new HashSet<>();
+        // START_CHANGE: ISS-2025-0167 - Initialize new fields
+        this.metaPredicateDeclarations = new HashMap<>();
+        this.transparentPredicates = new HashSet<>();
+        this.reexports = new HashMap<>();
+        this.localOperators = OperatorTable.createEmpty();
+        // END_CHANGE: ISS-2025-0167
     }
     
     /**
@@ -134,7 +154,9 @@ public class Module {
     
     /**
      * Resolve a predicate call to the appropriate module.
-     * 
+     * Returns any locally defined predicate regardless of export status.
+     * Use this for internal module resolution (within the same module).
+     *
      * @param signature The predicate signature
      * @return The module that defines the predicate, or null if not found
      */
@@ -143,10 +165,30 @@ public class Module {
         if (isLocallyDefined(signature)) {
             return this;
         }
-        
+
         // Check imported predicates
         return importedPredicates.get(signature);
     }
+
+    // START_CHANGE: ISS-2025-0165 - Enforce module visibility for external access
+    /**
+     * Resolve a predicate call for external access (from another module).
+     * Only returns exported predicates, enforcing module encapsulation.
+     * Private (non-exported) predicates are not visible externally.
+     *
+     * @param signature The predicate signature
+     * @return The module that defines the predicate, or null if not found or not exported
+     */
+    public Module resolvePredicateForExternalAccess(PredicateSignature signature) {
+        // Check local predicates - only if exported
+        if (isLocallyDefined(signature) && isExported(signature)) {
+            return this;
+        }
+
+        // Check imported predicates (these were already export-checked at import time)
+        return importedPredicates.get(signature);
+    }
+    // END_CHANGE: ISS-2025-0165
     
     /**
      * Get all rules for a specific predicate.
@@ -193,6 +235,100 @@ public class Module {
         return metaPredicates.contains(signature);
     }
     
+    // START_CHANGE: ISS-2025-0167 - meta_predicate/1 declarations
+    /**
+     * Declare a meta-predicate with argument specifications.
+     * Each arg spec is one of: "+" (input), "-" (output), "?" (any),
+     * or an integer N meaning "call with N extra args".
+     *
+     * @param sig The predicate signature
+     * @param argSpecs List of argument specifications
+     */
+    public void declareMetaPredicate(PredicateSignature sig, List<String> argSpecs) {
+        metaPredicateDeclarations.put(sig, new ArrayList<>(argSpecs));
+    }
+
+    /**
+     * Get the meta-predicate declaration for a predicate.
+     *
+     * @param sig The predicate signature
+     * @return List of argument specs, or null if not declared as meta-predicate
+     */
+    public List<String> getMetaPredicateDeclaration(PredicateSignature sig) {
+        List<String> specs = metaPredicateDeclarations.get(sig);
+        return specs != null ? new ArrayList<>(specs) : null;
+    }
+    // END_CHANGE: ISS-2025-0167
+
+    // START_CHANGE: ISS-2025-0167 - module_transparent/1 support
+    /**
+     * Declare a predicate as transparent (uses caller's module context).
+     *
+     * @param sig The predicate signature
+     */
+    public void declareTransparent(PredicateSignature sig) {
+        transparentPredicates.add(sig);
+    }
+
+    /**
+     * Check if a predicate is declared as transparent.
+     *
+     * @param sig The predicate signature
+     * @return true if the predicate is transparent
+     */
+    public boolean isTransparent(PredicateSignature sig) {
+        return transparentPredicates.contains(sig);
+    }
+    // END_CHANGE: ISS-2025-0167
+
+    // START_CHANGE: ISS-2025-0167 - Re-export mechanism
+    /**
+     * Re-export a predicate from a source module. The predicate is added to both
+     * this module's exports and imports, so modules importing this module also
+     * gain access to the re-exported predicate.
+     *
+     * @param sig The predicate signature to re-export
+     * @param sourceModule The module that originally defines the predicate
+     */
+    public void reexport(PredicateSignature sig, Module sourceModule) {
+        reexports.put(sig, sourceModule);
+        exportedPredicates.add(sig);
+        importedPredicates.put(sig, sourceModule);
+    }
+
+    /**
+     * Get the map of re-exported predicates to their source modules.
+     *
+     * @return Map of re-exported predicate signatures to source modules
+     */
+    public Map<PredicateSignature, Module> getReexports() {
+        return new HashMap<>(reexports);
+    }
+    // END_CHANGE: ISS-2025-0167
+
+    // START_CHANGE: ISS-2025-0167 - Per-module operator scope
+    /**
+     * Define an operator in this module's local operator table.
+     *
+     * @param precedence The operator precedence
+     * @param type The operator type string (e.g., "xfx", "yfx")
+     * @param name The operator name
+     */
+    public void defineOperator(int precedence, String type, String name) {
+        Operator.Type opType = Operator.parseType(type);
+        localOperators.defineOperator(precedence, opType, name);
+    }
+
+    /**
+     * Get this module's local operator table.
+     *
+     * @return The module's local operator table
+     */
+    public OperatorTable getOperatorTable() {
+        return localOperators;
+    }
+    // END_CHANGE: ISS-2025-0167
+
     // Getters
     public String getName() { return name; }
     public Set<PredicateSignature> getExportedPredicates() { return new HashSet<>(exportedPredicates); }

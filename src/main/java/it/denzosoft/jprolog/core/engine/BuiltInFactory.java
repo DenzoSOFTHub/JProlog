@@ -31,6 +31,27 @@ import it.denzosoft.jprolog.builtin.string.*;
 import it.denzosoft.jprolog.builtin.character.*;
 import it.denzosoft.jprolog.builtin.dcg.*;
 import it.denzosoft.jprolog.builtin.unification.*;
+import it.denzosoft.jprolog.builtin.jdbc.*;
+import it.denzosoft.jprolog.builtin.network.*;
+import it.denzosoft.jprolog.builtin.crypto.*;
+import it.denzosoft.jprolog.builtin.json.*;
+import it.denzosoft.jprolog.builtin.datetime.*;
+import it.denzosoft.jprolog.builtin.filesystem.*;
+import it.denzosoft.jprolog.builtin.os.*;
+import it.denzosoft.jprolog.builtin.regex.*;
+import it.denzosoft.jprolog.builtin.xml.*;
+import it.denzosoft.jprolog.builtin.threading.*;
+import it.denzosoft.jprolog.builtin.csv.*;
+import it.denzosoft.jprolog.builtin.logging.*;
+import it.denzosoft.jprolog.builtin.http.*;
+import it.denzosoft.jprolog.builtin.clpfd.ClpfdPredicates;
+import it.denzosoft.jprolog.builtin.graph.GraphPredicates;
+// START_CHANGE: ISS-2025-0126 - Persistence built-in predicates
+import it.denzosoft.jprolog.builtin.persistence.PersistencePredicates;
+// END_CHANGE: ISS-2025-0126
+// START_CHANGE: ISS-2025-0160 - Java FFI built-in predicates
+import it.denzosoft.jprolog.builtin.ffi.JavaFFI;
+// END_CHANGE: ISS-2025-0160
 
 import java.util.HashMap;
 import java.util.Map;
@@ -62,6 +83,10 @@ public class BuiltInFactory {
         registerFactory("ground", GroundCheck::new);
         registerFactory("simple", SimpleCheck::new);
         registerFactory("partial_list", PartialListCheck::new);
+        // START_CHANGE: ISS-2025-0170 - Add missing ISO predicates acyclic_term/1 and proper_list/1
+        registerFactory("acyclic_term", AcyclicTermCheck::new);
+        registerFactory("proper_list", ProperListCheck::new);
+        // END_CHANGE: ISS-2025-0170
         
         // Term comparison
         registerFactory("@=<", () -> new TermComparison(TermComparison.ComparisonType.AT_LESS_EQUAL));
@@ -217,6 +242,9 @@ public class BuiltInFactory {
         registerFactory("findall", () -> new Findall(null)); // QuerySolver will be injected
         registerFactory("bagof", () -> new Bagof(null)); // QuerySolver will be injected
         registerFactory("setof", () -> new Setof(null)); // QuerySolver will be injected
+        // START_CHANGE: ISS-2025-0122 - aggregate_all/3
+        registerFactory("aggregate_all", () -> new it.denzosoft.jprolog.builtin.meta.AggregateAll(null)); // QuerySolver will be injected
+        // END_CHANGE: ISS-2025-0122
         
         // Exception handling (ISO Prolog)
         registerFactory("catch", () -> new Catch(null)); // QuerySolver will be injected
@@ -246,6 +274,9 @@ public class BuiltInFactory {
         registerFactory("notrace", NoTrace::new);
         registerFactory("spy", Spy::new);
         registerFactory("nospy", NoSpy::new);
+        // START_CHANGE: ISS-2025-0172 - Leash built-in for debug port filtering
+        registerFactory("leash", Leash::new);
+        // END_CHANGE: ISS-2025-0172
         
         // System predicates (ISO Prolog)
         registerFactory("current_prolog_flag", CurrentPrologFlag::new);
@@ -288,8 +319,287 @@ public class BuiltInFactory {
         
         // Additional system predicates
         registerFactory("statistics", () -> new Statistics(null)); // QuerySolver will be injected
+
+        // START_CHANGE: ISS-2025-0092 - Tabling (memoization) predicates
+        registerFactory("table", TableDirective::new);
+        registerFactory("abolish_all_tables", AbolishAllTables::new);
+        // START_CHANGE: ISS-2025-0124 - abolish_table/1 predicate
+        registerFactory("abolish_table", AbolishTable::new);
+        // END_CHANGE: ISS-2025-0124
+        // END_CHANGE: ISS-2025-0092
         // START_CHANGE: ISS-2025-0064 - Remove duplicate current_op registration (already at line 218)
         // END_CHANGE: ISS-2025-0064
+
+        // START_CHANGE: ISS-2025-0108 - JDBC built-in predicates
+        registerFactory("jdbc_driver_load", JdbcDriverLoad::new);
+        registerFactory("jdbc_connect", JdbcConnect::new);
+        registerFactory("jdbc_disconnect", JdbcDisconnect::new);
+        registerFactory("jdbc_query", JdbcQuery::new);
+        registerFactory("jdbc_execute_update", JdbcExecuteUpdate::new);
+        registerFactory("jdbc_set_autocommit", () -> new JdbcTransaction(JdbcTransaction.Mode.SET_AUTOCOMMIT));
+        registerFactory("jdbc_commit", () -> new JdbcTransaction(JdbcTransaction.Mode.COMMIT));
+        registerFactory("jdbc_rollback", () -> new JdbcTransaction(JdbcTransaction.Mode.ROLLBACK));
+        registerFactory("jdbc_tables", () -> new JdbcMetadata(JdbcMetadata.Mode.TABLES));
+        registerFactory("jdbc_columns", () -> new JdbcMetadata(JdbcMetadata.Mode.COLUMNS));
+        // END_CHANGE: ISS-2025-0108
+
+        // START_CHANGE: ISS-2025-0110 - Prepared statements and stored procedures
+        registerFactory("jdbc_prepare", JdbcPrepare::new);
+        registerFactory("jdbc_set_param", JdbcSetParam::new);
+        registerFactory("jdbc_set_params", JdbcSetParams::new);
+        registerFactory("jdbc_execute_prepared_query", () -> new JdbcExecutePrepared(JdbcExecutePrepared.Mode.QUERY));
+        registerFactory("jdbc_execute_prepared_update", () -> new JdbcExecutePrepared(JdbcExecutePrepared.Mode.UPDATE));
+        registerFactory("jdbc_close_statement", () -> new JdbcExecutePrepared(JdbcExecutePrepared.Mode.CLOSE));
+        registerFactory("jdbc_prepare_call", () -> new JdbcCallProcedure(JdbcCallProcedure.Mode.PREPARE_CALL));
+        registerFactory("jdbc_call_set_param", () -> new JdbcCallProcedure(JdbcCallProcedure.Mode.SET_PARAM));
+        registerFactory("jdbc_call_register_out", () -> new JdbcCallProcedure(JdbcCallProcedure.Mode.REGISTER_OUT));
+        registerFactory("jdbc_call_execute", () -> new JdbcCallProcedure(JdbcCallProcedure.Mode.EXECUTE));
+        registerFactory("jdbc_call_get_result", () -> new JdbcCallProcedure(JdbcCallProcedure.Mode.GET_RESULT));
+        registerFactory("jdbc_call_get_resultset", () -> new JdbcCallProcedure(JdbcCallProcedure.Mode.GET_RESULTSET));
+        // END_CHANGE: ISS-2025-0110
+
+        // START_CHANGE: ISS-2025-0111 - CLOB and BLOB support
+        registerFactory("jdbc_set_clob", () -> new JdbcLob(JdbcLob.Mode.SET_CLOB));
+        registerFactory("jdbc_set_blob", () -> new JdbcLob(JdbcLob.Mode.SET_BLOB_FILE));
+        registerFactory("jdbc_set_blob_bytes", () -> new JdbcLob(JdbcLob.Mode.SET_BLOB_BYTES));
+        registerFactory("jdbc_get_clob", () -> new JdbcLob(JdbcLob.Mode.GET_CLOB));
+        registerFactory("jdbc_get_blob_to_file", () -> new JdbcLob(JdbcLob.Mode.GET_BLOB_FILE));
+        registerFactory("jdbc_get_blob_bytes", () -> new JdbcLob(JdbcLob.Mode.GET_BLOB_BYTES));
+        // END_CHANGE: ISS-2025-0111
+
+        // START_CHANGE: ISS-2025-0109 - Network communication built-in predicates
+        registerFactory("tcp_connect", TcpConnect::new);
+        registerFactory("tcp_server_socket", TcpServerSocket::new);
+        registerFactory("tcp_accept", TcpAccept::new);
+        registerFactory("tcp_send", TcpSend::new);
+        registerFactory("tcp_receive", TcpReceive::new);
+        registerFactory("tcp_close", TcpClose::new);
+        registerFactory("http_request", () -> new HttpRequest(HttpRequest.Mode.REQUEST));
+        registerFactory("http_post", () -> new HttpRequest(HttpRequest.Mode.POST));
+        registerFactory("udp_socket", () -> new UdpSocket(UdpSocket.Mode.CREATE));
+        registerFactory("udp_send", () -> new UdpSocket(UdpSocket.Mode.SEND));
+        registerFactory("udp_receive", () -> new UdpSocket(UdpSocket.Mode.RECEIVE));
+        registerFactory("udp_close", () -> new UdpSocket(UdpSocket.Mode.CLOSE));
+        registerFactory("hostname_address", HostLookup::new);
+        // END_CHANGE: ISS-2025-0109
+
+        // START_CHANGE: ISS-2025-0112 - Cryptographic built-in predicates
+        registerFactory("md5_hash", () -> new CryptoHash(CryptoHash.Mode.MD5));
+        registerFactory("sha256_hash", () -> new CryptoHash(CryptoHash.Mode.SHA256));
+        registerFactory("sha512_hash", () -> new CryptoHash(CryptoHash.Mode.SHA512));
+        registerFactory("crypto_hash", () -> new CryptoHash(CryptoHash.Mode.GENERIC));
+        registerFactory("hmac", () -> new CryptoUtils(CryptoUtils.Mode.HMAC));
+        registerFactory("base64_encode", () -> new CryptoUtils(CryptoUtils.Mode.BASE64_ENCODE));
+        registerFactory("base64_decode", () -> new CryptoUtils(CryptoUtils.Mode.BASE64_DECODE));
+        registerFactory("uuid", () -> new CryptoUtils(CryptoUtils.Mode.UUID));
+        registerFactory("random_token", () -> new CryptoUtils(CryptoUtils.Mode.RANDOM_TOKEN));
+        registerFactory("crypto_random_int", () -> new CryptoUtils(CryptoUtils.Mode.RANDOM_INT));
+        // START_CHANGE: ISS-2025-0176 - AES encryption and password hashing
+        registerFactory("crypto_aes_encrypt", () -> new CryptoUtils(CryptoUtils.Mode.AES_ENCRYPT));
+        registerFactory("crypto_aes_decrypt", () -> new CryptoUtils(CryptoUtils.Mode.AES_DECRYPT));
+        registerFactory("crypto_hash_password", () -> new CryptoUtils(CryptoUtils.Mode.HASH_PASSWORD));
+        registerFactory("crypto_verify_password", () -> new CryptoUtils(CryptoUtils.Mode.VERIFY_PASSWORD));
+        // END_CHANGE: ISS-2025-0176
+        // END_CHANGE: ISS-2025-0112
+
+        // START_CHANGE: ISS-2025-0113 - JSON built-in predicates
+        registerFactory("json_parse", () -> new JsonPredicates(JsonPredicates.Mode.PARSE));
+        registerFactory("json_serialize", () -> new JsonPredicates(JsonPredicates.Mode.SERIALIZE));
+        registerFactory("json_get", () -> new JsonPredicates(JsonPredicates.Mode.GET));
+        registerFactory("json_set", () -> new JsonPredicates(JsonPredicates.Mode.SET));
+        registerFactory("json_keys", () -> new JsonPredicates(JsonPredicates.Mode.KEYS));
+        registerFactory("json_member", () -> new JsonPredicates(JsonPredicates.Mode.MEMBER));
+        // END_CHANGE: ISS-2025-0113
+
+        // START_CHANGE: ISS-2025-0114 - Date/time built-in predicates
+        registerFactory("get_time", () -> new DateTimePredicates(DateTimePredicates.Mode.GET_TIME));
+        registerFactory("now", () -> new DateTimePredicates(DateTimePredicates.Mode.NOW));
+        registerFactory("today", () -> new DateTimePredicates(DateTimePredicates.Mode.TODAY));
+        registerFactory("format_time", () -> new DateTimePredicates(DateTimePredicates.Mode.FORMAT_TIME));
+        registerFactory("parse_time", () -> new DateTimePredicates(DateTimePredicates.Mode.PARSE_TIME));
+        registerFactory("date_add", () -> new DateTimePredicates(DateTimePredicates.Mode.DATE_ADD));
+        registerFactory("date_diff", () -> new DateTimePredicates(DateTimePredicates.Mode.DATE_DIFF));
+        registerFactory("day_of_week", () -> new DateTimePredicates(DateTimePredicates.Mode.DAY_OF_WEEK));
+        registerFactory("date_parts", () -> new DateTimePredicates(DateTimePredicates.Mode.DATE_PARTS));
+        registerFactory("time_parts", () -> new DateTimePredicates(DateTimePredicates.Mode.TIME_PARTS));
+        // END_CHANGE: ISS-2025-0114
+
+        // START_CHANGE: ISS-2025-0115 - File system built-in predicates
+        registerFactory("file_exists", () -> new FileSystemPredicates(FileSystemPredicates.Mode.FILE_EXISTS));
+        registerFactory("directory_exists", () -> new FileSystemPredicates(FileSystemPredicates.Mode.DIR_EXISTS));
+        registerFactory("make_directory", () -> new FileSystemPredicates(FileSystemPredicates.Mode.MAKE_DIR));
+        registerFactory("make_directory_path", () -> new FileSystemPredicates(FileSystemPredicates.Mode.MAKE_DIR_PATH));
+        registerFactory("delete_file", () -> new FileSystemPredicates(FileSystemPredicates.Mode.DELETE_FILE));
+        registerFactory("delete_directory", () -> new FileSystemPredicates(FileSystemPredicates.Mode.DELETE_DIR));
+        registerFactory("rename_file", () -> new FileSystemPredicates(FileSystemPredicates.Mode.RENAME));
+        registerFactory("copy_file", () -> new FileSystemPredicates(FileSystemPredicates.Mode.COPY));
+        registerFactory("file_size", () -> new FileSystemPredicates(FileSystemPredicates.Mode.FILE_SIZE));
+        registerFactory("file_modified", () -> new FileSystemPredicates(FileSystemPredicates.Mode.FILE_MODIFIED));
+        registerFactory("directory_files", () -> new FileSystemPredicates(FileSystemPredicates.Mode.DIR_FILES));
+        registerFactory("working_directory", () -> new FileSystemPredicates(FileSystemPredicates.Mode.WORKING_DIR));
+        registerFactory("absolute_file_name", () -> new FileSystemPredicates(FileSystemPredicates.Mode.ABS_FILE_NAME));
+        registerFactory("read_file_to_atom", () -> new FileSystemPredicates(FileSystemPredicates.Mode.READ_FILE));
+        registerFactory("write_atom_to_file", () -> new FileSystemPredicates(FileSystemPredicates.Mode.WRITE_FILE));
+        // END_CHANGE: ISS-2025-0115
+
+        // START_CHANGE: ISS-2025-0116 - OS/System built-in predicates
+        registerFactory("shell", () -> new OsPredicates(OsPredicates.Mode.SHELL));
+        registerFactory("shell2", () -> new OsPredicates(OsPredicates.Mode.SHELL2));
+        registerFactory("shell_output", () -> new OsPredicates(OsPredicates.Mode.SHELL_OUTPUT));
+        registerFactory("getenv", () -> new OsPredicates(OsPredicates.Mode.GETENV));
+        registerFactory("hostname", () -> new OsPredicates(OsPredicates.Mode.HOSTNAME));
+        registerFactory("pid", () -> new OsPredicates(OsPredicates.Mode.PID));
+        registerFactory("sleep", () -> new OsPredicates(OsPredicates.Mode.SLEEP));
+        registerFactory("system_time", () -> new OsPredicates(OsPredicates.Mode.SYSTEM_TIME));
+        registerFactory("os_name", () -> new OsPredicates(OsPredicates.Mode.OS_NAME));
+        registerFactory("cpu_count", () -> new OsPredicates(OsPredicates.Mode.CPU_COUNT));
+        registerFactory("free_memory", () -> new OsPredicates(OsPredicates.Mode.FREE_MEMORY));
+        registerFactory("total_memory", () -> new OsPredicates(OsPredicates.Mode.TOTAL_MEMORY));
+        // END_CHANGE: ISS-2025-0116
+
+        // START_CHANGE: ISS-2025-0117 - Regex built-in predicates
+        registerFactory("re_match", () -> new RegexPredicates(RegexPredicates.Mode.RE_MATCH));
+        registerFactory("re_matchsub", () -> new RegexPredicates(RegexPredicates.Mode.RE_MATCHSUB));
+        registerFactory("re_replace", () -> new RegexPredicates(RegexPredicates.Mode.RE_REPLACE));
+        registerFactory("re_split", () -> new RegexPredicates(RegexPredicates.Mode.RE_SPLIT));
+        registerFactory("re_findall", () -> new RegexPredicates(RegexPredicates.Mode.RE_FINDALL));
+        // START_CHANGE: ISS-2025-0174 - Register re_escape/2 predicate
+        registerFactory("re_escape", () -> new RegexPredicates(RegexPredicates.Mode.RE_ESCAPE));
+        // END_CHANGE: ISS-2025-0174
+        // END_CHANGE: ISS-2025-0117
+
+        // START_CHANGE: ISS-2025-0118 - XML built-in predicates
+        registerFactory("xml_parse", () -> new XmlPredicates(XmlPredicates.Mode.XML_PARSE));
+        registerFactory("xml_serialize", () -> new XmlPredicates(XmlPredicates.Mode.XML_SERIALIZE));
+        registerFactory("xpath", () -> new XmlPredicates(XmlPredicates.Mode.XPATH));
+        // END_CHANGE: ISS-2025-0118
+
+        // START_CHANGE: ISS-2025-0119 - Threading built-in predicates
+        registerFactory("thread_create", () -> new ThreadPredicates(ThreadPredicates.Mode.THREAD_CREATE));
+        registerFactory("thread_join", () -> new ThreadPredicates(ThreadPredicates.Mode.THREAD_JOIN));
+        registerFactory("thread_detach", () -> new ThreadPredicates(ThreadPredicates.Mode.THREAD_DETACH));
+        registerFactory("thread_self", () -> new ThreadPredicates(ThreadPredicates.Mode.THREAD_SELF));
+        registerFactory("thread_sleep", () -> new ThreadPredicates(ThreadPredicates.Mode.THREAD_SLEEP));
+        registerFactory("thread_is_alive", () -> new ThreadPredicates(ThreadPredicates.Mode.THREAD_IS_ALIVE));
+        registerFactory("message_queue_create", () -> new ThreadPredicates(ThreadPredicates.Mode.MQ_CREATE));
+        registerFactory("thread_send_message", () -> new ThreadPredicates(ThreadPredicates.Mode.MQ_SEND));
+        registerFactory("thread_get_message", () -> new ThreadPredicates(ThreadPredicates.Mode.MQ_GET));
+        registerFactory("thread_peek_message", () -> new ThreadPredicates(ThreadPredicates.Mode.MQ_PEEK));
+        // END_CHANGE: ISS-2025-0119
+
+        // START_CHANGE: ISS-2025-0139 - SWI-Prolog compatible concurrent execution predicates
+        registerFactory("concurrent", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.CONCURRENT));
+        registerFactory("concurrent_maplist", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.CONCURRENT_MAPLIST_2));
+        registerFactory("concurrent_maplist3", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.CONCURRENT_MAPLIST_3));
+        registerFactory("concurrent_maplist4", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.CONCURRENT_MAPLIST_4));
+        registerFactory("first_solution", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.FIRST_SOLUTION));
+        registerFactory("concurrent_and", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.CONCURRENT_AND));
+        registerFactory("concurrent_or", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.CONCURRENT_OR));
+        // END_CHANGE: ISS-2025-0139
+
+        // Removed ISS-2025-0140 through ISS-2025-0159 (31 toy/academic packages)
+
+        // START_CHANGE: ISS-2025-0120 - CSV built-in predicates
+        registerFactory("csv_read_file", () -> new CsvPredicates(CsvPredicates.Mode.CSV_READ_FILE));
+        registerFactory("csv_write_file", () -> new CsvPredicates(CsvPredicates.Mode.CSV_WRITE_FILE));
+        registerFactory("csv_parse", () -> new CsvPredicates(CsvPredicates.Mode.CSV_PARSE));
+        registerFactory("csv_serialize", () -> new CsvPredicates(CsvPredicates.Mode.CSV_SERIALIZE));
+        // END_CHANGE: ISS-2025-0120
+
+        // START_CHANGE: ISS-2025-0121 - Logging built-in predicates
+        registerFactory("log_info", () -> new LoggingPredicates(LoggingPredicates.Mode.LOG_INFO));
+        registerFactory("log_warning", () -> new LoggingPredicates(LoggingPredicates.Mode.LOG_WARNING));
+        registerFactory("log_error", () -> new LoggingPredicates(LoggingPredicates.Mode.LOG_ERROR));
+        registerFactory("log_debug", () -> new LoggingPredicates(LoggingPredicates.Mode.LOG_DEBUG));
+        registerFactory("log_level", () -> new LoggingPredicates(LoggingPredicates.Mode.LOG_LEVEL));
+        registerFactory("log_to_file", () -> new LoggingPredicates(LoggingPredicates.Mode.LOG_TO_FILE));
+        // END_CHANGE: ISS-2025-0121
+
+        // START_CHANGE: ISS-2025-0125 - HTTP server/client built-in predicates
+        registerFactory("http_server", () -> new HttpServerPredicates(HttpServerPredicates.Mode.HTTP_SERVER));
+        registerFactory("http_stop", () -> new HttpServerPredicates(HttpServerPredicates.Mode.HTTP_STOP));
+        registerFactory("http_handler", () -> new HttpServerPredicates(HttpServerPredicates.Mode.HTTP_HANDLER));
+        registerFactory("http_get_request", () -> new HttpServerPredicates(HttpServerPredicates.Mode.HTTP_GET_REQUEST));
+        registerFactory("http_reply", () -> new HttpServerPredicates(HttpServerPredicates.Mode.HTTP_REPLY));
+        registerFactory("http_reply_json", () -> new HttpServerPredicates(HttpServerPredicates.Mode.HTTP_REPLY_JSON));
+        registerFactory("http_client_get", () -> new HttpServerPredicates(HttpServerPredicates.Mode.HTTP_CLIENT_GET));
+        registerFactory("http_client_post", () -> new HttpServerPredicates(HttpServerPredicates.Mode.HTTP_CLIENT_POST));
+        registerFactory("http_open", () -> new HttpServerPredicates(HttpServerPredicates.Mode.HTTP_OPEN));
+        registerFactory("url_encode", () -> new HttpServerPredicates(HttpServerPredicates.Mode.URL_ENCODE));
+        registerFactory("url_decode", () -> new HttpServerPredicates(HttpServerPredicates.Mode.URL_DECODE));
+        // END_CHANGE: ISS-2025-0125
+
+        // START_CHANGE: ISS-2025-0123 - CLP(FD) Constraint Logic Programming over Finite Domains
+        registerFactory("in", () -> new ClpfdPredicates(null, ClpfdPredicates.OperationType.IN));
+        registerFactory("#=", () -> new ClpfdPredicates(null, ClpfdPredicates.OperationType.HASH_EQ));
+        registerFactory("#\\=", () -> new ClpfdPredicates(null, ClpfdPredicates.OperationType.HASH_NEQ));
+        registerFactory("#<", () -> new ClpfdPredicates(null, ClpfdPredicates.OperationType.HASH_LT));
+        registerFactory("#>", () -> new ClpfdPredicates(null, ClpfdPredicates.OperationType.HASH_GT));
+        registerFactory("#=<", () -> new ClpfdPredicates(null, ClpfdPredicates.OperationType.HASH_LEQ));
+        registerFactory("#>=", () -> new ClpfdPredicates(null, ClpfdPredicates.OperationType.HASH_GEQ));
+        registerFactory("all_different", () -> new ClpfdPredicates(null, ClpfdPredicates.OperationType.ALL_DIFFERENT));
+        registerFactory("label", () -> new ClpfdPredicates(null, ClpfdPredicates.OperationType.LABEL));
+        registerFactory("labeling", () -> new ClpfdPredicates(null, ClpfdPredicates.OperationType.LABELING));
+        registerFactory("indomain", () -> new ClpfdPredicates(null, ClpfdPredicates.OperationType.INDOMAIN));
+        registerFactory("fd_dom", () -> new ClpfdPredicates(null, ClpfdPredicates.OperationType.FD_DOM));
+        registerFactory("fd_size", () -> new ClpfdPredicates(null, ClpfdPredicates.OperationType.FD_SIZE));
+        // END_CHANGE: ISS-2025-0123
+
+        // START_CHANGE: ISS-2025-0127 - Graph algorithm predicates
+        registerFactory("graph_path", () -> new GraphPredicates(GraphPredicates.OperationType.GRAPH_PATH));
+        registerFactory("shortest_path", () -> new GraphPredicates(GraphPredicates.OperationType.SHORTEST_PATH));
+        registerFactory("graph_connected", () -> new GraphPredicates(GraphPredicates.OperationType.GRAPH_CONNECTED));
+        registerFactory("graph_vertices", () -> new GraphPredicates(GraphPredicates.OperationType.GRAPH_VERTICES));
+        registerFactory("graph_edges", () -> new GraphPredicates(GraphPredicates.OperationType.GRAPH_EDGES));
+        registerFactory("graph_neighbors", () -> new GraphPredicates(GraphPredicates.OperationType.GRAPH_NEIGHBORS));
+        registerFactory("topological_sort", () -> new GraphPredicates(GraphPredicates.OperationType.TOPOLOGICAL_SORT));
+        registerFactory("graph_components", () -> new GraphPredicates(GraphPredicates.OperationType.GRAPH_COMPONENTS));
+        registerFactory("minimum_spanning_tree", () -> new GraphPredicates(GraphPredicates.OperationType.MINIMUM_SPANNING_TREE));
+        registerFactory("graph_degree", () -> new GraphPredicates(GraphPredicates.OperationType.GRAPH_DEGREE));
+        registerFactory("graph_has_cycle", () -> new GraphPredicates(GraphPredicates.OperationType.GRAPH_HAS_CYCLE));
+        registerFactory("graph_reachable", () -> new GraphPredicates(GraphPredicates.OperationType.GRAPH_REACHABLE));
+        // START_CHANGE: ISS-2025-0176 - Graph SCC (Tarjan's algorithm)
+        registerFactory("graph_scc", () -> new GraphPredicates(GraphPredicates.OperationType.GRAPH_SCC));
+        // END_CHANGE: ISS-2025-0176
+        // END_CHANGE: ISS-2025-0127
+
+        // START_CHANGE: ISS-2025-0126 - Persistence built-in predicates
+        registerFactory("db_save", () -> new PersistencePredicates(PersistencePredicates.OperationType.DB_SAVE));
+        registerFactory("db_load", () -> new PersistencePredicates(PersistencePredicates.OperationType.DB_LOAD));
+        registerFactory("db_save_predicate", () -> new PersistencePredicates(PersistencePredicates.OperationType.DB_SAVE_PREDICATE));
+        registerFactory("persist", () -> new PersistencePredicates(PersistencePredicates.OperationType.PERSIST));
+        registerFactory("unpersist", () -> new PersistencePredicates(PersistencePredicates.OperationType.UNPERSIST));
+        registerFactory("db_export_json", () -> new PersistencePredicates(PersistencePredicates.OperationType.DB_EXPORT_JSON));
+        registerFactory("db_import_json", () -> new PersistencePredicates(PersistencePredicates.OperationType.DB_IMPORT_JSON));
+        registerFactory("db_snapshot", () -> new PersistencePredicates(PersistencePredicates.OperationType.DB_SNAPSHOT));
+        registerFactory("db_restore", () -> new PersistencePredicates(PersistencePredicates.OperationType.DB_RESTORE));
+        registerFactory("db_clear", () -> new PersistencePredicates(PersistencePredicates.OperationType.DB_CLEAR));
+        // END_CHANGE: ISS-2025-0126
+        // START_CHANGE: ISS-2025-0175 - Transaction and batch persistence predicates
+        registerFactory("db_transaction", () -> new PersistencePredicates(PersistencePredicates.OperationType.DB_TRANSACTION));
+        registerFactory("db_sync", () -> new PersistencePredicates(PersistencePredicates.OperationType.DB_SYNC));
+        registerFactory("db_batch_assert", () -> new PersistencePredicates(PersistencePredicates.OperationType.DB_BATCH_ASSERT));
+        // END_CHANGE: ISS-2025-0175
+
+        // START_CHANGE: ISS-2025-0160 - Java FFI built-in predicates
+        registerFactory("java_new", () -> new JavaFFI(JavaFFI.OperationType.JAVA_NEW));
+        registerFactory("java_call", () -> new JavaFFI(JavaFFI.OperationType.JAVA_CALL));
+        registerFactory("java_get_field", () -> new JavaFFI(JavaFFI.OperationType.JAVA_GET_FIELD));
+        registerFactory("java_set_field", () -> new JavaFFI(JavaFFI.OperationType.JAVA_SET_FIELD));
+        registerFactory("java_instanceof", () -> new JavaFFI(JavaFFI.OperationType.JAVA_INSTANCEOF));
+        registerFactory("java_class", () -> new JavaFFI(JavaFFI.OperationType.JAVA_CLASS));
+        registerFactory("java_array_new", () -> new JavaFFI(JavaFFI.OperationType.JAVA_ARRAY_NEW));
+        registerFactory("java_array_get", () -> new JavaFFI(JavaFFI.OperationType.JAVA_ARRAY_GET));
+        registerFactory("java_array_set", () -> new JavaFFI(JavaFFI.OperationType.JAVA_ARRAY_SET));
+        registerFactory("java_array_length", () -> new JavaFFI(JavaFFI.OperationType.JAVA_ARRAY_LENGTH));
+        registerFactory("java_to_term", () -> new JavaFFI(JavaFFI.OperationType.JAVA_TO_TERM));
+        registerFactory("java_from_term", () -> new JavaFFI(JavaFFI.OperationType.JAVA_FROM_TERM));
+        // END_CHANGE: ISS-2025-0160
+        // START_CHANGE: ISS-2025-0173 - Register java_release_ref/1 and java_gc/0 for FFI memory management
+        registerFactory("java_release_ref", () -> new JavaFFI(JavaFFI.OperationType.JAVA_RELEASE_REF));
+        registerFactory("java_gc", () -> new JavaFFI(JavaFFI.OperationType.JAVA_GC));
+        // END_CHANGE: ISS-2025-0173
+
     }
     
     private static void registerFactory(String name, Supplier<BuiltIn> factory) {

@@ -1,5 +1,154 @@
 # JProlog - Release Notes
 
+## Release 2.5.5 - 2026-03-22
+
+### Code Quality, Documentation, Dual-Arity Operators
+
+Final cleanup release resolving remaining issues from the v2.5.x improvement cycle.
+
+- **ISS-2025-0177**: Fixed dual-arity operator bug — `+`/`-` can now be both prefix and infix via composite key storage in OperatorDefinition
+- **ISS-2025-0178**: Dead code removal — deleted `SimplePrologEngine`, `PrologEngine`, `MainProlog`; removed legacy `Variable.occurs()`; converted `System.out.println` to Logger
+- **ISS-2025-0179**: Documentation — updated intro guide, added 14 missing predicates to reference (265+ total)
+
+**Tests**: 320/320 JUnit, 20/20 examples
+
+---
+
+## Release 2.5.0 - 2026-03-21
+
+### Package Cleanup, Last Call Optimization, Java FFI
+
+Focused release that removes 31 toy/academic packages to streamline the codebase, adds Last Call Optimization (LCO) for stack-safe tail recursion, and introduces a Java Foreign Function Interface (FFI) with 12 new built-in predicates.
+
+### Package Cleanup (ISS-2025-0160)
+
+Removed 31 toy/academic built-in packages that were impractical for real-world use:
+- AI/Knowledge: NLP, Expert Systems, Inference Engine, AI Planner, Fuzzy Logic, Bayesian Networks
+- Computational Intelligence: Genetic Algorithms, Neural Networks, Optimization, Simulation, Workflow Engine
+- Advanced Logic: CLP(R), Knowledge Graphs, Parsing/DSL, Datalog, Semantic Web/RDF, Model Checking, CHR, BDI Agents, ASP, Explainable AI
+- Classic Prolog: Type Inference, Theorem Proving, Symbolic Mathematics, Meta-Interpretation, Temporal Logic, ProbLog, SAT Solving, Game Playing, Term Rewriting, Description Logic
+
+Kept 16 useful infrastructure packages: CLP(FD), Tabling, HTTP, JSON, XML, CSV, Regex, Crypto, DateTime, Filesystem, OS, Threading, Logging, Persistence, Graph, Concurrent.
+
+### Last Call Optimization (ISS-2025-0161)
+
+Implemented LCO via trampoline in QuerySolver.java. Tail-recursive predicates with single-candidate matching now run iteratively instead of recursively, eliminating stack overflow for deep recursion. `count_down(10000)` now works without stack overflow.
+
+### Java Foreign Function Interface (ISS-2025-0162)
+
+12 new built-in predicates for Java interoperability:
+- **Object lifecycle**: `java_new/3`, `java_class/2`, `java_instanceof/2`
+- **Method/field access**: `java_call/4`, `java_get_field/3`, `java_set_field/3`
+- **Array operations**: `java_array_new/3`, `java_array_get/3`, `java_array_set/3`, `java_array_length/2`
+- **Conversion**: `java_to_term/2`, `java_from_term/2`
+
+### Quality Metrics
+- **320 JUnit tests, 0 failures**
+- **20/20 example programs pass** (100%)
+- **40/40 FFI tests pass**
+- **3/3 LCO tests pass**
+
+### Repository Information
+- **Tag**: v2.5.0
+- **Release Date**: 2026-03-21
+- **Compatibility**: Java 8+, Maven 3.6+
+
+---
+
+## Release 3.0.0 - 2026-03-21
+
+### 47 New Built-in Packages (555+ Predicates), AI/ML Engine, Concurrent Execution, Advanced Logic Programming & Classic Prolog Packages
+
+Major release with 47 new built-in predicate packages covering core infrastructure (CLP(FD), tabling, HTTP, crypto, JSON, datetime, filesystem, OS, regex, XML, threading, CSV, logging, persistence, graph algorithms), AI/knowledge engineering (expert systems, NLP, inference, planning, fuzzy logic, Bayesian networks), computational intelligence (genetic algorithms, neural networks, optimization, simulation, workflow engines), SWI-Prolog compatible concurrent execution, advanced logic programming (CLP(R), knowledge graphs, parsing/DSL, Datalog, semantic web/RDF, model checking, CHR, BDI agents, ASP, explainable AI), and classic Prolog packages (type inference, theorem proving, symbolic math, meta-interpretation, temporal logic, probabilistic logic, SAT solving, game playing, term rewriting, description logic). 665+ total built-in predicates.
+
+### New Built-in Packages
+
+**Core Infrastructure (108 predicates)**:
+- **CLP(FD)** (13 predicates): Constraint logic programming over finite domains with AC-3 propagation and snapshot/restore backtracking (ISS-2025-0123)
+- **Tabling** (3 predicates): Memoization with loop detection and variant tabling (ISS-2025-0124)
+- **HTTP** (11 predicates): HTTP server/client with handler routing, JSON replies, and URL encoding (ISS-2025-0125)
+- **Crypto** (10 predicates): Hashing, HMAC, encryption, random byte generation (ISS-2025-0112)
+- **JSON** (6 predicates): JSON parsing and generation (ISS-2025-0113)
+- **DateTime** (10 predicates): Date/time operations and formatting (ISS-2025-0114)
+- **Filesystem** (15 predicates): File and directory operations (ISS-2025-0115)
+- **OS** (12 predicates): Operating system interaction (ISS-2025-0116)
+- **Regex** (5 predicates): Regular expression matching and manipulation (ISS-2025-0117)
+- **XML** (3 predicates): XML parsing and generation (ISS-2025-0118)
+- **Threading** (10 predicates): Concurrent execution with thread safety review (ISS-2025-0119)
+- **CSV** (4 predicates): CSV reading and writing (ISS-2025-0120)
+- **Logging** (6 predicates): Structured logging capabilities (ISS-2025-0121)
+- **Persistence** (10 predicates): Database save/load, JSON import/export, snapshots (ISS-2025-0126)
+- **Graph Algorithms** (12 predicates): Path finding, shortest path, topological sort, MST, cycle detection (ISS-2025-0127)
+
+**AI and Knowledge Engineering (147 predicates)**:
+- **Expert Systems** (16 predicates): Forward/backward chaining, certainty factors, explanation facilities (ISS-2025-0128)
+- **NLP** (15 predicates): Tokenization, stemming, n-grams, TF-IDF, Levenshtein, Soundex, sentiment (ISS-2025-0129)
+- **Inference Engine** (13 predicates): Abduction, ILP, non-monotonic reasoning, frame-based KR (ISS-2025-0130)
+- **AI Planner** (11 predicates): STRIPS planning with A*, BFS, DFS, IDS, best-first search (ISS-2025-0131)
+- **Fuzzy Logic** (14 predicates): Mamdani fuzzy inference with centroid defuzzification (ISS-2025-0132)
+- **Bayesian Networks** (14 predicates): Exact inference, Naive Bayes with Laplace smoothing (ISS-2025-0133)
+- **Genetic Algorithms** (12 predicates): Configurable selection, crossover, mutation operators (ISS-2025-0134)
+- **Neural Networks** (14 predicates): Feedforward with backpropagation, multiple activations (ISS-2025-0135)
+- **Optimization** (8 predicates): LP (simplex), knapsack, TSP, simulated annealing, tabu search, max flow (ISS-2025-0136)
+- **Simulation** (12 predicates): Discrete event simulation with statistical analysis (ISS-2025-0137)
+- **Workflow Engine** (12 predicates): State machines, transitions, rules, instance management (ISS-2025-0138)
+
+### New Meta-Predicate
+
+- **aggregate_all/3**: Collect aggregated results over backtracking (ISS-2025-0122)
+
+### Bug Fixes
+
+- **copy_term/2**: Now uses fresh variable names via `TermCopier.copyWithFreshVariables` (ISS-2025-0122)
+- **retract/1**: Now correctly returns unification bindings (ISS-2025-0122)
+- **Goal directives**: Fixed `:- Goal.` execution during consult (ISS-2025-0122)
+
+### Concurrent Execution (ISS-2025-0139)
+
+- **concurrent/3** — execute N goals with thread pool
+- **concurrent_maplist/2,3,4** — parallel map over lists
+- **first_solution/3** — OR-parallelism, first goal wins
+- **concurrent_and/2** — AND-parallelism
+- **concurrent_or/2** — OR-parallelism with winner index
+
+### Advanced Logic Programming (146 predicates)
+
+- **CLP(R)** (8 predicates): Constraint logic programming over reals with simplex optimization (ISS-2025-0140)
+- **Knowledge Graphs** (15 predicates): Triple store with ontological reasoning, transitive closure, path finding (ISS-2025-0141)
+- **Parsing/DSL** (15 predicates): Tokenization, grammar definition, AST manipulation, code generation, DSL evaluation (ISS-2025-0142)
+- **Datalog** (13 predicates): Bottom-up evaluation with semi-naive fixpoint, stratification, incremental maintenance (ISS-2025-0143)
+- **Semantic Web/RDF** (15 predicates): RDF triple store with RDFS reasoning, prefix management, Turtle export (ISS-2025-0144)
+- **Model Checking** (15 predicates): CTL model checking with reachability, deadlock detection, bisimulation (ISS-2025-0145)
+- **CHR** (12 predicates): Constraint Handling Rules with simplification/propagation, store operations (ISS-2025-0146)
+- **BDI Agents** (15 predicates): Belief-Desire-Intention architecture with agent lifecycle and messaging (ISS-2025-0147)
+- **ASP** (13 predicates): Answer Set Programming with choice rules, brave/cautious reasoning (ISS-2025-0148)
+- **Explainable AI** (15 predicates): Goal tracing, counterfactual reasoning, feature importance, decision paths (ISS-2025-0149)
+
+### Classic Prolog Packages (125 predicates)
+
+- **Type Inference** (12 predicates): Hindley-Milner type inference with unification, generalization, instantiation (ISS-2025-0150)
+- **Theorem Proving** (13 predicates): Resolution-based theorem proving with CNF/DNF conversion, tautology/satisfiability checking (ISS-2025-0151)
+- **Symbolic Mathematics** (12 predicates): Symbolic differentiation, simplification, expansion, integration, equation solving (ISS-2025-0152)
+- **Meta-Interpretation** (12 predicates): Meta-interpreters with bounded/iterative deepening, tracing, partial evaluation, program transformation (ISS-2025-0153)
+- **Temporal Logic / Event Calculus** (13 predicates): Event calculus with fluent initiation/termination, Allen temporal intervals (ISS-2025-0154)
+- **Probabilistic Logic / ProbLog** (12 predicates): Probabilistic facts/rules, exact inference, evidence, entropy, KL divergence (ISS-2025-0155)
+- **SAT Solving** (12 predicates): DPLL-based SAT solver with unit propagation, pure elimination, backbone computation (ISS-2025-0156)
+- **Game Playing** (13 predicates): Minimax, alpha-beta pruning, negamax, MCTS game tree search (ISS-2025-0157)
+- **Term Rewriting** (12 predicates): Term rewriting systems with normalization, confluence/termination analysis, critical pairs (ISS-2025-0158)
+- **Description Logic** (14 predicates): ALC description logic with concept/role assertions, subsumption, satisfiability (ISS-2025-0159)
+
+### Test Programs
+
+- 46 comprehensive test files added: test_31 through test_77 covering all new packages
+- 1100+ individual test cases across all new packages
+
+### Repository Information
+- **Tag**: v3.0.0
+- **Release Date**: 2026-03-21
+- **Compatibility**: Java 8+, Maven 3.6+
+
+---
+
 ## Release 2.4.0 - 2026-03-19
 
 ### Integrated Debugger & Compilation Diagnostics

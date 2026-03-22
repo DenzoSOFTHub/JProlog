@@ -173,6 +173,70 @@ public class ISOErrorTerms {
         return error(systemErrorTerm, new Atom(context));
     }
     
+    // START_CHANGE: ISS-2025-0176 - Better error messages with context
+
+    /**
+     * Format a context string that includes predicate name and detail.
+     * Produces strings like "is/2: foo is not evaluable" or "arg/3: index out of range".
+     *
+     * @param predicate The predicate indicator (e.g., "is/2", "functor/3")
+     * @param detail A human-readable description of the problem
+     * @return A well-formatted context string
+     */
+    public static String formatContext(String predicate, String detail) {
+        if (predicate == null || predicate.isEmpty()) {
+            return detail != null ? detail : "unknown context";
+        }
+        if (detail == null || detail.isEmpty()) {
+            return predicate;
+        }
+        return predicate + ": " + detail;
+    }
+
+    /**
+     * Create a type error with structured predicate context.
+     */
+    public static Term typeError(String validType, Term culprit, String predicate, String detail) {
+        return typeError(validType, culprit, formatContext(predicate, detail));
+    }
+
+    /**
+     * Create a domain error with structured predicate context.
+     */
+    public static Term domainError(String validDomain, Term culprit, String predicate, String detail) {
+        return domainError(validDomain, culprit, formatContext(predicate, detail));
+    }
+
+    /**
+     * Create an existence error with structured predicate context.
+     */
+    public static Term existenceError(String objectType, Term culprit, String predicate, String detail) {
+        return existenceError(objectType, culprit, formatContext(predicate, detail));
+    }
+
+    /**
+     * Create a permission error with structured predicate context.
+     */
+    public static Term permissionError(String operation, String permissionType,
+                                       Term culprit, String predicate, String detail) {
+        return permissionError(operation, permissionType, culprit, formatContext(predicate, detail));
+    }
+
+    /**
+     * Create an instantiation error with structured predicate context.
+     */
+    public static Term instantiationError(String predicate, String detail) {
+        return instantiationError(formatContext(predicate, detail));
+    }
+
+    /**
+     * Create an evaluation error with structured predicate context.
+     */
+    public static Term evaluationError(String errorType, String predicate, String detail) {
+        return evaluationError(errorType, formatContext(predicate, detail));
+    }
+    // END_CHANGE: ISS-2025-0176
+
     // Common specific error instances
     
     /**

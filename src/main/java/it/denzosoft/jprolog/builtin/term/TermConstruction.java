@@ -228,6 +228,7 @@ public class TermConstruction implements BuiltIn {
     }
     // END_CHANGE: ISS-2025-0084
     
+    // START_CHANGE: ISS-2025-0122 - Fix copy_term to use fresh variable names
     private boolean handleCopyTerm(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
             throw new PrologEvaluationException("copy_term/2 requires exactly 2 arguments.");
@@ -235,10 +236,12 @@ public class TermConstruction implements BuiltIn {
 
         Term term1 = query.getArguments().get(0);
         Term term2 = query.getArguments().get(1);
-        
+
         Term resolvedTerm1 = term1.resolveBindings(bindings);
-        Term copy = resolvedTerm1.copy();
-        
+        // Use TermCopier which creates fresh variable names with unique prefix,
+        // preventing variable name collisions with the calling context
+        Term copy = it.denzosoft.jprolog.util.TermCopier.copyWithFreshVariables(resolvedTerm1);
+
         Map<String, Term> newBindings = new HashMap<>(bindings);
         if (term2.unify(copy, newBindings)) {
             solutions.add(new HashMap<>(newBindings));
@@ -246,4 +249,5 @@ public class TermConstruction implements BuiltIn {
         }
         return false;
     }
+    // END_CHANGE: ISS-2025-0122
 }

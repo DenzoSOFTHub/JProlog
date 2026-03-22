@@ -78,9 +78,11 @@ public class Succ implements BuiltIn {
             }
             
             double value2 = ((it.denzosoft.jprolog.core.terms.Number) int2Term).getValue();
-            if (value2 != Math.floor(value2) || value2 <= 0) {
-                return false; // Int2 must be a positive integer
+            // START_CHANGE: ISS-2025-0169 - Allow Int2 to be 1 (when Int1=0), so check >= 1 not > 0
+            if (value2 != Math.floor(value2) || value2 < 1) {
+                return false; // Int2 must be a positive integer (>= 1, since Int1 >= 0)
             }
+            // END_CHANGE: ISS-2025-0169
             
             int int2Value = (int) value2;
             int int1Value = int2Value - 1;

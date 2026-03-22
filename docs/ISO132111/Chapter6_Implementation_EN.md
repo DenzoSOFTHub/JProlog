@@ -25,7 +25,7 @@ public class JprologArchitecture {
     }
     
     // Layer 2: Logic Layer (Engine)
-    public interface PrologEngine {
+    public class Prolog {
         List<Map<String, Term>> solve(String query);
         void consult(String program);
         void assertFact(String fact);

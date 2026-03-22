@@ -15,11 +15,12 @@ import java.util.Map;
 
 /**
  * Implementation of retract/1 predicate.
- * 
- * retract(+ClauseHead)
- * 
- * Remove the first clause from the database that unifies with ClauseHead.
- * The predicate succeeds if a clause is found and removed.
+ *
+ * retract(+Clause)
+ *
+ * Non-deterministic: on backtracking, retracts the next matching clause.
+ * Each solution removes one clause from the database and returns
+ * its unification bindings.
  */
 public class Retract implements BuiltInWithContext {
     
@@ -46,13 +47,15 @@ public class Retract implements BuiltInWithContext {
         }
         
         try {
-            // Remove clauses that match the head
+            // START_CHANGE: ISS-2025-0164 - Non-deterministic retract/1
+            // Retract all matching clauses and return each as a separate solution
             Prolog prolog = solver.getPrologContext();
             if (prolog != null) {
-                boolean removed = prolog.retractClauses(clauseHead);
-                
-                if (removed) {
-                    solutions.add(new HashMap<>(bindings));
+                List<Map<String, Term>> allBindings =
+                    prolog.retractAllClausesWithBindings(clauseHead, bindings);
+
+                if (!allBindings.isEmpty()) {
+                    solutions.addAll(allBindings);
                     return true;
                 } else {
                     return false; // No matching clause found
@@ -60,7 +63,10 @@ public class Retract implements BuiltInWithContext {
             } else {
                 throw new PrologException(createSystemError("retract/1: cannot access clause database"));
             }
-            
+            // END_CHANGE: ISS-2025-0164
+
+        } catch (PrologException e) {
+            throw e;
         } catch (Exception e) {
             throw new PrologException(createSystemError("retract/1: " + e.getMessage()));
         }

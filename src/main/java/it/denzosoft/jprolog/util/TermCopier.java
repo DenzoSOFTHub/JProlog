@@ -81,6 +81,22 @@ public class TermCopier {
         }
     }
     
+    // START_CHANGE: ISS-2025-0122 - Fresh variable names for copy_term/2
+    /**
+     * Copy a term creating fresh variable names with a unique prefix.
+     * Used by copy_term/2 to ensure copied terms don't share variable
+     * names with the original, preventing unification interference.
+     *
+     * @param term The term to copy
+     * @return A copy with all variables renamed using a unique prefix
+     */
+    public static Term copyWithFreshVariables(Term term) {
+        Map<String, Variable> variableMap = new HashMap<>();
+        String prefix = "_R" + (COPY_COUNTER++) + "_";
+        return copyTermInternal(term, variableMap, prefix);
+    }
+    // END_CHANGE: ISS-2025-0122
+
     private static Term copyTermInternal(Term term, Map<String, Variable> variableMap, String prefix) {
         if (term instanceof Variable) {
             Variable var = (Variable) term;
@@ -107,15 +123,20 @@ public class TermCopier {
             // Numbers are immutable - reuse the same instance (no copy needed)
             return term;
 
+        // START_CHANGE: ISS-2025-0103 - Fast-path: skip recursion for ground compound terms
         } else if (term instanceof CompoundTerm) {
             CompoundTerm compound = (CompoundTerm) term;
+            // Ground terms contain no variables — safe to reuse directly
+            if (compound.isGround()) {
+                return compound;
+            }
             List<Term> copiedArgs = new ArrayList<>(compound.getArguments().size());
             for (Term arg : compound.getArguments()) {
                 copiedArgs.add(copyTermInternal(arg, variableMap, prefix));
             }
             // Reuse the functor Atom since it's immutable
             return new CompoundTerm(compound.getFunctor(), copiedArgs);
-        // END_CHANGE: ISS-2025-0091
+        // END_CHANGE: ISS-2025-0103
             
         } else {
             // Fallback to the term's own copy method

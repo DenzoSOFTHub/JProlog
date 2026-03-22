@@ -1,7 +1,7 @@
 # JProlog Meta-Predicates Guide
 
-**Version**: JProlog v2.0.6  
-**Last Updated**: August 2025  
+**Version**: JProlog v2.5.5
+**Last Updated**: 2026-03-22
 **Compatibility**: All JProlog versions 2.0+
 
 ---

@@ -1,6 +1,7 @@
 package it.denzosoft.jprolog.builtin.arithmetic;
 
 import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * ISO Prolog arithmetic functions that were missing from the implementation.
@@ -211,12 +212,14 @@ public class ISOArithmeticFunctions {
     /**
      * random_between/2 - Random integer between Low and High (inclusive)
      */
+    // START_CHANGE: ISS-2025-0169 - Fix non-uniform distribution caused by modulo bias
     public static long randomBetween(long low, long high) {
         if (low > high) {
             throw new IllegalArgumentException("Low must be <= High");
         }
-        return low + RANDOM.nextLong() % (high - low + 1);
+        return ThreadLocalRandom.current().nextLong(low, high + 1);
     }
+    // END_CHANGE: ISS-2025-0169
     
     /**
      * Mathematical constants

@@ -1,8 +1,8 @@
 # JProlog Built-in Predicates Reference
 
-**Version**: JProlog v2.3.0
-**Last Updated**: 2026-03-19
-**Total Predicates**: 110+ predicates organized by functional category
+**Version**: JProlog v2.5.0
+**Last Updated**: 2026-03-21
+**Total Predicates**: 265+ predicates organized by functional category
 **ISO 13211-1 Compliance**: 100% (111/111 core predicates)
 
 This reference guide organizes JProlog's built-in predicates by their logical function and use case. Each section includes explanations suitable for users new to Prolog, with detailed examples showing practical applications.
@@ -24,6 +24,22 @@ This reference guide organizes JProlog's built-in predicates by their logical fu
 11. [DCG (Grammar) Predicates](#11-dcg-grammar-predicates)
 12. [Exception Handling](#12-exception-handling)
 13. [System Predicates](#13-system-predicates)
+14. [Cryptographic Predicates](#14-cryptographic-predicates)
+15. [JSON Predicates](#15-json-predicates)
+16. [Date/Time Predicates](#16-datetime-predicates)
+17. [Filesystem Predicates](#17-filesystem-predicates)
+18. [OS Predicates](#18-os-predicates)
+19. [Regex Predicates](#19-regex-predicates)
+20. [XML Predicates](#20-xml-predicates)
+21. [Threading Predicates](#21-threading-predicates)
+22. [CSV Predicates](#22-csv-predicates)
+23. [Logging Predicates](#23-logging-predicates)
+24. [CLP(FD) Predicates](#24-clpfd-predicates)
+25. [Tabling Predicates](#25-tabling-predicates)
+26. [HTTP Predicates](#26-http-predicates)
+27. [Persistence Predicates](#27-persistence-predicates)
+28. [Graph Algorithm Predicates](#28-graph-algorithm-predicates)
+29. [Java FFI Predicates](#29-java-ffi-predicates)
 
 ---
 
@@ -317,6 +333,33 @@ Sum = 10.
 Error: Expected a list, got: not_a_list
 false.
 ```
+
+<!-- START_CHANGE: ISS-2025-0179 - Add acyclic_term/1 and proper_list/1 -->
+### acyclic_term/1
+**Purpose**: Checks if a term is acyclic (contains no circular references).
+
+**When to use**: Use to verify term safety before operations that would loop on cyclic terms.
+
+```prolog
+% Syntax: acyclic_term(+Term)
+?- acyclic_term(f(a, b)).
+true.
+```
+
+### proper_list/1
+**Purpose**: Checks if a term is a proper list (terminates with `[]`).
+
+**When to use**: Use to distinguish proper lists from partial lists or non-list terms.
+
+```prolog
+% Syntax: proper_list(+Term)
+?- proper_list([1, 2, 3]).
+true.
+
+?- proper_list([1|2]).
+false.
+```
+<!-- END_CHANGE: ISS-2025-0179 -->
 
 ---
 
@@ -1696,6 +1739,46 @@ people_with_skill(Skill, People) :-
 
 ?- people_with_skill(python, P).
 P = [john, mary].  % Sorted list of people
+```
+
+### aggregate_all/3
+**Purpose**: Aggregates values from all solutions to a goal using a specified aggregate template.
+
+**When to use**: Use when you need to compute aggregate statistics (sum, count, max, min, bag, set) over all solutions to a goal in a single call.
+
+```prolog
+% Syntax: aggregate_all(Template, Goal, Result)
+% Template can be: count, sum(Expr), max(Expr), min(Expr), bag(Expr), set(Expr)
+
+% Count solutions
+?- aggregate_all(count, member(_, [a, b, c]), Count).
+Count = 3.
+
+% Sum values
+employee(john, 50000).
+employee(mary, 60000).
+employee(bob, 55000).
+
+?- aggregate_all(sum(S), employee(_, S), Total).
+Total = 165000.
+
+% Collect into a sorted set
+?- aggregate_all(set(X), member(X, [b, a, c, a, b]), Sorted).
+Sorted = [a, b, c].
+
+% Find maximum
+?- aggregate_all(max(S), employee(_, S), Highest).
+Highest = 60000.
+
+% Practical example: Generate summary statistics
+salary_report(Count, Total, Max, Min) :-
+    aggregate_all(count, employee(_, _), Count),
+    aggregate_all(sum(S), employee(_, S), Total),
+    aggregate_all(max(S), employee(_, S), Max),
+    aggregate_all(min(S), employee(_, S), Min).
+
+?- salary_report(Count, Total, Max, Min).
+Count = 3, Total = 165000, Max = 60000, Min = 50000.
 ```
 
 ---
@@ -3232,11 +3315,3457 @@ monitor_resources :-
     fail.
 ```
 
+<!-- START_CHANGE: ISS-2025-0179 - Add leash/1 debug predicate -->
+### leash/1
+**Purpose**: Controls which ports (call, exit, redo, fail) the debugger pauses at during tracing.
+
+**When to use**: Use to fine-tune debugger behavior so it only stops at ports you are interested in.
+
+```prolog
+% Syntax: leash(+Ports)
+% Ports is a list of port names: call, exit, redo, fail
+?- leash([call, fail]).
+true.
+% Debugger will now only pause at call and fail ports
+```
+<!-- END_CHANGE: ISS-2025-0179 -->
+
+---
+
+## 14. Cryptographic Predicates
+
+Cryptographic predicates provide hashing, encoding, and secure random generation capabilities for data integrity, authentication, and security use cases.
+
+### md5_hash/2
+**Purpose**: Computes the MD5 hash of an atom, returning a hex string.
+
+**When to use**: Use for checksums and non-security fingerprinting of data.
+
+```prolog
+% Syntax: md5_hash(+Input, -Hash)
+?- md5_hash('hello world', Hash).
+Hash = '5eb63bbbe01eeed093cb22bb8f5acdc3'.
+
+% Verify data integrity
+verify_integrity(Data, ExpectedHash) :-
+    md5_hash(Data, ActualHash),
+    ActualHash = ExpectedHash.
+```
+
+### sha256_hash/2
+**Purpose**: Computes the SHA-256 hash of an atom, returning a hex string.
+
+**When to use**: Use for secure hashing where collision resistance is needed.
+
+```prolog
+% Syntax: sha256_hash(+Input, -Hash)
+?- sha256_hash('hello world', Hash).
+Hash = 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9'.
+
+% Hash a password (for demonstration; use proper KDF in production)
+store_password(User, Password) :-
+    sha256_hash(Password, Hash),
+    assertz(user_hash(User, Hash)).
+```
+
+### sha512_hash/2
+**Purpose**: Computes the SHA-512 hash of an atom, returning a hex string.
+
+**When to use**: Use when maximum hash length and security margin are required.
+
+```prolog
+% Syntax: sha512_hash(+Input, -Hash)
+?- sha512_hash('hello world', Hash).
+Hash = '309ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f'.
+```
+
+### crypto_hash/3
+**Purpose**: Computes a hash using a specified algorithm.
+
+**When to use**: Use when you need flexibility in choosing the hash algorithm at runtime.
+
+```prolog
+% Syntax: crypto_hash(+Algorithm, +Input, -Hash)
+?- crypto_hash(sha256, 'test data', Hash).
+Hash = '916f0027a575074ce72a331777c3478d6513f786a591bd892da1a577bf2335f9'.
+
+?- crypto_hash(md5, 'test data', Hash).
+Hash = 'eb733a00c0c9d336e65691a37ab54293'.
+
+% Choose algorithm based on requirements
+secure_hash(Input, Hash) :-
+    crypto_hash(sha256, Input, Hash).
+```
+
+### hmac/4
+**Purpose**: Computes an HMAC (Hash-based Message Authentication Code) using a key and algorithm.
+
+**When to use**: Use for message authentication and integrity verification with a shared secret.
+
+```prolog
+% Syntax: hmac(+Algorithm, +Key, +Message, -MAC)
+?- hmac(sha256, 'secret_key', 'my message', MAC).
+MAC = 'a1b2c3d4e5f6...'.
+
+% Verify a received message
+verify_message(Key, Message, ExpectedMAC) :-
+    hmac(sha256, Key, Message, ComputedMAC),
+    ComputedMAC = ExpectedMAC.
+```
+
+### base64_encode/2
+**Purpose**: Encodes an atom to its Base64 representation.
+
+**When to use**: Use for encoding binary or text data for safe transmission over text-based protocols.
+
+```prolog
+% Syntax: base64_encode(+Plain, -Encoded)
+?- base64_encode('Hello, World!', Encoded).
+Encoded = 'SGVsbG8sIFdvcmxkIQ=='.
+
+% Encode credentials for HTTP basic auth
+basic_auth_header(User, Password, Header) :-
+    atom_concat(User, ':', Temp),
+    atom_concat(Temp, Password, Credentials),
+    base64_encode(Credentials, Encoded),
+    atom_concat('Basic ', Encoded, Header).
+```
+
+### base64_decode/2
+**Purpose**: Decodes a Base64-encoded atom back to its original form.
+
+**When to use**: Use to decode data received in Base64 format.
+
+```prolog
+% Syntax: base64_decode(+Encoded, -Decoded)
+?- base64_decode('SGVsbG8sIFdvcmxkIQ==', Decoded).
+Decoded = 'Hello, World!'.
+
+% Round-trip encoding
+?- base64_encode('test', E), base64_decode(E, D).
+E = 'dGVzdA==', D = 'test'.
+```
+
+### uuid/1
+**Purpose**: Generates a new UUID (version 4, random).
+
+**When to use**: Use to create unique identifiers for records, sessions, or transactions.
+
+```prolog
+% Syntax: uuid(-UUID)
+?- uuid(Id).
+Id = '550e8400-e29b-41d4-a716-446655440000'.
+
+% Create a unique record
+create_record(Name, Record) :-
+    uuid(Id),
+    Record = record(Id, Name).
+```
+
+### random_token/2
+**Purpose**: Generates a cryptographically secure random hex token of the specified byte length.
+
+**When to use**: Use for generating session tokens, API keys, or nonces.
+
+```prolog
+% Syntax: random_token(+ByteLength, -Token)
+?- random_token(16, Token).
+Token = 'a3f2b8c1d4e5f6a7b8c9d0e1f2a3b4c5'.
+
+% Generate an API key
+generate_api_key(Key) :-
+    random_token(32, Key).
+```
+
+### crypto_random_int/3
+**Purpose**: Generates a cryptographically secure random integer within a range.
+
+**When to use**: Use when you need unbiased, unpredictable random numbers for security-sensitive applications.
+
+```prolog
+% Syntax: crypto_random_int(+Low, +High, -Value)
+% Generates a random integer N where Low =< N < High
+?- crypto_random_int(1, 100, N).
+N = 42.
+
+% Generate a 6-digit OTP
+generate_otp(OTP) :-
+    crypto_random_int(100000, 1000000, OTP).
+```
+
+<!-- START_CHANGE: ISS-2025-0179 - Add AES and password hashing predicates -->
+### crypto_aes_encrypt/4
+**Purpose**: Encrypts plaintext using AES symmetric encryption.
+
+```prolog
+% Syntax: crypto_aes_encrypt(+Key, +Plaintext, +Options, -Ciphertext)
+?- crypto_aes_encrypt('my_secret_key', 'hello world', [], Cipher).
+```
+
+### crypto_aes_decrypt/4
+**Purpose**: Decrypts AES-encrypted ciphertext back to plaintext.
+
+```prolog
+% Syntax: crypto_aes_decrypt(+Key, +Ciphertext, +Options, -Plaintext)
+?- crypto_aes_decrypt('my_secret_key', Cipher, [], Plain).
+```
+
+### crypto_hash_password/2
+**Purpose**: Hashes a password using PBKDF2 with a random salt for secure storage.
+
+```prolog
+% Syntax: crypto_hash_password(+Password, -Hash)
+?- crypto_hash_password('my_password', Hash).
+Hash = 'pbkdf2:sha256:...'.
+```
+
+### crypto_verify_password/2
+**Purpose**: Verifies a password against a previously hashed value.
+
+```prolog
+% Syntax: crypto_verify_password(+Password, +Hash)
+?- crypto_hash_password('secret', H), crypto_verify_password('secret', H).
+true.
+```
+<!-- END_CHANGE: ISS-2025-0179 -->
+
+---
+
+## 15. JSON Predicates
+
+JSON predicates provide parsing, serialization, and manipulation of JSON data, enabling integration with web services and configuration files.
+
+### json_parse/2
+**Purpose**: Parses a JSON string into a Prolog term representation.
+
+**When to use**: Use to convert JSON data received from external sources into Prolog terms for processing.
+
+```prolog
+% Syntax: json_parse(+JsonAtom, -Term)
+?- json_parse('{"name":"John","age":30}', Term).
+Term = json([name='John', age=30]).
+
+?- json_parse('[1, 2, 3]', Term).
+Term = [1, 2, 3].
+
+% Parse and extract data
+process_json(JsonString, Name) :-
+    json_parse(JsonString, json(Pairs)),
+    member(name=Name, Pairs).
+```
+
+### json_serialize/2
+**Purpose**: Serializes a Prolog term into a JSON string.
+
+**When to use**: Use to produce JSON output for APIs, files, or inter-process communication.
+
+```prolog
+% Syntax: json_serialize(+Term, -JsonAtom)
+?- json_serialize(json([name='John', age=30]), Json).
+Json = '{"name":"John","age":30}'.
+
+?- json_serialize([1, 2, 3], Json).
+Json = '[1,2,3]'.
+
+% Build and serialize a response
+build_response(Status, Message, Json) :-
+    json_serialize(json([status=Status, message=Message]), Json).
+
+?- build_response(ok, 'Operation completed', Json).
+Json = '{"status":"ok","message":"Operation completed"}'.
+```
+
+### json_get/3
+**Purpose**: Retrieves a value from a parsed JSON term by key.
+
+**When to use**: Use to access specific fields from a JSON object without manual member lookup.
+
+```prolog
+% Syntax: json_get(+JsonTerm, +Key, -Value)
+?- json_parse('{"name":"John","age":30}', J), json_get(J, name, V).
+V = 'John'.
+
+% Nested access with dot notation
+?- json_parse('{"user":{"name":"John"}}', J), json_get(J, 'user.name', V).
+V = 'John'.
+```
+
+### json_set/4
+**Purpose**: Sets or updates a key-value pair in a JSON term, producing a new term.
+
+**When to use**: Use to modify JSON data immutably before serialization.
+
+```prolog
+% Syntax: json_set(+JsonTerm, +Key, +Value, -NewJsonTerm)
+?- json_parse('{"name":"John","age":30}', J),
+   json_set(J, age, 31, J2),
+   json_serialize(J2, Out).
+Out = '{"name":"John","age":31}'.
+```
+
+### json_keys/2
+**Purpose**: Retrieves all keys from a JSON object as a list.
+
+**When to use**: Use to enumerate the fields of a JSON object.
+
+```prolog
+% Syntax: json_keys(+JsonTerm, -Keys)
+?- json_parse('{"name":"John","age":30,"city":"NYC"}', J), json_keys(J, Keys).
+Keys = [name, age, city].
+```
+
+### json_member/3
+**Purpose**: Non-deterministically enumerates key-value pairs in a JSON object.
+
+**When to use**: Use to iterate over all fields of a JSON object via backtracking.
+
+```prolog
+% Syntax: json_member(+JsonTerm, ?Key, ?Value)
+?- json_parse('{"a":1,"b":2}', J), json_member(J, K, V).
+K = a, V = 1 ;
+K = b, V = 2.
+
+% Find keys with numeric values
+numeric_keys(Json, Keys) :-
+    findall(K, (json_member(Json, K, V), number(V)), Keys).
+```
+
+---
+
+## 16. Date/Time Predicates
+
+Date and time predicates provide access to the system clock and operations for date arithmetic, formatting, and parsing.
+
+### get_time/1
+**Purpose**: Returns the current time as a Unix timestamp (seconds since epoch) as a float.
+
+**When to use**: Use for precise timing, benchmarking, or recording event timestamps.
+
+```prolog
+% Syntax: get_time(-Timestamp)
+?- get_time(T).
+T = 1.7110592e+09.
+
+% Measure elapsed time
+elapsed(Goal, Seconds) :-
+    get_time(T0),
+    call(Goal),
+    get_time(T1),
+    Seconds is T1 - T0.
+```
+
+### now/1
+**Purpose**: Returns the current date and time as a `datetime(Y,M,D,H,Min,S)` term.
+
+**When to use**: Use when you need the current date and time as structured components.
+
+```prolog
+% Syntax: now(-DateTime)
+?- now(DT).
+DT = datetime(2026, 3, 21, 14, 30, 45).
+```
+
+### today/1
+**Purpose**: Returns the current date as a `date(Y,M,D)` term.
+
+**When to use**: Use when you only need the current date without time components.
+
+```prolog
+% Syntax: today(-Date)
+?- today(D).
+D = date(2026, 3, 21).
+```
+
+### date_add/4
+**Purpose**: Adds a duration to a date, producing a new date.
+
+**When to use**: Use for date arithmetic such as computing deadlines or future dates.
+
+```prolog
+% Syntax: date_add(+Date, +Duration, +Unit, -NewDate)
+% Unit is one of: days, months, years
+?- date_add(date(2026, 3, 21), 10, days, NewDate).
+NewDate = date(2026, 3, 31).
+
+?- date_add(date(2026, 3, 21), 2, months, NewDate).
+NewDate = date(2026, 5, 21).
+
+% Calculate a deadline
+deadline(StartDate, DaysAllowed, Deadline) :-
+    date_add(StartDate, DaysAllowed, days, Deadline).
+```
+
+### date_diff/4
+**Purpose**: Computes the difference between two dates in the specified unit.
+
+**When to use**: Use to determine the number of days, months, or years between two dates.
+
+```prolog
+% Syntax: date_diff(+Date1, +Date2, +Unit, -Difference)
+?- date_diff(date(2026, 1, 1), date(2026, 3, 21), days, Diff).
+Diff = 79.
+
+% Calculate age in years
+age(BirthDate, Age) :-
+    today(Today),
+    date_diff(BirthDate, Today, years, Age).
+```
+
+### day_of_week/2
+**Purpose**: Determines the day of the week for a given date.
+
+**When to use**: Use for scheduling or display purposes.
+
+```prolog
+% Syntax: day_of_week(+Date, -DayName)
+?- day_of_week(date(2026, 3, 21), Day).
+Day = saturday.
+
+% Check if a date is a weekend
+is_weekend(Date) :-
+    day_of_week(Date, Day),
+    member(Day, [saturday, sunday]).
+```
+
+### date_parts/4
+**Purpose**: Decomposes a date term into its year, month, and day components.
+
+**When to use**: Use to extract individual components from a date term.
+
+```prolog
+% Syntax: date_parts(+Date, -Year, -Month, -Day)
+?- date_parts(date(2026, 3, 21), Y, M, D).
+Y = 2026, M = 3, D = 21.
+
+% Extract just the year
+get_year(Date, Year) :-
+    date_parts(Date, Year, _, _).
+```
+
+### time_parts/4
+**Purpose**: Decomposes a datetime term into its hour, minute, and second components.
+
+**When to use**: Use to extract time components from a datetime term.
+
+```prolog
+% Syntax: time_parts(+DateTime, -Hour, -Minute, -Second)
+?- now(DT), time_parts(DT, H, M, S).
+H = 14, M = 30, S = 45.
+```
+
+### format_date/3
+**Purpose**: Formats a date or datetime term into a string according to a format pattern.
+
+**When to use**: Use to produce human-readable or standardized date strings.
+
+```prolog
+% Syntax: format_date(+Format, +Date, -Formatted)
+?- format_date('~Y-~m-~d', date(2026, 3, 21), S).
+S = '2026-03-21'.
+
+?- format_date('~d/~m/~Y', date(2026, 3, 21), S).
+S = '21/03/2026'.
+
+% ISO 8601 formatting
+iso_date(Date, IsoString) :-
+    format_date('~Y-~m-~d', Date, IsoString).
+```
+
+### parse_date/3
+**Purpose**: Parses a date string into a date term according to a format pattern.
+
+**When to use**: Use to convert user input or file data into structured date terms.
+
+```prolog
+% Syntax: parse_date(+Format, +String, -Date)
+?- parse_date('~Y-~m-~d', '2026-03-21', D).
+D = date(2026, 3, 21).
+
+?- parse_date('~d/~m/~Y', '21/03/2026', D).
+D = date(2026, 3, 21).
+```
+
+---
+
+## 17. Filesystem Predicates
+
+Filesystem predicates provide operations for querying and manipulating files and directories on the host system.
+
+### file_exists/1
+**Purpose**: Checks whether a file exists at the given path.
+
+**When to use**: Use to verify a file is present before attempting to read or process it.
+
+```prolog
+% Syntax: file_exists(+Path)
+?- file_exists('data.pl').
+true.
+
+?- file_exists('nonexistent.pl').
+false.
+
+% Safe file loading
+safe_consult(File) :-
+    (   file_exists(File)
+    ->  consult(File)
+    ;   write('File not found: '), writeln(File)
+    ).
+```
+
+### directory_exists/1
+**Purpose**: Checks whether a directory exists at the given path.
+
+**When to use**: Use to verify a directory is present before listing or writing into it.
+
+```prolog
+% Syntax: directory_exists(+Path)
+?- directory_exists('/tmp').
+true.
+
+?- directory_exists('/nonexistent').
+false.
+```
+
+### delete_file/1
+**Purpose**: Deletes a file from the filesystem.
+
+**When to use**: Use to clean up temporary files or remove obsolete data.
+
+```prolog
+% Syntax: delete_file(+Path)
+?- delete_file('temp_output.txt').
+true.
+```
+
+### rename_file/2
+**Purpose**: Renames or moves a file.
+
+**When to use**: Use to rename files or move them between directories.
+
+```prolog
+% Syntax: rename_file(+OldPath, +NewPath)
+?- rename_file('old_name.pl', 'new_name.pl').
+true.
+```
+
+### copy_file/2
+**Purpose**: Copies a file to a new location.
+
+**When to use**: Use to create backups or duplicate files.
+
+```prolog
+% Syntax: copy_file(+Source, +Destination)
+?- copy_file('data.pl', 'data_backup.pl').
+true.
+
+% Backup before modifying
+safe_modify(File) :-
+    atom_concat(File, '.bak', Backup),
+    copy_file(File, Backup).
+```
+
+### file_size/2
+**Purpose**: Returns the size of a file in bytes.
+
+**When to use**: Use to check file sizes before processing or to report storage usage.
+
+```prolog
+% Syntax: file_size(+Path, -Size)
+?- file_size('data.pl', Size).
+Size = 4096.
+```
+
+### read_file_to_atom/2
+**Purpose**: Reads the entire contents of a file into an atom.
+
+**When to use**: Use for reading small files or configuration data in one operation.
+
+```prolog
+% Syntax: read_file_to_atom(+Path, -Content)
+?- read_file_to_atom('config.txt', Content).
+Content = 'key1=value1\nkey2=value2\n'.
+```
+
+### write_atom_to_file/2
+**Purpose**: Writes an atom as the entire contents of a file, overwriting any existing content.
+
+**When to use**: Use for writing small files or saving generated output.
+
+```prolog
+% Syntax: write_atom_to_file(+Content, +Path)
+?- write_atom_to_file('Hello, World!\n', 'output.txt').
+true.
+```
+
+### make_directory/1
+**Purpose**: Creates a single directory.
+
+**When to use**: Use when you need to create exactly one directory level.
+
+```prolog
+% Syntax: make_directory(+Path)
+?- make_directory('output').
+true.
+```
+
+### make_directory_path/1
+**Purpose**: Creates a directory and all necessary parent directories.
+
+**When to use**: Use when the full path may not exist and intermediate directories need to be created.
+
+```prolog
+% Syntax: make_directory_path(+Path)
+?- make_directory_path('output/reports/2026').
+true.
+```
+
+### absolute_file_name/2
+**Purpose**: Resolves a relative or aliased file path to an absolute path.
+
+**When to use**: Use to normalize file paths for consistent handling.
+
+```prolog
+% Syntax: absolute_file_name(+Relative, -Absolute)
+?- absolute_file_name('data.pl', Abs).
+Abs = '/home/user/project/data.pl'.
+```
+
+### directory_files/2
+**Purpose**: Lists all files and directories in a given directory.
+
+**When to use**: Use to enumerate directory contents for batch processing.
+
+```prolog
+% Syntax: directory_files(+Directory, -Files)
+?- directory_files('.', Files).
+Files = ['file1.pl', 'file2.pl', 'subdir'].
+
+% Process all Prolog files in a directory
+consult_all(Dir) :-
+    directory_files(Dir, Files),
+    member(F, Files),
+    file_extension(F, pl),
+    atom_concat(Dir, '/', Temp),
+    atom_concat(Temp, F, Path),
+    consult(Path),
+    fail ; true.
+```
+
+### file_extension/2
+**Purpose**: Extracts the file extension from a filename.
+
+**When to use**: Use to filter files by type or determine how to process a file.
+
+```prolog
+% Syntax: file_extension(+FileName, -Extension)
+?- file_extension('report.pdf', Ext).
+Ext = pdf.
+
+?- file_extension('archive.tar.gz', Ext).
+Ext = gz.
+```
+
+### file_base_name/2
+**Purpose**: Extracts the base filename (without directory path) from a full path.
+
+**When to use**: Use to get just the filename from a full path.
+
+```prolog
+% Syntax: file_base_name(+Path, -BaseName)
+?- file_base_name('/home/user/data.pl', Base).
+Base = 'data.pl'.
+```
+
+### file_directory_name/2
+**Purpose**: Extracts the directory portion from a full file path.
+
+**When to use**: Use to determine which directory a file resides in.
+
+```prolog
+% Syntax: file_directory_name(+Path, -Directory)
+?- file_directory_name('/home/user/data.pl', Dir).
+Dir = '/home/user'.
+```
+
+---
+
+## 18. OS Predicates
+
+OS predicates provide access to the operating system environment, process information, and shell command execution.
+
+### getenv/2
+**Purpose**: Retrieves the value of an environment variable.
+
+**When to use**: Use to read configuration from environment variables.
+
+```prolog
+% Syntax: getenv(+VarName, -Value)
+?- getenv('HOME', Home).
+Home = '/home/user'.
+
+?- getenv('PATH', Path).
+Path = '/usr/local/bin:/usr/bin:/bin'.
+
+% Configuration from environment
+db_host(Host) :-
+    (   getenv('DB_HOST', Host)
+    ->  true
+    ;   Host = localhost
+    ).
+```
+
+### setenv/2
+**Purpose**: Sets the value of an environment variable.
+
+**When to use**: Use to configure the environment for child processes or shell commands.
+
+```prolog
+% Syntax: setenv(+VarName, +Value)
+?- setenv('MY_APP_MODE', 'production').
+true.
+```
+
+### system_time/1
+**Purpose**: Returns the system time in milliseconds since epoch as an integer.
+
+**When to use**: Use for timestamps, profiling, or unique identifier generation.
+
+```prolog
+% Syntax: system_time(-Millis)
+?- system_time(T).
+T = 1711059200000.
+```
+
+### os_name/1
+**Purpose**: Returns the name of the operating system.
+
+**When to use**: Use to adapt behavior based on the host platform.
+
+```prolog
+% Syntax: os_name(-Name)
+?- os_name(OS).
+OS = 'Linux'.
+
+% Platform-specific path separator
+path_separator(Sep) :-
+    os_name(OS),
+    (   OS = 'Windows' -> Sep = '\\' ; Sep = '/' ).
+```
+
+### cpu_count/1
+**Purpose**: Returns the number of available CPU cores.
+
+**When to use**: Use to size thread pools or determine parallelism levels.
+
+```prolog
+% Syntax: cpu_count(-Count)
+?- cpu_count(N).
+N = 8.
+```
+
+### free_memory/1
+**Purpose**: Returns the amount of free memory available to the JVM in bytes.
+
+**When to use**: Use to monitor resource consumption or decide whether to proceed with memory-intensive tasks.
+
+```prolog
+% Syntax: free_memory(-Bytes)
+?- free_memory(M).
+M = 268435456.
+```
+
+### total_memory/1
+**Purpose**: Returns the total memory allocated to the JVM in bytes.
+
+**When to use**: Use together with free_memory/1 for memory utilization reporting.
+
+```prolog
+% Syntax: total_memory(-Bytes)
+?- total_memory(T), free_memory(F), Used is T - F.
+T = 536870912, F = 268435456, Used = 268435456.
+```
+
+### pid/1
+**Purpose**: Returns the process ID of the current JVM process.
+
+**When to use**: Use for logging, lock files, or process identification.
+
+```prolog
+% Syntax: pid(-PID)
+?- pid(P).
+P = 12345.
+```
+
+### hostname/1
+**Purpose**: Returns the hostname of the machine.
+
+**When to use**: Use for logging or identifying which host a program is running on.
+
+```prolog
+% Syntax: hostname(-Name)
+?- hostname(H).
+H = 'myserver.example.com'.
+```
+
+### shell/1
+**Purpose**: Executes a shell command and succeeds if the command exits with status 0.
+
+**When to use**: Use to run system commands where you only need to know success or failure.
+
+```prolog
+% Syntax: shell(+Command)
+?- shell('ls /tmp').
+true.
+
+?- shell('test -f config.ini').
+true.  % File exists
+```
+
+### shell/2
+**Purpose**: Executes a shell command and unifies the second argument with the exit code.
+
+**When to use**: Use when you need to inspect the exit status of a command.
+
+```prolog
+% Syntax: shell(+Command, -ExitCode)
+?- shell('grep -q pattern file.txt', Code).
+Code = 0.  % Pattern found
+
+?- shell('false', Code).
+Code = 1.
+```
+
+### shell_output/3
+**Purpose**: Executes a shell command, capturing its standard output and exit code.
+
+**When to use**: Use when you need to process the output of a system command in Prolog.
+
+```prolog
+% Syntax: shell_output(+Command, -Output, -ExitCode)
+?- shell_output('date +%Y', Output, Code).
+Output = '2026\n', Code = 0.
+
+?- shell_output('whoami', User, _).
+User = 'prolog_user\n'.
+```
+
+---
+
+## 19. Regex Predicates
+
+Regex predicates provide regular expression matching, substitution, and splitting, powered by Java's regex engine.
+
+### re_match/2
+**Purpose**: Tests whether a string matches a regular expression.
+
+**When to use**: Use for pattern validation such as checking email formats, identifiers, or input constraints.
+
+```prolog
+% Syntax: re_match(+Pattern, +String)
+?- re_match('[0-9]+', '12345').
+true.
+
+?- re_match('^[a-z]+$', 'Hello').
+false.
+
+% Validate an email address (simplified)
+valid_email(Email) :-
+    re_match('^[^@]+@[^@]+\\.[^@]+$', Email).
+
+?- valid_email('user@example.com').
+true.
+```
+
+### re_matchsub/3
+**Purpose**: Matches a regex with capturing groups and returns a list of captured substrings.
+
+**When to use**: Use to extract parts of a string that match specific sub-patterns.
+
+```prolog
+% Syntax: re_matchsub(+Pattern, +String, -Captures)
+?- re_matchsub('(\\d{4})-(\\d{2})-(\\d{2})', '2026-03-21', Caps).
+Caps = ['2026-03-21', '2026', '03', '21'].
+
+% Parse a log line
+parse_log(Line, Level, Message) :-
+    re_matchsub('\\[(\\w+)\\]\\s+(.*)', Line, [_, Level, Message]).
+
+?- parse_log('[ERROR] Connection failed', Level, Msg).
+Level = 'ERROR', Msg = 'Connection failed'.
+```
+
+### re_replace/4
+**Purpose**: Replaces occurrences of a pattern in a string with a replacement.
+
+**When to use**: Use for text transformation, sanitization, or templating.
+
+```prolog
+% Syntax: re_replace(+Pattern, +Replacement, +Input, -Output)
+?- re_replace('[0-9]+', 'NUM', 'Order 123 has 4 items', Out).
+Out = 'Order NUM has NUM items'.
+
+% Sanitize input
+sanitize(Input, Clean) :-
+    re_replace('[^a-zA-Z0-9 ]', '', Input, Clean).
+
+?- sanitize('Hello <World>!', C).
+C = 'Hello World'.
+```
+
+### re_split/3
+**Purpose**: Splits a string by a regex pattern into a list of substrings.
+
+**When to use**: Use to tokenize or break apart strings using flexible delimiters.
+
+```prolog
+% Syntax: re_split(+Pattern, +String, -Parts)
+?- re_split(',\\s*', 'a, b, c, d', Parts).
+Parts = ['a', 'b', 'c', 'd'].
+
+?- re_split('\\s+', 'Hello   World  Test', Words).
+Words = ['Hello', 'World', 'Test'].
+```
+
+### re_findall/3
+**Purpose**: Finds all non-overlapping matches of a pattern in a string.
+
+**When to use**: Use to extract all occurrences of a pattern from text.
+
+```prolog
+% Syntax: re_findall(+Pattern, +String, -Matches)
+?- re_findall('[0-9]+', 'Order 123 has 4 items at $56', Nums).
+Nums = ['123', '4', '56'].
+
+% Extract all email addresses from text
+extract_emails(Text, Emails) :-
+    re_findall('[\\w.]+@[\\w.]+', Text, Emails).
+```
+
+<!-- START_CHANGE: ISS-2025-0179 - Add re_escape/2 -->
+### re_escape/2
+**Purpose**: Escapes special regex characters in a string so it can be used as a literal pattern.
+
+```prolog
+% Syntax: re_escape(+Input, -Escaped)
+?- re_escape('hello.world', E).
+E = 'hello\\.world'.
+
+% Use to safely match user-provided literal text
+safe_match(Literal, Text) :-
+    re_escape(Literal, Pattern),
+    re_match(Pattern, Text).
+```
+<!-- END_CHANGE: ISS-2025-0179 -->
+
+---
+
+## 20. XML Predicates
+
+XML predicates provide parsing, serialization, and querying of XML documents.
+
+### xml_parse/2
+**Purpose**: Parses an XML string into a Prolog term representation.
+
+**When to use**: Use to process XML data from files, APIs, or configuration sources.
+
+```prolog
+% Syntax: xml_parse(+XmlAtom, -Term)
+?- xml_parse('<person name="John"><age>30</age></person>', Term).
+Term = element(person, [name='John'], [element(age, [], ['30'])]).
+
+% Parse and inspect structure
+get_root_tag(Xml, Tag) :-
+    xml_parse(Xml, element(Tag, _, _)).
+```
+
+### xml_serialize/2
+**Purpose**: Serializes a Prolog XML term into an XML string.
+
+**When to use**: Use to generate XML output from Prolog data structures.
+
+```prolog
+% Syntax: xml_serialize(+Term, -XmlAtom)
+?- xml_serialize(element(item, [id='1'], ['Hello']), Xml).
+Xml = '<item id="1">Hello</item>'.
+
+% Build an XML document
+build_person_xml(Name, Age, Xml) :-
+    AgeAtom = element(age, [], [Age]),
+    Person = element(person, [name=Name], [AgeAtom]),
+    xml_serialize(Person, Xml).
+```
+
+### xpath/3
+**Purpose**: Queries an XML term using an XPath-like expression, returning matching elements.
+
+**When to use**: Use to extract specific elements from parsed XML data.
+
+```prolog
+% Syntax: xpath(+XmlTerm, +Path, -Result)
+?- xml_parse('<root><item>A</item><item>B</item></root>', Doc),
+   xpath(Doc, '//item', Item).
+Item = element(item, [], ['A']) ;
+Item = element(item, [], ['B']).
+
+% Extract attribute values
+get_attribute(Xml, Path, Attr, Value) :-
+    xpath(Xml, Path, element(_, Attrs, _)),
+    member(Attr=Value, Attrs).
+```
+
+---
+
+## 21. Threading Predicates
+
+Threading predicates enable concurrent execution with message passing, built on Java's threading model. Use these for parallelism and background task processing.
+
+### thread_create/2
+**Purpose**: Creates a new thread that executes a given goal.
+
+**When to use**: Use to run a goal concurrently in the background.
+
+```prolog
+% Syntax: thread_create(+Goal, -ThreadId)
+?- thread_create(long_computation(Result), TId).
+TId = thread_1.
+
+% Start a background task
+start_worker(Id) :-
+    thread_create(worker_loop, Id).
+```
+
+### thread_join/2
+**Purpose**: Waits for a thread to complete and unifies with its exit status.
+
+**When to use**: Use to synchronize with a thread and retrieve its result.
+
+```prolog
+% Syntax: thread_join(+ThreadId, -Status)
+?- thread_create(member(X, [a, b, c]), TId),
+   thread_join(TId, Status).
+Status = true.
+
+% Wait for a computation
+run_and_wait(Goal, Status) :-
+    thread_create(Goal, TId),
+    thread_join(TId, Status).
+```
+
+### thread_detach/1
+**Purpose**: Detaches a thread so its resources are freed automatically upon completion.
+
+**When to use**: Use for fire-and-forget tasks where you do not need the result.
+
+```prolog
+% Syntax: thread_detach(+ThreadId)
+?- thread_create(log_event(startup), TId), thread_detach(TId).
+true.
+```
+
+### thread_self/1
+**Purpose**: Returns the identifier of the currently executing thread.
+
+**When to use**: Use for logging or when threads need to identify themselves.
+
+```prolog
+% Syntax: thread_self(-ThreadId)
+?- thread_self(Id).
+Id = main.
+```
+
+### thread_sleep/1
+**Purpose**: Suspends the current thread for the specified number of seconds.
+
+**When to use**: Use for delays, polling intervals, or rate limiting.
+
+```prolog
+% Syntax: thread_sleep(+Seconds)
+?- thread_sleep(2).
+true.  % Resumes after 2 seconds
+
+% Retry with delay
+retry_with_delay(Goal, Retries) :-
+    Retries > 0,
+    (   call(Goal) -> true
+    ;   thread_sleep(1),
+        R1 is Retries - 1,
+        retry_with_delay(Goal, R1)
+    ).
+```
+
+### thread_is_alive/1
+**Purpose**: Checks whether a thread is still running.
+
+**When to use**: Use to poll thread status without blocking.
+
+```prolog
+% Syntax: thread_is_alive(+ThreadId)
+?- thread_create(thread_sleep(10), TId), thread_is_alive(TId).
+true.
+```
+
+### message_queue_create/1
+**Purpose**: Creates a new message queue for inter-thread communication.
+
+**When to use**: Use to set up communication channels between threads.
+
+```prolog
+% Syntax: message_queue_create(-QueueId)
+?- message_queue_create(Q).
+Q = queue_1.
+```
+
+### thread_send_message/2
+**Purpose**: Sends a message (any Prolog term) to a message queue.
+
+**When to use**: Use to pass data to a consumer thread.
+
+```prolog
+% Syntax: thread_send_message(+QueueId, +Message)
+?- message_queue_create(Q), thread_send_message(Q, hello).
+true.
+
+% Producer pattern
+produce(Queue, Items) :-
+    member(Item, Items),
+    thread_send_message(Queue, Item),
+    fail ; true.
+```
+
+### thread_get_message/2
+**Purpose**: Retrieves a message from a queue, blocking until one is available.
+
+**When to use**: Use in consumer threads to wait for and process incoming messages.
+
+```prolog
+% Syntax: thread_get_message(+QueueId, -Message)
+?- message_queue_create(Q),
+   thread_send_message(Q, world),
+   thread_get_message(Q, Msg).
+Msg = world.
+
+% Consumer loop
+consume_loop(Queue) :-
+    thread_get_message(Queue, Msg),
+    (   Msg = stop -> true
+    ;   process(Msg),
+        consume_loop(Queue)
+    ).
+```
+
+### thread_peek_message/2
+**Purpose**: Checks if a message is available in a queue without removing it.
+
+**When to use**: Use to inspect the queue non-destructively, or to check for messages without blocking.
+
+```prolog
+% Syntax: thread_peek_message(+QueueId, -Message)
+?- message_queue_create(Q),
+   thread_send_message(Q, test),
+   thread_peek_message(Q, Msg).
+Msg = test.
+
+% Check if there is work to do
+has_work(Queue) :-
+    thread_peek_message(Queue, _).
+```
+
+---
+
+## 22. CSV Predicates
+
+CSV predicates provide parsing, serialization, and file I/O for comma-separated value data, commonly used for data exchange with spreadsheets and databases.
+
+### csv_parse/2
+**Purpose**: Parses a CSV string into a list of rows, where each row is a list of fields.
+
+**When to use**: Use to process CSV data received as a string.
+
+```prolog
+% Syntax: csv_parse(+CsvAtom, -Rows)
+?- csv_parse('name,age\nJohn,30\nMary,25', Rows).
+Rows = [['name', 'age'], ['John', '30'], ['Mary', '25']].
+
+% Parse and skip header
+csv_data(CsvString, Header, DataRows) :-
+    csv_parse(CsvString, [Header|DataRows]).
+```
+
+### csv_serialize/2
+**Purpose**: Serializes a list of rows into a CSV string.
+
+**When to use**: Use to produce CSV output from Prolog data.
+
+```prolog
+% Syntax: csv_serialize(+Rows, -CsvAtom)
+?- csv_serialize([['name', 'age'], ['John', '30']], Csv).
+Csv = 'name,age\nJohn,30\n'.
+```
+
+### csv_read_file/2
+**Purpose**: Reads a CSV file and returns its contents as a list of rows.
+
+**When to use**: Use to load tabular data directly from a file.
+
+```prolog
+% Syntax: csv_read_file(+Path, -Rows)
+?- csv_read_file('data.csv', Rows).
+Rows = [['id', 'name', 'score'], ['1', 'Alice', '95'], ['2', 'Bob', '87']].
+
+% Process file data
+average_score(File, Avg) :-
+    csv_read_file(File, [_Header|Rows]),
+    findall(S, (member(Row, Rows), last(Row, SA), atom_number(SA, S)), Scores),
+    sumlist(Scores, Total),
+    length(Scores, N),
+    Avg is Total / N.
+```
+
+### csv_write_file/2
+**Purpose**: Writes a list of rows to a CSV file.
+
+**When to use**: Use to export Prolog data to CSV format for use in other tools.
+
+```prolog
+% Syntax: csv_write_file(+Path, +Rows)
+?- csv_write_file('output.csv', [['name', 'score'], ['Alice', '95'], ['Bob', '87']]).
+true.
+
+% Export query results
+export_employees(File) :-
+    findall([Name, Dept, Sal],
+            employee(Name, Dept, Sal),
+            Rows),
+    csv_write_file(File, [['Name', 'Department', 'Salary']|Rows]).
+```
+
+---
+
+## 23. Logging Predicates
+
+Logging predicates provide structured, level-based logging for diagnostics and monitoring during program execution.
+
+### log_info/1
+**Purpose**: Logs a message at the INFO level.
+
+**When to use**: Use for general informational messages about normal program operation.
+
+```prolog
+% Syntax: log_info(+Message)
+?- log_info('Application started').
+% Output: [INFO] Application started
+true.
+```
+
+### log_warning/1
+**Purpose**: Logs a message at the WARNING level.
+
+**When to use**: Use to report unexpected but non-fatal conditions.
+
+```prolog
+% Syntax: log_warning(+Message)
+?- log_warning('Configuration file missing, using defaults').
+% Output: [WARNING] Configuration file missing, using defaults
+true.
+```
+
+### log_error/1
+**Purpose**: Logs a message at the ERROR level.
+
+**When to use**: Use to report errors that may affect program correctness.
+
+```prolog
+% Syntax: log_error(+Message)
+?- log_error('Failed to connect to database').
+% Output: [ERROR] Failed to connect to database
+true.
+
+% Log errors in exception handlers
+safe_process(Goal) :-
+    catch(
+        call(Goal),
+        Error,
+        (   term_to_atom(Error, Msg),
+            log_error(Msg),
+            fail
+        )
+    ).
+```
+
+### log_debug/1
+**Purpose**: Logs a message at the DEBUG level.
+
+**When to use**: Use for detailed diagnostic information during development.
+
+```prolog
+% Syntax: log_debug(+Message)
+?- log_debug('Entering solve/3 with X = 42').
+% Output: [DEBUG] Entering solve/3 with X = 42
+true.
+```
+
+### log_level/1
+**Purpose**: Sets the minimum logging level. Messages below this level are suppressed.
+
+**When to use**: Use to control verbosity at runtime.
+
+```prolog
+% Syntax: log_level(+Level)
+% Levels (from most to least verbose): debug, info, warning, error
+?- log_level(warning).
+true.
+
+% Now only warning and error messages are displayed
+?- log_info('This will be suppressed').
+true.
+
+?- log_warning('This will be shown').
+% Output: [WARNING] This will be shown
+true.
+```
+
+### log_to_file/1
+**Purpose**: Redirects log output to a file.
+
+**When to use**: Use to capture logs for later analysis instead of writing to the console.
+
+```prolog
+% Syntax: log_to_file(+FilePath)
+?- log_to_file('app.log').
+true.
+
+?- log_info('This goes to the file').
+true.
+
+% Set up application logging
+init_logging :-
+    log_to_file('logs/app.log'),
+    log_level(info),
+    log_info('Logging initialized').
+```
+
+---
+
+## 24. CLP(FD) Predicates
+
+CLP(FD) (Constraint Logic Programming over Finite Domains) predicates allow you to declare constraints over integer variables and let the solver find valid assignments. JProlog's implementation uses AC-3 arc consistency propagation with snapshot/restore backtracking.
+
+### in/2
+**Purpose**: Constrains a variable to a finite domain range.
+
+**When to use**: Use to declare the possible values for a constraint variable before posting constraints.
+
+```prolog
+% Syntax: X in +Low..+High
+?- X in 1..10.
+true.
+
+% Constrain multiple variables
+sudoku_vars(Vars) :-
+    length(Vars, 9),
+    maplist(clpfd:in_(1..9), Vars).
+```
+
+### #=/2
+**Purpose**: Posts an equality constraint between two arithmetic expressions.
+
+**When to use**: Use instead of `is/2` when working with constraint variables that are not yet bound.
+
+```prolog
+% Syntax: Expr1 #= Expr2
+?- X in 1..10, X #= 3 + 4.
+X = 7.
+
+% Bidirectional reasoning
+?- X in 1..10, Y in 1..10, X + Y #= 10, X #= 3.
+X = 3, Y = 7.
+```
+
+### #\=/2
+**Purpose**: Posts a disequality (not-equal) constraint.
+
+**When to use**: Use to declare that two expressions must have different values.
+
+```prolog
+% Syntax: Expr1 #\= Expr2
+?- X in 1..5, Y in 1..5, X #\= Y, X #= 3, label([Y]).
+Y = 1 ; Y = 2 ; Y = 4 ; Y = 5.
+```
+
+### #</2
+**Purpose**: Posts a strict less-than constraint.
+
+```prolog
+% Syntax: Expr1 #< Expr2
+?- X in 1..10, Y in 1..10, X #< Y, X #= 8, label([Y]).
+Y = 9 ; Y = 10.
+```
+
+### #>/2
+**Purpose**: Posts a strict greater-than constraint.
+
+```prolog
+% Syntax: Expr1 #> Expr2
+?- X in 1..10, X #> 7, label([X]).
+X = 8 ; X = 9 ; X = 10.
+```
+
+### #=</2
+**Purpose**: Posts a less-than-or-equal constraint.
+
+```prolog
+% Syntax: Expr1 #=< Expr2
+?- X in 1..10, X #=< 3, label([X]).
+X = 1 ; X = 2 ; X = 3.
+```
+
+### #>=/2
+**Purpose**: Posts a greater-than-or-equal constraint.
+
+```prolog
+% Syntax: Expr1 #>= Expr2
+?- X in 1..5, X #>= 4, label([X]).
+X = 4 ; X = 5.
+```
+
+### all_different/1
+**Purpose**: Constrains all variables in a list to take pairwise different values.
+
+**When to use**: Use for problems like Sudoku, graph coloring, or any assignment problem requiring distinct values.
+
+```prolog
+% Syntax: all_different(+Vars)
+?- X in 1..3, Y in 1..3, Z in 1..3,
+   all_different([X, Y, Z]),
+   label([X, Y, Z]).
+X = 1, Y = 2, Z = 3 ;
+X = 1, Y = 3, Z = 2 ;
+...
+```
+
+### label/1
+**Purpose**: Assigns concrete values to constraint variables by exhaustive search.
+
+**When to use**: Use after posting all constraints to enumerate solutions.
+
+```prolog
+% Syntax: label(+Vars)
+?- X in 1..3, Y in 1..3, X #< Y, label([X, Y]).
+X = 1, Y = 2 ;
+X = 1, Y = 3 ;
+X = 2, Y = 3.
+```
+
+### labeling/2
+**Purpose**: Labels variables with options controlling search strategy.
+
+**When to use**: Use for fine-grained control over variable and value ordering.
+
+```prolog
+% Syntax: labeling(+Options, +Vars)
+% Options: leftmost, ff (first-fail), min, max, up, down
+?- X in 1..5, Y in 1..5, X + Y #= 6,
+   labeling([ff], [X, Y]).
+X = 1, Y = 5 ;
+X = 2, Y = 4 ;
+...
+```
+
+### indomain/1
+**Purpose**: Nondeterministically assigns a value from the domain of a single variable.
+
+**When to use**: Use for custom labeling strategies where you want to control variable order manually.
+
+```prolog
+% Syntax: indomain(+Var)
+?- X in 1..3, indomain(X).
+X = 1 ; X = 2 ; X = 3.
+```
+
+### fd_dom/2
+**Purpose**: Returns the current domain of a constraint variable.
+
+**When to use**: Use to inspect the remaining possible values after constraint propagation.
+
+```prolog
+% Syntax: fd_dom(+Var, -Domain)
+?- X in 1..10, X #> 7, fd_dom(X, Dom).
+Dom = 8..10.
+```
+
+### fd_size/2
+**Purpose**: Returns the number of elements in the current domain of a variable.
+
+**When to use**: Use in custom search heuristics (e.g., first-fail selects the variable with smallest domain).
+
+```prolog
+% Syntax: fd_size(+Var, -Size)
+?- X in 1..10, X #> 7, fd_size(X, S).
+S = 3.
+```
+
+---
+
+## 25. Tabling Predicates
+
+Tabling (also known as memoization or tabled resolution) caches the results of predicate calls so that repeated calls with the same arguments return instantly. JProlog's implementation supports variant tabling with loop detection to handle left-recursive predicates.
+
+### table/1
+**Purpose**: Declares a predicate as tabled, enabling automatic memoization.
+
+**When to use**: Use for predicates with overlapping subproblems (e.g., Fibonacci, transitive closure) or left-recursive definitions.
+
+```prolog
+% Syntax: :- table Predicate/Arity.
+:- table fib/2.
+fib(0, 0).
+fib(1, 1).
+fib(N, F) :-
+    N > 1,
+    N1 is N - 1, N2 is N - 2,
+    fib(N1, F1), fib(N2, F2),
+    F is F1 + F2.
+
+% Without tabling: exponential time
+% With tabling: linear time
+?- fib(30, F).
+F = 832040.
+```
+
+### abolish_all_tables/0
+**Purpose**: Clears all tabling caches, forcing predicates to recompute on next call.
+
+**When to use**: Use when the underlying facts change and cached results may be stale.
+
+```prolog
+% Syntax: abolish_all_tables
+?- fib(10, F).
+F = 55.
+
+?- abolish_all_tables.
+true.
+
+% Next call to fib/2 recomputes from scratch
+```
+
+### abolish_table/1
+**Purpose**: Clears the tabling cache for a specific predicate.
+
+**When to use**: Use to selectively invalidate cached results for one predicate while keeping others.
+
+```prolog
+% Syntax: abolish_table(+Predicate/Arity)
+?- abolish_table(fib/2).
+true.
+
+% Only fib/2 cache is cleared; other tabled predicates retain their caches
+```
+
+---
+
+## 26. HTTP Predicates
+
+HTTP predicates provide both server-side and client-side HTTP capabilities, enabling JProlog programs to serve web APIs and consume external HTTP services.
+
+### http_server/2
+**Purpose**: Starts an HTTP server on the specified port with given options.
+
+**When to use**: Use to create web services or REST APIs from Prolog.
+
+```prolog
+% Syntax: http_server(+Port, +Options)
+?- http_server(8080, []).
+true.
+
+% Start server with registered handlers
+start_api :-
+    http_handler('/hello', handle_hello, []),
+    http_server(8080, []).
+```
+
+### http_stop/1
+**Purpose**: Stops a running HTTP server on the specified port.
+
+**When to use**: Use to gracefully shut down a server.
+
+```prolog
+% Syntax: http_stop(+Port)
+?- http_stop(8080).
+true.
+```
+
+### http_handler/3
+**Purpose**: Registers a handler predicate for a URL path pattern.
+
+**When to use**: Use to define routing for your HTTP server before starting it.
+
+```prolog
+% Syntax: http_handler(+Path, +Handler, +Options)
+?- http_handler('/api/users', handle_users, [method(get)]).
+true.
+
+handle_users(Request) :-
+    http_reply(Request, 200, 'application/json', '{"users":[]}').
+```
+
+### http_get_request/2
+**Purpose**: Extracts request details (method, path, headers, body) from an HTTP request object.
+
+**When to use**: Use inside handler predicates to inspect incoming requests.
+
+```prolog
+% Syntax: http_get_request(+Request, -Details)
+handle(Request) :-
+    http_get_request(Request, Details),
+    member(method(Method), Details),
+    member(path(Path), Details).
+```
+
+### http_reply/4
+**Purpose**: Sends an HTTP response with a status code, content type, and body.
+
+**When to use**: Use inside handler predicates to send responses.
+
+```prolog
+% Syntax: http_reply(+Request, +StatusCode, +ContentType, +Body)
+handle_hello(Request) :-
+    http_reply(Request, 200, 'text/plain', 'Hello, World!').
+```
+
+### http_reply_json/3
+**Purpose**: Sends a JSON HTTP response (convenience wrapper around http_reply/4).
+
+**When to use**: Use when building JSON APIs to avoid specifying content type manually.
+
+```prolog
+% Syntax: http_reply_json(+Request, +StatusCode, +JsonTerm)
+handle_user(Request) :-
+    http_reply_json(Request, 200, json([name='Alice', age=30])).
+```
+
+### http_client_get/2
+**Purpose**: Performs an HTTP GET request and unifies with the response body.
+
+**When to use**: Use to fetch data from external HTTP services.
+
+```prolog
+% Syntax: http_client_get(+URL, -Response)
+?- http_client_get('http://example.com/api/data', Response).
+Response = '{"key":"value"}'.
+```
+
+### http_client_post/3
+**Purpose**: Performs an HTTP POST request with a body and unifies with the response.
+
+**When to use**: Use to send data to external HTTP services.
+
+```prolog
+% Syntax: http_client_post(+URL, +Body, -Response)
+?- http_client_post('http://example.com/api/data', '{"key":"value"}', Response).
+Response = '{"status":"ok"}'.
+```
+
+### http_open/3
+**Purpose**: Opens an HTTP connection as a stream for reading.
+
+**When to use**: Use for streaming large HTTP responses or when you need fine-grained control over reading.
+
+```prolog
+% Syntax: http_open(+URL, -Stream, +Options)
+?- http_open('http://example.com/data.csv', Stream, []),
+   read_stream_to_codes(Stream, Codes),
+   close(Stream).
+```
+
+### url_encode/2
+**Purpose**: Percent-encodes a string for use in URLs.
+
+**When to use**: Use when constructing URLs with user-supplied parameters.
+
+```prolog
+% Syntax: url_encode(+Plain, -Encoded)
+?- url_encode('hello world', E).
+E = 'hello%20world'.
+```
+
+### url_decode/2
+**Purpose**: Decodes a percent-encoded URL string.
+
+**When to use**: Use when parsing URL parameters from incoming requests.
+
+```prolog
+% Syntax: url_decode(+Encoded, -Plain)
+?- url_decode('hello%20world', D).
+D = 'hello world'.
+```
+
+---
+
+## 27. Persistence Predicates
+
+Persistence predicates allow saving and loading the Prolog knowledge base to/from files, including support for JSON interchange format, predicate-level export, and snapshot/restore for transactional workflows.
+
+### db_save/1
+**Purpose**: Saves the entire knowledge base to a Prolog-format file.
+
+**When to use**: Use to persist all facts and rules to disk so they can be reloaded in a later session.
+
+```prolog
+% Syntax: db_save(+File)
+?- assert(person(alice, 30)),
+   assert(person(bob, 25)),
+   db_save('mydata.pl').
+true.
+
+% The file mydata.pl now contains:
+% person(alice, 30).
+% person(bob, 25).
+```
+
+### db_load/1
+**Purpose**: Loads facts and rules from a previously saved Prolog-format file into the knowledge base.
+
+**When to use**: Use to restore a knowledge base saved with db_save/1 or any standard Prolog source file.
+
+```prolog
+% Syntax: db_load(+File)
+?- db_load('mydata.pl').
+true.
+
+?- person(alice, Age).
+Age = 30.
+```
+
+### db_save_predicate/2
+**Purpose**: Saves only the clauses for a specific predicate to a file.
+
+**When to use**: Use when you want to export a subset of the knowledge base rather than the entire database.
+
+```prolog
+% Syntax: db_save_predicate(+Predicate/Arity, +File)
+?- db_save_predicate(person/2, 'people.pl').
+true.
+
+% Only person/2 clauses are written to people.pl
+```
+
+### persist/1
+**Purpose**: Marks a predicate for automatic persistence. Changes to this predicate are automatically saved.
+
+**When to use**: Use for predicates that should survive across sessions without explicitly calling db_save/1.
+
+```prolog
+% Syntax: persist(+Predicate/Arity)
+?- persist(config/2).
+true.
+
+?- assert(config(theme, dark)).
+true.
+% config/2 changes are automatically persisted
+```
+
+### unpersist/1
+**Purpose**: Removes automatic persistence marking from a predicate.
+
+**When to use**: Use when you no longer need automatic persistence for a predicate.
+
+```prolog
+% Syntax: unpersist(+Predicate/Arity)
+?- unpersist(config/2).
+true.
+% config/2 changes are no longer automatically persisted
+```
+
+### db_export_json/1
+**Purpose**: Exports the knowledge base to a JSON file.
+
+**When to use**: Use for interoperability with other systems that consume JSON data.
+
+```prolog
+% Syntax: db_export_json(+File)
+?- assert(employee(john, engineering)),
+   db_export_json('kb.json').
+true.
+
+% kb.json contains a JSON representation of all facts and rules
+```
+
+### db_import_json/1
+**Purpose**: Imports facts and rules from a JSON file into the knowledge base.
+
+**When to use**: Use to load data exported by db_export_json/1 or generated by external tools.
+
+```prolog
+% Syntax: db_import_json(+File)
+?- db_import_json('kb.json').
+true.
+
+?- employee(john, Dept).
+Dept = engineering.
+```
+
+### db_snapshot/1
+**Purpose**: Captures a named snapshot of the current knowledge base state.
+
+**When to use**: Use before making bulk changes so you can roll back if needed.
+
+```prolog
+% Syntax: db_snapshot(+Name)
+?- db_snapshot(before_update).
+true.
+
+?- retractall(person(_, _)).
+true.
+% Knowledge base is now empty for person/2, but snapshot is saved
+```
+
+### db_restore/1
+**Purpose**: Restores the knowledge base to a previously captured snapshot.
+
+**When to use**: Use to roll back changes when an operation fails or produces incorrect results.
+
+```prolog
+% Syntax: db_restore(+Name)
+?- db_restore(before_update).
+true.
+
+?- person(alice, Age).
+Age = 30.
+% Knowledge base restored to its state at snapshot time
+```
+
+### db_clear/0
+**Purpose**: Removes all user-defined facts and rules from the knowledge base.
+
+**When to use**: Use to reset the knowledge base to an empty state, for example before loading fresh data.
+
+```prolog
+% Syntax: db_clear
+?- db_clear.
+true.
+
+?- person(_, _).
+false.
+% All user-defined clauses have been removed
+```
+
+<!-- START_CHANGE: ISS-2025-0179 - Add db_transaction/1, db_sync/0, db_batch_assert/1 -->
+### db_transaction/1
+**Purpose**: Executes a goal within a transaction; rolls back changes if the goal fails or throws.
+
+```prolog
+% Syntax: db_transaction(+Goal)
+?- db_transaction((assert(account(alice, 100)), assert(account(bob, 200)))).
+true.
+
+% If the goal fails, no changes are committed
+?- db_transaction((assert(temp(1)), fail)).
+false.
+% temp(1) was not asserted
+```
+
+### db_sync/0
+**Purpose**: Forces all pending persistence writes to be flushed to disk.
+
+```prolog
+% Syntax: db_sync
+?- db_sync.
+true.
+```
+
+### db_batch_assert/1
+**Purpose**: Asserts a list of clauses in bulk, more efficiently than individual assert calls.
+
+```prolog
+% Syntax: db_batch_assert(+ClauseList)
+?- db_batch_assert([fact(a), fact(b), fact(c)]).
+true.
+
+?- fact(X).
+X = a ; X = b ; X = c.
+```
+<!-- END_CHANGE: ISS-2025-0179 -->
+
+---
+
+## 28. Graph Algorithm Predicates
+
+Graph algorithm predicates provide common graph operations including path finding, shortest path computation, connectivity analysis, topological sorting, minimum spanning trees, and cycle detection. Graphs are represented as lists of edges in the form `edge(From, To)` or `edge(From, To, Weight)` for weighted graphs.
+
+### graph_path/4
+**Purpose**: Finds a path between two vertices in a graph.
+
+**When to use**: Use to determine if two nodes are connected and to retrieve the connecting path.
+
+```prolog
+% Syntax: graph_path(+Edges, +Start, +End, -Path)
+?- Edges = [edge(a,b), edge(b,c), edge(c,d), edge(b,d)],
+   graph_path(Edges, a, d, Path).
+Path = [a, b, c, d] ;
+Path = [a, b, d].
+```
+
+### shortest_path/4
+**Purpose**: Finds the shortest (minimum weight) path between two vertices in a weighted graph.
+
+**When to use**: Use for route planning, network optimization, or any problem requiring minimum-cost paths.
+
+```prolog
+% Syntax: shortest_path(+Edges, +Start, +End, -Path)
+?- Edges = [edge(a,b,1), edge(b,c,2), edge(a,c,10)],
+   shortest_path(Edges, a, c, Path).
+Path = [a, b, c].
+```
+
+### graph_connected/2
+**Purpose**: Checks whether two vertices are connected in the graph (i.e., a path exists between them).
+
+**When to use**: Use for simple reachability checks without needing the actual path.
+
+```prolog
+% Syntax: graph_connected(+Edges, +Vertex-Vertex)
+?- Edges = [edge(a,b), edge(b,c)],
+   graph_connected(Edges, a-c).
+true.
+
+?- graph_connected(Edges, a-d).
+false.
+```
+
+### graph_vertices/2
+**Purpose**: Extracts the set of all vertices from a graph's edge list.
+
+**When to use**: Use to enumerate all nodes in a graph.
+
+```prolog
+% Syntax: graph_vertices(+Edges, -Vertices)
+?- graph_vertices([edge(a,b), edge(b,c), edge(c,a)], Vs).
+Vs = [a, b, c].
+```
+
+### graph_edges/2
+**Purpose**: Extracts all edges from a graph representation, normalizing them to a uniform format.
+
+**When to use**: Use to inspect or iterate over all edges in a graph.
+
+```prolog
+% Syntax: graph_edges(+Graph, -Edges)
+?- graph_edges([edge(a,b,1), edge(b,c,2)], Es).
+Es = [edge(a, b, 1), edge(b, c, 2)].
+```
+
+### graph_neighbors/3
+**Purpose**: Finds all neighbors (adjacent vertices) of a given vertex.
+
+**When to use**: Use to explore the local structure of a graph around a specific node.
+
+```prolog
+% Syntax: graph_neighbors(+Edges, +Vertex, -Neighbors)
+?- Edges = [edge(a,b), edge(a,c), edge(b,d)],
+   graph_neighbors(Edges, a, Ns).
+Ns = [b, c].
+```
+
+### topological_sort/2
+**Purpose**: Produces a topological ordering of vertices in a directed acyclic graph (DAG).
+
+**When to use**: Use for dependency resolution, task scheduling, or build ordering.
+
+```prolog
+% Syntax: topological_sort(+Edges, -Sorted)
+?- Edges = [edge(a,b), edge(a,c), edge(b,d), edge(c,d)],
+   topological_sort(Edges, Sorted).
+Sorted = [a, c, b, d].
+```
+
+### graph_components/2
+**Purpose**: Finds all connected components in an undirected graph.
+
+**When to use**: Use to identify clusters or disconnected subgraphs.
+
+```prolog
+% Syntax: graph_components(+Edges, -Components)
+?- Edges = [edge(a,b), edge(c,d)],
+   graph_components(Edges, Cs).
+Cs = [[a, b], [c, d]].
+```
+
+### minimum_spanning_tree/2
+**Purpose**: Computes the minimum spanning tree of a weighted undirected graph.
+
+**When to use**: Use for network design problems where you need to connect all nodes at minimum total cost.
+
+```prolog
+% Syntax: minimum_spanning_tree(+Edges, -MST)
+?- Edges = [edge(a,b,1), edge(b,c,2), edge(a,c,3)],
+   minimum_spanning_tree(Edges, MST).
+MST = [edge(a, b, 1), edge(b, c, 2)].
+```
+
+### graph_degree/3
+**Purpose**: Computes the degree (number of incident edges) of a vertex.
+
+**When to use**: Use to analyze the connectivity of individual nodes, find hubs, or identify leaf nodes.
+
+```prolog
+% Syntax: graph_degree(+Edges, +Vertex, -Degree)
+?- Edges = [edge(a,b), edge(a,c), edge(a,d)],
+   graph_degree(Edges, a, D).
+D = 3.
+```
+
+### graph_has_cycle/1
+**Purpose**: Checks whether a directed graph contains a cycle.
+
+**When to use**: Use to validate that a dependency graph is a DAG before performing topological sort.
+
+```prolog
+% Syntax: graph_has_cycle(+Edges)
+?- graph_has_cycle([edge(a,b), edge(b,c), edge(c,a)]).
+true.
+
+?- graph_has_cycle([edge(a,b), edge(b,c)]).
+false.
+```
+
+### graph_reachable/3
+**Purpose**: Finds all vertices reachable from a given starting vertex.
+
+**When to use**: Use to compute the transitive closure from a single source node.
+
+```prolog
+% Syntax: graph_reachable(+Edges, +Start, -Reachable)
+?- Edges = [edge(a,b), edge(b,c), edge(b,d)],
+   graph_reachable(Edges, a, Rs).
+Rs = [b, c, d].
+```
+
+<!-- START_CHANGE: ISS-2025-0179 - Add graph_scc/2 -->
+### graph_scc/2
+**Purpose**: Computes the strongly connected components (SCCs) of a directed graph using Tarjan's algorithm.
+
+```prolog
+% Syntax: graph_scc(+Edges, -SCCs)
+?- Edges = [edge(a,b), edge(b,c), edge(c,a), edge(d,e)],
+   graph_scc(Edges, SCCs).
+SCCs = [[a, b, c], [d], [e]].
+```
+<!-- END_CHANGE: ISS-2025-0179 -->
+
+---
+
+## 29. Expert System Predicates
+
+Expert system engine with forward and backward chaining, certainty factors, and explanation facilities.
+
+### es_rule/4
+Defines a production rule with name, conditions, conclusion, and certainty factor.
+```prolog
+es_rule(Name, Conditions, Conclusion, CF)
+```
+
+### es_fact/2
+Asserts a fact with a certainty factor into the expert system.
+```prolog
+es_fact(Fact, CF)
+```
+
+### es_forward_chain/1
+Runs forward chaining inference on the rule base. Fires all applicable rules until no new facts are derived.
+```prolog
+es_forward_chain(NewFacts)
+```
+
+### es_backward_chain/3
+Performs backward chaining (goal-directed) inference.
+```prolog
+es_backward_chain(Goal, CF, Explanation)
+```
+
+### es_explain/2, es_why/2, es_how/2
+Explanation facilities: trace derivation chain for a fact.
+```prolog
+es_explain(Fact, Explanation)
+es_why(Fact, Reasons)
+es_how(Fact, Steps)
+```
+
+### es_certainty/2, es_cf_combine/3
+Certainty factor management and combination.
+```prolog
+es_certainty(Fact, CF)
+es_cf_combine(CF1, CF2, Combined)
+```
+
+### es_ask/3, es_conflict_set/1, es_priority/2, es_rules_list/1, es_facts_list/1, es_retract_fact/1, es_reset/0
+Interactive querying, conflict resolution, listing, and management predicates.
+
+---
+
+## 30. NLP Predicates
+
+Natural language processing with tokenization, stemming, similarity metrics, and text analysis.
+
+### nlp_tokenize/2
+Tokenizes text into a list of word atoms.
+```prolog
+nlp_tokenize('Hello world', [hello, world])
+```
+
+### nlp_stem/2, nlp_lemmatize/2
+Reduces words to stems or base forms.
+```prolog
+nlp_stem(running, run)
+```
+
+### nlp_ngrams/3
+Generates n-grams from a list of tokens.
+```prolog
+nlp_ngrams([a,b,c,d], 2, [[a,b],[b,c],[c,d]])
+```
+
+### nlp_levenshtein/3, nlp_similarity/3
+String distance and similarity metrics.
+```prolog
+nlp_levenshtein(kitten, sitting, 3)
+nlp_similarity(hello, hallo, Sim)
+```
+
+### nlp_soundex/2, nlp_metaphone/2
+Phonetic encoding algorithms.
+
+### nlp_stopwords/2, nlp_frequency/2, nlp_tfidf/3
+Text analysis: stopword removal, term frequency, TF-IDF scoring.
+
+### nlp_sentiment/2, nlp_language_detect/2, nlp_normalize/2, nlp_pos_tag/2
+Sentiment analysis, language detection, text normalization, POS tagging.
+
+---
+
+## 31. Inference Engine Predicates
+
+Advanced inference with abduction, ILP, non-monotonic reasoning, and frame-based KR.
+
+### abduce/3, abductive_explain/3
+Abductive reasoning: find explanations for observations.
+```prolog
+abduce(Observation, Abducibles, Explanation)
+```
+
+### inductive_learn/3, ilp_learn/3
+Inductive logic programming: learn rules from positive/negative examples.
+```prolog
+ilp_learn(PositiveExamples, NegativeExamples, LearnedRules)
+```
+
+### default_rule/3, default_query/2
+Non-monotonic reasoning with default rules and exceptions.
+```prolog
+default_rule(Name, Prerequisite, Conclusion)
+default_query(Goal, Result)
+```
+
+### non_monotonic_assert/1, non_monotonic_retract/1
+Assert/retract with truth maintenance.
+
+### frame_create/2, frame_slot/3, frame_inherit/3
+Frame-based knowledge representation with inheritance.
+```prolog
+frame_create(animal, [legs-4, sound-unknown])
+frame_slot(animal, legs, 4)
+frame_inherit(dog, animal, InheritedSlots)
+```
+
+### reasoning_mode/1, reasoning_query/2
+Set and use reasoning mode (monotonic, non_monotonic, abductive).
+
+---
+
+## 32. AI Planner Predicates
+
+STRIPS-style AI planning with multiple search strategies.
+
+### plan_state/2, plan_goal/2, plan_action/2
+Define initial state, goal conditions, and actions with preconditions/effects.
+```prolog
+plan_state(blocks, [on(a,table), on(b,table), clear(a), clear(b)])
+plan_goal(blocks, [on(a,b)])
+plan_action(blocks, action(move(X,Y), [clear(X),clear(Y)], [on(X,Y)], [clear(Y)]))
+```
+
+### plan_solve/2, plan_solve_astar/2, plan_solve_bfs/2, plan_solve_dfs/2, plan_solve_ids/2, plan_solve_best/2
+Solve planning problem with different strategies.
+```prolog
+plan_solve_astar(blocks, Plan)
+```
+
+### plan_heuristic/2, plan_reset/1
+Set heuristic function for informed search; reset planning state.
+
+---
+
+## 33. Fuzzy Logic Predicates
+
+Mamdani fuzzy inference system with fuzzification and defuzzification.
+
+### fuzzy_variable/2, fuzzy_set/3
+Define fuzzy variables and their membership functions.
+```prolog
+fuzzy_variable(temperature, [0, 100])
+fuzzy_set(temperature, hot, trapezoidal(60, 70, 100, 100))
+```
+
+### fuzzy_rule/2, fuzzy_infer/2, fuzzy_defuzzify/2
+Define fuzzy rules and perform inference with centroid defuzzification.
+```prolog
+fuzzy_rule(if(temperature, hot), then(fan_speed, high))
+fuzzy_infer(fan_speed, Result)
+fuzzy_defuzzify(fan_speed, CrispValue)
+```
+
+### fuzzy_fuzzify/3, fuzzy_and/3, fuzzy_or/3, fuzzy_not/2, fuzzy_hedge/3
+Fuzzification and fuzzy logic operations.
+
+### fuzzy_compose/3, fuzzy_plot/1, fuzzy_reset/0, fuzzy_variables/1
+Composition, visualization, reset, and listing predicates.
+
+---
+
+## 34. Bayesian Network Predicates
+
+Bayesian networks with exact inference and Naive Bayes classification.
+
+### bn_node/1, bn_parent/2, bn_cpt/2
+Define network structure and conditional probability tables.
+```prolog
+bn_node(rain), bn_node(sprinkler), bn_node(wet_grass)
+bn_parent(wet_grass, rain), bn_parent(wet_grass, sprinkler)
+bn_cpt(rain, [(true, 0.2), (false, 0.8)])
+```
+
+### bn_evidence/2, bn_query/2, bn_clear_evidence/0
+Set evidence and query posterior probabilities.
+```prolog
+bn_evidence(wet_grass, true)
+bn_query(rain, Probability)
+```
+
+### bn_nodes/1, bn_parents/2, bn_joint/2, bn_marginal/3, bn_map/2
+Network inspection, joint/marginal probability computation, MAP inference.
+
+### bn_naive_bayes_train/3, bn_naive_bayes_classify/2
+Naive Bayes classifier with Laplace smoothing.
+```prolog
+bn_naive_bayes_train(spam, [word1, word2], Features)
+bn_naive_bayes_classify(Features, Class)
+```
+
+### bn_reset/0
+Reset the Bayesian network.
+
+---
+
+## 35. Genetic Algorithm Predicates
+
+Configurable genetic algorithms with multiple selection, crossover, and mutation operators.
+
+### ga_config/2
+Configure a genetic algorithm instance.
+```prolog
+ga_config(myga, [population_size(50), generations(100), crossover_rate(0.8), mutation_rate(0.05)])
+```
+
+### ga_chromosome/3, ga_fitness/2
+Define chromosome type and fitness function.
+```prolog
+ga_chromosome(myga, binary, 20)
+ga_fitness(myga, FitnessGoal)
+```
+
+### ga_select/2, ga_crossover/2, ga_mutate/2
+Set selection (tournament/roulette/rank), crossover (one_point/two_point/uniform/order), mutation (bit_flip/swap/insert/gaussian) methods.
+
+### ga_run/2, ga_population/2, ga_generation/2, ga_statistics/2
+Run the GA and inspect results.
+```prolog
+ga_run(myga, BestSolution)
+ga_statistics(myga, Stats)
+```
+
+### ga_seed/2, ga_reset/1
+Set random seed for reproducibility; reset GA state.
+
+---
+
+## 36. Neural Network Predicates
+
+Feedforward neural networks with backpropagation training.
+
+### nn_create/2
+Create a neural network with specified layer sizes.
+```prolog
+nn_create(xor_net, [2, 3, 1])
+```
+
+### nn_activation/2, nn_learning_rate/2
+Set activation function (sigmoid/tanh/relu/linear) and learning rate.
+
+### nn_train/3, nn_train_batch/2, nn_train_epoch/3
+Train on individual samples, batches, or multiple epochs.
+```prolog
+nn_train(xor_net, [0,1], [1])
+nn_train_epoch(xor_net, Samples, 1000)
+```
+
+### nn_predict/3, nn_classify/3
+Get network predictions or classifications.
+```prolog
+nn_predict(xor_net, [1,0], Output)
+nn_classify(iris_net, Features, Class)
+```
+
+### nn_weights/2, nn_set_weights/2, nn_error/3, nn_info/2, nn_reset/1, nn_delete/1
+Weight management, error computation, network inspection, reset, and deletion.
+
+---
+
+## 37. Optimization Predicates
+
+Operations research: LP, knapsack, TSP, metaheuristics, and network flow.
+
+### lp_maximize/4, lp_minimize/4
+Linear programming using the simplex method.
+```prolog
+lp_maximize([3,5], [[1,0,=<,4],[0,2,=<,12],[3,5,=<,25]], [], Result)
+```
+
+### knapsack/3
+Solve 0/1 knapsack problem via dynamic programming.
+```prolog
+knapsack([item(a,10,60),item(b,20,100),item(c,30,120)], 50, Selected)
+```
+
+### tsp_solve/2
+Traveling salesman: nearest-neighbor + 2-opt improvement.
+
+### simulated_annealing/2, tabu_search/2
+Metaheuristic optimization.
+
+### max_flow/4
+Maximum flow using Ford-Fulkerson.
+```prolog
+max_flow([edge(s,a,10),edge(a,t,10)], s, t, MaxFlow)
+```
+
+### optimize_reset/0
+Reset optimization state.
+
+---
+
+## 38. Simulation Predicates
+
+Discrete event simulation engine.
+
+### sim_create/2, sim_entity/3, sim_event/3
+Create simulation, add entities, schedule events.
+```prolog
+sim_create(bank, [type(queue)])
+sim_entity(bank, customer, 10)
+sim_event(bank, arrival, 5.0)
+```
+
+### sim_run/2, sim_step/1
+Run simulation to completion or advance one step.
+
+### sim_queue_size/2, sim_time/2
+Inspect event queue size and current simulation time.
+
+### sim_random_exp/2, sim_random_normal/3
+Generate random variates for stochastic modeling.
+
+### sim_histogram/3, sim_statistics/2, sim_reset/1
+Data analysis, statistical summaries, and reset.
+
+---
+
+## 39. Workflow Engine Predicates
+
+State machine-based workflow engine with rule firing.
+
+### wf_create/2, wf_state/3, wf_transition/4
+Define workflows with states and transitions.
+```prolog
+wf_create(order, [name(order_process)])
+wf_state(order, pending, [initial(true)])
+wf_transition(order, pending, processing, approve)
+```
+
+### wf_start/2, wf_advance/2
+Start workflow instances and advance through transitions.
+```prolog
+wf_start(order, instance1)
+wf_advance(instance1, approve)
+```
+
+### wf_current_state/2, wf_history/2, wf_is_complete/1
+Inspect current state, transition history, and completion status.
+
+### wf_instances/2, wf_rule/3, wf_fire_rules/2, wf_reset/1
+Instance listing, rule definition, rule firing, and reset.
+
+---
+
+---
+
+## 40. Concurrent Execution Predicates (SWI-Prolog Compatible)
+
+Parallel goal execution using Java threads. Requires independent, side-effect-free goals.
+
+### concurrent/3
+Execute a list of goals using at most N worker threads. All must succeed.
+```prolog
+concurrent(4, [goal1, goal2, goal3], [])
+```
+
+### concurrent_maplist/2
+Like maplist/2 but parallel. `call(Goal, Elem)` for each element.
+```prolog
+concurrent_maplist(is_positive, [1, 2, 3, 4, 5])
+```
+
+### concurrent_maplist3/3
+Like maplist/3 but parallel. `call(Goal, Elem, Result)` collecting results in order.
+```prolog
+concurrent_maplist3(square, [1,2,3,4], [1,4,9,16])
+```
+
+### concurrent_maplist4/4
+Parallel maplist with two input lists.
+```prolog
+concurrent_maplist4(add, [1,2,3], [10,20,30], [11,22,33])
+```
+
+### first_solution/3
+Run goals in parallel, return bindings from the first to succeed. OR-parallelism.
+```prolog
+first_solution(X, [search_db1(X), search_db2(X), search_db3(X)], [])
+```
+
+### concurrent_and/2
+AND-parallelism: all goals must succeed.
+```prolog
+concurrent_and([check1, check2, check3], [])
+```
+
+### concurrent_or/2
+OR-parallelism: returns 1-based index of the first goal to succeed.
+```prolog
+concurrent_or([strategy1, strategy2], WinnerIndex)
+```
+
+---
+
+## 41. CLP(R) Predicates
+
+Constraint Logic Programming over Reals with linear constraints and simplex optimization.
+
+### clpr_constraint/1
+Post a linear constraint. Format: `clpr_constraint(X =:= Y + 3)`.
+
+### clpr_maximize/2, clpr_minimize/2
+Optimize an objective function subject to constraints.
+
+### clpr_sup/2, clpr_inf/2
+Find supremum/infimum of expression under current constraints.
+
+### clpr_entailed/1
+Check if a constraint is entailed by current constraint store.
+
+### clpr_dump/1
+Dump current constraint store as a list.
+
+### clpr_reset/0
+Reset the constraint store.
+
+---
+
+## 42. Knowledge Graph Predicates
+
+Triple store with ontological reasoning (is-a, subclass, part-of), transitive closure, and path finding.
+
+### kg_triple/3
+Assert a triple (Subject, Predicate, Object) into the knowledge graph.
+
+### kg_query/3
+Query triples with pattern matching (variables as wildcards).
+
+### kg_retract_triple/3
+Remove a triple from the knowledge graph.
+
+### kg_isa/2, kg_subclass/2, kg_is_instance/2
+Ontological reasoning: instance-of, subclass, type checking.
+
+### kg_part_of/2, kg_has_part/2
+Mereological reasoning: part-whole relationships.
+
+### kg_property/3, kg_get_property/3
+Set and retrieve properties on entities.
+
+### kg_transitive_closure/3
+Compute transitive closure over a relation.
+
+### kg_path/3
+Find paths between nodes in the graph.
+
+### kg_neighbors/2
+Get all neighbors of a node.
+
+### kg_export/1
+Export graph in DOT format.
+
+### kg_reset/0
+Reset the knowledge graph.
+
+---
+
+## 43. Parsing/DSL Predicates
+
+Parsing utilities, grammar definition, AST manipulation, code generation, and DSL evaluation.
+
+### tokenize_string/2
+Tokenize a string into a list of tokens.
+
+### parse_integer/2, parse_float/2
+Parse string to integer or float.
+
+### parse_csv_line/2
+Parse a CSV line into a list of fields.
+
+### parse_json_value/2
+Parse a JSON value string.
+
+### grammar_rule/3
+Define a grammar rule (non-terminal -> expansion).
+
+### grammar_parse/3
+Parse input using defined grammar.
+
+### grammar_generate/2
+Generate strings from grammar.
+
+### ast_node/3
+Create an AST node with type and children.
+
+### ast_transform/3
+Transform an AST using rules.
+
+### code_emit/2
+Generate code from template.
+
+### dsl_define/2
+Define a DSL construct.
+
+### dsl_eval/2
+Evaluate a DSL expression.
+
+### format_code/2
+Format code with indentation.
+
+### parsing_reset/0
+Reset all parsing state.
+
+---
+
+## 44. Datalog Predicates
+
+Bottom-up Datalog evaluation with semi-naive fixpoint computation.
+
+### datalog_assert/1
+Assert a Datalog fact.
+
+### datalog_rule/2
+Define a Datalog rule (head :- body).
+
+### datalog_query/2
+Query the Datalog database.
+
+### datalog_retract/1
+Retract a Datalog fact.
+
+### datalog_facts/1, datalog_rules/1
+List all facts or rules.
+
+### datalog_stratify/1
+Compute stratification of rules.
+
+### datalog_materialize/0
+Run semi-naive fixpoint evaluation.
+
+### datalog_derived/1
+List all derived facts.
+
+### datalog_incremental_assert/1, datalog_incremental_retract/1
+Incremental maintenance of materialized views.
+
+### datalog_explain/2
+Explain derivation provenance.
+
+### datalog_reset/0
+Reset Datalog database.
+
+---
+
+## 45. Semantic Web/RDF Predicates
+
+RDF triple store with RDFS reasoning and Turtle export.
+
+### rdf_assert/3
+Assert an RDF triple.
+
+### rdf/3
+Query RDF triples.
+
+### rdf_retract/3
+Retract an RDF triple.
+
+### rdf_has/2
+Check if subject has a property (with RDFS reasoning).
+
+### rdfs_subclass_of/2, rdfs_subproperty_of/2, rdfs_class_of/2
+RDFS reasoning: subclass, subproperty, class membership.
+
+### rdf_global_id/2
+Expand prefixed name to full URI.
+
+### rdf_register_prefix/2
+Register a namespace prefix.
+
+### rdf_triples/1, rdf_subjects/1, rdf_predicates/1, rdf_objects/1
+List all triples, subjects, predicates, or objects.
+
+### rdf_save_turtle/1
+Export RDF store in Turtle format.
+
+### rdf_reset/0
+Reset the RDF store.
+
+---
+
+## 46. Model Checking Predicates
+
+CTL model checking with state/transition systems.
+
+### mc_state/1
+Declare a state.
+
+### mc_transition/2
+Declare a transition between states.
+
+### mc_initial/1
+Set initial state.
+
+### mc_label/2
+Label a state with atomic propositions.
+
+### mc_check_ef/2, mc_check_af/2, mc_check_eg/2, mc_check_ag/2
+CTL model checking: EF (exists finally), AF (all finally), EG (exists globally), AG (all globally).
+
+### mc_reachable/2
+Check reachability between states.
+
+### mc_deadlock/1
+Find deadlock states.
+
+### mc_counterexample/2
+Generate counterexample for failed property.
+
+### mc_bisimilar/2
+Check bisimulation equivalence.
+
+### mc_invariant/1
+Check state invariant.
+
+### mc_fairness/1
+Add fairness constraint.
+
+### mc_reset/0
+Reset model checking state.
+
+---
+
+## 47. CHR Predicates
+
+Constraint Handling Rules with simplification and propagation.
+
+### chr_constraint/1
+Declare a constraint type.
+
+### chr_rule/3
+Define a CHR rule (name, head, body).
+
+### chr_propagation/3
+Define a propagation rule.
+
+### chr_simplification/3
+Define a simplification rule.
+
+### chr_add/1
+Add a constraint to the store.
+
+### chr_remove/1
+Remove a constraint from the store.
+
+### chr_find/2
+Find constraints matching a pattern.
+
+### chr_store/1
+Get the full constraint store.
+
+### chr_ask/1
+Check if a constraint is entailed.
+
+### chr_fire/0
+Fire applicable rules.
+
+### chr_history/1
+Get rule firing history.
+
+### chr_reset/0
+Reset CHR state.
+
+---
+
+## 48. BDI Agent Predicates
+
+Belief-Desire-Intention agent architecture with messaging.
+
+### agent_create/1
+Create a new agent.
+
+### agent_believe/2
+Add a belief to an agent.
+
+### agent_desire/2
+Add a desire to an agent.
+
+### agent_intend/2
+Add an intention to an agent.
+
+### agent_plan/2
+Add a plan to an agent.
+
+### agent_beliefs/2, agent_desires/2, agent_intentions/2
+Query agent's beliefs, desires, or intentions.
+
+### agent_perceive/2
+Agent perceives environment (adds percept as belief).
+
+### agent_deliberate/2
+Agent deliberates (selects desire as intention).
+
+### agent_execute/2
+Agent executes current intention.
+
+### agent_cycle/1
+Run one BDI cycle (perceive -> deliberate -> execute).
+
+### agent_send/3, agent_receive/2
+Inter-agent messaging.
+
+### agent_reset/0
+Reset all agents.
+
+---
+
+## 49. ASP Predicates
+
+Answer Set Programming with stable model semantics.
+
+### asp_rule/2
+Define an ASP rule (head :- body).
+
+### asp_constraint/1
+Define an integrity constraint.
+
+### asp_choice/2
+Define a choice rule.
+
+### asp_fact/1
+Assert an ASP fact.
+
+### asp_show/1
+Mark predicates for display.
+
+### asp_solve/1
+Compute all answer sets.
+
+### asp_solve_one/1
+Compute one answer set.
+
+### asp_ground/1
+Ground the program.
+
+### asp_models_count/1
+Count number of answer sets.
+
+### asp_brave/1, asp_cautious/1
+Brave/cautious reasoning over answer sets.
+
+### asp_optimize/2
+Optimization with minimize/maximize.
+
+### asp_reset/0
+Reset ASP program.
+
+---
+
+## 50. Explainable AI (XAI) Predicates
+
+Goal tracing, explanation, and counterfactual reasoning for explainability.
+
+### xai_trace_goal/2
+Trace execution of a goal, recording derivation steps.
+
+### xai_explain/2
+Generate human-readable explanation for a result.
+
+### xai_why/2
+Explain why a goal succeeded.
+
+### xai_why_not/2
+Explain why a goal failed.
+
+### xai_counterfactual/2
+Generate counterfactual: what if a condition were different?
+
+### xai_feature_importance/2
+Rank features by importance to a decision.
+
+### xai_decision_path/2
+Show the decision path for a goal.
+
+### xai_confidence/2
+Compute confidence score for a result.
+
+### xai_alternatives/2
+Find alternative solutions/explanations.
+
+### xai_compare/3
+Compare two explanations/solutions.
+
+### xai_rule_used/2
+List rules used in a derivation.
+
+### xai_assumption/2
+List assumptions made during reasoning.
+
+### xai_sensitivity/2
+Sensitivity analysis: how robust is the result?
+
+### xai_log/1
+Log an XAI event.
+
+### xai_reset/0
+Reset XAI state.
+
+---
+
+## 51. Type Inference Predicates
+
+Hindley-Milner type inference with type constructors, unification, and generalization.
+
+### type_var/1
+Create a type variable.
+
+### type_const/2
+Create a type constant (e.g., `type_const(int, T)`).
+
+### type_fun/2
+Create a function type (e.g., `type_fun(type(int), type(bool))`).
+
+### type_list/1
+Create a list type.
+
+### type_tuple/1
+Create a tuple type.
+
+### type_unify/2
+Unify two types.
+
+### type_infer/2
+Infer the type of an expression.
+
+### type_check/2
+Check if an expression has the given type.
+
+### type_env/1
+Get the current type environment.
+
+### type_generalize/2
+Generalize a type (quantify free variables).
+
+### type_instantiate/2
+Instantiate a polymorphic type with fresh variables.
+
+### type_reset/0
+Reset the type inference state.
+
+---
+
+## 52. Theorem Proving Predicates
+
+Resolution-based theorem proving with normal form conversion.
+
+### thm_assert_axiom/1
+Assert an axiom into the knowledge base.
+
+### thm_assert_rule/2
+Assert a rule (antecedent => consequent).
+
+### thm_prove/1
+Prove a formula using forward chaining from axioms/rules.
+
+### thm_prove_by_contradiction/1
+Prove by assuming negation and deriving contradiction.
+
+### thm_resolution/2
+Perform a single resolution step between two clauses.
+
+### thm_cnf/2
+Convert a formula to Conjunctive Normal Form.
+
+### thm_dnf/2
+Convert a formula to Disjunctive Normal Form.
+
+### thm_nnf/2
+Convert a formula to Negation Normal Form.
+
+### thm_tautology/1
+Check if a formula is a tautology.
+
+### thm_satisfiable/1
+Check if a formula is satisfiable.
+
+### thm_axioms/1
+Get the list of current axioms.
+
+### thm_valid/1
+Check if a formula is valid (equivalent to tautology).
+
+### thm_reset/0
+Reset theorem prover state.
+
+---
+
+## 53. Symbolic Mathematics Predicates
+
+Symbolic computation: differentiation, simplification, integration.
+
+### sym_diff/3
+Symbolic differentiation: `sym_diff(Expr, Var, Result)`.
+
+### sym_simplify/2
+Simplify a symbolic expression.
+
+### sym_expand/2
+Expand a symbolic expression (distribute multiplication).
+
+### sym_factor/2
+Factor a symbolic expression.
+
+### sym_eval/2
+Evaluate a symbolic expression numerically.
+
+### sym_substitute/4
+Substitute a variable: `sym_substitute(Expr, Var, Value, Result)`.
+
+### sym_integrate/3
+Symbolic integration: `sym_integrate(Expr, Var, Result)`.
+
+### sym_solve_equation/2
+Solve a symbolic equation for a variable.
+
+### sym_polynomial_degree/2
+Get the degree of a polynomial.
+
+### sym_coefficients/2
+Get the coefficients of a polynomial.
+
+### sym_gcd/3
+Compute the GCD of two polynomials.
+
+### sym_reset/0
+Reset symbolic math state.
+
+---
+
+## 54. Meta-Interpretation Predicates
+
+Meta-interpreters for Prolog program analysis and transformation.
+
+### meta_solve/1
+Vanilla meta-interpreter: solve a goal using the knowledge base.
+
+### meta_solve_bounded/2
+Solve with depth bound: `meta_solve_bounded(Goal, MaxDepth)`.
+
+### meta_solve_iterative/2
+Solve with iterative deepening.
+
+### meta_solve_trace/2
+Solve with tracing (returns execution trace).
+
+### meta_transform/2
+Transform a program according to transformation rules.
+
+### meta_partial_eval/2
+Partially evaluate a goal.
+
+### meta_interpret_with/2
+Interpret a goal with a custom strategy.
+
+### meta_collect_clauses/2
+Collect all clauses matching a predicate.
+
+### meta_unfold/2
+Unfold a clause (inline a goal).
+
+### meta_fold/2
+Fold a clause (abstract a pattern).
+
+### meta_program_size/1
+Count the number of clauses in the knowledge base.
+
+### meta_reset/0
+Reset meta-interpretation state.
+
+---
+
+## 55. Temporal Logic / Event Calculus Predicates
+
+Event calculus with Allen temporal interval relations.
+
+### ec_assert_event/2
+Assert an event type with properties.
+
+### ec_assert_fluent/1
+Assert a fluent (time-varying property).
+
+### ec_initiates/3
+Define that an event initiates a fluent at a time.
+
+### ec_terminates/3
+Define that an event terminates a fluent at a time.
+
+### ec_holds_at/2
+Query whether a fluent holds at a given time.
+
+### ec_happens/2
+Assert that an event happens at a given time.
+
+### ec_timeline/2
+Get the timeline of events up to a given time.
+
+### ec_fluents_at/2
+Get all fluents holding at a given time.
+
+### interval_before/2
+Allen relation: interval A is entirely before interval B.
+
+### interval_meets/2
+Allen relation: interval A meets interval B (end of A = start of B).
+
+### interval_overlaps/2
+Allen relation: interval A overlaps with interval B.
+
+### interval_during/2
+Allen relation: interval A is during interval B.
+
+### ec_reset/0
+Reset event calculus state.
+
+---
+
+## 56. Probabilistic Logic / ProbLog Predicates
+
+ProbLog-style probabilistic logic programming with exact inference.
+
+### prob_fact/2
+Assert a probabilistic fact: `prob_fact(Probability, Atom)`.
+
+### prob_rule/2
+Assert a probabilistic rule.
+
+### prob_query/2
+Query the probability of an atom: `prob_query(Atom, P)`.
+
+### prob_evidence/2
+Assert evidence: `prob_evidence(Atom, true/false)`.
+
+### prob_conditional/3
+Compute conditional probability: `prob_conditional(Query, EvidenceList, P)`.
+
+### prob_marginal/2
+Compute marginal probability (considering stored evidence).
+
+### prob_most_probable/2
+Find the most probable explanation for a query.
+
+### prob_sample/2
+Sample from the probabilistic model: returns true/false.
+
+### prob_entropy/2
+Compute binary entropy of a probabilistic fact.
+
+### prob_kl_divergence/3
+Compute KL divergence between two probabilistic facts.
+
+### prob_facts/1
+Get all registered probabilistic facts.
+
+### prob_reset/0
+Reset probabilistic logic state.
+
+---
+
+## 57. SAT Solving Predicates
+
+DPLL-based Boolean satisfiability solver.
+
+### sat_add_clause/1
+Add a clause (list of literals) to the SAT problem.
+
+### sat_solve/1
+Find a satisfying assignment.
+
+### sat_solve_all/1
+Find all satisfying assignments.
+
+### sat_is_satisfiable/0
+Check if the current formula is satisfiable.
+
+### sat_add_variable/1
+Declare a SAT variable.
+
+### sat_unit_propagate/1
+Apply unit propagation and return simplified formula.
+
+### sat_pure_eliminate/1
+Apply pure literal elimination.
+
+### sat_model_count/1
+Count the number of satisfying models.
+
+### sat_implies/2
+Check if one literal implies another under the formula.
+
+### sat_backbone/1
+Compute the backbone (literals true in all models).
+
+### sat_minimize/1
+Find a minimal satisfying assignment.
+
+### sat_reset/0
+Reset SAT solver state.
+
+---
+
+## 58. Game Playing Predicates
+
+Game tree search with minimax, alpha-beta, and MCTS.
+
+### game_create/2
+Create a named game with initial state.
+
+### game_add_move/4
+Add a move: `game_add_move(Game, State, Move, NextState)`.
+
+### game_add_terminal/3
+Mark a state as terminal: `game_add_terminal(Game, State, Score)`.
+
+### game_moves/3
+Get available moves from a state.
+
+### game_is_terminal/2
+Check if a state is terminal.
+
+### game_score/3
+Get the score of a terminal state.
+
+### game_minimax/4
+Minimax search: `game_minimax(Game, State, Depth, BestMove)`.
+
+### game_alphabeta/4
+Alpha-beta pruning search.
+
+### game_negamax/4
+Negamax search variant.
+
+### game_mcts/4
+Monte Carlo tree search.
+
+### game_best_move/3
+Find the best move for current state.
+
+### game_play/3
+Play out a game from a state.
+
+### game_reset/0
+Reset game state.
+
+---
+
+## 59. Term Rewriting Predicates
+
+Term rewriting systems with normalization and analysis.
+
+### trs_add_rule/2
+Add a rewrite rule: `trs_add_rule(LHS, RHS)`.
+
+### trs_rewrite/2
+Apply one rewrite step.
+
+### trs_normalize/2
+Normalize a term (apply rules until normal form).
+
+### trs_is_normal_form/1
+Check if a term is in normal form.
+
+### trs_rewrite_all/2
+Get all possible one-step rewrites.
+
+### trs_trace_rewrite/2
+Trace normalization steps.
+
+### trs_confluent/1
+Check if the TRS is confluent (Church-Rosser property).
+
+### trs_terminating/1
+Check if the TRS is terminating.
+
+### trs_critical_pairs/1
+Compute critical pairs for the TRS.
+
+### trs_rules/1
+Get all rewrite rules.
+
+### trs_match/2
+Pattern match a term against a rule LHS.
+
+### trs_reset/0
+Reset TRS state.
+
+---
+
+## 60. Description Logic Predicates
+
+ALC description logic with concept/role reasoning.
+
+### dl_concept/1
+Define a named concept.
+
+### dl_role/1
+Define a named role.
+
+### dl_individual/2
+Assert individual membership: `dl_individual(Individual, Concept)`.
+
+### dl_role_assertion/3
+Assert a role relation: `dl_role_assertion(Individual1, Role, Individual2)`.
+
+### dl_subsumes/2
+Check if Concept1 subsumes Concept2.
+
+### dl_equivalent/2
+Check if two concepts are equivalent.
+
+### dl_satisfiable/1
+Check if a concept is satisfiable.
+
+### dl_instances/2
+Get all instances of a concept.
+
+### dl_concept_and/3
+Concept intersection: `dl_concept_and(C1, C2, Result)`.
+
+### dl_concept_or/3
+Concept union: `dl_concept_or(C1, C2, Result)`.
+
+### dl_concept_not/2
+Concept negation: `dl_concept_not(C, Result)`.
+
+### dl_some/3
+Existential restriction: `dl_some(Role, Concept, Result)`.
+
+### dl_all/3
+Universal restriction: `dl_all(Role, Concept, Result)`.
+
+### dl_reset/0
+Reset description logic state.
+
+---
+
+## 29. Java FFI Predicates
+
+The Java Foreign Function Interface (FFI) predicates allow Prolog programs to interact with Java classes, objects, methods, fields, and arrays. This enables seamless interoperability between Prolog logic and Java libraries.
+
+### Understanding Java FFI
+
+The FFI bridges Prolog and Java by:
+- Creating Java objects from Prolog
+- Calling Java methods and accessing fields
+- Working with Java arrays
+- Converting between Java objects and Prolog terms
+
+Java objects are referenced by opaque handles (atoms) that can be passed between FFI predicates.
+
+### java_new/3
+**Purpose**: Create a new Java object by calling a constructor.
+
+```prolog
+% java_new(+ClassName, +ArgsList, -ObjectRef)
+?- java_new('java.util.ArrayList', [], Ref).
+Ref = java_obj_1.
+
+?- java_new('java.lang.StringBuilder', ['Hello'], Ref).
+Ref = java_obj_2.
+```
+
+### java_call/4
+**Purpose**: Call a method on a Java object or class (for static methods).
+
+```prolog
+% java_call(+ObjectRef, +MethodName, +ArgsList, -Result)
+?- java_new('java.util.ArrayList', [], List),
+   java_call(List, add, ['hello'], _),
+   java_call(List, size, [], Size).
+Size = 0.
+
+% Static method call
+?- java_call('java.lang.Math', max, [3, 7], Result).
+Result = 7.
+```
+
+### java_get_field/3
+**Purpose**: Get the value of a field on a Java object or class.
+
+```prolog
+% java_get_field(+ObjectOrClass, +FieldName, -Value)
+?- java_get_field('java.lang.Integer', 'MAX_VALUE', Val).
+Val = 2147483647.
+```
+
+### java_set_field/3
+**Purpose**: Set the value of a field on a Java object.
+
+```prolog
+% java_set_field(+ObjectRef, +FieldName, +Value)
+?- java_new('MyClass', [], Obj),
+   java_set_field(Obj, count, 42).
+```
+
+### java_instanceof/2
+**Purpose**: Check if a Java object is an instance of a given class.
+
+```prolog
+% java_instanceof(+ObjectRef, +ClassName)
+?- java_new('java.util.ArrayList', [], Obj),
+   java_instanceof(Obj, 'java.util.List').
+true.
+```
+
+### java_class/2
+**Purpose**: Get the class name of a Java object.
+
+```prolog
+% java_class(+ObjectRef, -ClassName)
+?- java_new('java.util.HashMap', [], Obj),
+   java_class(Obj, Class).
+Class = 'java.util.HashMap'.
+```
+
+### java_array_new/3
+**Purpose**: Create a new Java array of a given type and size.
+
+```prolog
+% java_array_new(+ElementType, +Size, -ArrayRef)
+?- java_array_new(int, 5, Arr).
+Arr = java_arr_1.
+```
+
+### java_array_get/3
+**Purpose**: Get an element from a Java array by index.
+
+```prolog
+% java_array_get(+ArrayRef, +Index, -Value)
+?- java_array_get(Arr, 0, Val).
+Val = 0.
+```
+
+### java_array_set/3
+**Purpose**: Set an element in a Java array at a given index.
+
+```prolog
+% java_array_set(+ArrayRef, +Index, +Value)
+?- java_array_set(Arr, 0, 42).
+true.
+```
+
+### java_array_length/2
+**Purpose**: Get the length of a Java array.
+
+```prolog
+% java_array_length(+ArrayRef, -Length)
+?- java_array_length(Arr, Len).
+Len = 5.
+```
+
+### java_to_term/2
+**Purpose**: Convert a Java object to a Prolog term representation.
+
+```prolog
+% java_to_term(+ObjectRef, -Term)
+?- java_new('java.lang.Integer', [42], Obj),
+   java_to_term(Obj, Term).
+Term = 42.
+```
+
+### java_from_term/2
+**Purpose**: Convert a Prolog term to a Java object.
+
+```prolog
+% java_from_term(+Term, -ObjectRef)
+?- java_from_term(hello, Obj),
+   java_class(Obj, Class).
+Class = 'java.lang.String'.
+```
+
+<!-- START_CHANGE: ISS-2025-0179 - Add java_release_ref/1 and java_gc/0 -->
+### java_release_ref/1
+**Purpose**: Releases a Java object reference, allowing it to be garbage collected.
+
+```prolog
+% Syntax: java_release_ref(+ObjectRef)
+?- java_new('java.util.ArrayList', [], Ref),
+   java_release_ref(Ref).
+true.
+```
+
+### java_gc/0
+**Purpose**: Requests Java garbage collection to free unreferenced objects.
+
+```prolog
+% Syntax: java_gc
+?- java_gc.
+true.
+```
+<!-- END_CHANGE: ISS-2025-0179 -->
+
 ---
 
 ## Summary
 
-This comprehensive reference covers JProlog's 80+ built-in predicates organized by their functional purpose. Each predicate includes:
+This comprehensive reference covers JProlog's 251+ built-in predicates organized by their functional purpose. Each predicate includes:
 
 1. **Clear purpose statement** - What the predicate does
 2. **Usage guidance** - When and why to use it
@@ -3247,11 +6776,26 @@ This comprehensive reference covers JProlog's 80+ built-in predicates organized 
 These predicates form the foundation for Prolog programming, enabling:
 - **Data validation** through type checking
 - **Complex data manipulation** with term operations
-- **Efficient list processing** 
+- **Efficient list processing**
 - **Robust error handling** with exceptions
 - **Dynamic knowledge management** through database operations
 - **Text processing** with atom and string operations
 - **Advanced parsing** with DCG support
 - **System integration** through I/O and system predicates
+- **Security** with cryptographic hashing, HMAC, and secure random generation
+- **Data interchange** with JSON, XML, and CSV parsing and serialization
+- **Date and time** arithmetic, formatting, and parsing
+- **Filesystem operations** for file and directory management
+- **OS integration** with environment variables, shell execution, and process info
+- **Pattern matching** with full regular expression support
+- **Concurrency** with threads and message-passing queues
+- **Diagnostics** with structured, level-based logging
+- **Constraint solving** with CLP(FD) finite domain constraints, AC-3 propagation, and labeling
+- **Tabling** for memoization with loop detection and selective cache invalidation
+- **HTTP** server and client for building web APIs and consuming external services
+- **Persistence** for saving, loading, and snapshotting the knowledge base with JSON interchange
+- **Graph algorithms** for path finding, shortest path, topological sort, MST, and cycle detection
+- **Concurrent execution** with parallel maplist, first_solution, concurrent AND/OR (SWI-Prolog compatible)
+- **Java FFI** for instantiating Java objects, calling methods, accessing fields, and converting between Java and Prolog
 
 Use this reference as a guide for writing robust, efficient, and maintainable Prolog programs.

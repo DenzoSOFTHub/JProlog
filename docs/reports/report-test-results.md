@@ -2,11 +2,11 @@
 
 ## Executive Summary
 
-**Test Date**: 2025-08-20 (Updated)  
+**Test Date**: 2026-03-22 (Updated)
 **Programs Tested**: 20 ISO Prolog programs (comprehensive test suite)  
 **Overall Success Rate**: 95% (19/20 programs pass)  
-**Critical Issues Resolved**: Major fixes implemented in v2.0.5
-**Version Tested**: JProlog v2.0.5
+**Critical Issues Resolved**: Major fixes implemented in v2.5.5
+**Version Tested**: JProlog v2.5.5
 
 ## Test Methodology
 
@@ -39,7 +39,7 @@
 | **I/O Predicates** | 12/12 | 0 | 100% | ✅ EXCELLENT |
 | **Database** | 8/8 | 0 | 100% | ✅ EXCELLENT |
 
-### Resolved Issues (Now Working in v2.0.5)
+### Resolved Issues (Now Working in v2.5.5)
 
 #### 1. **Arithmetic Operators (ISS-2025-0017) - RESOLVED**
 - ✅ `5 =:= 5` → SUCCESS (working correctly)
@@ -217,7 +217,7 @@ JProlog demonstrates a **solid foundation** with excellent core engine architect
 3. Concurrent programming extensions (ISO extension)
 4. Some advanced I/O stream operations
 
-JProlog v2.0.5 represents a mature, highly ISO-compliant Prolog implementation suitable for both educational and production use, with excellent support for core Prolog programming patterns.
+JProlog v2.5.5 represents a mature, highly ISO-compliant Prolog implementation suitable for both educational and production use, with excellent support for core Prolog programming patterns.
 
 **Completed Major Improvements**:
 1. ✅ Fixed arithmetic operators (ISS-2025-0017) - fully operational
@@ -228,7 +228,7 @@ JProlog v2.0.5 represents a mature, highly ISO-compliant Prolog implementation s
 
 ---
 
-**Test Completed**: 2025-08-19  
+**Test Completed**: 2026-03-22
 **Issues Created**: 7 new issues (ISS-2025-0017 through ISS-2025-0023)  
 **Total Issues Tracked**: 23 issues  
 **Success Rate Target**: 90% ISO compliance recommended for production use

@@ -10,7 +10,9 @@ import java.awt.event.KeyListener;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 
 /**
  * Output console for displaying compilation results,
@@ -34,6 +36,13 @@ public class OutputConsole extends JTextPane {
     private int promptPosition;
     private boolean inputMode;
     
+    // START_CHANGE: ISS-2025-0176 - CLI command history
+    // Command history for UP/DOWN arrow navigation
+    private List<String> commandHistory = new ArrayList<>();
+    private int historyIndex = -1;
+    private static final int MAX_HISTORY_SIZE = 100;
+    // END_CHANGE: ISS-2025-0176
+
     // Configurations
     private boolean showTimestamps = true;
     private int maxLines = 1000;
@@ -331,14 +340,23 @@ public class OutputConsole extends JTextPane {
         char ch = e.getKeyChar();
         
         if (ch == '\n' || ch == '\r') {
-            // Enter: elabora input
+            // START_CHANGE: ISS-2025-0176 - Add command to history on Enter
             String input = currentInput.toString().trim();
             appendText("\n", normalStyle);
-            
+
             if (!input.isEmpty()) {
+                // Add to command history, avoiding consecutive duplicates
+                if (commandHistory.isEmpty() || !commandHistory.get(commandHistory.size() - 1).equals(input)) {
+                    commandHistory.add(input);
+                    if (commandHistory.size() > MAX_HISTORY_SIZE) {
+                        commandHistory.remove(0);
+                    }
+                }
+                historyIndex = commandHistory.size(); // Reset to end
                 processInput(input);
             }
-            
+            // END_CHANGE: ISS-2025-0176
+
             endInputMode();
             e.consume();
             
@@ -381,14 +399,56 @@ public class OutputConsole extends JTextPane {
                 }
                 break;
                 
+            // START_CHANGE: ISS-2025-0176 - Navigate command history with UP/DOWN arrows
             case KeyEvent.VK_UP:
-            case KeyEvent.VK_DOWN:
-                // TODO: Implementare cronologia comandi
+                if (!commandHistory.isEmpty()) {
+                    if (historyIndex > 0) {
+                        historyIndex--;
+                    }
+                    replaceCurrentInput(commandHistory.get(historyIndex));
+                }
                 e.consume();
                 break;
+
+            case KeyEvent.VK_DOWN:
+                if (!commandHistory.isEmpty()) {
+                    if (historyIndex < commandHistory.size() - 1) {
+                        historyIndex++;
+                        replaceCurrentInput(commandHistory.get(historyIndex));
+                    } else {
+                        historyIndex = commandHistory.size();
+                        replaceCurrentInput("");
+                    }
+                }
+                e.consume();
+                break;
+            // END_CHANGE: ISS-2025-0176
         }
     }
     
+    // START_CHANGE: ISS-2025-0176 - Replace current input line with history entry
+    /**
+     * Replaces the current input text with the given string.
+     * Used for command history navigation.
+     */
+    private void replaceCurrentInput(String text) {
+        try {
+            // Remove current input from document
+            int inputLength = document.getLength() - promptPosition;
+            if (inputLength > 0) {
+                document.remove(promptPosition, inputLength);
+            }
+            // Insert new text
+            document.insertString(promptPosition, text, normalStyle);
+            currentInput.setLength(0);
+            currentInput.append(text);
+            setCaretPosition(document.getLength());
+        } catch (BadLocationException ex) {
+            // Ignore replacement errors
+        }
+    }
+    // END_CHANGE: ISS-2025-0176
+
     /**
      * Elabora l'input dell'utente.
      */

@@ -1,282 +1,280 @@
-# Riorganizzazione Package JProlog
+# JProlog Package Reorganization
 
-## Panoramica
+## Overview
 
-La struttura del codice JProlog è stata riorganizzata per migliorare la manutenibilità, la coerenza e la scalabilità. Questa riorganizzazione introduce una separazione più chiara delle responsabilità e raggruppa i componenti correlati.
+The JProlog code structure has been reorganized (v2.5.5) to improve maintainability, consistency, and scalability. This reorganization introduces a clearer separation of responsibilities and groups related components together.
 
-## Nuova Struttura Package
+## New Package Structure
 
 ### Core Engine (`it.denzosoft.jprolog.core`)
 
 #### `it.denzosoft.jprolog.core.engine`
-**Componenti del motore principale**
-- `Prolog.java` - Classe principale dell'interprete
-- `QuerySolver.java` - Risolutore di query 
-- `KnowledgeBase.java` - Base di conoscenza
-- `PrologEngine.java` / `SimplePrologEngine.java` - Motori Prolog
-- `ArithmeticEvaluator.java` - Valutatore aritmetico
-- `Clause.java` / `Rule.java` / `Predicate.java` - Strutture dati principali
-- `CutStatus.java` - Gestione del cut
-- `Interpreter.java` - Interprete
-- `BuiltIn*.java` - Interfacce e factory per built-in
-- `Main.java` / `MainProlog.java` - Entry point applicazione
+**Main engine components**
+- `Prolog.java` - Main interpreter class
+- `QuerySolver.java` - Query resolver
+- `KnowledgeBase.java` - Knowledge base
+- `ArithmeticEvaluator.java` - Arithmetic evaluator
+- `Clause.java` / `Rule.java` / `Predicate.java` - Core data structures
+- `CutStatus.java` - Cut management
+- `Interpreter.java` - Interpreter
+- `BuiltIn*.java` - Built-in interfaces and factory
+- `Main.java` - Application entry point
 
 #### `it.denzosoft.jprolog.core.parser`
-**Sistema di parsing**
-- `Parser.java` - Parser principale
-- `TermParser.java` - Parser per termini
-- `PrologParser.java` - Parser specifico Prolog
+**Parsing system**
+- `Parser.java` - Main parser
+- `TermParser.java` - Term parser
+- `PrologParser.java` - Prolog-specific parser
 
 #### `it.denzosoft.jprolog.core.terms`
-**Rappresentazione dei termini**
-- `Term.java` - Classe base per termini
-- `Atom.java` - Atomi
-- `Variable.java` - Variabili
-- `CompoundTerm.java` - Termini composti
-- `Number.java` - Numeri
+**Term representation**
+- `Term.java` - Base class for terms
+- `Atom.java` - Atoms
+- `Variable.java` - Variables
+- `CompoundTerm.java` - Compound terms
+- `Number.java` - Numbers
 
 #### `it.denzosoft.jprolog.core.exceptions`
-**Sistema di eccezioni**
-- `PrologException.java` - Eccezione base
-- `PrologEvaluationException.java` - Errori di valutazione
-- `PrologParserException.java` - Errori di parsing
-- `PrologUnificationException.java` - Errori di unificazione
+**Exception system**
+- `PrologException.java` - Base exception
+- `PrologEvaluationException.java` - Evaluation errors
+- `PrologParserException.java` - Parsing errors
+- `PrologUnificationException.java` - Unification errors
 
 #### `it.denzosoft.jprolog.core.utils`
-**Utilità core**
-- `CollectionUtils.java` - Utilità per collezioni
-- `ListTerm.java` - Gestione liste
-- `Substitution.java` - Sostituzioni
-- `ListUtils.java` - Utilità per liste (da `util/`)
+**Core utilities**
+- `CollectionUtils.java` - Collection utilities
+- `ListTerm.java` - List management
+- `Substitution.java` - Substitutions
+- `ListUtils.java` - List utilities (from `util/`)
 
 ### Built-in Predicates (`it.denzosoft.jprolog.builtin`)
 
 #### `it.denzosoft.jprolog.builtin.arithmetic`
-**Operazioni aritmetiche**
-- `ArithmeticComparison.java` - Confronti aritmetici
-- `ArithmeticOperation.java` - Interfaccia operazioni
-- `StandardArithmeticOperations.java` - Operazioni standard
-- `Between.java` - Predicato between/3
-- `Plus.java` - Predicato plus/3
-- `Succ.java` - Predicato succ/2
+**Arithmetic operations**
+- `ArithmeticComparison.java` - Arithmetic comparisons
+- `ArithmeticOperation.java` - Operation interface
+- `StandardArithmeticOperations.java` - Standard operations
+- `Between.java` - Predicate between/3
+- `Plus.java` - Predicate plus/3
+- `Succ.java` - Predicate succ/2
 
 #### `it.denzosoft.jprolog.builtin.control`
-**Strutture di controllo**
-- `Cut.java` - Operatore cut (!)
-- `Repeat.java` - Predicato repeat/0
-- `NegationAsFailure.java` - Negazione per fallimento (\+)
-- `Conjunction.java` - Congiunzione (,)
+**Control structures**
+- `Cut.java` - Cut operator (!)
+- `Repeat.java` - Predicate repeat/0
+- `NegationAsFailure.java` - Negation as failure (\+)
+- `Conjunction.java` - Conjunction (,)
 - `IfThen.java` / `IfThenElse.java` - If-then(-else)
-- `Is.java` - Valutazione aritmetica (is/2)
-- `Unify.java` / `UnifyWithOccursCheck.java` - Unificazione
-- `Findall.java` / `Bagof.java` / `Setof.java` - Meta-predicati raccolta
+- `Is.java` - Arithmetic evaluation (is/2)
+- `Unify.java` / `UnifyWithOccursCheck.java` - Unification
+- `Findall.java` / `Bagof.java` / `Setof.java` - Collection meta-predicates
 
 #### `it.denzosoft.jprolog.builtin.atom`
-**Operazioni su atomi**
-- `AtomConcat.java` - Concatenazione atomi
-- `AtomLength.java` - Lunghezza atomi
-- `SubAtom.java` - Sotto-atomi
+**Atom operations**
+- `AtomConcat.java` - Atom concatenation
+- `AtomLength.java` - Atom length
+- `SubAtom.java` - Sub-atoms
 
 #### `it.denzosoft.jprolog.builtin.conversion`
-**Conversioni di tipo**
-- `AtomChars.java` - Conversione atom ↔ caratteri
-- `AtomCodes.java` - Conversione atom ↔ codici
-- `AtomNumber.java` - Conversione atom ↔ numero  
-- `NumberChars.java` - Conversione numero ↔ caratteri
+**Type conversions**
+- `AtomChars.java` - Atom-to-characters conversion
+- `AtomCodes.java` - Atom-to-codes conversion
+- `AtomNumber.java` - Atom-to-number conversion
+- `NumberChars.java` - Number-to-characters conversion
 
 #### `it.denzosoft.jprolog.builtin.database`
-**Operazioni database dinamico**
-- `Abolish.java` - Abolish predicati
-- `Asserta.java` / `Assertz.java` - Asserzione
-- `Retract.java` / `Retractall.java` - Rimozione
-- `CurrentPredicate.java` - Predicati correnti
+**Dynamic database operations**
+- `Abolish.java` - Abolish predicates
+- `Asserta.java` / `Assertz.java` - Assertion
+- `Retract.java` / `Retractall.java` - Removal
+- `CurrentPredicate.java` - Current predicates
 - `Listing0.java` / `Listing1.java` - Listing
 
 #### `it.denzosoft.jprolog.builtin.debug`
-**Predicati di debugging**
-- `Trace.java` / `NoTrace.java` - Controllo tracing
+**Debugging predicates**
+- `Trace.java` / `NoTrace.java` - Tracing control
 - `Spy.java` / `NoSpy.java` - Spy points
 
 #### `it.denzosoft.jprolog.builtin.exception`
-**Gestione eccezioni (ISO)**
-- `Catch.java` - Catch eccezioni
-- `Throw.java` - Lancio eccezioni
-- `Halt.java` - Terminazione programma
+**Exception handling (ISO)**
+- `Catch.java` - Exception catching
+- `Throw.java` - Exception throwing
+- `Halt.java` - Program termination
 
 #### `it.denzosoft.jprolog.builtin.io`
 **Input/Output**
-- `Write.java` / `Writeln.java` / `Nl.java` - Output base
-- `Read.java` - Input base
-- `GetChar.java` / `PutChar.java` - I/O caratteri
-- `GetCode.java` / `PutCode.java` - I/O codici caratteri
+- `Write.java` / `Writeln.java` / `Nl.java` - Basic output
+- `Read.java` - Basic input
+- `GetChar.java` / `PutChar.java` - Character I/O
+- `GetCode.java` / `PutCode.java` - Character code I/O
 
 #### `it.denzosoft.jprolog.builtin.list`
-**Operazioni su liste**
-- `Append.java` - Concatenazione liste
-- `Length.java` - Lunghezza liste
-- `Member.java` - Appartenenza
-- `Reverse.java` - Inversione
-- `Sort.java` / `Msort.java` - Ordinamento
-- `Nth0.java` / `Nth1.java` - Accesso posizionale
-- `Select.java` - Selezione elementi
-- `ListPredicate.java` - Base per predicati liste
+**List operations**
+- `Append.java` - List concatenation
+- `Length.java` - List length
+- `Member.java` - Membership
+- `Reverse.java` - Reversal
+- `Sort.java` / `Msort.java` - Sorting
+- `Nth0.java` / `Nth1.java` - Positional access
+- `Select.java` - Element selection
+- `ListPredicate.java` - Base class for list predicates
 
 #### `it.denzosoft.jprolog.builtin.meta`
-**Meta-predicati (ISO)**
-- `Call.java` - Chiamata dinamica
-- `Once.java` - Esecuzione deterministica
-- `Ignore.java` - Ignorare fallimenti
-- `ForAll.java` - Quantificazione universale
+**Meta-predicates (ISO)**
+- `Call.java` - Dynamic call
+- `Once.java` - Deterministic execution
+- `Ignore.java` - Ignore failures
+- `ForAll.java` - Universal quantification
 
 #### `it.denzosoft.jprolog.builtin.term`
-**Manipolazione termini**
-- `TermComparison.java` - Confronto termini
-- `TermConstruction.java` - Costruzione termini
+**Term manipulation**
+- `TermComparison.java` - Term comparison
+- `TermConstruction.java` - Term construction
 
 #### `it.denzosoft.jprolog.builtin.type`
-**Test di tipo**
-- `VarCheck.java` / `NonVarCheck.java` - Test variabili
-- `AtomCheck.java` - Test atomi
-- `NumberCheck.java` / `IntegerCheck.java` / `FloatCheck.java` - Test numerici
-- `AtomicCheck.java` / `CompoundCheck.java` - Test struttura
+**Type tests**
+- `VarCheck.java` / `NonVarCheck.java` - Variable tests
+- `AtomCheck.java` - Atom tests
+- `NumberCheck.java` / `IntegerCheck.java` / `FloatCheck.java` - Numeric tests
+- `AtomicCheck.java` / `CompoundCheck.java` - Structure tests
 
 ### Extensions (`it.denzosoft.jprolog.extension`)
 
 #### `it.denzosoft.jprolog.extension.gui`
-**Interfaccia grafica**
-- `PrologIDE.java` - IDE Prolog
+**Graphical interface**
+- `PrologIDE.java` - Prolog IDE
 
 #### `it.denzosoft.jprolog.extension.example`
-**Esempi ed estensioni**
-- `MathExtensions.java` - Estensioni matematiche
+**Examples and extensions**
+- `MathExtensions.java` - Mathematical extensions
 
-### Test (`it.denzosoft.jprolog.test`)
+### Tests (`it.denzosoft.jprolog.test`)
 
 #### `it.denzosoft.jprolog.test.core`
-**Test componenti core**
-- `PrologEngineTest.java` - Test motore
-- `PrologTest.java` - Test principale
-- `JPrologComprehensiveTest.java` - Test completi
+**Core component tests**
+- `PrologTest.java` - Main tests
+- `JPrologComprehensiveTest.java` - Comprehensive tests
 
 #### `it.denzosoft.jprolog.test.builtin`
-**Test predicati built-in**
-- `*ArithmeticTest.java` - Test aritmetici
-- `*BuiltinsTest.java` - Test built-in vari
-- `CharacterIOTest.java` - Test I/O caratteri
-- `DebuggingTest.java` - Test debugging
-- `AtomManipulationTest.java` - Test manipolazione atomi
-- Altri test specifici per categoria
+**Built-in predicate tests**
+- `*ArithmeticTest.java` - Arithmetic tests
+- `*BuiltinsTest.java` - Various built-in tests
+- `CharacterIOTest.java` - Character I/O tests
+- `DebuggingTest.java` - Debugging tests
+- `AtomManipulationTest.java` - Atom manipulation tests
+- Other category-specific tests
 
 #### `it.denzosoft.jprolog.test.integration`
-**Test di integrazione**
-- `FamousPrologProgramsTest.java` - Programmi Prolog famosi
+**Integration tests**
+- `FamousPrologProgramsTest.java` - Famous Prolog programs
 
 #### `it.denzosoft.jprolog.test.performance`
-**Test di performance**
-- (Da implementare)
+**Performance tests**
+- (To be implemented)
 
-## Vantaggi della Nuova Struttura
+## Benefits of the New Structure
 
-### 1. **Separazione delle Responsabilità**
-- Core engine separato da built-in
-- Parsing separato da valutazione
-- Eccezioni in package dedicato
+### 1. **Separation of Responsibilities**
+- Core engine separated from built-ins
+- Parsing separated from evaluation
+- Exceptions in a dedicated package
 
-### 2. **Scalabilità**
-- Facile aggiunta di nuovi built-in per categoria
-- Estensioni in package separato
-- Test organizzati per funzionalità
+### 2. **Scalability**
+- Easy addition of new built-ins by category
+- Extensions in a separate package
+- Tests organized by functionality
 
-### 3. **Manutenibilità**
-- Struttura più chiara e navigabile
-- Dipendenze più evidenti
-- Documentazione migliorata
+### 3. **Maintainability**
+- Clearer, more navigable structure
+- More evident dependencies
+- Improved documentation
 
-### 4. **Modularità**
-- Componenti più indipendenti
-- Riuso facilitato
-- Testing più mirato
+### 4. **Modularity**
+- More independent components
+- Easier reuse
+- More targeted testing
 
 ## Migration Guide
 
 ### Import Changes
 
-**Termini:**
+**Terms:**
 ```java
-// Vecchio
+// Old
 import it.denzosoft.jprolog.terms.*;
 
-// Nuovo  
+// New
 import it.denzosoft.jprolog.core.terms.*;
 ```
 
 **Engine:**
 ```java
-// Vecchio
+// Old
 import it.denzosoft.jprolog.Prolog;
 
-// Nuovo
+// New
 import it.denzosoft.jprolog.core.engine.Prolog;
 ```
 
-**Eccezioni:**
+**Exceptions:**
 ```java
-// Vecchio
+// Old
 import it.denzosoft.jprolog.PrologException;
 
-// Nuovo
+// New
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 ```
 
-**Built-in:**
+**Built-ins:**
 ```java
-// Vecchio
+// Old
 import it.denzosoft.jprolog.builtin.Cut;
 
-// Nuovo
+// New
 import it.denzosoft.jprolog.builtin.control.Cut;
 ```
 
-### Principali Modifiche
+### Key Changes
 
-1. **Package core:** Tutti i componenti fondamentali
-2. **Built-in categorizzati:** Organizzati per funzionalità
-3. **Test riorganizzati:** Per area di competenza
-4. **Estensioni separate:** GUI ed esempi isolati
+1. **Core package:** All fundamental components
+2. **Categorized built-ins:** Organized by functionality
+3. **Reorganized tests:** By area of responsibility
+4. **Separated extensions:** GUI and examples isolated
 
 ## Status
 
-- ✅ **Struttura creata**: Nuovi package e directory
-- ✅ **File spostati**: Rilocazione dei file sorgente
-- ✅ **Package statements**: Aggiornati nei file spostati
-- ✅ **Import references**: Tutti i riferimenti aggiornati
-- ✅ **Test**: Tutti i test compilano e passano (167/167)
-- ✅ **Compilazione**: Build SUCCESS per progetto principale e test
-- ✅ **Documentazione**: Completata
+- Completed: Structure created with new packages and directories
+- Completed: Files moved and relocated
+- Completed: Package statements updated in moved files
+- Completed: All import references updated
+- Completed: All tests compile and pass (167/167)
+- Completed: Build SUCCESS for main project and tests
+- Completed: Documentation finalized
 
-## Risultati Finali
+## Final Results
 
-### ✅ **Riorganizzazione Completata con Successo**
-- **110 file Java** del progetto principale compilano senza errori
-- **22 file di test** compilano e funzionano correttamente  
-- **167 test** passano tutti senza errori o fallimenti
-- **Struttura dei package** completamente riorganizzata e coerente
-- **Import references** tutti aggiornati e funzionanti
+### Reorganization Completed Successfully
+- **110 Java files** in the main project compile without errors
+- **22 test files** compile and work correctly
+- **167 tests** all pass without errors or failures
+- **Package structure** fully reorganized and consistent
+- **Import references** all updated and working
 
-### 📊 **Statistiche Finali**
+### Final Statistics
 ```
-Compilazione Progetto:   ✅ BUILD SUCCESS
-Compilazione Test:       ✅ BUILD SUCCESS  
-Test Eseguiti:          167/167 ✅ PASSED
-File Riorganizzati:     110+ file Java
-Package Creati:         20+ nuovi package strutturati
-Tempo Compilazione:     ~16 secondi
+Project Compilation:     BUILD SUCCESS
+Test Compilation:        BUILD SUCCESS
+Tests Run:              167/167 PASSED
+Files Reorganized:      110+ Java files
+Packages Created:       20+ new structured packages
+Compilation Time:       ~16 seconds
 ```
 
-### 🎯 **Obiettivi Raggiunti**
-- ✅ Package coerenti per funzionalità
-- ✅ Separazione responsabilità chiara
-- ✅ Struttura scalabile e manutenibile  
-- ✅ Test inclusi e funzionanti
-- ✅ Documentazione completa
-- ✅ Zero regressioni funzionali
+### Goals Achieved
+- Consistent packages by functionality
+- Clear separation of responsibilities
+- Scalable and maintainable structure
+- Tests included and working
+- Complete documentation
+- Zero functional regressions

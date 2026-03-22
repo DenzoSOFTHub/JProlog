@@ -65,12 +65,12 @@ public class Phase1FeaturesTest {
     @Test
     public void testStandardOperatorsPreloaded() {
         // Test that standard ISO operators are preloaded
+        // START_CHANGE: ISS-2025-0177 - getOperator now returns infix (most common) by default
         OperatorDefinition.OperatorInfo plusOp = OperatorDefinition.getOperator("+");
         assertNotNull("+ operator should be predefined", plusOp);
-        // Note: Currently returns unary + (200, fy) due to HashMap overwrite issue
-        // TODO: Fix operator system to handle multiple definitions for same operator
-        assertEquals("+ should have precedence 200 (unary)", 200, plusOp.precedence);
-        assertEquals("+ should be fy (unary)", "fy", plusOp.type);
+        assertEquals("+ should have precedence 500 (infix)", 500, plusOp.precedence);
+        assertEquals("+ should be yfx (infix)", "yfx", plusOp.type);
+        // END_CHANGE: ISS-2025-0177
         
         // Test existential quantification operator
         OperatorDefinition.OperatorInfo caretOp = OperatorDefinition.getOperator("^");

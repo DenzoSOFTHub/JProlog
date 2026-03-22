@@ -34,13 +34,26 @@ public class ArithmeticEvaluator {
         // Operatori binari esistenti
         BINARY_OPERATIONS.put("+", Double::sum);
         BINARY_OPERATIONS.put("-", (a, b) -> a - b);
-        BINARY_OPERATIONS.put("*", (a, b) -> a * b);
+        // START_CHANGE: ISS-2025-0164 - Detect overflow in multiplication
+        BINARY_OPERATIONS.put("*", (a, b) -> {
+            double result = a * b;
+            if (Double.isInfinite(result) && !Double.isInfinite(a) && !Double.isInfinite(b)) {
+                throw new PrologException(ISOErrorTerms.floatOverflowError("(*)/2"));
+            }
+            return result;
+        });
+        // END_CHANGE: ISS-2025-0164
         BINARY_OPERATIONS.put("/", (a, b) -> {
             if (b == 0.0) {
-                // Throw ISO standard zero divisor error
                 throw new PrologException(ISOErrorTerms.zeroDivisorError("(/)/2"));
             }
-            return a / b;
+            double result = a / b;
+            // START_CHANGE: ISS-2025-0164 - Detect overflow/NaN in division
+            if (Double.isInfinite(result) && !Double.isInfinite(a)) {
+                throw new PrologException(ISOErrorTerms.floatOverflowError("(/)/2"));
+            }
+            // END_CHANGE: ISS-2025-0164
+            return result;
         });
         
         // Funzioni matematiche unarie standard
@@ -84,10 +97,47 @@ public class ArithmeticEvaluator {
         UNARY_FUNCTIONS.put("truncate", x -> x < 0 ? Math.ceil(x) : Math.floor(x));
         UNARY_FUNCTIONS.put("float_integer_part", x -> Math.floor(Math.abs(x)) * Math.signum(x));
         UNARY_FUNCTIONS.put("float_fractional_part", x -> x - (Math.floor(Math.abs(x)) * Math.signum(x)));
-        UNARY_FUNCTIONS.put("\\", x -> (double)(~(x.longValue()))); // Bitwise NOT
+        // START_CHANGE: ISS-2025-0169 - Validate integer type before bitwise NOT to prevent precision loss
+        UNARY_FUNCTIONS.put("\\", x -> {
+            if (x != Math.floor(x) || Double.isInfinite(x)) {
+                throw new PrologException(ISOErrorTerms.typeError("integer",
+                    new Number(x), "(\\)/1"));
+            }
+            return (double)(~(x.longValue()));
+        }); // Bitwise NOT
+        // END_CHANGE: ISS-2025-0169
         UNARY_FUNCTIONS.put("random", x -> Math.random()); // Random number (ignores argument)
         UNARY_FUNCTIONS.put("float", x -> x.doubleValue()); // ISO: convert to float
-        
+
+        // START_CHANGE: ISS-2025-0170 - Add msb/1, lsb/1, popcount/1 ISO arithmetic functions
+        UNARY_FUNCTIONS.put("msb", x -> {
+            if (x != Math.floor(x) || Double.isInfinite(x) || x <= 0) {
+                throw new PrologException(ISOErrorTerms.typeError("integer", new Atom(String.valueOf(x)), "msb/1"));
+            }
+            long longVal = x.longValue();
+            return (double)(63 - Long.numberOfLeadingZeros(longVal));
+        });
+        UNARY_FUNCTIONS.put("lsb", x -> {
+            if (x != Math.floor(x) || Double.isInfinite(x) || x <= 0) {
+                throw new PrologException(ISOErrorTerms.typeError("integer", new Atom(String.valueOf(x)), "lsb/1"));
+            }
+            long longVal = x.longValue();
+            return (double) Long.numberOfTrailingZeros(longVal);
+        });
+        UNARY_FUNCTIONS.put("popcount", x -> {
+            if (x != Math.floor(x) || Double.isInfinite(x) || x < 0) {
+                throw new PrologException(ISOErrorTerms.typeError("integer", new Atom(String.valueOf(x)), "popcount/1"));
+            }
+            long longVal = x.longValue();
+            return (double) Long.bitCount(longVal);
+        });
+        // END_CHANGE: ISS-2025-0170
+
+        // START_CHANGE: ISS-2025-0105 - Unary minus and plus for prefix expressions like -X, +X
+        UNARY_FUNCTIONS.put("-", x -> -x);
+        UNARY_FUNCTIONS.put("+", x -> x);
+        // END_CHANGE: ISS-2025-0105
+
         // Register ISO arithmetic functions
         ISOArithmeticFunctions.registerAll();
     }
@@ -122,15 +172,19 @@ public class ArithmeticEvaluator {
      * @return The numeric result
      * @throws PrologEvaluationException if evaluation fails
      */
+    // START_CHANGE: ISS-2025-0163 - Let PrologException pass through for ISO error terms
     public static double evaluate(Term term, Map<String, Term> substitution) throws PrologEvaluationException {
         try {
             return evaluateTerm(term, substitution);
+        } catch (PrologException e) {
+            throw e; // Preserve ISO error term structure for catch/3
         } catch (ArithmeticException e) {
             throw new PrologEvaluationException("Arithmetic error evaluating expression: " + e.getMessage(), e);
         } catch (Exception e) {
             throw new PrologEvaluationException("Error evaluating arithmetic expression: " + e.getMessage(), e);
         }
     }
+    // END_CHANGE: ISS-2025-0163
 
     private static double evaluateTerm(Term term, Map<String, Term> substitution) throws PrologEvaluationException {
         if (term instanceof Number) {
@@ -149,55 +203,74 @@ public class ArithmeticEvaluator {
             } else if ("e".equals(atomName)) {
                 return Math.E;
             }
-            // Other atoms in arithmetic context are treated as 0.0
-            LOGGER.warning("Atom '" + atomName + "' in arithmetic context treated as 0.0");
-            return 0.0;
+            // START_CHANGE: ISS-2025-0163 - Throw type_error for unknown atoms instead of silent 0.0
+            if ("inf".equals(atomName) || "infinity".equals(atomName)) {
+                return Double.POSITIVE_INFINITY;
+            } else if ("nan".equals(atomName)) {
+                return Double.NaN;
+            }
+            // ISO Prolog: unknown atom in arithmetic context is a type_error
+            throw new PrologException(ISOErrorTerms.typeError("evaluable", new Atom(atomName + "/0"), "is/2"));
+        // START_CHANGE: ISS-2025-0104 - Cache getArguments()/getName() to avoid repeated calls
         } else if (term instanceof CompoundTerm) {
             CompoundTerm compoundTerm = (CompoundTerm) term;
-            
+            List<Term> args = compoundTerm.getArguments();
+            int arity = args.size();
+            String name = compoundTerm.getName();
+
             // Gestione funzioni unarie
-            if (compoundTerm.getArguments().size() == 1) {
-                Function<Double, Double> function = UNARY_FUNCTIONS.get(compoundTerm.getName());
+            if (arity == 1) {
+                Function<Double, Double> function = UNARY_FUNCTIONS.get(name);
                 if (function != null) {
-                    double argValue = evaluateTerm(compoundTerm.getArguments().get(0), substitution);
+                    double argValue = evaluateTerm(args.get(0), substitution);
                     return function.apply(argValue);
                 }
             }
-            
+
             // Gestione operatori binari
-            if (compoundTerm.getArguments().size() == 2) {
+            if (arity == 2) {
                 // Check legacy operations first
-                BiFunction<Double, Double, Double> operation = BINARY_OPERATIONS.get(compoundTerm.getName());
+                BiFunction<Double, Double, Double> operation = BINARY_OPERATIONS.get(name);
                 if (operation != null) {
-                    double left = evaluateTerm(compoundTerm.getArguments().get(0), substitution);
-                    double right = evaluateTerm(compoundTerm.getArguments().get(1), substitution);
+                    double left = evaluateTerm(args.get(0), substitution);
+                    double right = evaluateTerm(args.get(1), substitution);
                     return operation.apply(left, right);
                 }
-                
+
                 // Check StandardArithmeticOperations
-                ArithmeticOperation standardOp = StandardArithmeticOperations.getOperation(compoundTerm.getName());
+                ArithmeticOperation standardOp = StandardArithmeticOperations.getOperation(name);
                 if (standardOp != null) {
-                    double left = evaluateTerm(compoundTerm.getArguments().get(0), substitution);
-                    double right = evaluateTerm(compoundTerm.getArguments().get(1), substitution);
+                    double left = evaluateTerm(args.get(0), substitution);
+                    double right = evaluateTerm(args.get(1), substitution);
                     return standardOp.apply(left, right);
                 }
             }
-            
-            throw new PrologEvaluationException("Unknown arithmetic function or incorrect arity: " + compoundTerm.getName());
+
+            throw new PrologEvaluationException("Unknown arithmetic function or incorrect arity: " + name);
+        // END_CHANGE: ISS-2025-0104
         } else {
             throw new PrologEvaluationException("Cannot evaluate term in arithmetic context: " + term);
         }
     }
 
     // START_CHANGE: ISS-2025-0091 - Iterative variable resolution to prevent stack overflow
+    // START_CHANGE: ISS-2025-0166 - Circular variable binding detection with depth limit
+    private static final int MAX_RESOLVE_DEPTH = 64;
+
     private static Term resolveVariable(Variable variable, Map<String, Term> substitution) {
         Term current = substitution.get(variable.getName());
+        int depth = 0;
         while (current instanceof Variable && current != variable) {
+            if (++depth > MAX_RESOLVE_DEPTH) {
+                throw new PrologException(ISOErrorTerms.resourceError(
+                    "circular_binding", "Circular variable binding detected (depth " + MAX_RESOLVE_DEPTH + ") resolving: " + variable.getName()));
+            }
             Term next = substitution.get(((Variable) current).getName());
             if (next == null) break;
             current = next;
         }
         return current;
     }
+    // END_CHANGE: ISS-2025-0166
     // END_CHANGE: ISS-2025-0091
 }

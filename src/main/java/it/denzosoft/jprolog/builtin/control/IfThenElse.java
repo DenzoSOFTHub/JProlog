@@ -14,110 +14,134 @@ import java.util.Map;
 
 /**
  * Implementation of the if-then-else construct (Condition -> Then ; Else).
- * 
+ * Also handles simple disjunction (A ; B).
+ *
  * In Prolog:
  * - If Condition succeeds, execute Then
  * - If Condition fails, execute Else
  * - The construct is deterministic: it commits to the first choice
+ * - Cut (!) inside Then or Else branches propagates to enclosing clause (ISO 7.8.8)
  */
 public class IfThenElse implements BuiltInWithContext {
-    
+
     private final QuerySolver querySolver;
-    
+
     public IfThenElse(QuerySolver querySolver) {
         this.querySolver = querySolver;
     }
-    
+
     @Override
     public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         return executeSemicolon(query, bindings, solutions, solver);
     }
-    
+
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         throw new UnsupportedOperationException("Context-dependent built-in ';' must be invoked with context");
     }
-    
+
     private boolean executeSemicolon(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions, QuerySolver solver) {
-        // This handles the semicolon (;) operator
-        // The structure should be: ; (-> (Condition, Then), Else)
-        
         if (!(query instanceof CompoundTerm)) {
             throw new PrologEvaluationException("Semicolon operator requires compound term structure");
         }
-        
+
         CompoundTerm semicolonTerm = (CompoundTerm) query;
         if (semicolonTerm.getArguments().size() != 2) {
             throw new PrologEvaluationException("Semicolon operator requires exactly 2 arguments");
         }
-        
+
         Term leftTerm = semicolonTerm.getArguments().get(0);
         Term elseTerm = semicolonTerm.getArguments().get(1);
-        
+
         // Check if left term is an if-then construct (->)
         if (leftTerm instanceof CompoundTerm) {
             CompoundTerm leftCompound = (CompoundTerm) leftTerm;
             if (leftCompound.getFunctor().getName().equals("->") && leftCompound.getArguments().size() == 2) {
-                // This is a proper if-then-else: (Condition -> Then ; Else)
                 Term condition = leftCompound.getArguments().get(0);
                 Term thenTerm = leftCompound.getArguments().get(1);
-                
+
                 return executeIfThenElse(condition, thenTerm, elseTerm, bindings, solutions, solver);
             }
         }
-        
+
         // If not if-then-else, treat as simple disjunction (A ; B)
         return executeDisjunction(leftTerm, elseTerm, bindings, solutions, solver);
     }
-    
-    private boolean executeIfThenElse(Term condition, Term thenTerm, Term elseTerm, 
+
+    // START_CHANGE: ISS-2025-0163 - Propagate cut from Then/Else/disjunction branches to parent clause
+    private boolean executeIfThenElse(Term condition, Term thenTerm, Term elseTerm,
                                     Map<String, Term> bindings, List<Map<String, Term>> solutions, QuerySolver solver) {
-        // Try to solve the condition
+        // Get parent cut status from solver (set by handleBuiltIn before calling us)
+        CutStatus parentCutStatus = solver.getCurrentCutStatus();
+
+        // Try to solve the condition (cut inside condition is scoped to condition per ISO 7.8.8)
         List<Map<String, Term>> conditionSolutions = new ArrayList<>();
         boolean conditionSuccess = solver.solve(condition, new HashMap<>(bindings), conditionSolutions, CutStatus.notOccurred());
-        
+
         if (conditionSuccess && !conditionSolutions.isEmpty()) {
-            // START_CHANGE: ISS-2025-0055 - Fix if-then-else to commit to first condition solution
             // ISO Prolog: (Cond -> Then ; Else) commits to the FIRST solution of Cond
             Map<String, Term> firstConditionBinding = conditionSolutions.get(0);
             List<Map<String, Term>> thenSolutions = new ArrayList<>();
-            boolean thenSuccess = solver.solve(thenTerm, new HashMap<>(firstConditionBinding), thenSolutions, CutStatus.notOccurred());
+            // Cut in Then branch must propagate to enclosing clause
+            CutStatus thenCutStatus = CutStatus.notOccurred();
+            boolean thenSuccess = solver.solve(thenTerm, new HashMap<>(firstConditionBinding), thenSolutions, thenCutStatus);
             if (thenSuccess) {
                 solutions.addAll(thenSolutions);
             }
+            if (thenCutStatus.isCutOccurred() && parentCutStatus != null) {
+                parentCutStatus.setCutOccurred();
+            }
             return thenSuccess;
-            // END_CHANGE: ISS-2025-0055
         } else {
             // Condition failed - execute Else part
             List<Map<String, Term>> elseSolutions = new ArrayList<>();
-            boolean elseSuccess = solver.solve(elseTerm, new HashMap<>(bindings), elseSolutions, CutStatus.notOccurred());
+            CutStatus elseCutStatus = CutStatus.notOccurred();
+            boolean elseSuccess = solver.solve(elseTerm, new HashMap<>(bindings), elseSolutions, elseCutStatus);
             if (elseSuccess) {
                 solutions.addAll(elseSolutions);
+            }
+            if (elseCutStatus.isCutOccurred() && parentCutStatus != null) {
+                parentCutStatus.setCutOccurred();
             }
             return elseSuccess;
         }
     }
-    
-    private boolean executeDisjunction(Term leftTerm, Term rightTerm, 
+
+    private boolean executeDisjunction(Term leftTerm, Term rightTerm,
                                      Map<String, Term> bindings, List<Map<String, Term>> solutions, QuerySolver solver) {
+        // Get parent cut status from solver
+        CutStatus parentCutStatus = solver.getCurrentCutStatus();
         boolean success = false;
-        
+
         // Try left term first
         List<Map<String, Term>> leftSolutions = new ArrayList<>();
-        boolean leftSuccess = solver.solve(leftTerm, new HashMap<>(bindings), leftSolutions, CutStatus.notOccurred());
+        CutStatus leftCutStatus = CutStatus.notOccurred();
+        boolean leftSuccess = solver.solve(leftTerm, new HashMap<>(bindings), leftSolutions, leftCutStatus);
         if (leftSuccess) {
             solutions.addAll(leftSolutions);
             success = true;
         }
-        
+        // If cut occurred in left branch, propagate and skip right branch
+        if (leftCutStatus.isCutOccurred()) {
+            if (parentCutStatus != null) {
+                parentCutStatus.setCutOccurred();
+            }
+            return success;
+        }
+
         // Try right term
         List<Map<String, Term>> rightSolutions = new ArrayList<>();
-        boolean rightSuccess = solver.solve(rightTerm, new HashMap<>(bindings), rightSolutions, CutStatus.notOccurred());
+        CutStatus rightCutStatus = CutStatus.notOccurred();
+        boolean rightSuccess = solver.solve(rightTerm, new HashMap<>(bindings), rightSolutions, rightCutStatus);
         if (rightSuccess) {
             solutions.addAll(rightSolutions);
             success = true;
         }
-        
+        if (rightCutStatus.isCutOccurred() && parentCutStatus != null) {
+            parentCutStatus.setCutOccurred();
+        }
+
         return success;
     }
+    // END_CHANGE: ISS-2025-0163
 }

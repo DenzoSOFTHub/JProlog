@@ -76,10 +76,12 @@ public class Number extends Term {
         // END_CHANGE: ISS-2025-0091
     }
 
+    // START_CHANGE: ISS-2025-0102 - Number is immutable, reuse instance
     @Override
     public Term copy() {
-        return new Number(this.value, this.isInteger);
+        return this;
     }
+    // END_CHANGE: ISS-2025-0102
 
     @Override
     public boolean equals(Object obj) {

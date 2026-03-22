@@ -57,46 +57,107 @@ public class SubAtom implements BuiltIn {
         String subAtom = getAtomValue(subAtomTerm);
         
         boolean foundSolution = false;
-        
-        // Generate all possible combinations
-        for (int b = 0; b <= atomLength; b++) {
-            for (int len = 0; len <= atomLength - b; len++) {
-                int a = atomLength - b - len;
+
+        // START_CHANGE: ISS-2025-0172 - Optimize sub_atom/5 from O(n^2) to constraint-aware
+        if (before != null && length != null) {
+            // Both Before and Length are bound: single direct check, no loop needed
+            int b = before;
+            int len = length;
+            int a = atomLength - b - len;
+            if (b >= 0 && len >= 0 && b + len <= atomLength && (after == null || after == a)) {
                 String sub = atom.substring(b, b + len);
-                
-                // Check constraints
-                if (before != null && before != b) continue;
-                if (length != null && length != len) continue;
-                if (after != null && after != a) continue;
-                if (subAtom != null && !subAtom.equals(sub)) continue;
-                
-                // Create solution
-                Map<String, Term> newBindings = new HashMap<>(bindings);
-                boolean unificationSuccess = true;
-                
-                if (!beforeTerm.unify(new it.denzosoft.jprolog.core.terms.Number((double) b), newBindings)) {
-                    unificationSuccess = false;
+                if (subAtom == null || subAtom.equals(sub)) {
+                    foundSolution = trySolution(b, len, a, sub, beforeTerm, lengthTerm, afterTerm, subAtomTerm, bindings, solutions);
                 }
-                if (unificationSuccess && !lengthTerm.unify(new it.denzosoft.jprolog.core.terms.Number((double) len), newBindings)) {
-                    unificationSuccess = false;
+            }
+        } else if (before != null) {
+            // Before is bound: single loop over Length
+            int b = before;
+            if (b >= 0 && b <= atomLength) {
+                for (int len = 0; len <= atomLength - b; len++) {
+                    int a = atomLength - b - len;
+                    if (after != null && after != a) continue;
+                    String sub = atom.substring(b, b + len);
+                    if (subAtom != null && !subAtom.equals(sub)) continue;
+                    if (trySolution(b, len, a, sub, beforeTerm, lengthTerm, afterTerm, subAtomTerm, bindings, solutions)) {
+                        foundSolution = true;
+                    }
                 }
-                if (unificationSuccess && !afterTerm.unify(new it.denzosoft.jprolog.core.terms.Number((double) a), newBindings)) {
-                    unificationSuccess = false;
+            }
+        } else if (length != null) {
+            // Length is bound: single loop over Before
+            int len = length;
+            if (len >= 0 && len <= atomLength) {
+                for (int b = 0; b <= atomLength - len; b++) {
+                    int a = atomLength - b - len;
+                    if (after != null && after != a) continue;
+                    String sub = atom.substring(b, b + len);
+                    if (subAtom != null && !subAtom.equals(sub)) continue;
+                    if (trySolution(b, len, a, sub, beforeTerm, lengthTerm, afterTerm, subAtomTerm, bindings, solutions)) {
+                        foundSolution = true;
+                    }
                 }
-                if (unificationSuccess && !subAtomTerm.unify(new Atom(sub), newBindings)) {
-                    unificationSuccess = false;
-                }
-                
-                if (unificationSuccess) {
-                    solutions.add(newBindings);
+            }
+        } else if (subAtom != null) {
+            // SubAtom is bound (ground): search for matching positions only
+            int subLen = subAtom.length();
+            int idx = 0;
+            while ((idx = atom.indexOf(subAtom, idx)) != -1) {
+                int b = idx;
+                int len = subLen;
+                int a = atomLength - b - len;
+                if (after != null && after != a) { idx++; continue; }
+                if (trySolution(b, len, a, subAtom, beforeTerm, lengthTerm, afterTerm, subAtomTerm, bindings, solutions)) {
                     foundSolution = true;
+                }
+                idx++;
+            }
+            // Also handle empty sub_atom matches if subAtom is empty
+            if (subAtom.isEmpty()) {
+                for (int b = 0; b <= atomLength; b++) {
+                    int a = atomLength - b;
+                    if (after != null && after != a) continue;
+                    if (trySolution(b, 0, a, "", beforeTerm, lengthTerm, afterTerm, subAtomTerm, bindings, solutions)) {
+                        foundSolution = true;
+                    }
+                }
+            }
+        } else {
+            // Fallback: fully unbound case - double loop
+            for (int b = 0; b <= atomLength; b++) {
+                for (int len = 0; len <= atomLength - b; len++) {
+                    int a = atomLength - b - len;
+                    if (after != null && after != a) continue;
+                    String sub = atom.substring(b, b + len);
+                    if (trySolution(b, len, a, sub, beforeTerm, lengthTerm, afterTerm, subAtomTerm, bindings, solutions)) {
+                        foundSolution = true;
+                    }
                 }
             }
         }
-        
+        // END_CHANGE: ISS-2025-0172
+
         return foundSolution;
     }
     
+    // START_CHANGE: ISS-2025-0172 - Helper for constraint-aware sub_atom/5
+    private boolean trySolution(int b, int len, int a, String sub,
+                                Term beforeTerm, Term lengthTerm, Term afterTerm, Term subAtomTerm,
+                                Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        Map<String, Term> newBindings = new HashMap<>(bindings);
+        boolean ok = true;
+        if (ok) ok = beforeTerm.unify(new it.denzosoft.jprolog.core.terms.Number((double) b), newBindings);
+        if (ok) ok = lengthTerm.unify(new it.denzosoft.jprolog.core.terms.Number((double) len), newBindings);
+        if (ok) ok = afterTerm.unify(new it.denzosoft.jprolog.core.terms.Number((double) a), newBindings);
+        if (ok) ok = subAtomTerm.unify(new Atom(sub), newBindings);
+        if (ok) {
+            solutions.add(newBindings);
+            return true;
+        }
+        return false;
+    }
+    // END_CHANGE: ISS-2025-0172
+
     /**
      * Extract integer value from a term if it's a number, null if variable.
      */

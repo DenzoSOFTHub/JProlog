@@ -59,6 +59,10 @@ public class BuiltInRegistry {
         putArity("sub_atom", 5);
         // call/1..8
         BUILTIN_ARITY_RANGES.put("call", new int[]{1, 8});
+        // START_CHANGE: ISS-2025-0092 - Tabling predicates
+        putArity("table", 1);
+        putArity("abolish_all_tables", 0);
+        // END_CHANGE: ISS-2025-0092
     }
 
     private static void putArity(String name, int... arities) {

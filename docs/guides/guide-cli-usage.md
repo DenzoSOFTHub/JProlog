@@ -373,14 +373,14 @@ For more information about Prolog programming and ISO standard compliance, consu
 
 ## Version Information
 
-This guide is current as of **JProlog v2.2.0**. All CLI functionality and examples described have been tested with this version.
+This guide is current as of **JProlog v2.5.5**. All CLI functionality and examples described have been tested with this version.
 
 **Launch Command:**
 ```bash
 java -cp target/classes it.denzosoft.jprolog.PrologCLI
 ```
 
-### Binary Compilation (v2.2.0+)
+### Binary Compilation (v2.5.5+)
 
 Compile Prolog files to binary `.jpc` format for faster loading:
 

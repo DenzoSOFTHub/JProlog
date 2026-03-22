@@ -1,7 +1,7 @@
 # JProlog Built-in Operators Reference
 
-**Version**: JProlog v2.2.0
-**Last Updated**: 2026-03-18
+**Version**: JProlog v2.5.5
+**Last Updated**: 2026-03-22
 **Total Operators**: 25+ operators with comprehensive precedence rules, plus dynamic `op/3` support
 
 This reference guide organizes JProlog's built-in operators by their function and precedence. Each section includes explanations suitable for users new to Prolog, with detailed examples showing practical applications.

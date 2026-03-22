@@ -43,9 +43,15 @@ public final class CollectionUtils {
         Term rawGoal = query.getArguments().get(1);
         Term listVariable = query.getArguments().get(2);
 
+        // START_CHANGE: ISS-2025-0107 - Resolve bindings on goal before solving (meta-variable support)
+        // When goal is a variable bound to a term (e.g., findall(X, Goal, L) where Goal=member(X,[a,b,c])),
+        // we must resolve it to the actual goal term before attempting to solve it.
+        Term resolvedGoal = rawGoal.resolveBindings(bindings);
+        // END_CHANGE: ISS-2025-0107
+
         // START_CHANGE: ISS-2025-0062 - Handle ^ existential quantification in bagof/setof
         // Strip existential quantification: Var^Goal -> Goal (ignore Var for grouping)
-        Term goal = stripExistentialQuantification(rawGoal);
+        Term goal = stripExistentialQuantification(resolvedGoal);
         // END_CHANGE: ISS-2025-0062
 
         List<Term> collectedTerms = new ArrayList<>();
@@ -103,6 +109,30 @@ public final class CollectionUtils {
      * @param terms The terms to include in the list
      * @return The list term representation
      */
+    // START_CHANGE: ISS-2025-0118 - Convert Prolog list term to Java List
+    /**
+     * Convert a Prolog list term (.(H,T) chains ending in []) to a Java List.
+     * Returns null if the term is not a proper list.
+     */
+    public static List<Term> termToList(Term term) {
+        List<Term> result = new ArrayList<>();
+        Term current = term;
+        while (current instanceof CompoundTerm) {
+            CompoundTerm ct = (CompoundTerm) current;
+            if (".".equals(ct.getName()) && ct.getArguments().size() == 2) {
+                result.add(ct.getArguments().get(0));
+                current = ct.getArguments().get(1);
+            } else {
+                return null;
+            }
+        }
+        if (current instanceof Atom && "[]".equals(((Atom) current).getName())) {
+            return result;
+        }
+        return null;
+    }
+    // END_CHANGE: ISS-2025-0118
+
     // START_CHANGE: ISS-2025-0091 - Reuse cached Atom instances, use Arrays.asList
     public static Term createListTerm(List<Term> terms) {
         if (terms == null || terms.isEmpty()) {

@@ -14,7 +14,7 @@ JProlog aims to provide ISO-compliant Prolog functionality with modern developme
 - **Binary Compiled Format**: `.jpc` (JProlog Compiled) format with string interning for fast loading
 - **Professional Development Environment**: Full-featured IDE with debugging capabilities
 - **Command Line Interface**: Interactive Prolog console for quick testing and scripting
-- **Comprehensive Built-in Library**: 110+ built-in predicates including higher-order list operations
+- **Comprehensive Built-in Library**: 265+ built-in predicates including higher-order list operations
 - **Advanced DCG Support**: 85% success rate on comprehensive DCG parsing scenarios
 - **Java Integration**: Easy embedding of Prolog logic in Java applications
 
@@ -230,7 +230,7 @@ JProlog provides comprehensive documentation for all aspects of the system:
 
 ## 📊 **Quality Metrics & Compliance**
 
-### 🎯 **Current Status (Version 2.2.0)**
+### 🎯 **Current Status (Version 2.5.5)**
 - **Unit Tests**: 320 tests, 0 failures, 0 errors
 - **Core Test Success Rate**: 95% (19/20 comprehensive example programs pass)
 - **ISO Prolog Compliance**: ~95% with comprehensive built-in predicate implementation
@@ -420,13 +420,13 @@ mvn clean compile
 
 Copyright © 2024 DenzoSOFT. All rights reserved.
 
-Version 2.2.0 - Released March 2026
+Version 2.5.5 - Released March 2026
 
 ## 🌐 **Project Information**
 
 - **Repository**: https://github.com/DenzoSOFTHub/JProlog
 - **Website**: https://denzosoft.it
-- **Latest Release**: v2.2.0 with robust parser, binary compiled format, and 320 passing tests
+- **Latest Release**: v2.5.5 with robust parser, binary compiled format, and 320 passing tests
 - **License**: Proprietary (DenzoSOFT)
 
 ---
@@ -436,7 +436,7 @@ Version 2.2.0 - Released March 2026
 ✅ **Excellent ISO Compliance**: ~95% ISO 13211-1 support with comprehensive built-in predicate coverage
 ✅ **Robust Parser**: Unified Pratt parser with dynamic operator support and incremental directive processing
 ✅ **Fast Loading**: Binary `.jpc` compiled format with string interning and smart caching
-✅ **Complete Ecosystem**: Engine + IDE + CLI + 80+ Built-ins in one package
+✅ **Complete Ecosystem**: Engine + IDE + CLI + 265+ Built-ins in one package
 ✅ **Professional Tools**: Full-featured IDE with debugging capabilities
 ✅ **Advanced Grammar Processing**: 85% DCG success rate with comprehensive parsing capabilities
 ✅ **Easy Integration**: Simple Java API for embedding Prolog logic with `compile()` and `consultSmart()`

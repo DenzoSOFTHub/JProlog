@@ -1,7 +1,7 @@
 # JProlog Exception Handling Guide
 
-**Version**: JProlog v2.0.9  
-**Last Updated**: 2025-08-20  
+**Version**: JProlog v2.5.5
+**Last Updated**: 2026-03-22
 **ISO Compliance**: Full ISO 13211-1 standard support
 
 This guide provides comprehensive documentation for exception handling in JProlog, covering the complete ISO-compliant exception system implemented in Phase 2.

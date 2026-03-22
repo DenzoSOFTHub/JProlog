@@ -1,6 +1,8 @@
 package it.denzosoft.jprolog.builtin.list;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
+import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -23,7 +25,9 @@ public class Flatten implements BuiltIn {
         Term result = query.getArguments().get(1);
 
         List<Term> flat = new ArrayList<>();
-        flattenTerm(nested, flat);
+        // START_CHANGE: ISS-2025-0169 - Add depth limit to prevent infinite recursion on cyclic lists
+        flattenTerm(nested, flat, 0);
+        // END_CHANGE: ISS-2025-0169
 
         Map<String, Term> newBindings = new HashMap<>(bindings);
         if (result.unify(ListUtils.createList(flat), newBindings)) {
@@ -33,7 +37,13 @@ public class Flatten implements BuiltIn {
         return false;
     }
 
-    private void flattenTerm(Term term, List<Term> result) {
+    // START_CHANGE: ISS-2025-0169 - Add depth limit to prevent infinite recursion on cyclic lists
+    private static final int MAX_FLATTEN_DEPTH = 10000;
+
+    private void flattenTerm(Term term, List<Term> result, int depth) {
+        if (depth > MAX_FLATTEN_DEPTH) {
+            throw new PrologException(ISOErrorTerms.resourceError("cyclic_term", "flatten/2"));
+        }
         if (term instanceof Atom && ((Atom) term).getName().equals("[]")) {
             return;
         }
@@ -44,17 +54,18 @@ public class Flatten implements BuiltIn {
                 Term tail = ct.getArguments().get(1);
                 // If head is itself a list, flatten it recursively
                 if (isList(head)) {
-                    flattenTerm(head, result);
+                    flattenTerm(head, result, depth + 1);
                 } else {
                     result.add(head);
                 }
-                flattenTerm(tail, result);
+                flattenTerm(tail, result, depth + 1);
                 return;
             }
         }
         // Non-list term — add as-is
         result.add(term);
     }
+    // END_CHANGE: ISS-2025-0169
 
     private boolean isList(Term term) {
         if (term instanceof Atom && ((Atom) term).getName().equals("[]")) return true;

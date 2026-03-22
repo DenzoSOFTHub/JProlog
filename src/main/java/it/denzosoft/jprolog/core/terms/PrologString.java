@@ -34,10 +34,12 @@ public class PrologString extends Term {
         return true; // Strings are always ground
     }
     
+    // START_CHANGE: ISS-2025-0101 - PrologString is immutable, reuse instance
     @Override
     public Term copy() {
-        return new PrologString(value); // Create a copy with the same value
+        return this;
     }
+    // END_CHANGE: ISS-2025-0101
     
     @Override
     public Term resolveBindings(Map<java.lang.String, Term> bindings) {

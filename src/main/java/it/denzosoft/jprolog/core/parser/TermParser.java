@@ -565,13 +565,13 @@ public class TermParser {
             }
             return bestMatch;
         } else {
-            // Fallback: just read the symbolic chars (not dots)
-            StringBuilder fallback = new StringBuilder();
-            while (position < input.length() && isSymbolicChar(currentChar())) {
-                fallback.append(currentChar());
-                nextChar();
-            }
-            return fallback.length() > 0 ? fallback.toString() : java.lang.String.valueOf(allSymbols.charAt(0));
+            // START_CHANGE: ISS-2025-0106 - Single char fallback to avoid consuming operators like ','
+            // Only consume one character, matching readToken() behavior.
+            // Greedy read would consume structural chars (e.g., '!,' as one token).
+            char ch = currentChar();
+            nextChar();
+            return java.lang.String.valueOf(ch);
+            // END_CHANGE: ISS-2025-0106
         }
     }
 

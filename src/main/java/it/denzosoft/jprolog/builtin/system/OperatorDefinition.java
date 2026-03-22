@@ -39,8 +39,11 @@ public class OperatorDefinition implements BuiltIn {
         }
     }
     
+    // START_CHANGE: ISS-2025-0177 - Fix dual-arity operator bug: use composite key (name:typeClass)
     // Global operator registry - shared across all instances
+    // Key format: "name:typeClass" where typeClass is "prefix", "infix", or "postfix"
     private static final Map<String, OperatorInfo> OPERATORS = new ConcurrentHashMap<>();
+    // END_CHANGE: ISS-2025-0177
 
     // START_CHANGE: ISS-2025-0085 - Shared OperatorTable for parser integration
     private static volatile OperatorTable sharedOperatorTable;
@@ -67,72 +70,104 @@ public class OperatorDefinition implements BuiltIn {
         initializeISOOperators();
     }
     
+    // START_CHANGE: ISS-2025-0177 - Fix dual-arity operator bug: use composite key
     private static void initializeISOOperators() {
         // Precedence 1200 (lowest binding)
-        OPERATORS.put(":-", new OperatorInfo(1200, "fx", ":-"));  // Rule definition
-        OPERATORS.put("-->", new OperatorInfo(1200, "xfx", "-->"));  // DCG rule
-        
-        // Precedence 1150  
-        OPERATORS.put(";", new OperatorInfo(1150, "xfy", ";"));   // Disjunction/if-then-else
-        
+        putOperator(new OperatorInfo(1200, "xfx", ":-"));  // Rule definition (infix)
+        putOperator(new OperatorInfo(1200, "fx", ":-"));    // Directive (prefix)
+        putOperator(new OperatorInfo(1200, "xfx", "-->"));  // DCG rule
+        putOperator(new OperatorInfo(1200, "fx", "?-"));    // Query directive
+
         // Precedence 1100
-        OPERATORS.put("->", new OperatorInfo(1100, "xfy", "->"));  // If-then
-        
+        putOperator(new OperatorInfo(1100, "xfy", ";"));   // Disjunction/if-then-else
+
         // Precedence 1050
-        OPERATORS.put("*->", new OperatorInfo(1050, "xfy", "*->"));  // Soft cut
-        
+        putOperator(new OperatorInfo(1050, "xfy", "->"));  // If-then
+
         // Precedence 1000
-        OPERATORS.put(",", new OperatorInfo(1000, "xfy", ","));   // Conjunction
-        
+        putOperator(new OperatorInfo(1000, "xfy", ","));   // Conjunction
+
         // Precedence 900
-        OPERATORS.put("\\+", new OperatorInfo(900, "fy", "\\+"));  // Negation as failure
-        
+        putOperator(new OperatorInfo(900, "fy", "\\+"));  // Negation as failure
+
         // Precedence 700 (comparison and unification)
-        OPERATORS.put("=", new OperatorInfo(700, "xfx", "="));
-        OPERATORS.put("\\=", new OperatorInfo(700, "xfx", "\\="));
-        OPERATORS.put("==", new OperatorInfo(700, "xfx", "=="));
-        OPERATORS.put("\\==", new OperatorInfo(700, "xfx", "\\=="));
-        OPERATORS.put("@<", new OperatorInfo(700, "xfx", "@<"));
-        OPERATORS.put("@=<", new OperatorInfo(700, "xfx", "@=<"));
-        OPERATORS.put("@>", new OperatorInfo(700, "xfx", "@>"));
-        OPERATORS.put("@>=", new OperatorInfo(700, "xfx", "@>="));
-        OPERATORS.put("=..", new OperatorInfo(700, "xfx", "=.."));
-        OPERATORS.put("is", new OperatorInfo(700, "xfx", "is"));
-        OPERATORS.put("=:=", new OperatorInfo(700, "xfx", "=:="));
-        OPERATORS.put("=\\=", new OperatorInfo(700, "xfx", "=\\="));
-        OPERATORS.put("<", new OperatorInfo(700, "xfx", "<"));
-        OPERATORS.put("=<", new OperatorInfo(700, "xfx", "=<"));
-        OPERATORS.put(">", new OperatorInfo(700, "xfx", ">"));
-        OPERATORS.put(">=", new OperatorInfo(700, "xfx", ">="));
-        
+        putOperator(new OperatorInfo(700, "xfx", "="));
+        putOperator(new OperatorInfo(700, "xfx", "\\="));
+        putOperator(new OperatorInfo(700, "xfx", "=="));
+        putOperator(new OperatorInfo(700, "xfx", "\\=="));
+        putOperator(new OperatorInfo(700, "xfx", "@<"));
+        putOperator(new OperatorInfo(700, "xfx", "@=<"));
+        putOperator(new OperatorInfo(700, "xfx", "@>"));
+        putOperator(new OperatorInfo(700, "xfx", "@>="));
+        putOperator(new OperatorInfo(700, "xfx", "=.."));
+        putOperator(new OperatorInfo(700, "xfx", "is"));
+        putOperator(new OperatorInfo(700, "xfx", "=:="));
+        putOperator(new OperatorInfo(700, "xfx", "=\\="));
+        putOperator(new OperatorInfo(700, "xfx", "<"));
+        putOperator(new OperatorInfo(700, "xfx", "=<"));
+        putOperator(new OperatorInfo(700, "xfx", ">"));
+        putOperator(new OperatorInfo(700, "xfx", ">="));
+
+        // Precedence 600
+        putOperator(new OperatorInfo(600, "xfy", ":"));
+
         // Precedence 500 (addition-like)
-        OPERATORS.put("+", new OperatorInfo(500, "yfx", "+"));
-        OPERATORS.put("-", new OperatorInfo(500, "yfx", "-"));
-        OPERATORS.put("/\\", new OperatorInfo(500, "yfx", "/\\"));  // Bitwise AND
-        OPERATORS.put("\\/", new OperatorInfo(500, "yfx", "\\/"));  // Bitwise OR
-        OPERATORS.put("xor", new OperatorInfo(500, "yfx", "xor"));
-        
+        putOperator(new OperatorInfo(500, "yfx", "+"));
+        putOperator(new OperatorInfo(500, "yfx", "-"));
+        putOperator(new OperatorInfo(500, "yfx", "/\\"));  // Bitwise AND
+        putOperator(new OperatorInfo(500, "yfx", "\\/"));  // Bitwise OR
+        putOperator(new OperatorInfo(500, "yfx", "xor"));
+
         // Precedence 400 (multiplication-like)
-        OPERATORS.put("*", new OperatorInfo(400, "yfx", "*"));
-        OPERATORS.put("/", new OperatorInfo(400, "yfx", "/"));
-        OPERATORS.put("//", new OperatorInfo(400, "yfx", "//"));
-        OPERATORS.put("rem", new OperatorInfo(400, "yfx", "rem"));
-        OPERATORS.put("mod", new OperatorInfo(400, "yfx", "mod"));
-        OPERATORS.put("<<", new OperatorInfo(400, "yfx", "<<"));
-        OPERATORS.put(">>", new OperatorInfo(400, "yfx", ">>"));
-        
+        putOperator(new OperatorInfo(400, "yfx", "*"));
+        putOperator(new OperatorInfo(400, "yfx", "/"));
+        putOperator(new OperatorInfo(400, "yfx", "//"));
+        putOperator(new OperatorInfo(400, "yfx", "rem"));
+        putOperator(new OperatorInfo(400, "yfx", "mod"));
+        putOperator(new OperatorInfo(400, "yfx", "<<"));
+        putOperator(new OperatorInfo(400, "yfx", ">>"));
+
         // Precedence 200 (highest binding)
-        OPERATORS.put("**", new OperatorInfo(200, "xfx", "**"));
-        OPERATORS.put("^", new OperatorInfo(200, "xfy", "^"));   // Power/existential quantification
-        
-        // Unary operators
-        OPERATORS.put("+", new OperatorInfo(200, "fy", "+"));   // Unary plus
-        OPERATORS.put("-", new OperatorInfo(200, "fy", "-"));   // Unary minus
-        OPERATORS.put("\\", new OperatorInfo(200, "fy", "\\"));  // Bitwise NOT
+        putOperator(new OperatorInfo(200, "xfx", "**"));
+        putOperator(new OperatorInfo(200, "xfy", "^"));   // Power/existential quantification
+
+        // Unary operators (prefix - these no longer overwrite the infix versions)
+        putOperator(new OperatorInfo(200, "fy", "+"));   // Unary plus
+        putOperator(new OperatorInfo(200, "fy", "-"));   // Unary minus
+        putOperator(new OperatorInfo(200, "fy", "\\"));  // Bitwise NOT
     }
+    // END_CHANGE: ISS-2025-0177
     
+    // START_CHANGE: ISS-2025-0177 - Composite key helpers for dual-arity operator support
+    /**
+     * Get the type class (prefix, infix, or postfix) for an operator specifier.
+     */
+    private static String typeClass(String specifier) {
+        switch (specifier.toLowerCase()) {
+            case "fx": case "fy": return "prefix";
+            case "xf": case "yf": return "postfix";
+            case "xfx": case "xfy": case "yfx": return "infix";
+            default: return "infix";
+        }
+    }
+
+    /**
+     * Build the composite key for the OPERATORS map: "name:typeClass".
+     */
+    private static String compositeKey(String name, String specifier) {
+        return name + ":" + typeClass(specifier);
+    }
+
+    /**
+     * Store an operator using the composite key.
+     */
+    private static void putOperator(OperatorInfo info) {
+        OPERATORS.put(compositeKey(info.name, info.type), info);
+    }
+    // END_CHANGE: ISS-2025-0177
+
     private final OperatorType type;
-    
+
     public OperatorDefinition(OperatorType type) {
         this.type = type;
     }
@@ -196,8 +231,10 @@ public class OperatorDefinition implements BuiltIn {
         }
 
         if (precedence == 0) {
-            // Remove operator
-            OPERATORS.remove(name);
+            // START_CHANGE: ISS-2025-0177 - Remove using composite key
+            // Remove operator by composite key (name:typeClass)
+            OPERATORS.remove(compositeKey(name, operatorType));
+            // END_CHANGE: ISS-2025-0177
             if (sharedOperatorTable != null) {
                 // Remove all operators with this name and compatible type
                 Operator.Type type = Operator.parseType(operatorType);
@@ -209,8 +246,10 @@ public class OperatorDefinition implements BuiltIn {
                 }
             }
         } else {
+            // START_CHANGE: ISS-2025-0177 - Register using composite key
             // Register or update the operator
-            OPERATORS.put(name, new OperatorInfo(precedence, operatorType, name));
+            putOperator(new OperatorInfo(precedence, operatorType, name));
+            // END_CHANGE: ISS-2025-0177
             if (sharedOperatorTable != null) {
                 Operator.Type type = Operator.parseType(operatorType);
                 sharedOperatorTable.defineOperator(precedence, type, name);
@@ -298,26 +337,57 @@ public class OperatorDefinition implements BuiltIn {
     }
     // END_CHANGE: ISS-2025-0085
     
+    // START_CHANGE: ISS-2025-0177 - Dual-arity aware lookup methods
     /**
      * Get operator information for a given operator name.
+     * Returns the infix operator by default (most common usage).
+     * Falls back to prefix, then postfix if no infix definition exists.
      */
     public static OperatorInfo getOperator(String name) {
-        return OPERATORS.get(name);
+        OperatorInfo info = OPERATORS.get(name + ":infix");
+        if (info != null) return info;
+        info = OPERATORS.get(name + ":prefix");
+        if (info != null) return info;
+        return OPERATORS.get(name + ":postfix");
     }
-    
+
     /**
-     * Check if an operator is defined.
+     * Get the prefix operator for a given name, or null if none.
+     */
+    public static OperatorInfo getPrefixOperator(String name) {
+        return OPERATORS.get(name + ":prefix");
+    }
+
+    /**
+     * Get the infix operator for a given name, or null if none.
+     */
+    public static OperatorInfo getInfixOperator(String name) {
+        return OPERATORS.get(name + ":infix");
+    }
+
+    /**
+     * Get the postfix operator for a given name, or null if none.
+     */
+    public static OperatorInfo getPostfixOperator(String name) {
+        return OPERATORS.get(name + ":postfix");
+    }
+
+    /**
+     * Check if an operator is defined (any type class).
      */
     public static boolean isOperatorDefined(String name) {
-        return OPERATORS.containsKey(name);
+        return OPERATORS.containsKey(name + ":infix") ||
+               OPERATORS.containsKey(name + ":prefix") ||
+               OPERATORS.containsKey(name + ":postfix");
     }
-    
+
     /**
-     * Get all defined operators.
+     * Get all defined operators. Returns a map keyed by composite key (name:typeClass).
      */
     public static Map<String, OperatorInfo> getAllOperators() {
         return new HashMap<>(OPERATORS);
     }
+    // END_CHANGE: ISS-2025-0177
     
     private Term resolveVariable(Term term, Map<String, Term> bindings) {
         if (term instanceof it.denzosoft.jprolog.core.terms.Variable) {

@@ -7,13 +7,17 @@ import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.util.TermUtils;
 
 import java.util.*;
+import java.util.logging.Logger;
 
 /**
  * Manages the module system for ISO Prolog compliance.
  * Handles module creation, imports, exports, and predicate resolution.
  */
 public class ModuleManager {
-    
+    // START_CHANGE: ISS-2025-0167 - Logger for name collision warnings
+    private static final Logger LOGGER = Logger.getLogger(ModuleManager.class.getName());
+    // END_CHANGE: ISS-2025-0167
+
     private final Map<String, Module> modules;
     private Module currentModule;
     private Module userModule;
@@ -103,7 +107,7 @@ public class ModuleManager {
     
     /**
      * Import a module into the current module.
-     * 
+     *
      * @param moduleName The module to import
      */
     public void importModule(String moduleName) {
@@ -111,12 +115,17 @@ public class ModuleManager {
         if (module == null) {
             throw new IllegalArgumentException("Module not found: " + moduleName);
         }
+        // START_CHANGE: ISS-2025-0167 - Name collision detection on import
+        for (PredicateSignature sig : module.getExportedPredicates()) {
+            checkImportCollision(sig, moduleName);
+        }
+        // END_CHANGE: ISS-2025-0167
         currentModule.importModule(module);
     }
-    
+
     /**
      * Import specific predicates from a module.
-     * 
+     *
      * @param moduleName The module to import from
      * @param predicates List of predicates to import
      */
@@ -125,8 +134,41 @@ public class ModuleManager {
         if (module == null) {
             throw new IllegalArgumentException("Module not found: " + moduleName);
         }
+        // START_CHANGE: ISS-2025-0167 - Name collision detection on import
+        for (PredicateSignature sig : predicates) {
+            checkImportCollision(sig, moduleName);
+        }
+        // END_CHANGE: ISS-2025-0167
         currentModule.importModule(module, predicates);
     }
+
+    // START_CHANGE: ISS-2025-0167 - Name collision detection
+    /**
+     * Check if importing a predicate would collide with an existing predicate
+     * in the current module (locally defined or imported from another module).
+     * Logs a warning if a collision is detected.
+     *
+     * @param sig The predicate signature being imported
+     * @param sourceModuleName The name of the module being imported from
+     */
+    private void checkImportCollision(PredicateSignature sig, String sourceModuleName) {
+        if (currentModule.isLocallyDefined(sig)) {
+            LOGGER.warning("Import collision: predicate " + sig +
+                " from module '" + sourceModuleName +
+                "' conflicts with locally defined predicate in module '" +
+                currentModule.getName() + "'");
+        } else {
+            Module existingSource = currentModule.resolvePredicate(sig);
+            if (existingSource != null && !existingSource.getName().equals(sourceModuleName)) {
+                LOGGER.warning("Import collision: predicate " + sig +
+                    " from module '" + sourceModuleName +
+                    "' conflicts with predicate already imported from module '" +
+                    existingSource.getName() + "' in module '" +
+                    currentModule.getName() + "'");
+            }
+        }
+    }
+    // END_CHANGE: ISS-2025-0167
     
     /**
      * Resolve a predicate call with module qualification.
@@ -154,13 +196,23 @@ public class ModuleManager {
         String functor = term instanceof Atom ? ((Atom) term).getName() : TermUtils.getFunctorName(term);
         int arity = term instanceof Atom ? 0 : TermUtils.getArity(term);
         PredicateSignature signature = new PredicateSignature(functor, arity);
-        
+
+        // START_CHANGE: ISS-2025-0165 - Use internal resolution for current module, external for others
+        // Current module can see all its own predicates (internal access)
         Module resolvedModule = currentModule.resolvePredicate(signature);
-        if (resolvedModule == null) {
-            // Fall back to user module if not found
+        if (resolvedModule != null && resolvedModule != currentModule) {
+            // The predicate was found in an imported module - verify export visibility
+            resolvedModule = resolvedModule.resolvePredicateForExternalAccess(signature);
+        }
+        if (resolvedModule == null && currentModule != userModule) {
+            // Fall back to user module - use external access since it's a different module
+            resolvedModule = userModule.resolvePredicateForExternalAccess(signature);
+        } else if (resolvedModule == null) {
+            // Current module IS the user module - use internal access
             resolvedModule = userModule.resolvePredicate(signature);
         }
-        
+        // END_CHANGE: ISS-2025-0165
+
         return new ModuleQualifiedCall(resolvedModule, term);
     }
     

@@ -171,27 +171,46 @@ public class OperatorDefinitionTest {
     public void testStandardISOOperatorsPreloaded() {
         // Verify that standard ISO operators are preloaded
         
-        // Test some key operators with their expected precedences
-        // Note: + currently returns unary version due to HashMap overwrite
+        // START_CHANGE: ISS-2025-0177 - Fix dual-arity operator tests
+        // getOperator returns infix version by default (most common usage)
         OperatorDefinition.OperatorInfo plusOp = OperatorDefinition.getOperator("+");
         assertNotNull(plusOp);
-        assertEquals(200, plusOp.precedence);  // Unary + precedence
-        assertEquals("fy", plusOp.type);       // Unary + type
-        
+        assertEquals(500, plusOp.precedence);  // Infix + precedence
+        assertEquals("yfx", plusOp.type);       // Infix + type
+
+        // Verify prefix + is also available via getPrefixOperator
+        OperatorDefinition.OperatorInfo prefixPlusOp = OperatorDefinition.getPrefixOperator("+");
+        assertNotNull(prefixPlusOp);
+        assertEquals(200, prefixPlusOp.precedence);
+        assertEquals("fy", prefixPlusOp.type);
+
+        // Verify - has both infix and prefix forms
+        OperatorDefinition.OperatorInfo minusOp = OperatorDefinition.getOperator("-");
+        assertNotNull(minusOp);
+        assertEquals(500, minusOp.precedence);
+        assertEquals("yfx", minusOp.type);
+
+        OperatorDefinition.OperatorInfo prefixMinusOp = OperatorDefinition.getPrefixOperator("-");
+        assertNotNull(prefixMinusOp);
+        assertEquals(200, prefixMinusOp.precedence);
+        assertEquals("fy", prefixMinusOp.type);
+        // END_CHANGE: ISS-2025-0177
+
         OperatorDefinition.OperatorInfo isOp = OperatorDefinition.getOperator("is");
         assertNotNull(isOp);
         assertEquals(700, isOp.precedence);
         assertEquals("xfx", isOp.type);
-        
+
         OperatorDefinition.OperatorInfo commaOp = OperatorDefinition.getOperator(",");
         assertNotNull(commaOp);
         assertEquals(1000, commaOp.precedence);
         assertEquals("xfy", commaOp.type);
-        
+
+        // :- has both infix (xfx) and prefix (fx) forms; getOperator returns infix
         OperatorDefinition.OperatorInfo ruleOp = OperatorDefinition.getOperator(":-");
         assertNotNull(ruleOp);
         assertEquals(1200, ruleOp.precedence);
-        assertEquals("fx", ruleOp.type);
+        assertEquals("xfx", ruleOp.type);
     }
     
     @Test

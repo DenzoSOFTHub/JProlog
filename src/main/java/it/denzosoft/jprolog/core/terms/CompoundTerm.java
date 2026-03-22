@@ -40,10 +40,10 @@ public class CompoundTerm extends Term {
         return functor.getName();
     }
 
-    // START_CHANGE: ISS-2025-0091 - Optimize unification with key-snapshot rollback
-    // Instead of copying the entire HashMap (keys + values + rehash), we snapshot
-    // only the key set. On success (common case), we save the putAll cost entirely.
-    // On failure, we rollback by removing keys not in the snapshot.
+    // START_CHANGE: ISS-2025-0096 - Optimized compound unification rollback
+    // Fast path for LayeredMap: uses mark/rollback (O(K) where K = additions).
+    // Standard HashMap path: uses key snapshot + retainAll (unchanged semantics).
+    // On success (common case in matching rules): no rollback needed.
     @Override
     public boolean unify(Term term, Map<String, Term> substitution) {
         if (term instanceof Variable) {
@@ -55,25 +55,41 @@ public class CompoundTerm extends Term {
                 return false;
             }
 
-            // Snapshot existing keys for rollback (cheaper than full HashMap copy)
-            java.util.Set<String> savedKeys = new java.util.HashSet<>(substitution.keySet());
+            int argCount = this.arguments.size();
 
-            for (int i = 0; i < this.arguments.size(); i++) {
-                if (!this.arguments.get(i).unify(otherCompound.arguments.get(i), substitution)) {
-                    // Rollback: remove all bindings added during this compound unification
-                    if (substitution.size() > savedKeys.size()) {
-                        substitution.keySet().retainAll(savedKeys);
+            // Fast path for LayeredMap: use O(K) mark/rollback
+            if (substitution instanceof it.denzosoft.jprolog.core.engine.LayeredMap) {
+                it.denzosoft.jprolog.core.engine.LayeredMap layered =
+                    (it.denzosoft.jprolog.core.engine.LayeredMap) substitution;
+                int mark = layered.mark();
+                for (int i = 0; i < argCount; i++) {
+                    if (!this.arguments.get(i).unify(otherCompound.arguments.get(i), substitution)) {
+                        layered.rollbackToMark(mark);
+                        return false;
                     }
+                }
+                return true;
+            }
+
+            // START_CHANGE: ISS-2025-0163 - Correct rollback: snapshot full map, not just keys
+            // retainAll(savedKeys) only removes added keys but doesn't restore overwritten values.
+            // Full snapshot ensures correct rollback even if values are overwritten.
+            java.util.Map<String, Term> snapshot = new java.util.HashMap<>(substitution);
+            for (int i = 0; i < argCount; i++) {
+                if (!this.arguments.get(i).unify(otherCompound.arguments.get(i), substitution)) {
+                    // Restore substitution to pre-unification state
+                    substitution.clear();
+                    substitution.putAll(snapshot);
                     return false;
                 }
             }
-            // Success: all bindings already in the map, no putAll needed
+            // END_CHANGE: ISS-2025-0163
             return true;
         } else {
             return false;
         }
     }
-    // END_CHANGE: ISS-2025-0091
+    // END_CHANGE: ISS-2025-0096
 
     @Override
     public boolean isGround() {
@@ -149,14 +165,32 @@ public class CompoundTerm extends Term {
         return new CompoundTerm(functor, copiedArguments);
     }
     
+    // START_CHANGE: ISS-2025-0100 - Skip allocation when no arguments change
     @Override
     public Term resolveBindings(Map<String, Term> bindings) {
-        List<Term> resolvedArguments = new ArrayList<>();
-        for (Term arg : arguments) {
-            resolvedArguments.add(arg.resolveBindings(bindings));
+        // First pass: check if anything actually changes
+        int argCount = arguments.size();
+        List<Term> resolvedArguments = null; // Lazy allocation
+        for (int i = 0; i < argCount; i++) {
+            Term arg = arguments.get(i);
+            Term resolved = arg.resolveBindings(bindings);
+            if (resolved != arg && resolvedArguments == null) {
+                // Something changed — allocate and backfill
+                resolvedArguments = new ArrayList<>(argCount);
+                for (int j = 0; j < i; j++) {
+                    resolvedArguments.add(arguments.get(j));
+                }
+            }
+            if (resolvedArguments != null) {
+                resolvedArguments.add(resolved);
+            }
+        }
+        if (resolvedArguments == null) {
+            return this; // Nothing changed — no allocation
         }
         return new CompoundTerm(functor, resolvedArguments);
     }
+    // END_CHANGE: ISS-2025-0100
     
     @Override
     public boolean equals(Object obj) {

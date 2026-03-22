@@ -1,7 +1,7 @@
 # JProlog Built-in Predicates Reference
 
-**Version**: JProlog v2.0.15  
-**Last Updated**: 2025-08-20  
+**Version**: JProlog v2.5.5
+**Last Updated**: 2026-03-22
 **Total Built-ins**: 93+ predicates + 20+ arithmetic functions
 
 I predicati sono organizzati in ordine alfabetico per nome.
