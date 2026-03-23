@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.0] - 2026-03-23
+
+### Major: Attributed Variables, Coroutining, BigInteger Arithmetic, Module Calls
+
+Feature release implementing all Critical and High priority limitations (LIM-001 through LIM-009).
+
+#### Added — Critical Features
+- **LIM-001**: Coroutining — `freeze/2`, `when/2`, `dif/2` with attributed variable hooks
+- **LIM-002**: Attributed variables — `put_attr/3`, `get_attr/3`, `del_attr/2`, `attvar/1` with unification hooks in `Variable.unify()`
+- **LIM-003**: Global non-backtrackable variables — `nb_setval/2`, `nb_getval/2`, `nb_current/2`, `nb_delete/1`, `b_setval/2`, `b_getval/2`
+- **LIM-004**: Module-qualified calls — `Module:Goal` resolution in QuerySolver with existence_error for unknown modules
+
+#### Added — High Priority Features
+- **LIM-005**: `predicate_property/2` — query built_in, dynamic, static, defined properties
+- **LIM-006**: `code_type/2` — character code classification (alpha, digit, space, upper, lower, etc.)
+- **LIM-007**: Stream repositioning — `set_stream_position/2`, `stream_position/2` for seekable streams
+- **LIM-008**: Arbitrary precision integers — `Number` class now supports `long`/`BigInteger`/`double` dual representation; integer arithmetic stays exact; overflow promotes to BigInteger
+- **LIM-009**: Enhanced `write_term/2` options — `numbervars/1`, `quoted/1`, `ignore_ops/1`, `max_depth/1`; `numbervars/3` predicate; enhanced `read_term/2` with `variable_names/1`
+
+#### Fixed
+- `is/2` comparison bug: `getValue() ==` used reference equality on boxed Doubles; changed to `doubleValue() ==` for primitive comparison
+- `Dif.java` / `When.java` compilation error: `CompoundTerm` constructor requires `Atom` functor, not `String`
+
+#### Tests
+- 320/320 JUnit tests passing
+- 20/20 example programs passing
+- New test files: `test_52_attributed_variables.pl`, `test_53_global_variables.pl`, `test_54_predicate_property.pl`
+
+---
+
 ## [2.5.5] - 2026-03-22
 
 ### Code Quality, Documentation, Dual-Arity Operators

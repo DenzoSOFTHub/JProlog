@@ -13,6 +13,103 @@ public class Variable extends Term {
     // END_CHANGE: ISS-2025-0164
     private final boolean isAnonymous;
 
+    // START_CHANGE: LIM-002 - Attributed variables support
+    /**
+     * Lazily initialized attribute map for attributed variables.
+     * Null by default for zero overhead on normal (non-attributed) variables.
+     * Keys are module names, values are attribute terms.
+     */
+    private Map<String, Term> attributes;
+
+    /**
+     * Set an attribute on this variable for the given module.
+     * @param module the module key
+     * @param value the attribute value term
+     */
+    public void putAttribute(String module, Term value) {
+        if (attributes == null) {
+            attributes = new java.util.HashMap<>();
+        }
+        attributes.put(module, value);
+    }
+
+    /**
+     * Get the attribute for the given module, or null if not set.
+     * @param module the module key
+     * @return the attribute term, or null
+     */
+    public Term getAttribute(String module) {
+        if (attributes == null) return null;
+        return attributes.get(module);
+    }
+
+    /**
+     * Check if this variable has any attributes.
+     * @return true if at least one attribute is set
+     */
+    public boolean hasAttributes() {
+        return attributes != null && !attributes.isEmpty();
+    }
+
+    /**
+     * Remove the attribute for the given module.
+     * @param module the module key
+     */
+    public void removeAttribute(String module) {
+        if (attributes != null) {
+            attributes.remove(module);
+            if (attributes.isEmpty()) {
+                attributes = null;
+            }
+        }
+    }
+
+    /**
+     * Get all attributes as an unmodifiable map. Returns empty map if no attributes.
+     * @return the attributes map
+     */
+    public Map<String, Term> getAttributes() {
+        if (attributes == null) return java.util.Collections.emptyMap();
+        return java.util.Collections.unmodifiableMap(attributes);
+    }
+    /**
+     * Callback interface for attributed variable unification hooks.
+     * Called when an attributed variable is unified with a non-variable term.
+     */
+    public interface AttributeUnifyHook {
+        /**
+         * Called when an attributed variable is unified with a value.
+         * @param variable the attributed variable being bound
+         * @param value the term it is being unified with
+         * @param substitution the current substitution map
+         * @return true if the hook goals succeeded, false to fail unification
+         */
+        boolean onAttributeUnify(Variable variable, Term value, Map<String, Term> substitution);
+    }
+
+    /**
+     * Thread-local hook set by QuerySolver to intercept attributed variable unifications.
+     * Null when no solver is active (zero overhead).
+     */
+    private static final ThreadLocal<AttributeUnifyHook> attributeUnifyHook = new ThreadLocal<>();
+
+    /**
+     * Set the attribute unification hook for the current thread.
+     * @param hook the hook, or null to clear
+     */
+    public static void setAttributeUnifyHook(AttributeUnifyHook hook) {
+        attributeUnifyHook.set(hook);
+    }
+
+    /**
+     * Get the current attribute unification hook.
+     * @return the hook, or null if not set
+     */
+    public static AttributeUnifyHook getAttributeUnifyHook() {
+        return attributeUnifyHook.get();
+    }
+    // END_CHANGE: LIM-002
+
     // START_CHANGE: ISS-2025-0168 - Occurs check flag (default: false for performance)
     /**
      * Global flag controlling whether the occurs check is performed during
@@ -94,6 +191,20 @@ public class Variable extends Term {
 
             // Bind the variable to the term
             substitution.put(var.name, derefTerm);
+
+            // START_CHANGE: LIM-002 - Trigger attribute unification hooks
+            // When an attributed variable is bound to a non-variable, invoke hooks
+            if (var.hasAttributes() && !(derefTerm instanceof Variable)) {
+                AttributeUnifyHook hook = attributeUnifyHook.get();
+                if (hook != null) {
+                    if (!hook.onAttributeUnify(var, derefTerm, substitution)) {
+                        // Hook failed — undo the binding and fail unification
+                        substitution.remove(var.name);
+                        return false;
+                    }
+                }
+            }
+            // END_CHANGE: LIM-002
             return true;
         }
 
@@ -110,6 +221,18 @@ public class Variable extends Term {
 
             // Bind the variable to the term
             substitution.put(var.name, derefThis);
+
+            // START_CHANGE: LIM-002 - Trigger attribute unification hooks
+            if (var.hasAttributes() && !(derefThis instanceof Variable)) {
+                AttributeUnifyHook hook = attributeUnifyHook.get();
+                if (hook != null) {
+                    if (!hook.onAttributeUnify(var, derefThis, substitution)) {
+                        substitution.remove(var.name);
+                        return false;
+                    }
+                }
+            }
+            // END_CHANGE: LIM-002
             return true;
         }
 

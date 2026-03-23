@@ -33,6 +33,10 @@ public class Prolog {
     // START_CHANGE: ISS-2025-0092 - Tabling (memoization) support
     private final TableStore tableStore;
     // END_CHANGE: ISS-2025-0092
+    // START_CHANGE: LIM-003 - Global non-backtrackable variables
+    private final java.util.concurrent.ConcurrentHashMap<String, it.denzosoft.jprolog.core.terms.Term> globalVariables =
+        new java.util.concurrent.ConcurrentHashMap<>();
+    // END_CHANGE: LIM-003
     private boolean traceEnabled = false;
 
     /**
@@ -74,6 +78,9 @@ public class Prolog {
                          name.equals("table") || name.equals("abolish_all_tables") ||
                          name.equals("abolish_table") ||
                          name.equals("aggregate_all") ||
+                         // START_CHANGE: LIM-005 - predicate_property/2 context-dependent predicate
+                         name.equals("predicate_property") ||
+                         // END_CHANGE: LIM-005
                          // START_CHANGE: ISS-2025-0123 - CLP(FD) context-dependent predicates
                          name.equals("in") || name.equals("#=") || name.equals("#\\=") ||
                          name.equals("#<") || name.equals("#>") || name.equals("#=<") || name.equals("#>=") ||
@@ -90,8 +97,20 @@ public class Prolog {
                          name.equals("concurrent") || name.equals("concurrent_maplist") ||
                          name.equals("concurrent_maplist3") || name.equals("concurrent_maplist4") ||
                          name.equals("first_solution") || name.equals("concurrent_and") ||
-                         name.equals("concurrent_or")
+                         name.equals("concurrent_or") ||
                          // END_CHANGE: ISS-2025-0139
+                         // START_CHANGE: LIM-003 - Global variable predicates (context-dependent)
+                         name.equals("nb_setval") || name.equals("nb_getval") ||
+                         name.equals("nb_current") || name.equals("nb_delete") ||
+                         name.equals("b_setval") || name.equals("b_getval") ||
+                         // END_CHANGE: LIM-003
+                         // START_CHANGE: LIM-002 - Attributed variable predicates (context-dependent)
+                         name.equals("put_attr") || name.equals("get_attr") ||
+                         name.equals("del_attr") || name.equals("attvar") ||
+                         // END_CHANGE: LIM-002
+                         // START_CHANGE: LIM-001 - Coroutining predicates (context-dependent)
+                         name.equals("freeze") || name.equals("when") || name.equals("dif")
+                         // END_CHANGE: LIM-001
                          )) {
                         // Special handling for context-dependent predicates
                         builtInRegistry.registerBuiltIn(name, new CollectionBuiltInAdapter((BuiltInWithContext) builtIn, querySolver));
@@ -441,6 +460,42 @@ public class Prolog {
         return tableStore;
     }
     // END_CHANGE: ISS-2025-0092
+
+    // START_CHANGE: LIM-003 - Global non-backtrackable variable operations
+    /**
+     * Set a non-backtrackable global variable.
+     * @param name The variable name (must be an atom name)
+     * @param value The value to store
+     */
+    public void nbSetval(String name, Term value) {
+        globalVariables.put(name, value);
+    }
+
+    /**
+     * Get a non-backtrackable global variable.
+     * @param name The variable name
+     * @return The stored value, or null if not set
+     */
+    public Term nbGetval(String name) {
+        return globalVariables.get(name);
+    }
+
+    /**
+     * Delete a non-backtrackable global variable.
+     * @param name The variable name
+     */
+    public void nbDelete(String name) {
+        globalVariables.remove(name);
+    }
+
+    /**
+     * Get all current global variables as a snapshot.
+     * @return A copy of the global variables map
+     */
+    public Map<String, Term> nbCurrentAll() {
+        return new HashMap<>(globalVariables);
+    }
+    // END_CHANGE: LIM-003
 
     /**
      * Check if a rule is a DCG rule (uses --> operator).

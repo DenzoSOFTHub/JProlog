@@ -230,7 +230,7 @@ JProlog provides comprehensive documentation for all aspects of the system:
 
 ## 📊 **Quality Metrics & Compliance**
 
-### 🎯 **Current Status (Version 2.5.5)**
+### 🎯 **Current Status (Version 2.6.0)**
 - **Unit Tests**: 320 tests, 0 failures, 0 errors
 - **Core Test Success Rate**: 100% (20/20 example programs pass)
 - **ISO Prolog Compliance**: ~85% of ISO 13211-1 core predicates (see [Limitations](#️-current-limitations) for gaps)
@@ -264,27 +264,14 @@ JProlog provides comprehensive documentation for all aspects of the system:
 
 The following features are not yet implemented or are partially supported compared to full ISO 13211-1 Prolog systems (e.g., SWI-Prolog).
 
-### Critical — Missing Core Features
+### Resolved in v2.6.0 (formerly Critical/High)
 
-| Feature | Status | Impact |
-|---------|--------|--------|
-| **Coroutining** (`freeze/2`, `when/2`, `dif/2`) | Not implemented | No delayed goals or constraint-based programming |
-| **Attributed variables** | Not implemented | Required for advanced constraint systems |
-| **Global variables** (`nb_setval/2`, `nb_getval/2`, `b_setval/2`, `b_getval/2`) | Not implemented | No persistent state across backtracking |
-| **Module-qualified calls** (`Module:Goal`) | Partial — framework exists, not wired into execution | Cannot call predicates from specific modules at runtime |
+All Critical and High priority limitations have been resolved:
+- `freeze/2`, `when/2`, `dif/2` (coroutining), attributed variables, global variables (`nb_setval/2` etc.)
+- Module-qualified calls (`Module:Goal`), `predicate_property/2`, `code_type/2`
+- Stream repositioning, arbitrary precision integers (BigInteger), enhanced `write_term/2` options
 
-### High — ISO Compliance Gaps
-
-| Feature | Status | Impact |
-|---------|--------|--------|
-| **`predicate_property/2`** | Not implemented | Cannot query predicate properties (static, dynamic, built_in) |
-| **`code_type/2`** | Not implemented | Only `char_type/2` available |
-| **Stream repositioning** (`set_stream_position/2`) | Not implemented | Cannot seek in streams |
-| **Arbitrary precision integers** (BigInteger) | Not implemented | Integer overflow on large numbers; arithmetic uses `double` |
-| **`read_term/2` full options** (`variable_names`, `singletons`) | Partial | Some ISO-required options missing |
-| **`write_term/2` full options** (`numbervars`, `quoted`) | Partial | Incomplete option handling |
-
-### Medium — Extended Features
+### Medium — Remaining Limitations
 
 | Feature | Status | Impact |
 |---------|--------|--------|
@@ -461,13 +448,13 @@ mvn clean compile
 
 Copyright © 2024 DenzoSOFT. All rights reserved.
 
-Version 2.5.5 - Released March 2026
+Version 2.6.0 - Released March 2026
 
 ## 🌐 **Project Information**
 
 - **Repository**: https://github.com/DenzoSOFTHub/JProlog
 - **Website**: https://denzosoft.it
-- **Latest Release**: v2.5.5 with robust parser, binary compiled format, and 320 passing tests
+- **Latest Release**: v2.6.0 with robust parser, binary compiled format, and 320 passing tests
 - **License**: Proprietary (DenzoSOFT)
 
 ---

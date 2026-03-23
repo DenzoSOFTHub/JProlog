@@ -63,6 +63,25 @@ public class BuiltInRegistry {
         putArity("table", 1);
         putArity("abolish_all_tables", 0);
         // END_CHANGE: ISS-2025-0092
+        // START_CHANGE: LIM-005 - predicate_property/2
+        putArity("predicate_property", 2);
+        // END_CHANGE: LIM-005
+        // START_CHANGE: LIM-006 - code_type/2
+        putArity("code_type", 2);
+        // END_CHANGE: LIM-006
+
+        // START_CHANGE: LIM-002 - Attributed variable predicates
+        putArity("put_attr", 3);
+        putArity("get_attr", 3);
+        putArity("del_attr", 2);
+        putArity("attvar", 1);
+        // END_CHANGE: LIM-002
+
+        // START_CHANGE: LIM-001 - Coroutining predicates
+        putArity("freeze", 2);
+        putArity("when", 2);
+        putArity("dif", 2);
+        // END_CHANGE: LIM-001
     }
 
     private static void putArity(String name, int... arities) {

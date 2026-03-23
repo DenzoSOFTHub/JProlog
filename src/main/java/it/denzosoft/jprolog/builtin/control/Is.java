@@ -29,19 +29,33 @@ public class Is implements BuiltIn {
         variableTerm = variableTerm.resolveBindings(bindings);
 
         try {
-            double result = ArithmeticEvaluator.evaluate(expressionTerm, bindings);
+            // START_CHANGE: LIM-008 - Use evaluateToNumber to preserve integer/float type
+            Number resultNum = ArithmeticEvaluator.evaluateToNumber(expressionTerm, bindings);
+            // END_CHANGE: LIM-008
 
             if (variableTerm instanceof Variable) {
                 // Unbound variable: bind it to the result
                 Variable variable = (Variable) variableTerm;
                 Map<String, Term> newBindings = new HashMap<>(bindings);
-                newBindings.put(variable.getName(), new Number(result));
+                newBindings.put(variable.getName(), resultNum);
                 solutions.add(newBindings);
                 return true;
             } else if (variableTerm instanceof Number) {
                 // Already bound to a number or a number literal: check equality
-                double existingValue = ((Number) variableTerm).getValue();
-                if (existingValue == result) {
+                Number existingNum = (Number) variableTerm;
+                // START_CHANGE: LIM-008 - Compare with BigInteger awareness
+                boolean equal;
+                if (existingNum.isBigInteger() || resultNum.isBigInteger()) {
+                    if (existingNum.isInteger() && resultNum.isInteger()) {
+                        equal = existingNum.bigIntegerValue().equals(resultNum.bigIntegerValue());
+                    } else {
+                        equal = existingNum.doubleValue() == resultNum.doubleValue();
+                    }
+                } else {
+                    equal = existingNum.doubleValue() == resultNum.doubleValue();
+                }
+                // END_CHANGE: LIM-008
+                if (equal) {
                     solutions.add(new HashMap<>(bindings));
                     return true;
                 } else {

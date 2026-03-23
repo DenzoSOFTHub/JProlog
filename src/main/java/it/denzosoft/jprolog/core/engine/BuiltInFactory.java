@@ -256,7 +256,10 @@ public class BuiltInFactory {
         registerFactory("once", () -> new Once(null)); // QuerySolver will be injected
         registerFactory("ignore", () -> new Ignore(null)); // QuerySolver will be injected
         registerFactory("forall", () -> new ForAll(null)); // QuerySolver will be injected
-        
+        // START_CHANGE: LIM-005 - predicate_property/2 meta-predicate
+        registerFactory("predicate_property", () -> new PredicateProperty(null)); // QuerySolver will be injected
+        // END_CHANGE: LIM-005
+
         // Dynamic database operations (ISO Prolog)
         // START_CHANGE: ISS-2025-0023 - Add assert/1 as alias for assertz/1
         registerFactory("assert", () -> new Assertz(null)); // assert/1 is alias for assertz/1
@@ -296,11 +299,18 @@ public class BuiltInFactory {
         registerFactory("read_term", () -> new ReadTerm(null)); // QuerySolver will be injected
         registerFactory("write_term", () -> new WriteTerm(null)); // QuerySolver will be injected
         registerFactory("format", () -> new Format(null)); // QuerySolver will be injected
-        
+        // START_CHANGE: LIM-007 - Stream Repositioning predicates
+        registerFactory("set_stream_position", SetStreamPosition::new);
+        registerFactory("stream_position", StreamPosition::new);
+        // END_CHANGE: LIM-007
+
         // Character predicates (ISO Prolog)
         registerFactory("char_type", CharType::new);
         registerFactory("char_code", CharCode::new);
-        
+        // START_CHANGE: LIM-006 - code_type/2 character code classification
+        registerFactory("code_type", CodeType::new);
+        // END_CHANGE: LIM-006
+
         // Phase 6: Character & String Processing
         registerFactory("upcase_atom", it.denzosoft.jprolog.builtin.character.UpCase::new);
         registerFactory("downcase_atom", it.denzosoft.jprolog.builtin.character.DownCase::new);
@@ -599,6 +609,38 @@ public class BuiltInFactory {
         registerFactory("java_release_ref", () -> new JavaFFI(JavaFFI.OperationType.JAVA_RELEASE_REF));
         registerFactory("java_gc", () -> new JavaFFI(JavaFFI.OperationType.JAVA_GC));
         // END_CHANGE: ISS-2025-0173
+
+        // START_CHANGE: LIM-003 - Global variable predicates
+        registerFactory("nb_setval", () -> new it.denzosoft.jprolog.builtin.system.GlobalVariables(
+            it.denzosoft.jprolog.builtin.system.GlobalVariables.Mode.NB_SETVAL));
+        registerFactory("nb_getval", () -> new it.denzosoft.jprolog.builtin.system.GlobalVariables(
+            it.denzosoft.jprolog.builtin.system.GlobalVariables.Mode.NB_GETVAL));
+        registerFactory("nb_current", () -> new it.denzosoft.jprolog.builtin.system.GlobalVariables(
+            it.denzosoft.jprolog.builtin.system.GlobalVariables.Mode.NB_CURRENT));
+        registerFactory("nb_delete", () -> new it.denzosoft.jprolog.builtin.system.GlobalVariables(
+            it.denzosoft.jprolog.builtin.system.GlobalVariables.Mode.NB_DELETE));
+        registerFactory("b_setval", () -> new it.denzosoft.jprolog.builtin.system.GlobalVariables(
+            it.denzosoft.jprolog.builtin.system.GlobalVariables.Mode.B_SETVAL));
+        registerFactory("b_getval", () -> new it.denzosoft.jprolog.builtin.system.GlobalVariables(
+            it.denzosoft.jprolog.builtin.system.GlobalVariables.Mode.B_GETVAL));
+        // END_CHANGE: LIM-003
+
+        // START_CHANGE: LIM-002 - Attributed variable predicates
+        registerFactory("put_attr", () -> new it.denzosoft.jprolog.builtin.term.AttributedVariables(
+            it.denzosoft.jprolog.builtin.term.AttributedVariables.Mode.PUT_ATTR));
+        registerFactory("get_attr", () -> new it.denzosoft.jprolog.builtin.term.AttributedVariables(
+            it.denzosoft.jprolog.builtin.term.AttributedVariables.Mode.GET_ATTR));
+        registerFactory("del_attr", () -> new it.denzosoft.jprolog.builtin.term.AttributedVariables(
+            it.denzosoft.jprolog.builtin.term.AttributedVariables.Mode.DEL_ATTR));
+        registerFactory("attvar", () -> new it.denzosoft.jprolog.builtin.term.AttributedVariables(
+            it.denzosoft.jprolog.builtin.term.AttributedVariables.Mode.ATTVAR));
+        // END_CHANGE: LIM-002
+
+        // START_CHANGE: LIM-001 - Coroutining predicates
+        registerFactory("freeze", () -> new it.denzosoft.jprolog.builtin.control.Freeze(null));
+        registerFactory("when", () -> new it.denzosoft.jprolog.builtin.control.When(null));
+        registerFactory("dif", () -> new it.denzosoft.jprolog.builtin.control.Dif(null));
+        // END_CHANGE: LIM-001
 
     }
     

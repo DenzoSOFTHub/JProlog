@@ -76,15 +76,25 @@ public class QuerySolver {
      */
     public List<Map<String, Term>> solve(Term query) {
         List<Map<String, Term>> solutions = new ArrayList<>();
-        solve(query, new HashMap<>(), solutions, CutStatus.notOccurred());
-        // START_CHANGE: ISS-2025-0069 - Deep-resolve variable chains in returned solutions
-        // After solving, variable bindings may contain chains like X→Y→Z→hello.
-        // Resolve all chains so the caller gets final values.
-        for (Map<String, Term> solution : solutions) {
-            deepResolveSolution(solution);
+        // START_CHANGE: LIM-002 - Set up attribute unification hook for this solver
+        Variable.AttributeUnifyHook previousHook = Variable.getAttributeUnifyHook();
+        Variable.setAttributeUnifyHook(this::handleAttributeUnification);
+        try {
+        // END_CHANGE: LIM-002
+            solve(query, new HashMap<>(), solutions, CutStatus.notOccurred());
+            // START_CHANGE: ISS-2025-0069 - Deep-resolve variable chains in returned solutions
+            // After solving, variable bindings may contain chains like X→Y→Z→hello.
+            // Resolve all chains so the caller gets final values.
+            for (Map<String, Term> solution : solutions) {
+                deepResolveSolution(solution);
+            }
+            // END_CHANGE: ISS-2025-0069
+            return solutions;
+        // START_CHANGE: LIM-002 - Restore previous hook
+        } finally {
+            Variable.setAttributeUnifyHook(previousHook);
         }
-        // END_CHANGE: ISS-2025-0069
-        return solutions;
+        // END_CHANGE: LIM-002
     }
 
     // START_CHANGE: ISS-2025-0098 - Single-pass deep resolve with path compression
@@ -251,7 +261,7 @@ public class QuerySolver {
                 }
             }
 
-            // Handle module-qualified calls Module:Goal
+            // START_CHANGE: LIM-004 - Module-qualified calls Module:Goal
             if (":".equals(goalName) && goal.getArguments() != null && goal.getArguments().size() == 2) {
                 Term moduleTerm = goal.getArguments().get(0).resolveBindings(bindings);
                 Term innerGoal = goal.getArguments().get(1).resolveBindings(bindings);
@@ -262,9 +272,21 @@ public class QuerySolver {
                     if (module != null) {
                         return solveInModuleContext(innerGoal, module, bindings, solutions, cutStatus);
                     }
+                    // Module not found - throw existence_error(module, ModuleName)
+                    throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                        it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.existenceError(
+                            "module", new Atom(moduleName), ":/2",
+                            "Module '" + moduleName + "' does not exist"));
                 }
+                if (moduleTerm instanceof it.denzosoft.jprolog.core.terms.Variable) {
+                    throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                        it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError(
+                            ":/2 - module argument must be instantiated"));
+                }
+                // Non-atom, non-variable module term - try to solve inner goal directly
                 return solveInternal(innerGoal, bindings, solutions, cutStatus);
             }
+            // END_CHANGE: LIM-004
 
             // Handle conjunction ,(A,B)
             if (",".equals(goalName) && goal.getArguments() != null && goal.getArguments().size() == 2) {
@@ -963,4 +985,59 @@ public class QuerySolver {
     public void setPrologContext(Prolog prologContext) {
         this.prologContext = prologContext;
     }
+
+    // START_CHANGE: LIM-002 - Attribute unification hook dispatcher
+    /**
+     * Handle attribute unification events. Called by Variable.unify() when an
+     * attributed variable is bound to a non-variable term.
+     * Dispatches to the appropriate module-specific handler for each attribute.
+     *
+     * @param variable the attributed variable being bound
+     * @param value the non-variable term it was bound to
+     * @param substitution the current substitution map
+     * @return true if all hooks succeed, false if any hook fails (which fails unification)
+     */
+    private boolean handleAttributeUnification(Variable variable, Term value,
+                                                java.util.Map<String, Term> substitution) {
+        // Copy the attribute map since handlers may modify it
+        java.util.Map<String, Term> attrs = new HashMap<>(variable.getAttributes());
+
+        for (java.util.Map.Entry<String, Term> entry : attrs.entrySet()) {
+            String module = entry.getKey();
+            Term attrValue = entry.getValue();
+
+            switch (module) {
+                case it.denzosoft.jprolog.builtin.control.Freeze.FREEZE_MODULE:
+                    // Execute the frozen goal
+                    if (!it.denzosoft.jprolog.builtin.control.Freeze.executeFrozenGoal(
+                            this, attrValue, substitution)) {
+                        return false;
+                    }
+                    break;
+
+                case it.denzosoft.jprolog.builtin.control.When.WHEN_MODULE:
+                    // Re-check the when condition and potentially execute the goal
+                    if (!it.denzosoft.jprolog.builtin.control.When.executeWhenGoal(
+                            this, attrValue, substitution)) {
+                        return false;
+                    }
+                    break;
+
+                case it.denzosoft.jprolog.builtin.control.Dif.DIF_MODULE:
+                    // Re-check the dif constraint
+                    if (!it.denzosoft.jprolog.builtin.control.Dif.checkDifConstraint(
+                            this, attrValue, substitution)) {
+                        return false;
+                    }
+                    break;
+
+                default:
+                    // Unknown module — try to find attr_unify_hook/2 in knowledge base
+                    // For now, just ignore unknown modules
+                    break;
+            }
+        }
+        return true;
+    }
+    // END_CHANGE: LIM-002
 }

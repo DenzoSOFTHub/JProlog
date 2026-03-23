@@ -112,13 +112,20 @@ public class StreamProperty implements BuiltIn {
     private List<Term> getStreamProperties(String streamAlias) {
         // Determine stream properties based on stream type and alias
         
+        // START_CHANGE: LIM-007 - Add reposition property to stream properties
+        boolean canReposition = StreamManager.supportsReposition(streamAlias);
+        Term repositionProp = new CompoundTerm(new Atom("reposition"),
+            Arrays.asList(new Atom(canReposition ? "true" : "false")));
+        // END_CHANGE: LIM-007
+
         if ("user_input".equals(streamAlias)) {
             return Arrays.asList(
                 new Atom("input"),
                 new Atom("text"),
                 new CompoundTerm(new Atom("mode"), Arrays.asList(new Atom("read"))),
                 new CompoundTerm(new Atom("alias"), Arrays.asList(new Atom("user_input"))),
-                new CompoundTerm(new Atom("type"), Arrays.asList(new Atom("text")))
+                new CompoundTerm(new Atom("type"), Arrays.asList(new Atom("text"))),
+                repositionProp
             );
         } else if ("user_output".equals(streamAlias) || "user_error".equals(streamAlias)) {
             return Arrays.asList(
@@ -126,20 +133,22 @@ public class StreamProperty implements BuiltIn {
                 new Atom("text"),
                 new CompoundTerm(new Atom("mode"), Arrays.asList(new Atom("write"))),
                 new CompoundTerm(new Atom("alias"), Arrays.asList(new Atom(streamAlias))),
-                new CompoundTerm(new Atom("type"), Arrays.asList(new Atom("text")))
+                new CompoundTerm(new Atom("type"), Arrays.asList(new Atom("text"))),
+                repositionProp
             );
         } else {
             // For file streams, determine properties based on whether it's input or output
             InputStream is = StreamManager.getInputStream(streamAlias);
             OutputStream os = StreamManager.getOutputStream(streamAlias);
-            
+
             if (is != null) {
                 return Arrays.asList(
                     new Atom("input"),
                     new Atom("text"),
                     new CompoundTerm(new Atom("mode"), Arrays.asList(new Atom("read"))),
                     new CompoundTerm(new Atom("alias"), Arrays.asList(new Atom(streamAlias))),
-                    new CompoundTerm(new Atom("type"), Arrays.asList(new Atom("text")))
+                    new CompoundTerm(new Atom("type"), Arrays.asList(new Atom("text"))),
+                    repositionProp
                 );
             } else if (os != null) {
                 return Arrays.asList(
@@ -147,7 +156,8 @@ public class StreamProperty implements BuiltIn {
                     new Atom("text"),
                     new CompoundTerm(new Atom("mode"), Arrays.asList(new Atom("write"))),
                     new CompoundTerm(new Atom("alias"), Arrays.asList(new Atom(streamAlias))),
-                    new CompoundTerm(new Atom("type"), Arrays.asList(new Atom("text")))
+                    new CompoundTerm(new Atom("type"), Arrays.asList(new Atom("text"))),
+                    repositionProp
                 );
             } else {
                 return Arrays.asList();

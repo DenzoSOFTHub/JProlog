@@ -128,4 +128,30 @@ public class StreamManager {
     public static boolean hasStream(String streamAlias) {
         return INPUT_STREAMS.containsKey(streamAlias) || OUTPUT_STREAMS.containsKey(streamAlias);
     }
+
+    // START_CHANGE: LIM-007 - Stream Repositioning support
+    /**
+     * Check if a stream supports repositioning.
+     * Only file-backed streams (FileInputStream/FileOutputStream) support repositioning.
+     *
+     * @param streamAlias the stream alias to check
+     * @return true if the stream supports repositioning
+     */
+    public static boolean supportsReposition(String streamAlias) {
+        // Standard streams do not support repositioning
+        if ("user_input".equals(streamAlias) || "user_output".equals(streamAlias)
+                || "user_error".equals(streamAlias)) {
+            return false;
+        }
+        InputStream is = INPUT_STREAMS.get(streamAlias);
+        if (is instanceof FileInputStream) {
+            return true;
+        }
+        OutputStream os = OUTPUT_STREAMS.get(streamAlias);
+        if (os instanceof FileOutputStream) {
+            return true;
+        }
+        return false;
+    }
+    // END_CHANGE: LIM-007
 }

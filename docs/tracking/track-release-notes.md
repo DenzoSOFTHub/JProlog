@@ -1,5 +1,25 @@
 # JProlog - Release Notes
 
+## Release 2.6.0 - 2026-03-23
+
+### Attributed Variables, Coroutining, BigInteger Arithmetic, Module Calls
+
+Major feature release implementing all Critical and High priority limitations (LIM-001 through LIM-009).
+
+- **LIM-001**: `freeze/2`, `when/2`, `dif/2` — coroutining with attributed variable hooks
+- **LIM-002**: `put_attr/3`, `get_attr/3`, `del_attr/2`, `attvar/1` — attributed variables with unification hooks
+- **LIM-003**: `nb_setval/2`, `nb_getval/2`, `nb_current/2`, `nb_delete/1`, `b_setval/2`, `b_getval/2` — global variables
+- **LIM-004**: `Module:Goal` — module-qualified calls wired into QuerySolver
+- **LIM-005**: `predicate_property/2` — predicate introspection
+- **LIM-006**: `code_type/2` — character code classification
+- **LIM-007**: `set_stream_position/2`, `stream_position/2` — stream repositioning
+- **LIM-008**: `Number` class with `long`/`BigInteger`/`double` dual representation; integer arithmetic stays exact
+- **LIM-009**: Enhanced `write_term/2` (`numbervars`, `quoted`, `ignore_ops`, `max_depth`), `numbervars/3`, enhanced `read_term/2`
+
+**Tests**: 320/320 JUnit, 20/20 examples
+
+---
+
 ## Release 2.5.5 - 2026-03-22
 
 ### Code Quality, Documentation, Dual-Arity Operators

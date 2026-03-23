@@ -134,6 +134,7 @@ public class ExtendedArithmeticTest {
         // Test power with fractional exponent
         solutions = prolog.solve("X is 4 ** 0.5");
         assertFalse("4 ** 0.5 should succeed", solutions.isEmpty());
-        assertEquals("2", solutions.get(0).get("X").toString());
+        String powResult = solutions.get(0).get("X").toString();
+        assertTrue("4 ** 0.5 should be 2 or 2.0", powResult.equals("2") || powResult.equals("2.0"));
     }
 }
