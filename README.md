@@ -232,13 +232,13 @@ JProlog provides comprehensive documentation for all aspects of the system:
 
 ### 🎯 **Current Status (Version 2.5.5)**
 - **Unit Tests**: 320 tests, 0 failures, 0 errors
-- **Core Test Success Rate**: 95% (19/20 comprehensive example programs pass)
-- **ISO Prolog Compliance**: ~95% with comprehensive built-in predicate implementation
-- **Built-in Predicate Coverage**: 80+ predicates with extensive ISO standard coverage
+- **Core Test Success Rate**: 100% (20/20 example programs pass)
+- **ISO Prolog Compliance**: ~85% of ISO 13211-1 core predicates (see [Limitations](#️-current-limitations) for gaps)
+- **Built-in Predicate Coverage**: 265+ predicates including I/O, CLP(FD), FFI, crypto, networking
 - **Parser**: Robust Pratt parser with unified operator table and dynamic `op/3` support
 - **Binary Format**: `.jpc` compiled format with string interning for fast loading
 - **DCG Support**: 85% success rate (17/20 comprehensive DCG programs working)
-- **Module Support**: Module-qualified calls (`Module:Goal`) supported
+- **Module Support**: Basic module framework (full qualification not yet wired into execution)
 
 ### 🧪 **Testing Framework**
 - **320 Unit Tests**: JUnit test suite covering all engine components
@@ -259,6 +259,47 @@ JProlog provides comprehensive documentation for all aspects of the system:
 - ✅ **Database operations**: Dynamic assert/retract predicates (confirmed v2.0.14)
 - ✅ **I/O operations**: File and stream handling
 - ✅ **Atom operations**: `atom_length/2`, `atom_concat/3` (confirmed v2.0.14)
+
+## ⚠️ **Current Limitations**
+
+The following features are not yet implemented or are partially supported compared to full ISO 13211-1 Prolog systems (e.g., SWI-Prolog).
+
+### Critical — Missing Core Features
+
+| Feature | Status | Impact |
+|---------|--------|--------|
+| **Coroutining** (`freeze/2`, `when/2`, `dif/2`) | Not implemented | No delayed goals or constraint-based programming |
+| **Attributed variables** | Not implemented | Required for advanced constraint systems |
+| **Global variables** (`nb_setval/2`, `nb_getval/2`, `b_setval/2`, `b_getval/2`) | Not implemented | No persistent state across backtracking |
+| **Module-qualified calls** (`Module:Goal`) | Partial — framework exists, not wired into execution | Cannot call predicates from specific modules at runtime |
+
+### High — ISO Compliance Gaps
+
+| Feature | Status | Impact |
+|---------|--------|--------|
+| **`predicate_property/2`** | Not implemented | Cannot query predicate properties (static, dynamic, built_in) |
+| **`code_type/2`** | Not implemented | Only `char_type/2` available |
+| **Stream repositioning** (`set_stream_position/2`) | Not implemented | Cannot seek in streams |
+| **Arbitrary precision integers** (BigInteger) | Not implemented | Integer overflow on large numbers; arithmetic uses `double` |
+| **`read_term/2` full options** (`variable_names`, `singletons`) | Partial | Some ISO-required options missing |
+| **`write_term/2` full options** (`numbervars`, `quoted`) | Partial | Incomplete option handling |
+
+### Medium — Extended Features
+
+| Feature | Status | Impact |
+|---------|--------|--------|
+| **Constraint Handling Rules (CHR)** | Not implemented | Only CLP(FD) available |
+| **DCG advanced features** (pushback notation, `call//N`, `;` in DCG) | Not implemented | Basic DCG works; advanced patterns unsupported |
+| **Rational numbers** | Not implemented | No exact fractions (e.g., 1/3) |
+| **Character code notation** (`0'a`) | Not supported in parser | Must use `char_code/2` instead |
+| **Binary/Octal/Hex literals** (`0b1010`, `0o77`, `0xFF`) | Not supported in parser | Must use decimal notation |
+| **Multi-argument indexing** | Not implemented | First-argument indexing only; performance impact on large clause sets |
+| **WAM-style compilation** | Not implemented | Interpreted resolution; no bytecode compilation |
+| **Atom garbage collection** | Not implemented | Memory grows in long-running programs |
+
+For the full tracking list, see [docs/tracking/track-limitations.md](docs/tracking/track-limitations.md).
+
+---
 
 ## 🔧 **IDE Keyboard Shortcuts**
 
@@ -433,7 +474,7 @@ Version 2.5.5 - Released March 2026
 
 ## 🎯 **Why Choose JProlog?**
 
-✅ **Excellent ISO Compliance**: ~95% ISO 13211-1 support with comprehensive built-in predicate coverage
+✅ **Strong ISO Compliance**: ~85% ISO 13211-1 core support with 265+ built-in predicates
 ✅ **Robust Parser**: Unified Pratt parser with dynamic operator support and incremental directive processing
 ✅ **Fast Loading**: Binary `.jpc` compiled format with string interning and smart caching
 ✅ **Complete Ecosystem**: Engine + IDE + CLI + 265+ Built-ins in one package
