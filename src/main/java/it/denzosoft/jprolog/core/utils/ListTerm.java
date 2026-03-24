@@ -5,6 +5,7 @@ import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Logger;
@@ -28,9 +29,11 @@ public class ListTerm extends Term {
         this.elements = new ArrayList<>(elements);
     }
 
+    // START_CHANGE: ISS-2025-0190 - Return unmodifiable view instead of copy
     public List<Term> getElements() {
-        return new ArrayList<>(elements); // Return a copy
+        return Collections.unmodifiableList(elements);
     }
+    // END_CHANGE: ISS-2025-0190
 
     @Override
     public boolean unify(Term term, Map<String, Term> substitution) {
@@ -80,10 +83,12 @@ public class ListTerm extends Term {
         return null;
     }
 
+    // START_CHANGE: ISS-2025-0190 - Return unmodifiable view instead of copy
     @Override
     public List<Term> getArguments() {
-        return new ArrayList<>(elements); // Return a copy
+        return Collections.unmodifiableList(elements);
     }
+    // END_CHANGE: ISS-2025-0190
 
     @Override
     public Term resolveBindings(Map<String, Term> bindings) {

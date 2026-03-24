@@ -100,11 +100,13 @@ public class JpcReader {
 
     // ---------- internals ----------
 
+    // START_CHANGE: ISS-2025-0190 - Add bounds checking on string table indices
     private Term readTerm(DataInputStream dis, String[] strings) throws IOException {
         byte type = dis.readByte();
         switch (type) {
             case JpcFormat.TERM_ATOM: {
                 int idx = readVarint(dis);
+                checkStringIndex(idx, strings.length, "atom");
                 return new Atom(strings[idx]);
             }
             case JpcFormat.TERM_NUMBER: {
@@ -113,10 +115,12 @@ public class JpcReader {
             }
             case JpcFormat.TERM_VARIABLE: {
                 int idx = readVarint(dis);
+                checkStringIndex(idx, strings.length, "variable");
                 return new Variable(strings[idx]);
             }
             case JpcFormat.TERM_COMPOUND: {
                 int functorIdx = readVarint(dis);
+                checkStringIndex(functorIdx, strings.length, "compound functor");
                 int argCount = readVarint(dis);
                 List<Term> args = new ArrayList<>(argCount);
                 for (int i = 0; i < argCount; i++) {
@@ -126,8 +130,10 @@ public class JpcReader {
             }
             case JpcFormat.TERM_PROLOG_STRING: {
                 int idx = readVarint(dis);
+                checkStringIndex(idx, strings.length, "prolog string");
                 return new PrologString(strings[idx]);
             }
+    // END_CHANGE: ISS-2025-0190
             // START_CHANGE: ISS-2025-0185 - Rational number deserialization
             case JpcFormat.TERM_RATIONAL: {
                 int numLen = readVarint(dis);
@@ -143,6 +149,14 @@ public class JpcReader {
                 throw new IOException("Unknown term type tag: " + type);
         }
     }
+
+    // START_CHANGE: ISS-2025-0190 - Bounds checking helper
+    private static void checkStringIndex(int idx, int tableSize, String context) throws IOException {
+        if (idx < 0 || idx >= tableSize) {
+            throw new IOException("Invalid " + context + " string index: " + idx + " (table size: " + tableSize + ")");
+        }
+    }
+    // END_CHANGE: ISS-2025-0190
 
     /** Read an unsigned variable-length integer (1-5 bytes). */
     static int readVarint(DataInputStream dis) throws IOException {

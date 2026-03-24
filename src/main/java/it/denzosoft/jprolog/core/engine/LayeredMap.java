@@ -133,10 +133,11 @@ public class LayeredMap implements Map<String, Term> {
     }
 
     // START_CHANGE: ISS-2025-0163 - Improved mark/rollback: track both additions and overwrites
+    // START_CHANGE: ISS-2025-0190 - Fix O(N²) rollback, track removed set state
     /**
-     * Journal of changes since mark, stored as (key, previousValue) pairs.
+     * Journal of changes since mark, stored as (key, previousValue, wasRemoved) triples.
      * previousValue is null for new keys (key didn't exist in local before).
-     * For overwrites, previousValue is the old local value to restore.
+     * wasRemoved tracks whether the key was in the removed set before put().
      */
     private List<Object[]> changeJournal = null;
 
@@ -161,6 +162,7 @@ public class LayeredMap implements Map<String, Term> {
                 Object[] entry = changeJournal.get(i);
                 String key = (String) entry[0];
                 Term previousValue = (Term) entry[1];
+                Boolean wasRemoved = (Boolean) entry[2];
                 if (previousValue == null) {
                     // Key was newly added — remove it
                     local.remove(key);
@@ -168,22 +170,30 @@ public class LayeredMap implements Map<String, Term> {
                     // Key was overwritten — restore old value
                     local.put(key, previousValue);
                 }
-                changeJournal.remove(i);
+                // Restore removed set state
+                if (wasRemoved != null && wasRemoved) {
+                    if (removed == null) removed = new HashSet<>();
+                    removed.add(key);
+                }
             }
+            // Truncate journal efficiently via subList().clear() — O(1) for tail removal
+            changeJournal.subList(markPoint, changeJournal.size()).clear();
         }
     }
 
     // Override put to track changes when mark/rollback is active
     @Override
     public Term put(String key, Term value) {
+        boolean wasRemoved = removed != null && removed.contains(key);
         if (removed != null) removed.remove(key);
         if (changeJournal != null) {
             Term oldValue = local.get(key);
             // oldValue == null means this is a new key in local layer
-            changeJournal.add(new Object[]{key, oldValue});
+            changeJournal.add(new Object[]{key, oldValue, wasRemoved ? Boolean.TRUE : null});
         }
         return local.put(key, value);
     }
+    // END_CHANGE: ISS-2025-0190
     // END_CHANGE: ISS-2025-0163
 }
 // END_CHANGE: ISS-2025-0095

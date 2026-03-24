@@ -83,8 +83,10 @@ public class AcyclicTermCheck implements BuiltIn {
             }
         }
 
-        // Remove from visited (backtrack) - allows the same subterm in different positions
-        visited.remove(term);
+        // START_CHANGE: ISS-2025-0190 - Keep in visited set to properly detect cycles
+        // Do NOT remove — same term instance in multiple positions is fine,
+        // but re-encountering during descent means a cycle.
+        // END_CHANGE: ISS-2025-0190
 
         return true;
     }

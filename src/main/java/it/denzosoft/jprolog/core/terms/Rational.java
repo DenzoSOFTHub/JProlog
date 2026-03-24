@@ -173,6 +173,7 @@ public class Rational extends Number {
     }
     // END_CHANGE: ISS-2025-0189
 
+    // START_CHANGE: ISS-2025-0190 - Fix equals/hashCode contract violation
     @Override
     public boolean equals(Object obj) {
         if (this == obj) return true;
@@ -180,9 +181,7 @@ public class Rational extends Number {
             Rational other = (Rational) obj;
             return this.numerator.equals(other.numerator) && this.denominator.equals(other.denominator);
         }
-        if (obj instanceof Number) {
-            return super.equals(obj);
-        }
+        // Do NOT delegate to super.equals(Number) — different hashCode would violate contract
         return false;
     }
 
@@ -190,6 +189,7 @@ public class Rational extends Number {
     public int hashCode() {
         return 31 * numerator.hashCode() + denominator.hashCode();
     }
+    // END_CHANGE: ISS-2025-0190
 
     // START_CHANGE: ISS-2025-0185 - Helper for zero denominator check before super()
     private static double throwZeroDenominator() {

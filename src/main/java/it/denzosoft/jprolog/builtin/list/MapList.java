@@ -131,20 +131,24 @@ public class MapList implements BuiltInWithContext {
         List<Term> elems1 = ListUtils.extractElements(list1);
         List<Term> result2 = new ArrayList<>();
         List<Term> result3 = new ArrayList<>();
+        // START_CHANGE: ISS-2025-0190 - Accumulate bindings through iterations
+        Map<String, Term> currentBindings = new HashMap<>(bindings);
 
         for (int i = 0; i < elems1.size(); i++) {
             Variable outVar2 = new Variable("_MapOut2_" + i);
             Variable outVar3 = new Variable("_MapOut3_" + i);
             Term callGoal = buildCall(goal, elems1.get(i), outVar2, outVar3);
             List<Map<String, Term>> temp = new ArrayList<>();
-            if (!solver.solve(callGoal, new HashMap<>(bindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
+            if (!solver.solve(callGoal, new HashMap<>(currentBindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
                 return false;
             }
-            result2.add(outVar2.resolveBindings(temp.get(0)));
-            result3.add(outVar3.resolveBindings(temp.get(0)));
+            currentBindings = new HashMap<>(temp.get(0));
+            result2.add(outVar2.resolveBindings(currentBindings));
+            result3.add(outVar3.resolveBindings(currentBindings));
         }
+        // END_CHANGE: ISS-2025-0190
 
-        Map<String, Term> newBindings = new HashMap<>(bindings);
+        Map<String, Term> newBindings = new HashMap<>(currentBindings);
         if (list2Raw.unify(ListUtils.createList(result2), newBindings) &&
             list3Raw.unify(ListUtils.createList(result3), newBindings)) {
             solutions.add(newBindings);

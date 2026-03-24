@@ -2,6 +2,16 @@
 
 ## Active and Resolved Issues
 
+### ISS-2025-0190: Sixth-Round Deep Analysis Fixes
+
+**Title**: Fix KeySort ordering, Intersection dedup, Phrase bindings, LayeredMap rollback, Rational equals/hashCode, Unicode range, Succ overflow, MapList4 bindings, IfThen ISO, AcyclicTerm, error terms, Ignore propagation, PrologString escapes, JpcReader bounds, ListTerm views, DebugPanel volatiles
+**Date Created**: 2026-03-24
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-24
+**Affected Files**: KeySort.java, Intersection.java, Phrase.java, LayeredMap.java, Rational.java, NumberCodes.java, ToCodesSimple.java, Succ.java, MapList.java, IfThen.java, AcyclicTermCheck.java, ArithmeticEvaluator.java, Ignore.java, PrologString.java, JpcReader.java, ListTerm.java, DebugPanel.java
+
+---
+
 ### ISS-2025-0189: Fifth-Round Deep Analysis Fixes
 
 **Title**: Fix shift wraparound, NaN/Infinity handling, ISO exception propagation, Rational.unify, LayeredMap.isEmpty, term immutability, ArithmeticComparison precision

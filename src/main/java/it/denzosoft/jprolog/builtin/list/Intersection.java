@@ -23,17 +23,15 @@ public class Intersection implements BuiltIn {
 
         List<Term> elems1 = ListUtils.extractElements(set1);
         List<Term> elems2 = ListUtils.extractElements(set2);
-        // START_CHANGE: ISS-2025-0187 - Deduplicate intersection results (set semantics)
+        // START_CHANGE: ISS-2025-0190 - Use structural equality for deduplication instead of toString
         List<Term> common = new ArrayList<>();
-        java.util.Set<String> seen = new java.util.HashSet<>();
 
         for (Term e : elems1) {
-            String key = e.toString();
-            if (Subtract.memberOf(e, elems2) && seen.add(key)) {
+            if (Subtract.memberOf(e, elems2) && !structurallyContains(common, e)) {
                 common.add(e);
             }
         }
-        // END_CHANGE: ISS-2025-0187
+        // END_CHANGE: ISS-2025-0190
 
         Map<String, Term> newBindings = new HashMap<>(bindings);
         if (result.unify(ListUtils.createList(common), newBindings)) {
@@ -42,4 +40,15 @@ public class Intersection implements BuiltIn {
         }
         return false;
     }
+
+    // START_CHANGE: ISS-2025-0190 - Structural equality check
+    private boolean structurallyContains(List<Term> list, Term term) {
+        for (Term t : list) {
+            if (t.unify(term, new HashMap<>())) {
+                return true;
+            }
+        }
+        return false;
+    }
+    // END_CHANGE: ISS-2025-0190
 }

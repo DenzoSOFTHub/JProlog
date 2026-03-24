@@ -61,11 +61,23 @@ public class Ignore implements BuiltInWithContext {
             
             return true; // ignore/1 always succeeds
             
+        // START_CHANGE: ISS-2025-0190 - Propagate system errors, only ignore user-level failures
         } catch (PrologException e) {
-            // Even if an exception occurs, ignore/1 succeeds
+            // Check if it's a system error (resource_error, etc.) — propagate those
+            Term errorTerm = e.getErrorTerm();
+            if (errorTerm instanceof CompoundTerm) {
+                Term errorType = ((CompoundTerm) errorTerm).getArguments().get(0);
+                String typeName = errorType instanceof Atom ? ((Atom) errorType).getName() :
+                    (errorType instanceof CompoundTerm ? ((CompoundTerm) errorType).getName() : "");
+                if ("resource_error".equals(typeName) || "system_error".equals(typeName)) {
+                    throw e; // Propagate system errors
+                }
+            }
+            // For user-level errors (existence, type, etc.), ignore/1 still succeeds
             solutions.add(new HashMap<>(bindings));
             return true;
         }
+        // END_CHANGE: ISS-2025-0190
     }
     
     @Override

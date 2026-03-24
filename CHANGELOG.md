@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.7] - 2026-03-24
+
+### Sixth-Round Deep Analysis Fixes (ISS-2025-0190)
+
+20 fixes for ISO compliance, correctness, and robustness:
+
+#### Bug Fixes
+- **KeySort**: Use ISO term ordering instead of toString comparison
+- **Intersection**: Structural equality for deduplication instead of toString
+- **Phrase/3**: Fix destructive modification of input bindings map
+- **LayeredMap**: Fix O(N²) rollbackToMark via subList().clear(); restore removed set on rollback
+- **Rational**: Fix equals/hashCode contract violation with Number
+- **NumberCodes/ToCodesSimple**: Extend character code range from ASCII (0-255) to Unicode BMP (0-65535)
+- **Succ/2**: Use long instead of int to prevent overflow for large numbers
+- **MapList/4**: Accumulate bindings across iterations
+- **IfThen (->)**: Commit to first condition solution per ISO; add cut propagation
+- **AcyclicTermCheck**: Keep visited entries to properly detect cycles
+- **ArithmeticEvaluator**: Use Number instead of Atom in msb/lsb/popcount error terms
+
+#### Improvements
+- **Ignore/1**: Propagate system/resource errors instead of swallowing all exceptions
+- **PrologString**: Add escape sequences for \a, \b, \f, \v for full round-trip symmetry
+- **JpcReader**: Add bounds checking on string table indices
+- **ListTerm**: Return unmodifiable views from getElements()/getArguments()
+- **DebugPanel**: Add volatile to cross-thread fields (debugController, debugThread, lastPausedEvent)
+
 ## [2.6.6] - 2026-03-24
 
 ### Fifth-Round Deep Analysis Fixes (ISS-2025-0189)

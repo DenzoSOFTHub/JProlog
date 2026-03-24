@@ -82,30 +82,35 @@ public class Phrase extends AbstractBuiltInWithContext {
     /**
      * phrase/3 implementation: phrase(RuleSet, List, Rest)
      */
+    // START_CHANGE: ISS-2025-0190 - Fix destructive bindings modification and exception masking
     private boolean phrase3(Term ruleSet, Term list, Term rest, Map<String, Term> bindings) {
         try {
             // Create a goal: RuleSet(List, Rest)
             Term goal = createDCGGoal(ruleSet, list, rest);
-            
-            // Solve the DCG goal using the query solver
+
+            // Solve the DCG goal using a copy of bindings to avoid destructive modification
+            Map<String, Term> solveBindings = new HashMap<>(bindings);
             List<Map<String, Term>> solutionList = new ArrayList<>();
-            boolean success = this.solver.solve(goal, bindings, solutionList, CutStatus.notOccurred());
-            
+            boolean success = this.solver.solve(goal, solveBindings, solutionList, CutStatus.notOccurred());
+
             // Return true if successful and propagate bindings correctly
             if (success && !solutionList.isEmpty()) {
-                // Simply use the first solution - the solve method should have already
-                // unified variables correctly if implemented properly
-                bindings.clear();
+                // Merge solution bindings into original map without losing pre-existing bindings
                 bindings.putAll(solutionList.get(0));
                 return true;
             }
-            
+
             return false;
-            
+
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException e) {
+            throw e; // Propagate Prolog exceptions (system errors, etc.)
+        } catch (RuntimeException e) {
+            throw e; // Propagate programming errors
         } catch (Exception e) {
             return false;
         }
     }
+    // END_CHANGE: ISS-2025-0190
     
     /**
      * Create a DCG goal from the rule set and arguments.

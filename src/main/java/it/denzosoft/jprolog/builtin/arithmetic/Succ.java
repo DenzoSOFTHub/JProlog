@@ -63,7 +63,9 @@ public class Succ implements BuiltIn {
                 return false;
             }
             
-            if ((int) value2 == (int) value1 + 1) {
+            // START_CHANGE: ISS-2025-0190 - Use long to avoid int overflow
+            if ((long) value2 == (long) value1 + 1) {
+            // END_CHANGE: ISS-2025-0190
                 solutions.add(new HashMap<>(bindings));
                 return true;
             } else {
@@ -84,9 +86,11 @@ public class Succ implements BuiltIn {
             }
             // END_CHANGE: ISS-2025-0169
             
-            int int2Value = (int) value2;
-            int int1Value = int2Value - 1;
-            
+            // START_CHANGE: ISS-2025-0190 - Use long to avoid int overflow
+            long int2Value = (long) value2;
+            long int1Value = int2Value - 1;
+            // END_CHANGE: ISS-2025-0190
+
             Map<String, Term> newBindings = new HashMap<>(bindings);
             if (query.getArguments().get(0).unify(new it.denzosoft.jprolog.core.terms.Number((double) int1Value), newBindings)) {
                 solutions.add(newBindings);
@@ -105,8 +109,10 @@ public class Succ implements BuiltIn {
                 return false; // Int1 must be a non-negative integer
             }
             
-            int int1Value = (int) value1;
-            int int2Value = int1Value + 1;
+            // START_CHANGE: ISS-2025-0190 - Use long to avoid int overflow
+            long int1Value = (long) value1;
+            long int2Value = int1Value + 1;
+            // END_CHANGE: ISS-2025-0190
             
             Map<String, Term> newBindings = new HashMap<>(bindings);
             if (query.getArguments().get(1).unify(new it.denzosoft.jprolog.core.terms.Number((double) int2Value), newBindings)) {

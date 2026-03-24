@@ -130,6 +130,14 @@ All code modifications must be tagged:
 // END_CHANGE: ISS-2025-0001
 ```
 
+### Test Verification (MANDATORY per bug/limitation fix)
+
+Every resolved bug or limitation must have a corresponding JUnit test that verifies the fix. Tests go in `src/test/java/it/denzosoft/jprolog/test/builtin/BugFixVerificationTest.java`, organized by ISS number:
+- Add a `@Test` method named after the issue and fix (e.g., `testISS0188_ModNegativeDivisor`)
+- The test must fail without the fix and pass with the fix
+- Use `prolog.solve()` for query-level assertions, direct Java assertions for internal class fixes
+- Run `mvn test` to confirm the new tests pass alongside all existing tests
+
 ### Documentation Updates (MANDATORY per release)
 
 When adding/modifying built-ins or operators, update:

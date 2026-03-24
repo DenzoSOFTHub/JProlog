@@ -1,5 +1,15 @@
 # JProlog - Release Notes
 
+## Release 2.6.7 - 2026-03-24
+
+### Sixth-Round Deep Analysis Fixes
+
+20 fixes for ISO compliance, correctness, and robustness across 17 files.
+
+- **ISS-2025-0190**: KeySort ISO ordering, Intersection structural dedup, Phrase bindings fix, LayeredMap O(N²) rollback + removed set restoration, Rational equals/hashCode contract, Unicode BMP range in NumberCodes/ToCodesSimple, Succ long overflow, MapList/4 bindings, IfThen ISO first-solution commit + cut propagation, AcyclicTermCheck cycle detection, msb/lsb/popcount error terms, Ignore system error propagation, PrologString escape symmetry, JpcReader bounds checking, ListTerm unmodifiable views, DebugPanel volatile fields
+
+---
+
 ## Release 2.6.6 - 2026-03-24
 
 ### Fifth-Round Deep Analysis Fixes

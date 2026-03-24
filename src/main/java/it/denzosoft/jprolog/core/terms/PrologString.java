@@ -95,13 +95,19 @@ public class PrologString extends Term {
      * @param str the string to escape
      * @return the escaped string
      */
+    // START_CHANGE: ISS-2025-0190 - Add missing escape sequences for full round-trip symmetry
     private java.lang.String escapeString(java.lang.String str) {
         return str.replace("\\", "\\\\")
                   .replace("\"", "\\\"")
+                  .replace("\u0007", "\\a")
+                  .replace("\b", "\\b")
+                  .replace("\f", "\\f")
+                  .replace("\u000B", "\\v")
                   .replace("\n", "\\n")
                   .replace("\t", "\\t")
                   .replace("\r", "\\r");
     }
+    // END_CHANGE: ISS-2025-0190
     
     /**
      * Unescapes special characters in a string.

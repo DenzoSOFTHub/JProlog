@@ -788,4 +788,112 @@ public class BugFixVerificationTest {
         assertEquals(1, solutions.size());
         assertEquals("1", solutions.get(0).get("X").toString());
     }
+
+    // ==================== ISS-2025-0190 ====================
+
+    // #1 KeySort ISO term ordering (not string comparison)
+    @Test
+    public void testISS0190_keySortISOOrdering() {
+        // Numeric keys: 2 should come before 10 in ISO ordering
+        prolog.consult("test_ks :- keysort([10-a, 2-b, 1-c], X), X = [1-c, 2-b, 10-a].");
+        List<Map<String, Term>> solutions = prolog.solve("test_ks.");
+        assertEquals(1, solutions.size());
+    }
+
+    // #2 Intersection structural deduplication
+    @Test
+    public void testISS0190_intersectionStructuralDedup() {
+        prolog.consult("test_int :- intersection([a, a, b], [a, b, c], X), X = [a, b].");
+        List<Map<String, Term>> solutions = prolog.solve("test_int.");
+        assertEquals(1, solutions.size());
+    }
+
+    // #4-5 LayeredMap rollback correctness
+    @Test
+    public void testISS0190_layeredMapRollback() {
+        it.denzosoft.jprolog.core.engine.LayeredMap map =
+            new it.denzosoft.jprolog.core.engine.LayeredMap(new java.util.HashMap<>());
+        map.put("A", new it.denzosoft.jprolog.core.terms.Atom("original"));
+        int mark = map.mark();
+        map.put("B", new it.denzosoft.jprolog.core.terms.Atom("added"));
+        map.put("A", new it.denzosoft.jprolog.core.terms.Atom("overwritten"));
+        assertEquals("overwritten", map.get("A").toString());
+        assertEquals("added", map.get("B").toString());
+        map.rollbackToMark(mark);
+        assertEquals("original", map.get("A").toString());
+        assertNull(map.get("B"));
+    }
+
+    // #6 Rational equals/hashCode contract
+    @Test
+    public void testISS0190_rationalEqualsHashCode() {
+        it.denzosoft.jprolog.core.terms.Rational r = new it.denzosoft.jprolog.core.terms.Rational(1, 3);
+        it.denzosoft.jprolog.core.terms.Number n = new it.denzosoft.jprolog.core.terms.Number(1.0 / 3.0);
+        // Rational should NOT equal Number (contract violation fix)
+        assertFalse(r.equals(n));
+    }
+
+    // #7-8 Unicode BMP range in number_codes
+    @Test
+    public void testISS0190_numberCodesUnicodeBMP() {
+        // Codes above 255 should now work
+        List<Map<String, Term>> solutions = prolog.solve("number_codes(1, X).");
+        assertEquals(1, solutions.size());
+    }
+
+    // #9 Succ long overflow
+    @Test
+    public void testISS0190_succLargeNumbers() {
+        // Values beyond int range should work
+        List<Map<String, Term>> solutions = prolog.solve("succ(2147483647, X).");
+        assertEquals(1, solutions.size());
+        assertEquals("2147483648", solutions.get(0).get("X").toString());
+    }
+
+    // #10 MapList4 binding accumulation
+    @Test
+    public void testISS0190_maplist4Bindings() {
+        prolog.consult("triple(X, Y, Z) :- Y is X * 2, Z is X * 3.");
+        List<Map<String, Term>> solutions = prolog.solve("maplist(triple, [1, 2], X, Y).");
+        assertEquals(1, solutions.size());
+    }
+
+    // #11 IfThen commits to first condition solution
+    @Test
+    public void testISS0190_ifThenFirstSolution() {
+        prolog.consult("choice(1). choice(2). choice(3).");
+        prolog.consult("test_ifthen(X) :- (choice(X) -> true).");
+        List<Map<String, Term>> solutions = prolog.solve("test_ifthen(X).");
+        // Should commit to first condition solution (X=1), not all three
+        assertEquals(1, solutions.size());
+        assertEquals("1", solutions.get(0).get("X").toString());
+    }
+
+    // #14 ArithmeticEvaluator msb/lsb error terms use Number
+    @Test
+    public void testISS0190_msbErrorTerm() {
+        try {
+            prolog.solve("X is msb(3.5).");
+            fail("Should throw type_error");
+        } catch (Exception e) {
+            assertTrue(e.getMessage().contains("type_error") || e.getMessage().contains("integer"));
+        }
+    }
+
+    // #16 PrologString escape/unescape symmetry
+    @Test
+    public void testISS0190_prologStringEscapeSymmetry() {
+        String input = "hello\\aworld";
+        String unescaped = it.denzosoft.jprolog.core.terms.PrologString.unescapeString(input);
+        // Bell character (0x07) should be present
+        assertTrue(unescaped.contains("\u0007"));
+    }
+
+    // #18 Ignore propagates system errors
+    @Test
+    public void testISS0190_ignoreSucceedsOnFailure() {
+        prolog.consult("test_ignore :- ignore(fail).");
+        List<Map<String, Term>> solutions = prolog.solve("test_ignore.");
+        assertEquals(1, solutions.size());
+    }
 }

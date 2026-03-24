@@ -168,11 +168,13 @@ public class NumberCodes implements BuiltIn {
                 Term element = compound.getArguments().get(0);
                 if (element instanceof Number) {
                     double code = ((Number) element).getValue();
-                    if (code == Math.floor(code) && code >= 0 && code <= 255) {
+                    // START_CHANGE: ISS-2025-0190 - Extend to full Unicode BMP range
+                    if (code == Math.floor(code) && code >= 0 && code <= Character.MAX_VALUE) {
                         codes.add((int) code);
                     } else {
-                        return null; // Invalid ASCII code
+                        return null; // Invalid character code
                     }
+                    // END_CHANGE: ISS-2025-0190
                 } else {
                     return null; // Element must be a number
                 }

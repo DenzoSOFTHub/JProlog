@@ -46,13 +46,15 @@ public class KeySort implements BuiltIn {
             }
         }
 
+        // START_CHANGE: ISS-2025-0190 - Use ISO term ordering instead of toString comparison
         // Stable sort by key using standard term ordering
         List<Term> sorted = new ArrayList<>(pairs);
         sorted.sort((a, b) -> {
             Term keyA = ((CompoundTerm) a).getArguments().get(0);
             Term keyB = ((CompoundTerm) b).getArguments().get(0);
-            return keyA.toString().compareTo(keyB.toString());
+            return Sort.compareTerms(keyA, keyB);
         });
+        // END_CHANGE: ISS-2025-0190
 
         Term sortedListTerm = ListUtils.createList(sorted);
 

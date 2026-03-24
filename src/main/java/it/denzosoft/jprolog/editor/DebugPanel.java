@@ -34,9 +34,11 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
     private boolean debugMode = false;
 
     // Debug infrastructure
-    private DebugController debugController;
-    private Thread debugThread;
+    // START_CHANGE: ISS-2025-0190 - Thread safety: volatile for cross-thread fields
+    private volatile DebugController debugController;
+    private volatile Thread debugThread;
     private volatile boolean queryRunning = false;
+    // END_CHANGE: ISS-2025-0190
 
     // UI Components - Toolbar
     private JButton startDebugButton;
@@ -76,7 +78,9 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
     private int historyIndex = -1;
 
     // Last paused event (for stack frame click -> variable update)
-    private DebugEvent lastPausedEvent;
+    // START_CHANGE: ISS-2025-0190 - Thread safety: volatile for cross-thread access
+    private volatile DebugEvent lastPausedEvent;
+    // END_CHANGE: ISS-2025-0190
     // Call stack entries from last pause (indexed parallel to tree nodes)
     // START_CHANGE: ISS-2025-0188 - Thread safety: volatile for cross-thread access
     private volatile List<DebugStackEntry> lastCallStack;

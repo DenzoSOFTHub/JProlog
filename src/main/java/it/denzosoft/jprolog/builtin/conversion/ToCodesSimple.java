@@ -137,9 +137,11 @@ public class ToCodesSimple implements BuiltIn {
             }
             
             int code = ((Number) head).getValue().intValue();
-            if (code < 0 || code > 255) {
+            // START_CHANGE: ISS-2025-0190 - Extend to full Unicode BMP range
+            if (code < 0 || code > Character.MAX_VALUE) {
                 return null;
             }
+            // END_CHANGE: ISS-2025-0190
             
             sb.append((char) code);
             current = getListTail(current);
