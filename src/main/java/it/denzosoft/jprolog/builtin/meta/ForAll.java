@@ -68,7 +68,9 @@ public class ForAll implements BuiltInWithContext {
             boolean actionSucceeds = solver.solve(action, new HashMap<>(conditionBinding), 
                                                 actionSolutions, CutStatus.notOccurred());
             
-            if (!actionSucceeds || actionSolutions.isEmpty()) {
+            // START_CHANGE: ISS-2025-0184 - Only check success, not solution count
+            if (!actionSucceeds) {
+            // END_CHANGE: ISS-2025-0184
                 // Action failed for this condition - forall fails
                 return false;
             }

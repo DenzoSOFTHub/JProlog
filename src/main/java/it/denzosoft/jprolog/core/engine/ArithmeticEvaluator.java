@@ -657,6 +657,11 @@ public class ArithmeticEvaluator {
     private static Number integerPower(Number base, Number exp) {
         long ev = exp.longValue();
         if (ev < 0) {
+            // START_CHANGE: ISS-2025-0185 - 0^negative throws zero_divisor
+            if (base.doubleValue() == 0.0) {
+                throw new PrologEvaluationException("evaluation_error(zero_divisor): 0 raised to negative power");
+            }
+            // END_CHANGE: ISS-2025-0185
             // Negative exponent: result is float
             return new Number(Math.pow(base.doubleValue(), exp.doubleValue()), false);
         }

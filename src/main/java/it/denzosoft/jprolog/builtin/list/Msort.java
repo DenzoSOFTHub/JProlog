@@ -31,7 +31,9 @@ public class Msort implements BuiltIn {
             List<Term> elements = ListUtils.extractElements(inputList);
 
             // Sort while preserving duplicates
-            Collections.sort(elements, (t1, t2) -> t1.toString().compareTo(t2.toString()));
+            // START_CHANGE: ISS-2025-0184 - Use ISO standard term ordering
+            Collections.sort(elements, Sort::compareTerms);
+            // END_CHANGE: ISS-2025-0184
 
             // Create the sorted list term
             Term sortedListTerm = ListUtils.createList(elements);

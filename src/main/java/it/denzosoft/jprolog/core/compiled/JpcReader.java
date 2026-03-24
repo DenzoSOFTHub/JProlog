@@ -128,6 +128,17 @@ public class JpcReader {
                 int idx = readVarint(dis);
                 return new PrologString(strings[idx]);
             }
+            // START_CHANGE: ISS-2025-0185 - Rational number deserialization
+            case JpcFormat.TERM_RATIONAL: {
+                int numLen = readVarint(dis);
+                byte[] numBytes = new byte[numLen];
+                dis.readFully(numBytes);
+                int denLen = readVarint(dis);
+                byte[] denBytes = new byte[denLen];
+                dis.readFully(denBytes);
+                return new Rational(new java.math.BigInteger(numBytes), new java.math.BigInteger(denBytes));
+            }
+            // END_CHANGE: ISS-2025-0185
             default:
                 throw new IOException("Unknown term type tag: " + type);
         }

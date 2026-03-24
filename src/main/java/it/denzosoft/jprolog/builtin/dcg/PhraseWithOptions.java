@@ -209,7 +209,9 @@ public class PhraseWithOptions implements BuiltIn {
                 case "fail":
                     return false;
                 case "warning":
-                    System.err.println("DCG warning: " + e.getMessage());
+                    // START_CHANGE: ISS-2025-0185 - Use LOGGER instead of System.err
+                    LOGGER.warning("DCG warning: " + e.getMessage());
+                    // END_CHANGE: ISS-2025-0185
                     return false;
                 default:
                     throw new PrologEvaluationException("DCG error: " + e.getMessage());

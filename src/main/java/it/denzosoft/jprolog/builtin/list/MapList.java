@@ -60,6 +60,7 @@ public class MapList implements BuiltInWithContext {
         List<Term> elements = ListUtils.extractElements(list);
         Map<String, Term> currentBindings = new HashMap<>(bindings);
 
+        // START_CHANGE: ISS-2025-0184 - Accumulate bindings through iterations
         for (Term elem : elements) {
             Term callGoal = buildCall(goal, elem);
             List<Map<String, Term>> tempSolutions = new ArrayList<>();
@@ -67,10 +68,12 @@ public class MapList implements BuiltInWithContext {
             if (!ok || tempSolutions.isEmpty()) {
                 return false;
             }
+            currentBindings = new HashMap<>(tempSolutions.get(0));
         }
 
-        solutions.add(new HashMap<>(bindings));
+        solutions.add(currentBindings);
         return true;
+        // END_CHANGE: ISS-2025-0184
     }
 
     private boolean maplist3(QuerySolver solver, Term goal, Term list1, Term list2Raw,

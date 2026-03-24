@@ -504,9 +504,13 @@ public class DCGTransformer {
             throw new IllegalArgumentException("Pushback notation requires exactly 1 argument: " + pushback);
         }
         Term terminals = TermUtils.getArgument(pushback, 0);
+        // START_CHANGE: ISS-2025-0185 - Null safety for non-CompoundTerm pushback
+        if (!(terminals instanceof CompoundTerm)) {
+            return TermUtils.createCompound("=", input, output);
+        }
+        // END_CHANGE: ISS-2025-0185
         // Transform pushback: output is input with terminals prepended
-        // Essentially: append(Terminals, Output, Input)
-        List<Term> terminalsList = extractListElements(terminals instanceof CompoundTerm ? (CompoundTerm) terminals : null);
+        List<Term> terminalsList = extractListElements((CompoundTerm) terminals);
         if (terminalsList.isEmpty()) {
             return TermUtils.createCompound("=", input, output);
         }

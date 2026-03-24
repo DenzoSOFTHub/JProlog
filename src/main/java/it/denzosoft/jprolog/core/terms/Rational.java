@@ -26,10 +26,9 @@ public class Rational extends Number {
      * Create a rational from BigInteger numerator and denominator.
      */
     public Rational(BigInteger numerator, BigInteger denominator) {
-        super(numerator.doubleValue() / denominator.doubleValue());
-        if (denominator.signum() == 0) {
-            throw new ArithmeticException("Rational: division by zero");
-        }
+        // START_CHANGE: ISS-2025-0185 - Check zero denominator before division
+        super(denominator.signum() == 0 ? throwZeroDenominator() : numerator.doubleValue() / denominator.doubleValue());
+        // END_CHANGE: ISS-2025-0185
         // Normalize: GCD reduction and positive denominator
         BigInteger gcd = numerator.gcd(denominator);
         this.numerator = denominator.signum() < 0
@@ -169,5 +168,11 @@ public class Rational extends Number {
     public int hashCode() {
         return 31 * numerator.hashCode() + denominator.hashCode();
     }
+
+    // START_CHANGE: ISS-2025-0185 - Helper for zero denominator check before super()
+    private static double throwZeroDenominator() {
+        throw new ArithmeticException("Rational: division by zero");
+    }
+    // END_CHANGE: ISS-2025-0185
 }
 // END_CHANGE: LIM-012

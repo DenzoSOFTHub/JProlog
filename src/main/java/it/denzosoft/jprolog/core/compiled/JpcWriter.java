@@ -143,7 +143,18 @@ public class JpcWriter {
     }
 
     private void writeTerm(DataOutputStream dos, Term term) throws IOException {
-        if (term instanceof Atom) {
+        // START_CHANGE: ISS-2025-0185 - Handle Rational before Number (Rational extends Number)
+        if (term instanceof Rational) {
+            Rational r = (Rational) term;
+            dos.writeByte(JpcFormat.TERM_RATIONAL);
+            byte[] numBytes = r.getNumerator().toByteArray();
+            byte[] denBytes = r.getDenominator().toByteArray();
+            writeVarint(dos, numBytes.length);
+            dos.write(numBytes);
+            writeVarint(dos, denBytes.length);
+            dos.write(denBytes);
+        // END_CHANGE: ISS-2025-0185
+        } else if (term instanceof Atom) {
             dos.writeByte(JpcFormat.TERM_ATOM);
             writeVarint(dos, indexOf(((Atom) term).getName()));
         } else if (term instanceof it.denzosoft.jprolog.core.terms.Number) {

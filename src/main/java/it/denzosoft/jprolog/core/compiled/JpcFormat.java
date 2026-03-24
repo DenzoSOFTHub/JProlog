@@ -35,6 +35,9 @@ public final class JpcFormat {
     public static final byte TERM_VARIABLE      = 0x03;
     public static final byte TERM_COMPOUND      = 0x04;
     public static final byte TERM_PROLOG_STRING = 0x05;
+    // START_CHANGE: ISS-2025-0185 - Rational number serialization
+    public static final byte TERM_RATIONAL      = 0x06;
+    // END_CHANGE: ISS-2025-0185
 
     // Operator type indices (matches Operator.Type ordinal)
     public static final byte OP_FX  = 0;

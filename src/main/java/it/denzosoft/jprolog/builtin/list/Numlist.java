@@ -27,7 +27,9 @@ public class Numlist implements BuiltIn {
         int low = ((Number) lowTerm).getValue().intValue();
         int high = ((Number) highTerm).getValue().intValue();
 
-        if (low > high + 1) return false;
+        // START_CHANGE: ISS-2025-0184 - Fix range validation
+        if (low > high) return false;
+        // END_CHANGE: ISS-2025-0184
 
         List<Term> nums = new ArrayList<>();
         for (int i = low; i <= high; i++) {
