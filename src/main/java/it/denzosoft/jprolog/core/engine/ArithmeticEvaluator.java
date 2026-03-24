@@ -99,13 +99,23 @@ public class ArithmeticEvaluator {
         UNARY_FUNCTIONS.put("ceil", Math::ceil);
         UNARY_FUNCTIONS.put("ceiling", Math::ceil);  // ISO standard name
         UNARY_FUNCTIONS.put("floor", Math::floor);
-        UNARY_FUNCTIONS.put("round", (x) -> (double) Math.round(x));
+        // START_CHANGE: ISS-2025-0189 - Handle NaN/Infinity in round
+        UNARY_FUNCTIONS.put("round", (x) -> {
+            if (Double.isNaN(x) || Double.isInfinite(x)) return x;
+            return (double) Math.round(x);
+        });
+        // END_CHANGE: ISS-2025-0189
 
         // ISO Prolog additional functions
         UNARY_FUNCTIONS.put("sign", Math::signum);
         UNARY_FUNCTIONS.put("truncate", x -> x < 0 ? Math.ceil(x) : Math.floor(x));
         UNARY_FUNCTIONS.put("float_integer_part", x -> Math.floor(Math.abs(x)) * Math.signum(x));
-        UNARY_FUNCTIONS.put("float_fractional_part", x -> x - (Math.floor(Math.abs(x)) * Math.signum(x)));
+        // START_CHANGE: ISS-2025-0189 - Handle NaN/Infinity in float_fractional_part
+        UNARY_FUNCTIONS.put("float_fractional_part", x -> {
+            if (Double.isNaN(x) || Double.isInfinite(x)) return Double.isNaN(x) ? x : 0.0;
+            return x - (Math.floor(Math.abs(x)) * Math.signum(x));
+        });
+        // END_CHANGE: ISS-2025-0189
         // START_CHANGE: ISS-2025-0169 - Validate integer type before bitwise NOT to prevent precision loss
         UNARY_FUNCTIONS.put("\\", x -> {
             if (x != Math.floor(x) || Double.isInfinite(x)) {
@@ -643,10 +653,12 @@ public class ArithmeticEvaluator {
         if (shift > Integer.MAX_VALUE) {
             throw new PrologEvaluationException("Shift amount too large: " + shift);
         }
-        if (a.isBigInteger()) {
+        // START_CHANGE: ISS-2025-0189 - Promote to BigInteger for shift >= 64 on long values
+        if (a.isBigInteger() || shift >= 64) {
             return normalizeBigInt(a.bigIntegerValue().shiftLeft((int) shift));
         }
         return new Number(a.longValue() << shift);
+        // END_CHANGE: ISS-2025-0189
     }
 
     private static Number shiftRight(Number a, Number b) {
@@ -658,7 +670,8 @@ public class ArithmeticEvaluator {
         if (shift > Integer.MAX_VALUE) {
             throw new PrologEvaluationException("Shift amount too large: " + shift);
         }
-        if (a.isBigInteger()) {
+        // ISS-2025-0189: Promote to BigInteger for shift >= 64 on long values
+        if (a.isBigInteger() || shift >= 64) {
             return normalizeBigInt(a.bigIntegerValue().shiftRight((int) shift));
         }
         return new Number(a.longValue() >> shift);

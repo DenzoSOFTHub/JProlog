@@ -50,10 +50,19 @@ public class LayeredMap implements Map<String, Term> {
         return flatten().size();
     }
 
+    // START_CHANGE: ISS-2025-0189 - Account for removed set in isEmpty()
     @Override
     public boolean isEmpty() {
-        return local.isEmpty() && parent.isEmpty();
+        if (!local.isEmpty()) return false;
+        if (parent.isEmpty()) return true;
+        if (removed == null || removed.isEmpty()) return false;
+        // Check if all parent keys were removed
+        for (String key : parent.keySet()) {
+            if (!removed.contains(key)) return false;
+        }
+        return true;
     }
+    // END_CHANGE: ISS-2025-0189
 
     @Override
     public boolean containsValue(Object value) {

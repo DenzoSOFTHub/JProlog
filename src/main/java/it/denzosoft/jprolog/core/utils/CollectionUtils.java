@@ -3,6 +3,7 @@ package it.denzosoft.jprolog.core.utils;
 import it.denzosoft.jprolog.core.engine.CutStatus;
 import it.denzosoft.jprolog.core.engine.QuerySolver;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -67,9 +68,13 @@ public final class CollectionUtils {
                 return false;
             }
             // END_CHANGE: ISS-2025-0072
+        // START_CHANGE: ISS-2025-0189 - Let PrologException propagate with ISO error terms
+        } catch (PrologException e) {
+            throw e;
         } catch (Exception e) {
             throw new PrologEvaluationException("Error solving goal in " + collectorType + ": " + e.getMessage(), e);
         }
+        // END_CHANGE: ISS-2025-0189
 
         // Process each solution to create the collected terms
         for (Map<String, Term> solution : tempSolutions) {

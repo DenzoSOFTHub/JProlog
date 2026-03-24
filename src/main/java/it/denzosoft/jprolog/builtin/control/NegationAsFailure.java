@@ -3,6 +3,7 @@ package it.denzosoft.jprolog.builtin.control;
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.QuerySolver;
 import it.denzosoft.jprolog.core.engine.CutStatus;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Term;
 
 import java.util.HashMap;
@@ -43,9 +44,16 @@ public class NegationAsFailure implements BuiltInWithContext {
         
         Term goal = query.getArguments().get(0).resolveBindings(bindings);
         
+        // START_CHANGE: ISS-2025-0189 - Let exceptions propagate per ISO 13211-1
         // Try to solve the goal
         List<Map<String, Term>> goalSolutions = new java.util.ArrayList<>();
-        boolean goalSucceeds = solver.solve(goal, new HashMap<>(bindings), goalSolutions, CutStatus.notOccurred());
+        boolean goalSucceeds;
+        try {
+            goalSucceeds = solver.solve(goal, new HashMap<>(bindings), goalSolutions, CutStatus.notOccurred());
+        } catch (PrologException e) {
+            throw e; // ISO: exceptions propagate through negation
+        }
+        // END_CHANGE: ISS-2025-0189
         
         // Negation as failure: succeed if the goal fails, fail if the goal succeeds
         if (!goalSucceeds || goalSolutions.isEmpty()) {

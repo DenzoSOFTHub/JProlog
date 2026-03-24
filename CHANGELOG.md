@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.6] - 2026-03-24
+
+### Fifth-Round Deep Analysis Fixes (ISS-2025-0189)
+
+Fifth comprehensive fix release addressing ISO compliance, arithmetic precision, exception propagation, and term immutability.
+
+#### Fixed — Arithmetic (HIGH)
+- **Shift operations**: Promote to BigInteger for shift amounts >= 64 (Java wraps lower 6 bits)
+- **round/1**: Preserve NaN/Infinity instead of producing incorrect 0/Long.MAX_VALUE
+- **float_fractional_part/1**: Return 0.0 for Infinity instead of NaN
+- **ArithmeticComparison**: Use exact integer comparison for ALL integer pairs, not just BigInteger
+
+#### Fixed — ISO Exception Propagation (HIGH)
+- **NegationAsFailure `\+`**: PrologException now propagates through negation per ISO 13211-1
+- **CollectionUtils findall/bagof/setof**: PrologException re-thrown with ISO error terms preserved
+
+#### Fixed — Term System (HIGH/MEDIUM)
+- **Rational.unify()**: Override with exact numerator/denominator comparison instead of double fallback
+- **LayeredMap.isEmpty()**: Now accounts for `removed` set — correct after rollback operations
+- **Atom.setName()**: Removed — enforces immutability contract
+- **Variable.setName()**: Removed — enforces immutability contract
+- **PrologString.unescapeString**: Added `\a`, `\b`, `\f`, `\v`, `\'` escape sequences for symmetry
+
+#### Tests
+- 320/320 JUnit tests passing
+- 20/20 example programs passing
+
+---
+
 ## [2.6.5] - 2026-03-24
 
 ### Fourth-Round Deep Analysis Fixes (ISS-2025-0188)

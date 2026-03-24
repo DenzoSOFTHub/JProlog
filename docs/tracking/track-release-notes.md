@@ -1,5 +1,17 @@
 # JProlog - Release Notes
 
+## Release 2.6.6 - 2026-03-24
+
+### Fifth-Round Deep Analysis Fixes
+
+11 fixes for ISO compliance, arithmetic precision, exception propagation, and term immutability.
+
+- **ISS-2025-0189**: Shift >= 64 BigInteger promotion, round/float_fractional_part NaN/Infinity, \+ exception propagation, findall/bagof PrologException passthrough, Rational.unify exact comparison, LayeredMap.isEmpty with removed set, ArithmeticComparison integer precision, Atom/Variable immutability, PrologString escape symmetry
+
+**Tests**: 320/320 JUnit, 20/20 examples
+
+---
+
 ## Release 2.6.5 - 2026-03-24
 
 ### Fourth-Round Deep Analysis Fixes

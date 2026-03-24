@@ -16,9 +16,7 @@ public class Atom extends Term {
         return name;
     }
 
-    public void setName(String name) {
-        this.name = name;
-    }
+    // ISS-2025-0189: Removed setName() to enforce immutability contract
 
     @Override
     public boolean unify(Term term, Map<String, Term> substitution) {

@@ -123,6 +123,13 @@ public class PrologString extends Term {
                     case 'n':  sb.append('\n'); i++; break;
                     case 't':  sb.append('\t'); i++; break;
                     case 'r':  sb.append('\r'); i++; break;
+                    // START_CHANGE: ISS-2025-0189 - Symmetric escape/unescape
+                    case 'a':  sb.append('\u0007'); i++; break; // bell
+                    case 'b':  sb.append('\b'); i++; break;     // backspace
+                    case 'f':  sb.append('\f'); i++; break;     // form feed
+                    case 'v':  sb.append('\u000B'); i++; break; // vertical tab
+                    case '\'': sb.append('\''); i++; break;     // single quote
+                    // END_CHANGE: ISS-2025-0189
                     default:   sb.append(c); break;
                 }
             } else {

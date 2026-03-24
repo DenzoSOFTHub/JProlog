@@ -154,9 +154,7 @@ public class Variable extends Term {
         return name;
     }
 
-    public void setName(String name) {
-        this.name = name;
-    }
+    // ISS-2025-0189: Removed setName() to enforce immutability contract
     
     public boolean isAnonymous() {
         return isAnonymous;

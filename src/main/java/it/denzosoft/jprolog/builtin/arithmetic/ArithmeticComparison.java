@@ -53,7 +53,8 @@ public class ArithmeticComparison implements BuiltIn {
 
             boolean result;
             // Use BigInteger comparison for large integers
-            if ((num1.isBigInteger() || num2.isBigInteger()) && num1.isInteger() && num2.isInteger()) {
+            // START_CHANGE: ISS-2025-0189 - Use exact integer comparison for all integer pairs
+            if (num1.isInteger() && num2.isInteger()) {
                 int cmp = num1.bigIntegerValue().compareTo(num2.bigIntegerValue());
                 switch (type) {
                     case EQUAL:       result = cmp == 0; break;

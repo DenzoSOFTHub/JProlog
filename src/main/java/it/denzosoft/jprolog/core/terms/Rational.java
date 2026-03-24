@@ -151,6 +151,28 @@ public class Rational extends Number {
         return new Rational(numerator, denominator);
     }
 
+    // START_CHANGE: ISS-2025-0189 - Exact rational unification instead of double comparison
+    @Override
+    public boolean unify(Term term, Map<String, Term> substitution) {
+        if (term instanceof Variable) {
+            return term.unify(this, substitution);
+        }
+        if (term instanceof Rational) {
+            Rational other = (Rational) term;
+            return this.numerator.equals(other.numerator) && this.denominator.equals(other.denominator);
+        }
+        if (term instanceof Number) {
+            Number other = (Number) term;
+            // A rational with denominator 1 can unify with an integer
+            if (this.isWholeNumber() && other.isInteger()) {
+                return this.numerator.equals(other.bigIntegerValue());
+            }
+            return false;
+        }
+        return false;
+    }
+    // END_CHANGE: ISS-2025-0189
+
     @Override
     public boolean equals(Object obj) {
         if (this == obj) return true;
