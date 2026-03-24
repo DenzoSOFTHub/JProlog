@@ -271,20 +271,14 @@ All Critical and High priority limitations have been resolved:
 - Module-qualified calls (`Module:Goal`), `predicate_property/2`, `code_type/2`
 - Stream repositioning, arbitrary precision integers (BigInteger), enhanced `write_term/2` options
 
-### Medium — Remaining Limitations
+### Resolved in v2.6.1 (formerly Medium)
 
-| Feature | Status | Impact |
-|---------|--------|--------|
-| **Constraint Handling Rules (CHR)** | Not implemented | Only CLP(FD) available |
-| **DCG advanced features** (pushback notation, `call//N`, `;` in DCG) | Not implemented | Basic DCG works; advanced patterns unsupported |
-| **Rational numbers** | Not implemented | No exact fractions (e.g., 1/3) |
-| **Character code notation** (`0'a`) | Not supported in parser | Must use `char_code/2` instead |
-| **Binary/Octal/Hex literals** (`0b1010`, `0o77`, `0xFF`) | Not supported in parser | Must use decimal notation |
-| **Multi-argument indexing** | Not implemented | First-argument indexing only; performance impact on large clause sets |
-| **WAM-style compilation** | Not implemented | Interpreted resolution; no bytecode compilation |
-| **Atom garbage collection** | Not implemented | Memory grows in long-running programs |
+All Medium priority limitations have been resolved:
+- CHR (basic simplification/propagation), DCG advanced features (pushback, `call//N`, if-then)
+- Rational numbers (`rdiv`), number literal notation (`0'a`, `0xFF`, `0o77`, `0b1010`)
+- Multi-argument indexing, compiled clause cache, atom garbage collection
 
-For the full tracking list, see [docs/tracking/track-limitations.md](docs/tracking/track-limitations.md).
+All 16 tracked limitations (LIM-001 through LIM-016) are now resolved. See [docs/tracking/track-limitations.md](docs/tracking/track-limitations.md).
 
 ---
 

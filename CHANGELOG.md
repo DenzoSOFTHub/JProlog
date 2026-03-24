@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.1] - 2026-03-23
+
+### Medium Priority Limitations Resolved (LIM-010 through LIM-016)
+
+Feature release implementing all remaining Medium priority limitations.
+
+#### Added
+- **LIM-010**: Constraint Handling Rules (CHR) — basic `CHRStore` with simplification and propagation rules
+- **LIM-011**: DCG advanced features — if-then (`->`), pushback notation (`\`), `call//N` in DCGTransformer
+- **LIM-012**: Rational numbers — `Rational` class extending `Number`, `rdiv` operator in ArithmeticEvaluator
+- **LIM-014**: Multi-argument indexing — second-argument index alongside first-argument in KnowledgeBase
+- **LIM-015**: Compiled clause cache — `CompiledClause` with pre-computed head argument types for fast rejection
+- **LIM-016**: Atom garbage collection — `AtomTable` with WeakReference-based intern table and permanent atoms; `atom_gc/0`, `atom_table_size/1`
+
+#### Already Implemented
+- **LIM-013**: Parser number literals (`0'a`, `0xFF`, `0o77`, `0b1010`) — discovered already present in TermParser.java
+
+#### Tests
+- 320/320 JUnit tests passing
+- 20/20 example programs passing
+
+---
+
 ## [2.6.0] - 2026-03-23
 
 ### Major: Attributed Variables, Coroutining, BigInteger Arithmetic, Module Calls

@@ -460,6 +460,14 @@ public class ArithmeticEvaluator {
             }
         }
 
+        // START_CHANGE: LIM-012 - Rational number support via rdiv
+        if ("rdiv".equals(name)) {
+            it.denzosoft.jprolog.core.terms.Rational lr = it.denzosoft.jprolog.core.terms.Rational.fromNumber(left);
+            it.denzosoft.jprolog.core.terms.Rational rr = it.denzosoft.jprolog.core.terms.Rational.fromNumber(right);
+            return lr.divide(rr);
+        }
+        // END_CHANGE: LIM-012
+
         // Default: use double-based operations
         // Check legacy operations first
         BiFunction<Double, Double, Double> operation = BINARY_OPERATIONS.get(name);

@@ -25,6 +25,10 @@ public class KnowledgeBase {
     private final Map<String, Map<String, List<Rule>>> firstArgIndex = new HashMap<>();
     private static final String VAR_KEY = "_VAR";
     // END_CHANGE: ISS-2025-0093
+    // START_CHANGE: LIM-014 - Multi-argument indexing (second argument)
+    /** Three-level index: predicate indicator -> arg1 key -> arg2 key -> rules */
+    private final Map<String, Map<String, Map<String, List<Rule>>>> multiArgIndex = new HashMap<>();
+    // END_CHANGE: LIM-014
 
     /**
      * Add a rule to the knowledge base.
@@ -201,6 +205,9 @@ public class KnowledgeBase {
         Term firstArg = getHeadFirstArg(rule);
         String argKey = (firstArg != null) ? getFirstArgKey(firstArg) : VAR_KEY;
         argIndex.computeIfAbsent(argKey, k -> new ArrayList<>()).add(rule);
+        // START_CHANGE: LIM-014 - Multi-argument indexing
+        addToMultiArgIndex(rule, predKey, argKey);
+        // END_CHANGE: LIM-014
     }
 
     private void addToFirstArgIndexFirst(Rule rule) {
@@ -209,7 +216,98 @@ public class KnowledgeBase {
         Term firstArg = getHeadFirstArg(rule);
         String argKey = (firstArg != null) ? getFirstArgKey(firstArg) : VAR_KEY;
         argIndex.computeIfAbsent(argKey, k -> new ArrayList<>()).add(0, rule);
+        // START_CHANGE: LIM-014 - Multi-argument indexing
+        addToMultiArgIndexFirst(rule, predKey, argKey);
+        // END_CHANGE: LIM-014
     }
+
+    // START_CHANGE: LIM-014 - Multi-argument indexing on second argument
+    private void addToMultiArgIndex(Rule rule, String predKey, String arg1Key) {
+        Term secondArg = getHeadNthArg(rule, 1);
+        String arg2Key = (secondArg != null) ? getFirstArgKey(secondArg) : VAR_KEY;
+        multiArgIndex
+            .computeIfAbsent(predKey, k -> new HashMap<>())
+            .computeIfAbsent(arg1Key, k -> new HashMap<>())
+            .computeIfAbsent(arg2Key, k -> new ArrayList<>())
+            .add(rule);
+    }
+
+    private void addToMultiArgIndexFirst(Rule rule, String predKey, String arg1Key) {
+        Term secondArg = getHeadNthArg(rule, 1);
+        String arg2Key = (secondArg != null) ? getFirstArgKey(secondArg) : VAR_KEY;
+        multiArgIndex
+            .computeIfAbsent(predKey, k -> new HashMap<>())
+            .computeIfAbsent(arg1Key, k -> new HashMap<>())
+            .computeIfAbsent(arg2Key, k -> new ArrayList<>())
+            .add(0, rule);
+    }
+
+    private Term getHeadNthArg(Rule rule, int n) {
+        Term head = rule.getHead();
+        if (head instanceof CompoundTerm) {
+            List<Term> args = ((CompoundTerm) head).getArguments();
+            if (args != null && args.size() > n) {
+                Term arg = args.get(n);
+                if (arg instanceof Variable) return null; // Variable = no index
+                return arg;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Get rules using multi-argument indexing (first + second argument).
+     * Falls back to first-argument-only if second argument is a variable.
+     */
+    public List<Rule> getRulesWithMultiArgIndex(String functor, int arity, Term firstArg, Term secondArg) {
+        synchronized (this) {
+            String predKey = functor + "/" + arity;
+
+            // If no first arg, fall through to basic lookup
+            if (firstArg == null || firstArg instanceof Variable) {
+                return getRulesForPredicate(functor, arity);
+            }
+
+            String arg1Key = getFirstArgKey(firstArg);
+
+            // If no second arg index possible, use first-arg only
+            if (secondArg == null || secondArg instanceof Variable) {
+                return getRulesWithFirstArgIndex(functor, arity, firstArg);
+            }
+
+            String arg2Key = getFirstArgKey(secondArg);
+
+            Map<String, Map<String, List<Rule>>> arg1Index = multiArgIndex.get(predKey);
+            if (arg1Index == null) {
+                return getRulesWithFirstArgIndex(functor, arity, firstArg);
+            }
+
+            // Collect: exact match on both args + variable matches
+            List<Rule> result = new ArrayList<>();
+            collectMultiArgRules(arg1Index, arg1Key, arg2Key, result);
+            collectMultiArgRules(arg1Index, arg1Key, VAR_KEY, result);
+            collectMultiArgRules(arg1Index, VAR_KEY, arg2Key, result);
+            collectMultiArgRules(arg1Index, VAR_KEY, VAR_KEY, result);
+
+            // Deduplicate while preserving order
+            Set<Rule> seen = new HashSet<>();
+            List<Rule> deduped = new ArrayList<>();
+            for (Rule r : result) {
+                if (seen.add(r)) deduped.add(r);
+            }
+            return Collections.unmodifiableList(deduped);
+        }
+    }
+
+    private void collectMultiArgRules(Map<String, Map<String, List<Rule>>> arg1Index,
+                                       String key1, String key2, List<Rule> result) {
+        Map<String, List<Rule>> arg2Index = arg1Index.get(key1);
+        if (arg2Index != null) {
+            List<Rule> rules = arg2Index.get(key2);
+            if (rules != null) result.addAll(rules);
+        }
+    }
+    // END_CHANGE: LIM-014
 
     private void removeFromFirstArgIndex(Rule rule) {
         String predKey = getPredicateIndicator(rule.getHead());

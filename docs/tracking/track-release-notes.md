@@ -1,5 +1,23 @@
 # JProlog - Release Notes
 
+## Release 2.6.1 - 2026-03-23
+
+### Medium Priority Limitations Resolved (LIM-010 through LIM-016)
+
+All remaining Medium priority limitations resolved. All 16 tracked limitations now closed.
+
+- **LIM-010**: CHR — basic `CHRStore` with simplification/propagation rules
+- **LIM-011**: DCG advanced features — if-then, pushback notation, `call//N`
+- **LIM-012**: Rational numbers — `Rational` class, `rdiv` operator
+- **LIM-013**: Number literal notation — already implemented in TermParser
+- **LIM-014**: Multi-argument indexing in KnowledgeBase
+- **LIM-015**: Compiled clause cache (`CompiledClause`) for fast rejection
+- **LIM-016**: Atom garbage collection via `AtomTable` with WeakReferences
+
+**Tests**: 320/320 JUnit, 20/20 examples
+
+---
+
 ## Release 2.6.0 - 2026-03-23
 
 ### Attributed Variables, Coroutining, BigInteger Arithmetic, Module Calls

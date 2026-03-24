@@ -110,24 +110,37 @@ public class DCGTransformer {
             switch (functor) {
                 case ",": // Conjunction
                     return transformConjunction(compound, input, output);
-                    
+
                 case ";": // Disjunction
                     return transformDisjunction(compound, input, output);
-                    
+
+                // START_CHANGE: LIM-011 - If-then in DCG
+                case "->": // If-then
+                    return transformIfThen(compound, input, output);
+                // END_CHANGE: LIM-011
+
                 case "[]": // Empty list (epsilon)
                     return TermUtils.createCompound("=", input, output);
-                    
+
                 case ".": // List (terminal symbols)
                     return transformTerminalList(compound, input, output);
-                    
+
                 case "{}": // Prolog goal
                     return transformPrologGoal(compound, input, output);
-                    
+
                 case "!": // Cut
-                    return TermUtils.createCompound(",", 
+                    return TermUtils.createCompound(",",
                         new Atom("!"),
                         TermUtils.createCompound("=", input, output));
-                    
+
+                // START_CHANGE: LIM-011 - Pushback notation and call//N
+                case "\\": // Pushback notation: pushback terminal list
+                    return transformPushback(compound, input, output);
+
+                case "call": // call//N: call(Goal, Args...) in DCG context
+                    return transformCallN(compound, input, output);
+                // END_CHANGE: LIM-011
+
                 default:
                     // Non-terminal with arguments
                     return transformNonTerminal(compound, input, output);
@@ -415,8 +428,71 @@ public class DCGTransformer {
      * @return true if it's a DCG rule
      */
     public static boolean isDCGRule(Term term) {
-        return term instanceof CompoundTerm && 
-               "-->".equals(TermUtils.getFunctorName(term)) && 
+        return term instanceof CompoundTerm &&
+               "-->".equals(TermUtils.getFunctorName(term)) &&
                TermUtils.getArity(term) == 2;
     }
+
+    // START_CHANGE: LIM-011 - DCG advanced features: if-then, pushback, call//N
+
+    /**
+     * Transform if-then: (Cond -> Then) in DCG context.
+     * Becomes: (TransformedCond -> TransformedThen)
+     */
+    private Term transformIfThen(CompoundTerm ifThen, Variable input, Variable output) {
+        Term cond = TermUtils.getArgument(ifThen, 0);
+        Term then = TermUtils.getArgument(ifThen, 1);
+
+        Variable intermediate = getNewVariable();
+        Term transformedCond = transformBody(cond, input, intermediate);
+        Term transformedThen = transformBody(then, intermediate, output);
+
+        return TermUtils.createCompound("->", transformedCond, transformedThen);
+    }
+
+    /**
+     * Transform pushback notation: (A, Terminals) where Terminals is a list
+     * that gets pushed back onto the input.
+     * pushback(List) in DCG context becomes: Output = [List | Input']
+     * Essentially appends the pushback terminals before the remaining input.
+     */
+    private Term transformPushback(CompoundTerm pushback, Variable input, Variable output) {
+        if (TermUtils.getArity(pushback) != 1) {
+            throw new IllegalArgumentException("Pushback notation requires exactly 1 argument: " + pushback);
+        }
+        Term terminals = TermUtils.getArgument(pushback, 0);
+        // Transform pushback: output is input with terminals prepended
+        // Essentially: append(Terminals, Output, Input)
+        List<Term> terminalsList = extractListElements(terminals instanceof CompoundTerm ? (CompoundTerm) terminals : null);
+        if (terminalsList.isEmpty()) {
+            return TermUtils.createCompound("=", input, output);
+        }
+        // Build: Input = [T1, T2, ... | Output]
+        Term pushbackList = output;
+        for (int i = terminalsList.size() - 1; i >= 0; i--) {
+            pushbackList = TermUtils.createCompound(".", terminalsList.get(i), pushbackList);
+        }
+        return TermUtils.createCompound("=", input, pushbackList);
+    }
+
+    /**
+     * Transform call//N in DCG context.
+     * call(Goal, Arg1, ..., ArgN) in DCG --> call(Goal, Arg1, ..., ArgN, S0, S)
+     */
+    private Term transformCallN(CompoundTerm callTerm, Variable input, Variable output) {
+        int arity = TermUtils.getArity(callTerm);
+        if (arity < 1) {
+            throw new IllegalArgumentException("call//N requires at least 1 argument: " + callTerm);
+        }
+        // Build call(Goal, Arg1, ..., ArgN, S0, S)
+        List<Term> newArgs = new ArrayList<>();
+        for (int i = 0; i < arity; i++) {
+            newArgs.add(TermUtils.getArgument(callTerm, i));
+        }
+        newArgs.add(input);
+        newArgs.add(output);
+        return TermUtils.createCompound("call", newArgs.toArray(new Term[0]));
+    }
+
+    // END_CHANGE: LIM-011
 }

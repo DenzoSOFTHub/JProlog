@@ -642,6 +642,37 @@ public class BuiltInFactory {
         registerFactory("dif", () -> new it.denzosoft.jprolog.builtin.control.Dif(null));
         // END_CHANGE: LIM-001
 
+        // START_CHANGE: LIM-012 - Rational number predicate
+        registerFactory("rational", () -> (it.denzosoft.jprolog.core.engine.BuiltIn) (query, bindings, solutions) -> {
+            it.denzosoft.jprolog.core.terms.Term arg = query.getArguments().get(0).resolveBindings(bindings);
+            if (arg instanceof it.denzosoft.jprolog.core.terms.Rational) {
+                solutions.add(new java.util.HashMap<>(bindings));
+                return true;
+            }
+            return false;
+        });
+        // END_CHANGE: LIM-012
+
+        // START_CHANGE: LIM-016 - Atom garbage collection predicates
+        registerFactory("atom_gc", () -> (it.denzosoft.jprolog.core.engine.BuiltIn) (query, bindings, solutions) -> {
+            it.denzosoft.jprolog.core.terms.AtomTable.gc();
+            solutions.add(new java.util.HashMap<>(bindings));
+            return true;
+        });
+        registerFactory("atom_table_size", () -> (it.denzosoft.jprolog.core.engine.BuiltIn) (query, bindings, solutions) -> {
+            it.denzosoft.jprolog.core.terms.Term arg = query.getArguments().get(0).resolveBindings(bindings);
+            it.denzosoft.jprolog.core.terms.Number size =
+                new it.denzosoft.jprolog.core.terms.Number((long) it.denzosoft.jprolog.core.terms.AtomTable.size());
+            if (arg instanceof it.denzosoft.jprolog.core.terms.Variable) {
+                java.util.Map<String, it.denzosoft.jprolog.core.terms.Term> newBindings = new java.util.HashMap<>(bindings);
+                newBindings.put(((it.denzosoft.jprolog.core.terms.Variable) arg).getName(), size);
+                solutions.add(newBindings);
+                return true;
+            }
+            return arg.unify(size, bindings);
+        });
+        // END_CHANGE: LIM-016
+
     }
     
     private static void registerFactory(String name, Supplier<BuiltIn> factory) {
