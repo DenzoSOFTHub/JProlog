@@ -129,29 +129,38 @@ public class ArithmeticEvaluator {
         UNARY_FUNCTIONS.put("float", x -> x.doubleValue()); // ISO: convert to float
 
         // START_CHANGE: ISS-2025-0170 - Add msb/1, lsb/1, popcount/1 ISO arithmetic functions
-        // START_CHANGE: ISS-2025-0190 - Use Number instead of Atom for error terms
+        // START_CHANGE: ISS-2025-0191 - Correct error types: typeError for non-integer, evaluationError for <= 0
         UNARY_FUNCTIONS.put("msb", x -> {
-            if (x != Math.floor(x) || Double.isInfinite(x) || x <= 0) {
+            if (x != Math.floor(x) || Double.isInfinite(x)) {
                 throw new PrologException(ISOErrorTerms.typeError("integer", new Number(x), "msb/1"));
+            }
+            if (x <= 0) {
+                throw new PrologException(ISOErrorTerms.evaluationError("undefined", "msb/1"));
             }
             long longVal = x.longValue();
             return (double)(63 - Long.numberOfLeadingZeros(longVal));
         });
         UNARY_FUNCTIONS.put("lsb", x -> {
-            if (x != Math.floor(x) || Double.isInfinite(x) || x <= 0) {
+            if (x != Math.floor(x) || Double.isInfinite(x)) {
                 throw new PrologException(ISOErrorTerms.typeError("integer", new Number(x), "lsb/1"));
+            }
+            if (x <= 0) {
+                throw new PrologException(ISOErrorTerms.evaluationError("undefined", "lsb/1"));
             }
             long longVal = x.longValue();
             return (double) Long.numberOfTrailingZeros(longVal);
         });
         UNARY_FUNCTIONS.put("popcount", x -> {
-            if (x != Math.floor(x) || Double.isInfinite(x) || x < 0) {
+            if (x != Math.floor(x) || Double.isInfinite(x)) {
                 throw new PrologException(ISOErrorTerms.typeError("integer", new Number(x), "popcount/1"));
+            }
+            if (x < 0) {
+                throw new PrologException(ISOErrorTerms.evaluationError("undefined", "popcount/1"));
             }
             long longVal = x.longValue();
             return (double) Long.bitCount(longVal);
         });
-        // END_CHANGE: ISS-2025-0190
+        // END_CHANGE: ISS-2025-0191
         // END_CHANGE: ISS-2025-0170
 
         // START_CHANGE: ISS-2025-0105 - Unary minus and plus for prefix expressions like -X, +X

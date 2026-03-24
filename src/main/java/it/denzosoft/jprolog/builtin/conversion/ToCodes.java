@@ -131,11 +131,13 @@ public class ToCodes implements BuiltIn {
             Term head = getListHead(current);
             if (head instanceof Number) {
                 int code = ((Number) head).getValue().intValue();
-                if (code >= 0 && code <= 255) {
+                // START_CHANGE: ISS-2025-0191 - Extend to full Unicode BMP range
+                if (code >= 0 && code <= Character.MAX_VALUE) {
                     sb.append((char) code);
                 } else {
                     return false; // Invalid character code
                 }
+                // END_CHANGE: ISS-2025-0191
             } else {
                 return false;
             }
@@ -234,10 +236,14 @@ public class ToCodes implements BuiltIn {
     /**
      * Check if a term represents a list
      */
+    // START_CHANGE: ISS-2025-0191 - Use proper type checking instead of fragile toString()
     private boolean isListTerm(Term term) {
-        return term instanceof CompoundTerm && ".".equals(((CompoundTerm) term).getFunctor()) ||
-               "[]".equals(term.toString());
+        if (term instanceof Atom && "[]".equals(((Atom) term).getName())) {
+            return true;
+        }
+        return term instanceof CompoundTerm && ".".equals(((CompoundTerm) term).getFunctor());
     }
+    // END_CHANGE: ISS-2025-0191
     
     /**
      * Check if a term represents an empty list

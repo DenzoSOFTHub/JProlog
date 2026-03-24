@@ -109,8 +109,9 @@ public class AtomConcat implements BuiltIn {
             }
             return false;
         } else {
-            throw new PrologEvaluationException("atom_concat/3 mode not supported. "+atom1.isGround()+
-                    ", "+atom2.isGround()+", "+atom12.isGround());
+            // START_CHANGE: ISS-2025-0191 - Return false instead of throwing for unsupported modes
+            return false;
+            // END_CHANGE: ISS-2025-0191
         }
     }
 }

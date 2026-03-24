@@ -214,15 +214,15 @@ public class Number extends Term {
         return Double.compare(number.doubleValue, doubleValue) == 0;
     }
 
-    // START_CHANGE: ISS-2025-0181 - Term system bug fixes
+    // START_CHANGE: ISS-2025-0191 - Fix NaN hashCode consistency
     @Override
     public int hashCode() {
         if (isBigInteger()) return bigIntValue.hashCode();
-        // Normalize -0.0 to 0.0 for hashCode consistency with equals
-        double val = (doubleValue == 0.0) ? 0.0 : doubleValue;
+        // Normalize -0.0 to 0.0 and canonicalize NaN for hashCode consistency with equals
+        double val = Double.isNaN(doubleValue) ? Double.NaN : (doubleValue == 0.0) ? 0.0 : doubleValue;
         long temp = Double.doubleToLongBits(val);
         return (int) (temp ^ (temp >>> 32));
     }
-    // END_CHANGE: ISS-2025-0181
+    // END_CHANGE: ISS-2025-0191
 }
 // END_CHANGE: LIM-008

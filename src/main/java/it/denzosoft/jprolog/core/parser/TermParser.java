@@ -741,13 +741,21 @@ public class TermParser {
         }
         // END_CHANGE: ISS-2025-0058
 
+        // START_CHANGE: ISS-2025-0191 - Parse integers via BigInteger to avoid double precision loss
         try {
-            double val = Double.parseDouble(number.toString());
-            return new Number(val, !hasDecimalPoint);
+            if (!hasDecimalPoint) {
+                // Always go through BigInteger to preserve exact precision for large integers
+                java.math.BigInteger bigVal = new java.math.BigInteger(number.toString());
+                return new Number(bigVal);
+            } else {
+                double val = Double.parseDouble(number.toString());
+                return new Number(val, false);
+            }
         } catch (NumberFormatException e) {
             throw new PrologParserException("Invalid number format: " + number.toString() +
                                           " at line " + line + ", column " + column);
         }
+        // END_CHANGE: ISS-2025-0191
     }
 
     private Term parseList() throws PrologParserException {

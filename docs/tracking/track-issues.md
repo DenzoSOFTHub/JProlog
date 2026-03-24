@@ -2,6 +2,16 @@
 
 ## Active and Resolved Issues
 
+### ISS-2025-0191: Seventh-Round Deep Analysis Fixes
+
+**Title**: Fix parser precision, PredSort solver call, ToCodes range/list check, TableStore collision, Number NaN hashCode, msb/lsb error types, Nth1 pre-resolution, AtomConcat mode, ListTerm recursion, DCG variable naming, Subtract/Intersection equality
+**Date Created**: 2026-03-24
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-24
+**Affected Files**: TermParser.java, PredSort.java, ToCodes.java, TableStore.java, Number.java, ArithmeticEvaluator.java, Nth1.java, AtomConcat.java, ListTerm.java, DCGTransformer.java, Subtract.java
+
+---
+
 ### ISS-2025-0190: Sixth-Round Deep Analysis Fixes
 
 **Title**: Fix KeySort ordering, Intersection dedup, Phrase bindings, LayeredMap rollback, Rational equals/hashCode, Unicode range, Succ overflow, MapList4 bindings, IfThen ISO, AcyclicTerm, error terms, Ignore propagation, PrologString escapes, JpcReader bounds, ListTerm views, DebugPanel volatiles

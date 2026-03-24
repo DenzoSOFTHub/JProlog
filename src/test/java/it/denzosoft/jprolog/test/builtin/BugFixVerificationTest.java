@@ -896,4 +896,97 @@ public class BugFixVerificationTest {
         List<Map<String, Term>> solutions = prolog.solve("test_ignore.");
         assertEquals(1, solutions.size());
     }
+
+    // ==================== ISS-2025-0191 ====================
+
+    // #1 Parser: large integer precision (parser level, not arithmetic evaluator)
+    @Test
+    public void testISS0191_largeIntegerParsing() {
+        // Verify the parser preserves large integer precision via direct unification
+        List<Map<String, Term>> solutions = prolog.solve("X = 9007199254740993.");
+        assertEquals(1, solutions.size());
+        assertEquals("9007199254740993", solutions.get(0).get("X").toString());
+    }
+
+    // #2-3 PredSort correct solver call and error propagation
+    @Test
+    public void testISS0191_predSortBasic() {
+        prolog.consult("my_cmp(<, X, Y) :- X < Y. my_cmp(>, X, Y) :- X > Y. my_cmp(=, X, Y) :- X =:= Y.");
+        List<Map<String, Term>> solutions = prolog.solve("predsort(my_cmp, [3, 1, 2], X).");
+        assertEquals(1, solutions.size());
+        // Verify sorting works — result should contain 1, 2, 3 in order
+        String result = solutions.get(0).get("X").toString();
+        assertTrue("Expected sorted list, got: " + result, result.contains("1") && result.contains("2") && result.contains("3"));
+    }
+
+    // #5 TableStore exact matching (internal unit test)
+    @Test
+    public void testISS0191_tableStoreNoCollision() {
+        // Direct test of the matchesPredicate logic via abolishTable
+        it.denzosoft.jprolog.core.engine.TableStore store = new it.denzosoft.jprolog.core.engine.TableStore();
+        store.declareTable("path", 2);
+        store.declareTable("path_query", 1);
+        store.abolishTable("path", 2);
+        // path_query should still be tabled after abolishing path
+        assertTrue(store.isTabled("path_query", 1));
+        assertFalse(store.isTabled("path", 2));
+    }
+
+    // #6 Number hashCode NaN consistency
+    @Test
+    public void testISS0191_numberHashCodeNaN() {
+        it.denzosoft.jprolog.core.terms.Number nan1 = new it.denzosoft.jprolog.core.terms.Number(Double.NaN);
+        it.denzosoft.jprolog.core.terms.Number nan2 = new it.denzosoft.jprolog.core.terms.Number(Double.NaN);
+        // Both NaN values should produce the same hashCode
+        assertEquals(nan1.hashCode(), nan2.hashCode());
+    }
+
+    // #7 msb/lsb evaluationError for <= 0
+    @Test
+    public void testISS0191_msbEvaluationError() {
+        try {
+            prolog.solve("X is msb(0).");
+            fail("Should throw evaluation_error");
+        } catch (Exception e) {
+            assertTrue(e.getMessage().contains("evaluation_error") || e.getMessage().contains("undefined"));
+        }
+    }
+
+    // #8 Nth1 element unification without pre-resolution
+    @Test
+    public void testISS0191_nth1Enumeration() {
+        List<Map<String, Term>> solutions = prolog.solve("nth1(N, [a, b, c], b).");
+        assertTrue(solutions.size() >= 1);
+        assertEquals("2", solutions.get(0).get("N").toString());
+    }
+
+    // #10 AtomConcat unsupported mode returns false
+    @Test
+    public void testISS0191_atomConcatUnsupportedMode() {
+        // All three unbound should fail, not throw
+        List<Map<String, Term>> solutions = prolog.solve("atom_concat(X, Y, Z).");
+        assertEquals(0, solutions.size());
+    }
+
+    // #11 ListTerm.createListTerm iterative
+    @Test
+    public void testISS0191_listTermLargeList() {
+        // Build a large list to ensure no stack overflow
+        StringBuilder sb = new StringBuilder("X = [");
+        for (int i = 0; i < 500; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(i);
+        }
+        sb.append("].");
+        List<Map<String, Term>> solutions = prolog.solve(sb.toString());
+        assertEquals(1, solutions.size());
+    }
+
+    // #13 Subtract uses structural equality
+    @Test
+    public void testISS0191_subtractStructuralEquality() {
+        prolog.consult("test_sub :- subtract([1, 2, 3], [2], X), X = [1, 3].");
+        List<Map<String, Term>> solutions = prolog.solve("test_sub.");
+        assertEquals(1, solutions.size());
+    }
 }

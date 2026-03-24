@@ -1,5 +1,15 @@
 # JProlog - Release Notes
 
+## Release 2.6.8 - 2026-03-24
+
+### Seventh-Round Deep Analysis Fixes
+
+13 fixes for parser precision, predicate correctness, and ISO compliance across 11 files.
+
+- **ISS-2025-0191**: TermParser BigInteger precision, PredSort solver call + error propagation, ToCodes Unicode BMP + list check, TableStore abolish collision, Number NaN hashCode, msb/lsb evaluationError, Nth1 unification, AtomConcat mode, ListTerm iterative, DCG variable prefix, Subtract structural equality
+
+---
+
 ## Release 2.6.7 - 2026-03-24
 
 ### Sixth-Round Deep Analysis Fixes

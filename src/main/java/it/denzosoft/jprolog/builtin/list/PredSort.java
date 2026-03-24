@@ -10,6 +10,9 @@ import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
 import it.denzosoft.jprolog.core.util.ListUtils;
 
+import it.denzosoft.jprolog.core.engine.CutStatus;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -95,6 +98,7 @@ public class PredSort implements BuiltInWithContext {
         return result;
     }
 
+    // START_CHANGE: ISS-2025-0191 - Fix solver call signature, propagate system errors
     private String compareTerms(QuerySolver solver, Term pred, Term x, Term y, Map<String, Term> bindings) {
         // Build goal: call(Pred, Order, X, Y)
         Variable orderVar = new Variable("_PredSortOrder");
@@ -106,19 +110,25 @@ public class PredSort implements BuiltInWithContext {
         Term callGoal = new CompoundTerm(new Atom("call"), callArgs);
 
         try {
-            List<Map<String, Term>> tempSolutions = solver.solve(callGoal);
-            if (!tempSolutions.isEmpty()) {
+            List<Map<String, Term>> tempSolutions = new ArrayList<>();
+            boolean success = solver.solve(callGoal, new HashMap<>(bindings), tempSolutions, CutStatus.notOccurred());
+            if (success && !tempSolutions.isEmpty()) {
                 Term orderTerm = orderVar.resolveBindings(tempSolutions.get(0));
                 if (orderTerm instanceof Atom) {
                     return ((Atom) orderTerm).getName();
                 }
             }
+        } catch (PrologException e) {
+            throw e; // Propagate Prolog exceptions
+        } catch (RuntimeException e) {
+            throw e; // Propagate system errors
         } catch (Exception e) {
-            // Fall through to default
+            // Fall through to default for checked exceptions
         }
 
         // Default to standard term ordering
         return "<";
     }
+    // END_CHANGE: ISS-2025-0191
 }
 // END_CHANGE: CR-2025-0008

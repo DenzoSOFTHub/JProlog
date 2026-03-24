@@ -92,14 +92,24 @@ public class TableStore {
     public void abolishTable(String functor, int arity) {
         String key = functor + "/" + arity;
         tabledPredicates.remove(key);
-        // Remove all cache entries whose key starts with the predicate's functor pattern
-        String prefix = functor + "(";
-        String atomKey = functor; // For zero-arity atoms
-        cache.entrySet().removeIf(entry ->
-            entry.getKey().startsWith(prefix) || entry.getKey().equals(atomKey));
-        inProgress.removeIf(k -> k.startsWith(prefix) || k.equals(atomKey));
+        // START_CHANGE: ISS-2025-0191 - Use exact functor/arity matching to prevent prefix collisions
+        // Match "functor(" for arity>0, or exact "functor" for arity==0
+        // Ensure no prefix collision: "path(" must NOT match "path_query("
+        cache.entrySet().removeIf(entry -> matchesPredicate(entry.getKey(), functor, arity));
+        inProgress.removeIf(k -> matchesPredicate(k, functor, arity));
+        // END_CHANGE: ISS-2025-0191
     }
     // END_CHANGE: ISS-2025-0124
+
+    // START_CHANGE: ISS-2025-0191 - Exact predicate matching helper
+    private static boolean matchesPredicate(String cacheKey, String functor, int arity) {
+        if (arity == 0) {
+            return cacheKey.equals(functor);
+        }
+        // For arity>0, must match "functor(" exactly (not "functor_ext(")
+        return cacheKey.startsWith(functor + "(");
+    }
+    // END_CHANGE: ISS-2025-0191
 
     public Set<String> getTabledPredicates() {
         return Collections.unmodifiableSet(tabledPredicates);

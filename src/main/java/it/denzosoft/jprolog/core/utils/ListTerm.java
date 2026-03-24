@@ -121,18 +121,19 @@ public class ListTerm extends Term {
         return elements.hashCode();
     }
 
-    // Helper function to create a list term from a list of terms.
+    // START_CHANGE: ISS-2025-0191 - Iterative list construction to avoid stack overflow for large lists
     public static Term createListTerm(List<Term> terms) {
         if (terms == null || terms.isEmpty()) {
-            return new Atom("[]");  // Empty list represented as an atom "[]"
-        } else {
-            List<Term> args = new ArrayList<>();
-            args.add(terms.get(0));
-
-            List<Term> sublist = terms.subList(1, terms.size());
-            Term tail = createListTerm(sublist);
-            args.add(tail);
-            return new CompoundTerm(new Atom("."), args); // List constructor
+            return new Atom("[]");
         }
+        Term result = new Atom("[]");
+        for (int i = terms.size() - 1; i >= 0; i--) {
+            List<Term> args = new ArrayList<>(2);
+            args.add(terms.get(i));
+            args.add(result);
+            result = new CompoundTerm(new Atom("."), args);
+        }
+        return result;
     }
+    // END_CHANGE: ISS-2025-0191
 }

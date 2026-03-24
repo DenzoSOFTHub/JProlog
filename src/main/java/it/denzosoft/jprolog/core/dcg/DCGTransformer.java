@@ -327,23 +327,25 @@ public class DCGTransformer {
     /**
      * Get the standard input variable S0.
      */
+    // START_CHANGE: ISS-2025-0191 - Use _DCG_ prefix to avoid variable naming collisions
     private Variable getInputVariable() {
-        return new Variable("S0");
+        return new Variable("_DCG_S0");
     }
-    
+
     /**
      * Get the standard output variable S.
      */
     private Variable getOutputVariable() {
-        return new Variable("S");
+        return new Variable("_DCG_S");
     }
-    
+
     /**
      * Generate a new unique variable.
      */
     private Variable getNewVariable() {
-        return new Variable("S" + (++variableCounter));
+        return new Variable("_DCG_S" + (++variableCounter));
     }
+    // END_CHANGE: ISS-2025-0191
     
     /**
      * Check if an atom name represents a string literal.

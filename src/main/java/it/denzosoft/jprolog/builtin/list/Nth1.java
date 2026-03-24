@@ -51,8 +51,10 @@ public class Nth1 implements BuiltIn {
             for (int i = 0; i < elements.size(); i++) {
                 Map<String, Term> newBindings = new HashMap<>(bindings);
                 Term idx = new Number(i + 1); // 1-based indexing
+                // START_CHANGE: ISS-2025-0191 - Let unification handle element without pre-resolution
                 if (indexTerm.unify(idx, newBindings) &&
-                    element.resolveBindings(bindings).unify(elements.get(i).copy(), newBindings)) {
+                    element.unify(elements.get(i).copy(), newBindings)) {
+                // END_CHANGE: ISS-2025-0191
                     solutions.add(new HashMap<>(newBindings));
                     found = true;
                 }

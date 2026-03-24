@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.8] - 2026-03-24
+
+### Seventh-Round Deep Analysis Fixes (ISS-2025-0191)
+
+13 fixes for parser precision, predicate correctness, and ISO compliance:
+
+#### Bug Fixes
+- **TermParser**: Parse integers via BigInteger to preserve precision for values > 2^53
+- **PredSort**: Fix solver call signature (pass bindings/solutions); propagate system errors
+- **ToCodes**: Extend character code range to Unicode BMP; fix fragile `isListTerm()` toString check
+- **TableStore**: Fix `abolishTable()` prefix collision (e.g., `path` no longer deletes `path_query`)
+- **Number.hashCode()**: Canonicalize NaN for consistent hashing
+- **ArithmeticEvaluator**: msb/lsb use `evaluationError("undefined")` for <= 0 (not typeError)
+- **Nth1**: Remove pre-resolution of element before unification
+- **AtomConcat**: Return false for unsupported modes instead of throwing
+- **Subtract/Intersection**: Use structural equality instead of unification for membership
+
+#### Improvements
+- **ListTerm.createListTerm()**: Iterative instead of recursive to avoid stack overflow
+- **DCGTransformer**: Use `_DCG_` prefix for generated variables to avoid collisions
+
 ## [2.6.7] - 2026-03-24
 
 ### Sixth-Round Deep Analysis Fixes (ISS-2025-0190)
