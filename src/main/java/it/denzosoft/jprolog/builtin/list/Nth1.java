@@ -43,10 +43,24 @@ public class Nth1 implements BuiltIn {
                 }
             }
             return false; // Index out of bounds or invalid index type
+        // START_CHANGE: ISS-2025-0186 - Debug, utility, and list predicate fixes
+        } else if (list.isGround() && !indexTerm.isGround()) {
+            // Enumeration mode: Index unbound, List is ground
+            List<Term> elements = ListUtils.extractElements(list);
+            boolean found = false;
+            for (int i = 0; i < elements.size(); i++) {
+                Map<String, Term> newBindings = new HashMap<>(bindings);
+                Term idx = new Number(i + 1); // 1-based indexing
+                if (indexTerm.unify(idx, newBindings) &&
+                    element.resolveBindings(bindings).unify(elements.get(i).copy(), newBindings)) {
+                    solutions.add(new HashMap<>(newBindings));
+                    found = true;
+                }
+            }
+            return found;
+        // END_CHANGE: ISS-2025-0186
         } else {
-            // START_CHANGE: ISS-2025-0084 - Return false instead of throwing for normal failure
             return false;
-            // END_CHANGE: ISS-2025-0084
         }
     }
 

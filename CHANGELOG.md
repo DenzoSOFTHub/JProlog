@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.3] - 2026-03-24
+
+### Deep Bug Fixes, ISO Compliance, Robustness
+
+Second comprehensive bug fix release from deep codebase analysis. Fixes 20+ issues across list predicates, engine, parser, debug system, and utilities.
+
+#### Fixed — List & Meta Predicates (ISS-2025-0184)
+- **Numlist**: `numlist(5,3,L)` now correctly fails instead of returning empty list
+- **Sort/Msort**: Proper ISO standard term ordering (numbers < atoms < compounds) replaces lexicographic toString comparison; structural deduplication
+- **MapList**: Bindings now accumulate through iterations — `maplist(=(1), [X,X])` works correctly
+- **ForAll**: Removed spurious empty-solutions check; only checks goal success
+
+#### Fixed — Engine & Parser (ISS-2025-0185)
+- **Rational**: Zero denominator check moved before division computation (prevents Infinity)
+- **ArithmeticEvaluator**: `0 ** -1` throws `evaluation_error(zero_divisor)` instead of returning Infinity
+- **DCGTransformer**: Pushback handles non-CompoundTerm gracefully (null safety)
+- **PhraseWithOptions**: `System.err.println` replaced with `LOGGER.warning`
+- **JpcWriter/JpcReader**: Rational number serialization/deserialization with `TERM_RATIONAL` tag
+
+#### Fixed — Debug, Utilities, Lists (ISS-2025-0186)
+- **DebugController**: `handleException()` pops call stack on uncaught exceptions (prevents stack leak)
+- **ListTerm**: Unification with standard Prolog lists (CompoundTerm "." functor) now works
+- **TermCopier**: `COPY_COUNTER` uses `AtomicLong` for thread safety
+- **Substitution**: Cycle detection in variable resolution prevents infinite recursion
+- **Nth0/Nth1**: Enumeration mode generates all index-element pairs when both are unbound
+
+#### Tests
+- 320/320 JUnit tests passing
+- 20/20 example programs passing
+
+---
+
 ## [2.6.2] - 2026-03-24
 
 ### Bug Fixes, DCG Completion, ISO Compliance

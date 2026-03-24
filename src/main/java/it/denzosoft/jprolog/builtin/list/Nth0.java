@@ -60,6 +60,22 @@ public class Nth0 implements BuiltIn {
                 }
             }
             return false;
+        // START_CHANGE: ISS-2025-0186 - Debug, utility, and list predicate fixes
+        } else if (list.isGround() && !indexTerm.isGround() && !element.isGround()) {
+            // Enumeration mode: both Index and Element unbound, List is ground
+            List<Term> elements = ListUtils.extractElements(list);
+            boolean found = false;
+            for (int i = 0; i < elements.size(); i++) {
+                Map<String, Term> newBindings = new HashMap<>(bindings);
+                Term idx = new Number(i);
+                if (indexTerm.unify(idx, newBindings) &&
+                    element.unify(elements.get(i).copy(), newBindings)) {
+                    solutions.add(new HashMap<>(newBindings));
+                    found = true;
+                }
+            }
+            return found;
+        // END_CHANGE: ISS-2025-0186
         } else {
             throw new PrologEvaluationException("nth0/3: unsupported argument pattern.");
         }

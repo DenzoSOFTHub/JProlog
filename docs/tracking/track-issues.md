@@ -2,6 +2,36 @@
 
 ## Active and Resolved Issues
 
+### ISS-2025-0186: Debug, Utility, and List Predicate Fixes
+
+**Title**: Fix DebugController stack leak, ListTerm unification, TermCopier thread safety, Substitution cycles, Nth0/Nth1 enumeration
+**Date Created**: 2026-03-24
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-24
+**Priority**: HIGH
+
+---
+
+### ISS-2025-0185: Engine and Parser Bug Fixes
+
+**Title**: Fix Rational zero-division, power 0^-N, DCG pushback null safety, PhraseWithOptions logging, JPC Rational serialization
+**Date Created**: 2026-03-24
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-24
+**Priority**: HIGH
+
+---
+
+### ISS-2025-0184: List and Meta Predicate Bug Fixes
+
+**Title**: Fix Numlist range, Sort ISO ordering, MapList binding accumulation, ForAll solution check
+**Date Created**: 2026-03-24
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-24
+**Priority**: CRITICAL
+
+---
+
 ### ISS-2025-0183: DCG Negation and If-Then-Else Completion
 
 **Title**: Add \+ negation handling and proper if-then-else semantics in DCGTransformer

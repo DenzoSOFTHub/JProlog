@@ -47,6 +47,14 @@ public class ListTerm extends Term {
                 }
             }
             return true;
+        // START_CHANGE: ISS-2025-0186 - Debug, utility, and list predicate fixes
+        } else if (term instanceof CompoundTerm && ".".equals(term.getName())) {
+            // Unify with standard Prolog "." list by converting this ListTerm
+            Term standardList = createListTerm(this.elements);
+            return standardList.unify(term, substitution);
+        } else if (term instanceof Atom && "[]".equals(((Atom) term).getName()) && this.elements.isEmpty()) {
+            return true;
+        // END_CHANGE: ISS-2025-0186
         } else {
             return term.unify(this, substitution);
         }

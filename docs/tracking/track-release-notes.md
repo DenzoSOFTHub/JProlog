@@ -1,5 +1,19 @@
 # JProlog - Release Notes
 
+## Release 2.6.3 - 2026-03-24
+
+### Deep Bug Fixes, ISO Compliance, Robustness
+
+Second comprehensive fix release from deep analysis. 20+ fixes across list predicates, engine, parser, debug, and utilities.
+
+- **ISS-2025-0184**: Numlist range, Sort ISO ordering, MapList bindings, ForAll check
+- **ISS-2025-0185**: Rational zero-div, power 0^-N, DCG pushback, JPC Rational support
+- **ISS-2025-0186**: DebugController stack, ListTerm unification, TermCopier AtomicLong, Substitution cycles, Nth0/Nth1 enumeration
+
+**Tests**: 320/320 JUnit, 20/20 examples
+
+---
+
 ## Release 2.6.2 - 2026-03-24
 
 ### Bug Fixes, DCG Completion, ISO Compliance

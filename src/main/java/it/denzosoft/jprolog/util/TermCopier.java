@@ -5,6 +5,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.List;
 import java.util.ArrayList;
+// START_CHANGE: ISS-2025-0186 - Debug, utility, and list predicate fixes
+import java.util.concurrent.atomic.AtomicLong;
+// END_CHANGE: ISS-2025-0186
 
 /**
  * Utility class for copying terms while preserving variable sharing.
@@ -13,9 +16,9 @@ import java.util.ArrayList;
  */
 public class TermCopier {
 
-    // START_CHANGE: ISS-2025-0091 - Use simple counter (single-threaded execution)
-    private static long COPY_COUNTER = 0;
-    // END_CHANGE: ISS-2025-0091
+    // START_CHANGE: ISS-2025-0186 - Debug, utility, and list predicate fixes
+    private static final AtomicLong COPY_COUNTER = new AtomicLong(0);
+    // END_CHANGE: ISS-2025-0186
     
     /**
      * Copy a term while preserving variable sharing relationships.
@@ -57,9 +60,9 @@ public class TermCopier {
      */
     public static RuleCopy copyRule(Term head, List<Term> body) {
         Map<String, Variable> variableMap = new HashMap<>();
-        // START_CHANGE: ISS-2025-0091 - Cache prefix string to avoid repeated concatenation
-        String prefix = "_R" + (COPY_COUNTER++) + "_";
-        // END_CHANGE: ISS-2025-0091
+        // START_CHANGE: ISS-2025-0186 - Debug, utility, and list predicate fixes
+        String prefix = "_R" + COPY_COUNTER.incrementAndGet() + "_";
+        // END_CHANGE: ISS-2025-0186
         Term copiedHead = copyTermInternal(head, variableMap, prefix);
         List<Term> copiedBody = new ArrayList<>(body.size());
         for (Term term : body) {
@@ -92,7 +95,9 @@ public class TermCopier {
      */
     public static Term copyWithFreshVariables(Term term) {
         Map<String, Variable> variableMap = new HashMap<>();
-        String prefix = "_R" + (COPY_COUNTER++) + "_";
+        // START_CHANGE: ISS-2025-0186 - Debug, utility, and list predicate fixes
+        String prefix = "_R" + COPY_COUNTER.incrementAndGet() + "_";
+        // END_CHANGE: ISS-2025-0186
         return copyTermInternal(term, variableMap, prefix);
     }
     // END_CHANGE: ISS-2025-0122

@@ -4,7 +4,9 @@ import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 
 
@@ -41,20 +43,29 @@ public class Substitution  {
         return bindings.containsKey(var.getName());
     }
 
+    // START_CHANGE: ISS-2025-0186 - Debug, utility, and list predicate fixes
     private Term resolveTerm(Term term) {
         if (term == null) {
             return null;
         }
 
-        if (term instanceof Variable) {
-            String variableName = ((Variable) term).getName();
-            if (bindings.containsKey(variableName)) {
-                Term boundTerm = bindings.get(variableName);
-                return resolveTerm(boundTerm); // Recursively resolve
+        Set<String> visited = new HashSet<>();
+        Term current = term;
+        while (current instanceof Variable) {
+            String variableName = ((Variable) current).getName();
+            if (visited.contains(variableName)) {
+                // Cycle detected - return the variable as-is to prevent infinite recursion
+                return current;
             }
+            if (!bindings.containsKey(variableName)) {
+                return current;
+            }
+            visited.add(variableName);
+            current = bindings.get(variableName);
         }
-        return term; // Return the term if it's not a bound variable or is not a variable
+        return current;
     }
+    // END_CHANGE: ISS-2025-0186
 
     @Override
 	public String toString() {
