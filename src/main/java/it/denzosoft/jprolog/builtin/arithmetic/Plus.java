@@ -64,7 +64,9 @@ public class Plus implements BuiltIn {
             double value2 = ((it.denzosoft.jprolog.core.terms.Number) int2Term).getValue();
             double value3 = ((it.denzosoft.jprolog.core.terms.Number) int3Term).getValue();
             
-            if (Math.abs((value1 + value2) - value3) < 1e-10) {
+            // START_CHANGE: ISS-2025-0187 - Exact comparison instead of epsilon
+            if (Double.compare(value1 + value2, value3) == 0) {
+            // END_CHANGE: ISS-2025-0187
                 solutions.add(new HashMap<>(bindings));
                 return true;
             } else {

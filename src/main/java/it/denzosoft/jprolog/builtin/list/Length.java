@@ -92,7 +92,9 @@ public class Length implements BuiltIn {
         Term current = new Atom("[]");
         for (int i = 0; i < length; i++) {
             List<Term> args = new ArrayList<>();
-            args.add(new Variable("_")); // Anonymous variable for list element
+            // START_CHANGE: ISS-2025-0187 - Unique variable names to avoid unification
+            args.add(new Variable("_G" + i));
+            // END_CHANGE: ISS-2025-0187
             args.add(current);
             current = new CompoundTerm(new Atom("."), args);
         }

@@ -52,7 +52,14 @@ public class CurrentPredicate implements BuiltInWithContext {
                     String[] parts = predicateStr.split("/");
                     if (parts.length == 2) {
                         String functor = parts[0];
-                        int arity = Integer.parseInt(parts[1]);
+                        // START_CHANGE: ISS-2025-0187 - Handle invalid arity format
+                        int arity;
+                        try {
+                            arity = Integer.parseInt(parts[1]);
+                        } catch (NumberFormatException e) {
+                            continue; // Skip malformed predicate indicator
+                        }
+                        // END_CHANGE: ISS-2025-0187
                         
                         // Create predicate indicator term
                         Term indicatorTerm = new CompoundTerm(

@@ -59,6 +59,8 @@ public class Foldl implements BuiltInWithContext {
 
         List<Term> elements = ListUtils.extractElements(list);
         Term accumulator = v0;
+        // START_CHANGE: ISS-2025-0187 - Accumulate bindings through iterations
+        Map<String, Term> currentBindings = new HashMap<>(bindings);
 
         for (int i = 0; i < elements.size(); i++) {
             Variable nextAcc = new Variable("_FoldAcc_" + i);
@@ -66,13 +68,15 @@ public class Foldl implements BuiltInWithContext {
                 Arrays.asList(goal, elements.get(i), accumulator, nextAcc));
 
             List<Map<String, Term>> temp = new ArrayList<>();
-            if (!solver.solve(callGoal, new HashMap<>(bindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
+            if (!solver.solve(callGoal, new HashMap<>(currentBindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
                 return false;
             }
-            accumulator = nextAcc.resolveBindings(temp.get(0));
+            currentBindings = new HashMap<>(temp.get(0));
+            accumulator = nextAcc.resolveBindings(currentBindings);
         }
+        // END_CHANGE: ISS-2025-0187
 
-        Map<String, Term> newBindings = new HashMap<>(bindings);
+        Map<String, Term> newBindings = new HashMap<>(currentBindings);
         if (vResult.unify(accumulator, newBindings)) {
             solutions.add(newBindings);
             return true;
@@ -93,19 +97,21 @@ public class Foldl implements BuiltInWithContext {
         if (elems1.size() != elems2.size()) return false;
 
         Term accumulator = v0;
+        Map<String, Term> currentBindings = new HashMap<>(bindings);
         for (int i = 0; i < elems1.size(); i++) {
             Variable nextAcc = new Variable("_FoldAcc_" + i);
             Term callGoal = new CompoundTerm(new Atom("call"),
                 Arrays.asList(goal, elems1.get(i), elems2.get(i), accumulator, nextAcc));
 
             List<Map<String, Term>> temp = new ArrayList<>();
-            if (!solver.solve(callGoal, new HashMap<>(bindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
+            if (!solver.solve(callGoal, new HashMap<>(currentBindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
                 return false;
             }
-            accumulator = nextAcc.resolveBindings(temp.get(0));
+            currentBindings = new HashMap<>(temp.get(0));
+            accumulator = nextAcc.resolveBindings(currentBindings);
         }
 
-        Map<String, Term> newBindings = new HashMap<>(bindings);
+        Map<String, Term> newBindings = new HashMap<>(currentBindings);
         if (vResult.unify(accumulator, newBindings)) {
             solutions.add(newBindings);
             return true;
@@ -128,19 +134,21 @@ public class Foldl implements BuiltInWithContext {
         if (elems1.size() != elems2.size() || elems1.size() != elems3.size()) return false;
 
         Term accumulator = v0;
+        Map<String, Term> currentBindings = new HashMap<>(bindings);
         for (int i = 0; i < elems1.size(); i++) {
             Variable nextAcc = new Variable("_FoldAcc_" + i);
             Term callGoal = new CompoundTerm(new Atom("call"),
                 Arrays.asList(goal, elems1.get(i), elems2.get(i), elems3.get(i), accumulator, nextAcc));
 
             List<Map<String, Term>> temp = new ArrayList<>();
-            if (!solver.solve(callGoal, new HashMap<>(bindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
+            if (!solver.solve(callGoal, new HashMap<>(currentBindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
                 return false;
             }
-            accumulator = nextAcc.resolveBindings(temp.get(0));
+            currentBindings = new HashMap<>(temp.get(0));
+            accumulator = nextAcc.resolveBindings(currentBindings);
         }
 
-        Map<String, Term> newBindings = new HashMap<>(bindings);
+        Map<String, Term> newBindings = new HashMap<>(currentBindings);
         if (vResult.unify(accumulator, newBindings)) {
             solutions.add(newBindings);
             return true;

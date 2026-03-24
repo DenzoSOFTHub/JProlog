@@ -2,6 +2,16 @@
 
 ## Active and Resolved Issues
 
+### ISS-2025-0187: Third-Round Analysis Bug Fixes
+
+**Title**: Fix Length variable naming, Intersection deduplication, Plus/Foldl binding accumulation, NumberCodes Unicode range, CurrentPredicate parseInt, ArithmeticEvaluator shift overflow
+**Date Created**: 2026-03-24
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-24
+**Priority**: MEDIUM
+
+---
+
 ### ISS-2025-0186: Debug, Utility, and List Predicate Fixes
 
 **Title**: Fix DebugController stack leak, ListTerm unification, TermCopier thread safety, Substitution cycles, Nth0/Nth1 enumeration

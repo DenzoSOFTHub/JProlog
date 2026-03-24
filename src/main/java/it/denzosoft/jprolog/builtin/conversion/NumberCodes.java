@@ -81,7 +81,8 @@ public class NumberCodes implements BuiltIn {
         
         StringBuilder sb = new StringBuilder();
         for (int code : codes) {
-            if (code < 0 || code > 255) {
+            // ISS-2025-0187: extend to full Unicode BMP range
+            if (code < 0 || code > Character.MAX_VALUE) {
                 return false; // Invalid ASCII code
             }
             sb.append((char) code);
@@ -118,7 +119,8 @@ public class NumberCodes implements BuiltIn {
         // Convert codes to string and compare with number string
         StringBuilder sb = new StringBuilder();
         for (int code : codes) {
-            if (code < 0 || code > 255) {
+            // ISS-2025-0187: extend to full Unicode BMP range
+            if (code < 0 || code > Character.MAX_VALUE) {
                 return false;
             }
             sb.append((char) code);

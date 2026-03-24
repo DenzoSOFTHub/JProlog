@@ -636,6 +636,10 @@ public class ArithmeticEvaluator {
         if (shift < 0) {
             throw new PrologException(ISOErrorTerms.evaluationError("negative_shift", "(<<)/2"));
         }
+        // ISS-2025-0187: validate shift range before int cast
+        if (shift > Integer.MAX_VALUE) {
+            throw new PrologEvaluationException("Shift amount too large: " + shift);
+        }
         if (a.isBigInteger()) {
             return normalizeBigInt(a.bigIntegerValue().shiftLeft((int) shift));
         }
@@ -646,6 +650,10 @@ public class ArithmeticEvaluator {
         long shift = b.longValue();
         if (shift < 0) {
             throw new PrologException(ISOErrorTerms.evaluationError("negative_shift", "(>>)/2"));
+        }
+        // ISS-2025-0187: validate shift range before int cast
+        if (shift > Integer.MAX_VALUE) {
+            throw new PrologEvaluationException("Shift amount too large: " + shift);
         }
         if (a.isBigInteger()) {
             return normalizeBigInt(a.bigIntegerValue().shiftRight((int) shift));

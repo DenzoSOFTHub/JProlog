@@ -1,5 +1,17 @@
 # JProlog - Release Notes
 
+## Release 2.6.4 - 2026-03-24
+
+### Third-Round Analysis Fixes
+
+Final round of deep codebase analysis. 7 fixes for remaining edge cases.
+
+- **ISS-2025-0187**: Length variable naming, Intersection deduplication, Plus exact comparison, Foldl binding accumulation, NumberCodes Unicode BMP range, CurrentPredicate parseInt safety, ArithmeticEvaluator shift overflow
+
+**Tests**: 320/320 JUnit, 20/20 examples
+
+---
+
 ## Release 2.6.3 - 2026-03-24
 
 ### Deep Bug Fixes, ISO Compliance, Robustness

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.4] - 2026-03-24
+
+### Third-Round Analysis Fixes (ISS-2025-0187)
+
+Third and final round of deep codebase analysis fixes addressing remaining edge cases and correctness issues.
+
+#### Fixed
+- **Length**: Variable naming collision in list generation mode (`_G0`, `_G1` instead of all `_`)
+- **Intersection**: Deduplication of results using `HashSet<String>` tracking
+- **Plus**: Exact arithmetic comparison via `Double.compare()` instead of epsilon
+- **Foldl**: Binding accumulation through fold iterations for all 3 variants (foldl4/5/6)
+- **NumberCodes**: Extended valid code range from 0-255 to full Unicode BMP (0-65535)
+- **CurrentPredicate**: Graceful handling of malformed arity in predicate indicators
+- **ArithmeticEvaluator**: Shift amount overflow validation (> Integer.MAX_VALUE)
+
+#### Tests
+- 320/320 JUnit tests passing
+- 20/20 example programs passing
+
+---
+
 ## [2.6.3] - 2026-03-24
 
 ### Deep Bug Fixes, ISO Compliance, Robustness
