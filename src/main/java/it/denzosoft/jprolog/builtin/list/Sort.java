@@ -25,23 +25,14 @@ public class Sort implements BuiltIn {
         if (inputList.isGround()) {
             List<Term> elements = ListUtils.extractElements(inputList);
 
-            // START_CHANGE: ISS-2025-0184 - ISO standard term ordering and structural dedup
-            // Remove duplicates using structural equality (toString comparison)
+            // START_CHANGE: ISS-2025-0188 - Sort first, then dedup using compareTerms
+            Collections.sort(elements, Sort::compareTerms);
             List<Term> uniqueElements = new ArrayList<>();
-            for (Term term : elements) {
-                boolean found = false;
-                for (Term existing : uniqueElements) {
-                    if (existing.toString().equals(term.toString())) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    uniqueElements.add(term);
+            for (int i = 0; i < elements.size(); i++) {
+                if (i == 0 || compareTerms(elements.get(i), elements.get(i - 1)) != 0) {
+                    uniqueElements.add(elements.get(i));
                 }
             }
-
-            Collections.sort(uniqueElements, Sort::compareTerms);
             // END_CHANGE: ISS-2025-0184
 
             Term sortedListTerm = ListUtils.createList(uniqueElements);

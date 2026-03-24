@@ -121,9 +121,15 @@ public class JpcWriter {
         return i;
     }
 
+    // START_CHANGE: ISS-2025-0188 - Null safety for un-interned strings
     private int indexOf(String s) {
-        return stringIndex.get(s);
+        Integer idx = stringIndex.get(s);
+        if (idx == null) {
+            return intern(s);
+        }
+        return idx;
     }
+    // END_CHANGE: ISS-2025-0188
 
     private void collectStrings(Term term) {
         if (term instanceof Atom) {

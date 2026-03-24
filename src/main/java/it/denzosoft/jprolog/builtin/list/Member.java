@@ -57,7 +57,9 @@ public class Member implements BuiltIn {
                         found = true;
                     }
 
-                    current = tail.resolveBindings(bindings);
+                    // START_CHANGE: ISS-2025-0188 - Resolve tail with current bindings
+                    current = tail.resolveBindings(newBindings);
+                    // END_CHANGE: ISS-2025-0188
                 } else {
                     break;
                 }

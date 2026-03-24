@@ -110,14 +110,26 @@ public class PrologString extends Term {
      * @param str the string to unescape
      * @return the unescaped string
      */
-    // START_CHANGE: ISS-2025-0181 - Term system bug fixes
+    // START_CHANGE: ISS-2025-0188 - Single-pass unescape to handle all edge cases correctly
     public static java.lang.String unescapeString(java.lang.String str) {
-        return str.replace("\\\\", "\u0000")
-                  .replace("\\\"", "\"")
-                  .replace("\\n", "\n")
-                  .replace("\\t", "\t")
-                  .replace("\\r", "\r")
-                  .replace("\u0000", "\\");
+        StringBuilder sb = new StringBuilder(str.length());
+        for (int i = 0; i < str.length(); i++) {
+            char c = str.charAt(i);
+            if (c == '\\' && i + 1 < str.length()) {
+                char next = str.charAt(i + 1);
+                switch (next) {
+                    case '\\': sb.append('\\'); i++; break;
+                    case '"':  sb.append('"');  i++; break;
+                    case 'n':  sb.append('\n'); i++; break;
+                    case 't':  sb.append('\t'); i++; break;
+                    case 'r':  sb.append('\r'); i++; break;
+                    default:   sb.append(c); break;
+                }
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
-    // END_CHANGE: ISS-2025-0181
+    // END_CHANGE: ISS-2025-0188
 }

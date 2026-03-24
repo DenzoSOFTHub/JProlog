@@ -63,8 +63,9 @@ public class Number extends Term {
         }
         this.bigIntValue = value;
         this.doubleValue = value.doubleValue();
+        // START_CHANGE: ISS-2025-0188 - Fix bitLength threshold: <= 63 covers all long values
         // Try to fit in long
-        if (value.bitLength() < 63) {
+        if (value.bitLength() <= 63) {
             this.longValue = value.longValueExact();
         } else {
             this.longValue = 0; // overflow marker, use bigIntValue
@@ -140,7 +141,7 @@ public class Number extends Term {
      * (i.e., value is outside long range).
      */
     public boolean isBigInteger() {
-        return bigIntValue != null && bigIntValue.bitLength() >= 63;
+        return bigIntValue != null && bigIntValue.bitLength() > 63;
     }
 
     /**
@@ -149,7 +150,8 @@ public class Number extends Term {
     public boolean fitsInLong() {
         if (!isInteger) return false;
         if (bigIntValue != null) {
-            return bigIntValue.bitLength() < 63;
+            return bigIntValue.bitLength() <= 63;
+            // END_CHANGE: ISS-2025-0188
         }
         return true;
     }
@@ -185,7 +187,7 @@ public class Number extends Term {
     @Override
     public String toString() {
         if (isInteger) {
-            if (bigIntValue != null && bigIntValue.bitLength() >= 63) {
+            if (bigIntValue != null && bigIntValue.bitLength() > 63) {
                 return bigIntValue.toString();
             }
             return Long.toString(longValue);

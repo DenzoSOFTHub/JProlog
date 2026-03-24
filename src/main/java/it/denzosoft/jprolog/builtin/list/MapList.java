@@ -84,31 +84,39 @@ public class MapList implements BuiltInWithContext {
         boolean list2Ground = list2.isGround();
 
         if (list2Ground) {
+            // START_CHANGE: ISS-2025-0188 - Accumulate bindings through iterations
             List<Term> elems2 = ListUtils.extractElements(list2);
             if (elems1.size() != elems2.size()) return false;
+            Map<String, Term> currentBindings = new HashMap<>(bindings);
             for (int i = 0; i < elems1.size(); i++) {
                 Term callGoal = buildCall(goal, elems1.get(i), elems2.get(i));
                 List<Map<String, Term>> temp = new ArrayList<>();
-                if (!solver.solve(callGoal, new HashMap<>(bindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
+                if (!solver.solve(callGoal, new HashMap<>(currentBindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
                     return false;
                 }
+                currentBindings = new HashMap<>(temp.get(0));
             }
-            solutions.add(new HashMap<>(bindings));
+            solutions.add(currentBindings);
             return true;
+            // END_CHANGE: ISS-2025-0188
         } else {
             // Generate output list
+            // START_CHANGE: ISS-2025-0188 - Accumulate bindings in non-ground branch
             List<Term> resultElems = new ArrayList<>();
+            Map<String, Term> currentBindings3 = new HashMap<>(bindings);
             for (int i = 0; i < elems1.size(); i++) {
                 Variable outVar = new Variable("_MapOut_" + i);
                 Term callGoal = buildCall(goal, elems1.get(i), outVar);
                 List<Map<String, Term>> temp = new ArrayList<>();
-                if (!solver.solve(callGoal, new HashMap<>(bindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
+                if (!solver.solve(callGoal, new HashMap<>(currentBindings3), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
                     return false;
                 }
-                resultElems.add(outVar.resolveBindings(temp.get(0)));
+                currentBindings3 = new HashMap<>(temp.get(0));
+                resultElems.add(outVar.resolveBindings(currentBindings3));
             }
+            // END_CHANGE: ISS-2025-0188
             Term resultList = ListUtils.createList(resultElems);
-            Map<String, Term> newBindings = new HashMap<>(bindings);
+            Map<String, Term> newBindings = new HashMap<>(currentBindings3);
             if (list2Raw.unify(resultList, newBindings)) {
                 solutions.add(newBindings);
                 return true;

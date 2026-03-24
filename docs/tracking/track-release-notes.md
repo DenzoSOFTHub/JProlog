@@ -1,5 +1,17 @@
 # JProlog - Release Notes
 
+## Release 2.6.5 - 2026-03-24
+
+### Fourth-Round Deep Analysis Fixes
+
+20+ fixes from comprehensive fourth-round codebase analysis.
+
+- **ISS-2025-0188**: ISO mod/2 fix, Number bitLength thresholds, PrologString single-pass unescape, Member/MapList/Delete/Numlist/AtomChars/Sort/NotUnifiable/StringConcat bug fixes, JpcWriter null safety, DebugPanel thread safety, dead code removal (duplicate exception classes)
+
+**Tests**: 320/320 JUnit, 20/20 examples
+
+---
+
 ## Release 2.6.4 - 2026-03-24
 
 ### Third-Round Analysis Fixes

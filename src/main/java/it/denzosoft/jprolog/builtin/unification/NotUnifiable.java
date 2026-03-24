@@ -53,11 +53,11 @@ public class NotUnifiable implements BuiltIn {
                 return false;
             }
             
-        } catch (Exception e) {
-            // If unification throws an exception, consider terms as not unifiable
-            solutions.add(new HashMap<>(bindings));
-            return true;
+        // START_CHANGE: ISS-2025-0188 - Let real exceptions propagate
+        } catch (RuntimeException e) {
+            throw e;
         }
+        // END_CHANGE: ISS-2025-0188
     }
 }
 // END_CHANGE: ISS-2025-0007

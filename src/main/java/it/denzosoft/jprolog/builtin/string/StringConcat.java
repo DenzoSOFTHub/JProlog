@@ -57,7 +57,9 @@ public class StringConcat implements BuiltIn {
             return generateSplitsMode(string1Term, string2Term, string3Term, newBindings, solutions);
             
         } else {
-            throw new PrologEvaluationException("string_concat/3: at least two arguments must be instantiated.");
+            // START_CHANGE: ISS-2025-0188 - Return false instead of throwing for insufficient instantiation
+            return false;
+            // END_CHANGE: ISS-2025-0188
         }
     }
     

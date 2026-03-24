@@ -41,38 +41,38 @@ public class AtomChars implements BuiltIn {
             }
         } else if (!atomTerm.isGround() && charsTerm.isGround()) {
             // Convert character list to atom
+            // START_CHANGE: ISS-2025-0188 - Null check for extractChars result
             List<String> chars = extractChars(charsTerm.resolveBindings(bindings));
-            if (chars != null) {
-                StringBuilder sb = new StringBuilder();
-                for (String ch : chars) {
-                    sb.append(ch);
-                }
-                
-                Map<String, Term> newBindings = new HashMap<>(bindings);
-                if (atomTerm.unify(new Atom(sb.toString()), newBindings)) {
-                    solutions.add(new HashMap<>(newBindings));
-                    return true;
-                }
+            if (chars == null) return false;
+            StringBuilder sb = new StringBuilder();
+            for (String ch : chars) {
+                sb.append(ch);
+            }
+
+            Map<String, Term> newBindings = new HashMap<>(bindings);
+            if (atomTerm.unify(new Atom(sb.toString()), newBindings)) {
+                solutions.add(new HashMap<>(newBindings));
+                return true;
             }
         } else if (atomTerm.isGround() && charsTerm.isGround()) {
             // Both ground - check if they represent the same value
             if (!(atomTerm instanceof Atom)) {
                 return false;
             }
-            
+
             String atomValue = ((Atom) atomTerm).getName();
             List<String> chars = extractChars(charsTerm.resolveBindings(bindings));
-            
-            if (chars != null) {
-                StringBuilder sb = new StringBuilder();
-                for (String ch : chars) {
-                    sb.append(ch);
-                }
-                
-                if (atomValue.equals(sb.toString())) {
-                    solutions.add(new HashMap<>(bindings));
-                    return true;
-                }
+            if (chars == null) return false;
+            // END_CHANGE: ISS-2025-0188
+
+            StringBuilder sb = new StringBuilder();
+            for (String ch : chars) {
+                sb.append(ch);
+            }
+
+            if (atomValue.equals(sb.toString())) {
+                solutions.add(new HashMap<>(bindings));
+                return true;
             }
             return false;
         } else {

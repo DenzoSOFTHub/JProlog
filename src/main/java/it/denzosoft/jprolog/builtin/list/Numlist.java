@@ -24,17 +24,20 @@ public class Numlist implements BuiltIn {
 
         if (!(lowTerm instanceof Number) || !(highTerm instanceof Number)) return false;
 
-        int low = ((Number) lowTerm).getValue().intValue();
-        int high = ((Number) highTerm).getValue().intValue();
+        // START_CHANGE: ISS-2025-0188 - Use long to avoid int truncation; validate integer
+        Number lowNum = (Number) lowTerm;
+        Number highNum = (Number) highTerm;
+        if (!lowNum.isInteger() || !highNum.isInteger()) return false;
+        long low = lowNum.longValue();
+        long high = highNum.longValue();
 
-        // START_CHANGE: ISS-2025-0184 - Fix range validation
         if (low > high) return false;
-        // END_CHANGE: ISS-2025-0184
 
         List<Term> nums = new ArrayList<>();
-        for (int i = low; i <= high; i++) {
+        for (long i = low; i <= high; i++) {
             nums.add(new Number(i));
         }
+        // END_CHANGE: ISS-2025-0188
 
         Map<String, Term> newBindings = new HashMap<>(bindings);
         if (result.unify(ListUtils.createList(nums), newBindings)) {

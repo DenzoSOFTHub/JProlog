@@ -2,6 +2,16 @@
 
 ## Active and Resolved Issues
 
+### ISS-2025-0188: Fourth-Round Deep Analysis Fixes
+
+**Title**: Fix ISO mod/2, bitLength thresholds, PrologString unescape, Member/MapList/Delete/Numlist/AtomChars bugs, remove dead code
+**Date Created**: 2026-03-24
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-24
+**Priority**: CRITICAL
+
+---
+
 ### ISS-2025-0187: Third-Round Analysis Bug Fixes
 
 **Title**: Fix Length variable naming, Intersection deduplication, Plus/Foldl binding accumulation, NumberCodes Unicode range, CurrentPredicate parseInt, ArithmeticEvaluator shift overflow

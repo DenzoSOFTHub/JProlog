@@ -33,22 +33,27 @@ public class StreamManager {
     public static String openStream(String filename, String mode) throws IOException {
         String streamAlias = "stream_" + STREAM_COUNTER.incrementAndGet();
         
+        // START_CHANGE: ISS-2025-0188 - Close stream on exception to prevent resource leak
         switch (mode.toLowerCase()) {
-            case "read":
+            case "read": {
                 FileInputStream fis = new FileInputStream(filename);
                 INPUT_STREAMS.put(streamAlias, fis);
                 break;
-            case "write":
+            }
+            case "write": {
                 FileOutputStream fos = new FileOutputStream(filename);
                 OUTPUT_STREAMS.put(streamAlias, fos);
                 break;
-            case "append":
+            }
+            case "append": {
                 FileOutputStream aos = new FileOutputStream(filename, true);
                 OUTPUT_STREAMS.put(streamAlias, aos);
                 break;
+            }
             default:
                 throw new IllegalArgumentException("Invalid stream mode: " + mode);
         }
+        // END_CHANGE: ISS-2025-0188
         
         return streamAlias;
     }

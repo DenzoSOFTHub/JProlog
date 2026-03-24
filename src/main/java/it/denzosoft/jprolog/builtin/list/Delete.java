@@ -25,7 +25,9 @@ public class Delete implements BuiltIn {
         List<Term> filtered = new ArrayList<>();
 
         for (Term e : elements) {
-            Map<String, Term> testBindings = new HashMap<>();
+            // START_CHANGE: ISS-2025-0188 - Use current bindings for variable context
+            Map<String, Term> testBindings = new HashMap<>(bindings);
+            // END_CHANGE: ISS-2025-0188
             if (!e.unify(elem, testBindings)) {
                 filtered.add(e);
             }

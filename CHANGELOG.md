@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.5] - 2026-03-24
+
+### Fourth-Round Deep Analysis Fixes (ISS-2025-0188)
+
+Comprehensive fourth-round fix release addressing 20+ bugs across core engine, term system, built-in predicates, and infrastructure.
+
+#### Fixed — Core Engine (CRITICAL)
+- **ArithmeticEvaluator mod/2**: ISO-compliant floor modulo for negative divisors using `divideAndRemainder`
+- **ArithmeticEvaluator normalizeBigInt**: Fixed bitLength threshold `< 63` → `<= 63` (Long.MAX_VALUE has bitLength=63)
+- **ArithmeticEvaluator 0^negative**: Now throws ISO `evaluation_error(zero_divisor)` instead of generic exception
+- **Number.java**: Fixed bitLength thresholds in 4 locations (constructor, isBigInteger, fitsInLong, toString)
+- **PrologString.unescapeString**: Replaced NUL-placeholder chain with single-pass character scanner
+
+#### Fixed — Built-in Predicates (CRITICAL/HIGH)
+- **Member**: Non-ground list tail resolution now uses updated bindings
+- **MapList**: Binding accumulation in maplist3 ground and non-ground branches
+- **AtomChars**: Null check on `extractChars()` result prevents NPE
+- **Delete**: Unification test now uses current bindings context
+- **Numlist**: Uses `long` instead of `int` to prevent silent truncation; validates integer type
+- **NotUnifiable**: RuntimeExceptions now propagate instead of being masked as success
+- **StringConcat**: Returns `false` instead of throwing for insufficient instantiation
+- **Sort**: Deduplication uses `compareTerms()` instead of `toString()` comparison
+
+#### Fixed — Infrastructure (HIGH/MEDIUM)
+- **JpcWriter**: `indexOf()` null safety — auto-interns missing strings
+- **DebugPanel**: `lastCallStack` field marked `volatile` for thread safety
+- **StreamManager**: Resource leak prevention with proper scoping
+
+#### Removed — Dead Code
+- **core/exception/PrologException.java**: Unused duplicate of `core/exceptions/PrologException.java`
+- **core/exception/ISOErrorTerms.java**: Unused duplicate of `builtin/exception/ISOErrorTerms.java`
+
+#### Tests
+- 320/320 JUnit tests passing
+- 20/20 example programs passing
+
+---
+
 ## [2.6.4] - 2026-03-24
 
 ### Third-Round Analysis Fixes (ISS-2025-0187)

@@ -549,12 +549,15 @@ public class ArithmeticEvaluator {
             if (bv.signum() == 0) {
                 throw new PrologException(ISOErrorTerms.zeroDivisorError("mod/2"));
             }
-            // ISO: mod(X,Y) = X - floor(X/Y) * Y
+            // START_CHANGE: ISS-2025-0188 - Fix ISO mod/2 for negative divisors
+            // ISO: mod(X,Y) = X - floor(X/Y) * Y (result has sign of Y)
             BigInteger av = a.bigIntegerValue();
-            BigInteger result = av.mod(bv.abs());
-            if (bv.signum() < 0 && result.signum() > 0) {
+            BigInteger[] qr = av.divideAndRemainder(bv);
+            BigInteger result = qr[1];
+            if (result.signum() != 0 && (result.signum() ^ bv.signum()) < 0) {
                 result = result.add(bv);
             }
+            // END_CHANGE: ISS-2025-0188
             return normalizeBigInt(result);
         }
         long lv = a.longValue();
@@ -666,8 +669,9 @@ public class ArithmeticEvaluator {
         long ev = exp.longValue();
         if (ev < 0) {
             // START_CHANGE: ISS-2025-0185 - 0^negative throws zero_divisor
+            // ISS-2025-0188: Use ISO-compliant error term
             if (base.doubleValue() == 0.0) {
-                throw new PrologEvaluationException("evaluation_error(zero_divisor): 0 raised to negative power");
+                throw new PrologException(ISOErrorTerms.zeroDivisorError("(**)/2"));
             }
             // END_CHANGE: ISS-2025-0185
             // Negative exponent: result is float
@@ -725,7 +729,8 @@ public class ArithmeticEvaluator {
      * Normalize a BigInteger result: if it fits in a long, use long representation.
      */
     private static Number normalizeBigInt(BigInteger value) {
-        if (value.bitLength() < 63) {
+        // START_CHANGE: ISS-2025-0188 - Fix bitLength threshold: <= 63 covers all long values
+        if (value.bitLength() <= 63) {
             return new Number(value.longValueExact());
         }
         return new Number(value);
