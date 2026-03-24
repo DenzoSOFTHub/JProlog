@@ -24,8 +24,14 @@ import java.util.Map;
  *   <li>b_getval(+Name, -Value) - Get backtrackable global variable (alias for nb_getval)</li>
  * </ul>
  *
- * Note: b_setval/b_getval currently behave identically to nb_setval/nb_getval.
- * True backtrackable semantics (undo on backtracking) are not yet implemented.
+ * START_CHANGE: ISS-2025-0182 - Built-in predicate bug fixes
+ * KNOWN LIMITATION: b_setval/b_getval currently behave identically to nb_setval/nb_getval
+ * (non-backtrackable). In standard Prolog, b_setval should undo value changes upon
+ * backtracking, but this implementation does NOT restore previous values on backtrack.
+ * True backtrackable semantics require integration with the choice point / trail mechanism
+ * which is not yet implemented. Users relying on backtrackable global state should be
+ * aware that values set via b_setval will persist even after backtracking.
+ * END_CHANGE: ISS-2025-0182
  */
 public class GlobalVariables implements BuiltInWithContext {
 

@@ -30,6 +30,12 @@ public class Length implements BuiltIn {
         if (list.isGround()) {
             // Case: length(GroundList, Length)
             int count = countElements(list);
+            // START_CHANGE: ISS-2025-0182 - Built-in predicate bug fixes
+            // Fail gracefully for malformed lists instead of producing wrong results
+            if (count == -1) {
+                return false;
+            }
+            // END_CHANGE: ISS-2025-0182
             Term length = new Number(count);
             if (lengthTerm.unify(length, bindings)) {
                 solutions.add(new HashMap<>(bindings));

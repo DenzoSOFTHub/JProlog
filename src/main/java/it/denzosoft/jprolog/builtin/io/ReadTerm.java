@@ -60,10 +60,16 @@ public class ReadTerm extends AbstractBuiltInWithContext {
 
     /**
      * Read term from specified stream.
+     * START_CHANGE: ISS-2025-0182 - Built-in predicate bug fixes
+     * KNOWN LIMITATION: The stream parameter (streamTerm) is currently ignored.
+     * read_term/3 always reads from the current input stream (System.in) regardless
+     * of which stream is specified. Proper stream handling requires integration with
+     * the stream management subsystem which is not yet fully implemented.
+     * END_CHANGE: ISS-2025-0182
      */
     private boolean readTermFromStream(Term streamTerm, Term termVar, List<ReadOption> options, Map<String, Term> bindings) {
         try {
-            // Get stream
+            // Get stream (currently always returns current input - stream parameter is ignored)
             BufferedReader reader = getCurrentInputStream();
 
             // Read and parse term

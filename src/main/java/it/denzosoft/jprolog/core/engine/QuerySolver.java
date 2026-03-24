@@ -877,6 +877,11 @@ public class QuerySolver {
                     }
                     return found;
                 }
+                // START_CHANGE: ISS-2025-0180 - Core engine bug fixes
+                if (lcoIterations >= LCO_MAX_ITERATIONS) {
+                    LOGGER.warning("LCO trampoline exceeded " + LCO_MAX_ITERATIONS + " iterations for goal: " + trampolineGoal + " — falling back to normal solve");
+                }
+                // END_CHANGE: ISS-2025-0180
                 // Trampoline exhausted or not applicable — fall back to normal solve
                 CutStatus bodyCutStatus = CutStatus.notOccurred();
                 if (solveInternal(trampolineGoal, trampolineBindings, nextSolutions, bodyCutStatus)) {

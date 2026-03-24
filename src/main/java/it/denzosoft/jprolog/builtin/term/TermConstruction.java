@@ -101,10 +101,13 @@ public class TermConstruction implements BuiltIn {
                         return true;
                     }
                 } else if (arityValue > 0) {
+                    // START_CHANGE: ISS-2025-0182 - Built-in predicate bug fixes
+                    // Use "_G" prefix to avoid collision with user variables like _0, _1
                     List<Term> args = new ArrayList<>();
                     for (int i = 0; i < arityValue; i++) {
-                        args.add(new Variable("_" + i));
+                        args.add(new Variable("_G" + i));
                     }
+                    // END_CHANGE: ISS-2025-0182
                     Term constructed = new CompoundTerm((Atom) resolvedFunctor, args);
                     if (term.unify(constructed, newBindings)) {
                         solutions.add(new HashMap<>(newBindings));

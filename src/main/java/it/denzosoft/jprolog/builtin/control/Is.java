@@ -3,6 +3,7 @@ package it.denzosoft.jprolog.builtin.control;
 import it.denzosoft.jprolog.core.engine.ArithmeticEvaluator;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
@@ -66,10 +67,14 @@ public class Is implements BuiltIn {
                 throw new PrologEvaluationException(
                     "is/2: first argument must be a variable or a number, got: " + variableTerm);
             }
-        } catch (IllegalArgumentException e) {
-            // Return false for arithmetic errors instead of throwing exception
+        // START_CHANGE: ISS-2025-0182 - Built-in predicate bug fixes
+        // Re-throw PrologExceptions instead of swallowing them
+        } catch (PrologException e) {
+            throw e;
+        } catch (Exception e) {
             return false;
         }
+        // END_CHANGE: ISS-2025-0182
         // END_CHANGE: ISS-2025-0074
     }
 }

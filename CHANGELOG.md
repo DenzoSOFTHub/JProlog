@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.2] - 2026-03-24
+
+### Bug Fixes, DCG Completion, ISO Compliance
+
+Comprehensive bug fix release addressing 25+ issues across core engine, term system, and built-in predicates. DCG support now 100% complete.
+
+#### Fixed — Core Engine (ISS-2025-0180)
+- **KnowledgeBase**: Missing synchronization in `addClauseFirst`/`addClauseLast` (race condition)
+- **KnowledgeBase**: `abolishPredicate` and `retract` now properly clean `multiArgIndex` (memory leak)
+- **CompiledClause**: `canMatch()` uses `Double.compare()` instead of `==` for NaN-safe comparison
+- **ArithmeticEvaluator**: Shift operations (`<<`/`>>`) now reject negative amounts per ISO
+- **QuerySolver**: LCO trampoline logs warning when iteration limit exceeded
+
+#### Fixed — Term System (ISS-2025-0181)
+- **Number**: `hashCode()` normalizes -0.0 for equals/hashCode contract compliance
+- **Number**: `unify()` uses `Double.compare()` for correct NaN handling
+- **PrologString**: `unescapeString()` uses placeholder to prevent `\\n` → newline corruption
+- **AtomTable**: `gc()` collects dead keys before removal (safe iteration)
+- **AtomTable**: `intern()` uses `compute()` for atomic check-and-create (race condition fix)
+
+#### Fixed — Built-in Predicates (ISS-2025-0182)
+- **ArithmeticComparison**: `=:=`/`=\=` use exact comparison via `Double.compare()` instead of epsilon
+- **Is**: Re-throws `PrologException` instead of swallowing all errors
+- **Between**: Uses `long` instead of `int` to prevent overflow with large ranges
+- **Length**: Returns false for malformed lists instead of silent wrong result
+- **TermConstruction**: `functor/3` generates `_G` prefix variables to avoid collisions
+- **AttributedVariables**: `put_attr/3` throws `type_error(variable, _)` on non-variable
+
+#### Fixed — DCG/CFG (ISS-2025-0183)
+- **DCGTransformer**: Added `\+` (negation) handling — negation no longer falls through to non-terminal
+- **DCGTransformer**: If-then-else `(Cond -> Then ; Else)` now has proper committed-choice semantics
+
+#### Tests
+- 320/320 JUnit tests passing
+- 20/20 example programs passing
+
+---
+
 ## [2.6.1] - 2026-03-23
 
 ### Medium Priority Limitations Resolved (LIM-010 through LIM-016)

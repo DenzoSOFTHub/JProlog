@@ -630,19 +630,29 @@ public class ArithmeticEvaluator {
         return new Number(a.longValue() ^ b.longValue());
     }
 
+    // START_CHANGE: ISS-2025-0180 - Core engine bug fixes
     private static Number shiftLeft(Number a, Number b) {
-        if (a.isBigInteger()) {
-            return normalizeBigInt(a.bigIntegerValue().shiftLeft((int) b.longValue()));
+        long shift = b.longValue();
+        if (shift < 0) {
+            throw new PrologException(ISOErrorTerms.evaluationError("negative_shift", "(<<)/2"));
         }
-        return new Number(a.longValue() << b.longValue());
+        if (a.isBigInteger()) {
+            return normalizeBigInt(a.bigIntegerValue().shiftLeft((int) shift));
+        }
+        return new Number(a.longValue() << shift);
     }
 
     private static Number shiftRight(Number a, Number b) {
-        if (a.isBigInteger()) {
-            return normalizeBigInt(a.bigIntegerValue().shiftRight((int) b.longValue()));
+        long shift = b.longValue();
+        if (shift < 0) {
+            throw new PrologException(ISOErrorTerms.evaluationError("negative_shift", "(>>)/2"));
         }
-        return new Number(a.longValue() >> b.longValue());
+        if (a.isBigInteger()) {
+            return normalizeBigInt(a.bigIntegerValue().shiftRight((int) shift));
+        }
+        return new Number(a.longValue() >> shift);
     }
+    // END_CHANGE: ISS-2025-0180
 
     private static Number integerPower(Number base, Number exp) {
         long ev = exp.longValue();

@@ -3,6 +3,8 @@ package it.denzosoft.jprolog.builtin.term;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
@@ -62,7 +64,12 @@ public class AttributedVariables implements BuiltInWithContext {
         if (args.size() != 3) return false;
 
         Term varTerm = resolveToVariable(args.get(0), bindings);
-        if (!(varTerm instanceof Variable)) return false;
+        // START_CHANGE: ISS-2025-0182 - Built-in predicate bug fixes
+        // Throw type_error(variable, Term) when put_attr is called on a non-variable
+        if (!(varTerm instanceof Variable)) {
+            throw new PrologException(ISOErrorTerms.typeError("variable", varTerm, "put_attr/3"));
+        }
+        // END_CHANGE: ISS-2025-0182
         Variable var = (Variable) varTerm;
 
         Term moduleTerm = args.get(1).resolveBindings(bindings);

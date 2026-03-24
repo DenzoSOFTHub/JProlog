@@ -68,13 +68,16 @@ public class ArithmeticComparison implements BuiltIn {
                 double value1 = num1.doubleValue();
                 double value2 = num2.doubleValue();
 
+                // START_CHANGE: ISS-2025-0182 - Built-in predicate bug fixes
+                // ISO Prolog requires exact comparison, not epsilon-based
                 switch (type) {
                     case EQUAL:
-                        result = Math.abs(value1 - value2) < 1e-10; // Use epsilon for double comparison
+                        result = Double.compare(value1, value2) == 0;
                         break;
                     case NOT_EQUAL:
-                        result = Math.abs(value1 - value2) >= 1e-10;
+                        result = Double.compare(value1, value2) != 0;
                         break;
+                // END_CHANGE: ISS-2025-0182
                     case LESS:
                         result = value1 < value2;
                         break;

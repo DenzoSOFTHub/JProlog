@@ -58,19 +58,22 @@ public class Between implements BuiltIn {
             throw new PrologEvaluationException("between/3: Low and High arguments must be integers");
         }
         
-        int low = (int) lowValue;
-        int high = (int) highValue;
-        
+        // START_CHANGE: ISS-2025-0182 - Built-in predicate bug fixes
+        // Use long instead of int to handle larger ranges without overflow
+        long low = (long) lowValue;
+        long high = (long) highValue;
+        // END_CHANGE: ISS-2025-0182
+
         if (low > high) {
             return false; // Empty range
         }
-        
+
         Term resolvedValueTerm = valueTerm.resolveBindings(bindings);
-        
+
         if (resolvedValueTerm instanceof Variable) {
             // Generate all values in the range
             boolean foundSolution = false;
-            for (int i = low; i <= high; i++) {
+            for (long i = low; i <= high; i++) {
                 Map<String, Term> newBindings = new HashMap<>(bindings);
                 if (valueTerm.unify(new it.denzosoft.jprolog.core.terms.Number((double) i), newBindings)) {
                     solutions.add(newBindings);
@@ -83,14 +86,14 @@ public class Between implements BuiltIn {
             if (!(resolvedValueTerm instanceof it.denzosoft.jprolog.core.terms.Number)) {
                 return false;
             }
-            
+
             double value = ((it.denzosoft.jprolog.core.terms.Number) resolvedValueTerm).getValue();
             if (value != Math.floor(value)) {
                 return false; // Not an integer
             }
-            
-            int intValue = (int) value;
-            if (intValue >= low && intValue <= high) {
+
+            long longValue = (long) value;
+            if (longValue >= low && longValue <= high) {
                 solutions.add(new HashMap<>(bindings));
                 return true;
             } else {

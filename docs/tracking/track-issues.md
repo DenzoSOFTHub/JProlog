@@ -2,6 +2,46 @@
 
 ## Active and Resolved Issues
 
+### ISS-2025-0183: DCG Negation and If-Then-Else Completion
+
+**Title**: Add \+ negation handling and proper if-then-else semantics in DCGTransformer
+**Date Created**: 2026-03-24
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-24
+**Priority**: HIGH
+
+---
+
+### ISS-2025-0182: Built-in Predicate Bug Fixes
+
+**Title**: Fix ArithmeticComparison epsilon, Is error swallowing, Between overflow, Length malformed list, TermConstruction variable naming, AttributedVariables type error
+**Date Created**: 2026-03-24
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-24
+**Priority**: HIGH
+
+---
+
+### ISS-2025-0181: Term System Bug Fixes
+
+**Title**: Fix Number equals/hashCode contract, NaN unification, PrologString escape order, AtomTable gc/intern race conditions
+**Date Created**: 2026-03-24
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-24
+**Priority**: CRITICAL
+
+---
+
+### ISS-2025-0180: Core Engine Bug Fixes
+
+**Title**: Fix KnowledgeBase synchronization and multiArgIndex leaks, CompiledClause NaN comparison, ArithmeticEvaluator shift validation, QuerySolver LCO logging
+**Date Created**: 2026-03-24
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-24
+**Priority**: CRITICAL
+
+---
+
 ### ISS-2025-0179: Documentation Updates
 
 **Title**: Update intro guide, add missing predicates to reference

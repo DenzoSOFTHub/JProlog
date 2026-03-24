@@ -49,34 +49,38 @@ public class AtomTable {
      * If the atom was previously interned and is still alive, returns the existing instance.
      * Common atoms are always returned from the permanent table.
      */
+    // START_CHANGE: ISS-2025-0181 - Term system bug fixes
     public static Atom intern(String name) {
-        // Check permanent atoms first (fast path for common atoms)
         Atom permanent = permanentAtoms.get(name);
         if (permanent != null) return permanent;
 
-        // Check/update intern table
-        WeakReference<Atom> ref = internTable.get(name);
-        if (ref != null) {
-            Atom existing = ref.get();
-            if (existing != null) return existing;
-        }
-
-        // Create new atom and intern it
-        Atom newAtom = new Atom(name);
-        internTable.put(name, new WeakReference<>(newAtom));
-        return newAtom;
+        WeakReference<Atom> ref = internTable.compute(name, (k, existingRef) -> {
+            if (existingRef != null) {
+                Atom existing = existingRef.get();
+                if (existing != null) return existingRef;
+            }
+            return new WeakReference<>(new Atom(k));
+        });
+        return ref.get();
     }
+    // END_CHANGE: ISS-2025-0181
 
     /**
      * Run garbage collection on the atom table.
      * Removes entries whose weak references have been cleared.
      * @return number of atoms reclaimed
      */
+    // START_CHANGE: ISS-2025-0181 - Term system bug fixes
     public static int gc() {
         int reclaimed = 0;
+        java.util.List<String> deadKeys = new java.util.ArrayList<>();
         for (Map.Entry<String, WeakReference<Atom>> entry : internTable.entrySet()) {
             if (entry.getValue().get() == null) {
-                internTable.remove(entry.getKey(), entry.getValue());
+                deadKeys.add(entry.getKey());
+            }
+        }
+        for (String key : deadKeys) {
+            if (internTable.remove(key) != null) {
                 reclaimed++;
             }
         }
@@ -85,6 +89,7 @@ public class AtomTable {
         }
         return reclaimed;
     }
+    // END_CHANGE: ISS-2025-0181
 
     /**
      * Get the current size of the intern table (including potentially dead references).

@@ -133,6 +133,11 @@ public class DCGTransformer {
                         new Atom("!"),
                         TermUtils.createCompound("=", input, output));
 
+                // START_CHANGE: ISS-2025-0183 - DCG negation support
+                case "\\+": // Negation: \+ Goal in DCG
+                    return transformNegation(compound, input, output);
+                // END_CHANGE: ISS-2025-0183
+
                 // START_CHANGE: LIM-011 - Pushback notation and call//N
                 case "\\": // Pushback notation: pushback terminal list
                     return transformPushback(compound, input, output);
@@ -208,16 +213,34 @@ public class DCGTransformer {
     
     /**
      * Transform disjunction: (A ; B).
+     * Special case: (Cond -> Then ; Else) is if-then-else with committed choice.
      */
+    // START_CHANGE: ISS-2025-0183 - DCG if-then-else committed choice semantics
     private Term transformDisjunction(CompoundTerm disjunction, Variable input, Variable output) {
         Term left = TermUtils.getArgument(disjunction, 0);
         Term right = TermUtils.getArgument(disjunction, 1);
-        
+
+        // Check for if-then-else pattern: (Cond -> Then ; Else)
+        if (left instanceof CompoundTerm && "->".equals(TermUtils.getFunctorName(left)) && TermUtils.getArity(left) == 2) {
+            Term cond = TermUtils.getArgument((CompoundTerm) left, 0);
+            Term then = TermUtils.getArgument((CompoundTerm) left, 1);
+
+            Variable intermediate = getNewVariable();
+            Term transformedCond = transformBody(cond, input, intermediate);
+            Term transformedThen = transformBody(then, intermediate, output);
+            Term transformedElse = transformBody(right, input, output);
+
+            // Build: (TransformedCond -> TransformedThen ; TransformedElse)
+            Term ifThen = TermUtils.createCompound("->", transformedCond, transformedThen);
+            return TermUtils.createCompound(";", ifThen, transformedElse);
+        }
+
         Term transformedLeft = transformBody(left, input, output);
         Term transformedRight = transformBody(right, input, output);
-        
+
         return TermUtils.createCompound(";", transformedLeft, transformedRight);
     }
+    // END_CHANGE: ISS-2025-0183
     
     /**
      * Transform terminal list: [a, b, c].
@@ -432,6 +455,26 @@ public class DCGTransformer {
                "-->".equals(TermUtils.getFunctorName(term)) &&
                TermUtils.getArity(term) == 2;
     }
+
+    // START_CHANGE: ISS-2025-0183 - DCG negation support
+    /**
+     * Transform negation: \+ Goal in DCG context.
+     * \+ Goal becomes: (\+ TransformedGoal, Input = Output)
+     * Negation does not consume input.
+     */
+    private Term transformNegation(CompoundTerm negation, Variable input, Variable output) {
+        if (TermUtils.getArity(negation) != 1) {
+            throw new IllegalArgumentException("Negation requires exactly 1 argument: " + negation);
+        }
+        Term goal = TermUtils.getArgument(negation, 0);
+        // Negation tests the goal against the input but does not consume any input
+        Variable dummy = getNewVariable();
+        Term transformedGoal = transformBody(goal, input, dummy);
+        Term negatedGoal = TermUtils.createCompound("\\+", transformedGoal);
+        Term inputOutputUnification = TermUtils.createCompound("=", input, output);
+        return TermUtils.createCompound(",", negatedGoal, inputOutputUnification);
+    }
+    // END_CHANGE: ISS-2025-0183
 
     // START_CHANGE: LIM-011 - DCG advanced features: if-then, pushback, call//N
 

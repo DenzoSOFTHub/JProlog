@@ -1,5 +1,21 @@
 # JProlog - Release Notes
 
+## Release 2.6.2 - 2026-03-24
+
+### Bug Fixes, DCG Completion, ISO Compliance
+
+Comprehensive bug fix release addressing 25+ issues found via deep codebase analysis.
+
+- **ISS-2025-0180**: Core engine fixes — KnowledgeBase sync, multiArgIndex leaks, CompiledClause NaN, shift validation, LCO logging
+- **ISS-2025-0181**: Term system fixes — Number equals/hashCode contract, NaN unification, PrologString escapes, AtomTable race conditions
+- **ISS-2025-0182**: Built-in fixes — ArithmeticComparison exact comparison, Is error handling, Between overflow, Length malformed list, functor/3 variable naming, put_attr type error
+- **ISS-2025-0183**: DCG completion — `\+` negation in DCG bodies, if-then-else committed-choice semantics
+
+**DCG/CFG**: Now 100% feature complete (18/18 standard features)
+**Tests**: 320/320 JUnit, 20/20 examples
+
+---
+
 ## Release 2.6.1 - 2026-03-23
 
 ### Medium Priority Limitations Resolved (LIM-010 through LIM-016)

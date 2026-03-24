@@ -326,6 +326,31 @@ public class KnowledgeBase {
                 firstArgIndex.remove(predKey);
             }
         }
+        // START_CHANGE: ISS-2025-0180 - Core engine bug fixes
+        Map<String, Map<String, List<Rule>>> arg1Index = multiArgIndex.get(predKey);
+        if (arg1Index != null) {
+            Term firstArg = getHeadFirstArg(rule);
+            String arg1Key = (firstArg != null) ? getFirstArgKey(firstArg) : VAR_KEY;
+            Map<String, List<Rule>> arg2Index = arg1Index.get(arg1Key);
+            if (arg2Index != null) {
+                Term secondArg = getHeadNthArg(rule, 1);
+                String arg2Key = (secondArg != null) ? getFirstArgKey(secondArg) : VAR_KEY;
+                List<Rule> list = arg2Index.get(arg2Key);
+                if (list != null) {
+                    list.remove(rule);
+                    if (list.isEmpty()) {
+                        arg2Index.remove(arg2Key);
+                    }
+                }
+                if (arg2Index.isEmpty()) {
+                    arg1Index.remove(arg1Key);
+                }
+            }
+            if (arg1Index.isEmpty()) {
+                multiArgIndex.remove(predKey);
+            }
+        }
+        // END_CHANGE: ISS-2025-0180
     }
     // END_CHANGE: ISS-2025-0093
 
@@ -372,34 +397,42 @@ public class KnowledgeBase {
      *
      * @param clause The clause to add
      */
+    // START_CHANGE: ISS-2025-0180 - Core engine bug fixes
     public void addClauseFirst(Clause clause) {
-        List<Term> bodyList = clause.getBody() != null ?
-            java.util.Arrays.asList(clause.getBody()) :
-            Collections.emptyList();
-        Rule rule = new Rule(clause.getHead(), bodyList);
-        rules.add(0, rule);
-        // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
-        addToIndexFirst(rule);
-        // END_CHANGE: ISS-2025-0075
-        LOGGER.fine("Clause added at beginning: " + clause);
+        synchronized (this) {
+            List<Term> bodyList = clause.getBody() != null ?
+                java.util.Arrays.asList(clause.getBody()) :
+                Collections.emptyList();
+            Rule rule = new Rule(clause.getHead(), bodyList);
+            rules.add(0, rule);
+            // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
+            addToIndexFirst(rule);
+            // END_CHANGE: ISS-2025-0075
+            LOGGER.fine("Clause added at beginning: " + clause);
+        }
     }
+    // END_CHANGE: ISS-2025-0180
 
     /**
      * Add a clause to the end of the database.
      *
      * @param clause The clause to add
      */
+    // START_CHANGE: ISS-2025-0180 - Core engine bug fixes
     public void addClauseLast(Clause clause) {
-        List<Term> bodyList = clause.getBody() != null ?
-            java.util.Arrays.asList(clause.getBody()) :
-            Collections.emptyList();
-        Rule rule = new Rule(clause.getHead(), bodyList);
-        rules.add(rule);
-        // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
-        addToIndex(rule);
-        // END_CHANGE: ISS-2025-0075
-        LOGGER.fine("Clause added at end: " + clause);
+        synchronized (this) {
+            List<Term> bodyList = clause.getBody() != null ?
+                java.util.Arrays.asList(clause.getBody()) :
+                Collections.emptyList();
+            Rule rule = new Rule(clause.getHead(), bodyList);
+            rules.add(rule);
+            // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
+            addToIndex(rule);
+            // END_CHANGE: ISS-2025-0075
+            LOGGER.fine("Clause added at end: " + clause);
+        }
     }
+    // END_CHANGE: ISS-2025-0180
 
     /**
      * Remove clauses that match the given term.
@@ -548,6 +581,9 @@ public class KnowledgeBase {
                 // START_CHANGE: ISS-2025-0093 - Clear first-argument index on abolish
                 firstArgIndex.remove(key);
                 // END_CHANGE: ISS-2025-0093
+                // START_CHANGE: ISS-2025-0180 - Core engine bug fixes
+                multiArgIndex.remove(key);
+                // END_CHANGE: ISS-2025-0180
             }
             // END_CHANGE: ISS-2025-0075
             return count;

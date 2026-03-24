@@ -68,8 +68,12 @@ public class CompiledClause {
                     argTypes[i] = ArgType.OTHER;
                     fp.append('?');
                 }
-                Arrays.fill(numberValues, i, i + 1,
-                    arg instanceof it.denzosoft.jprolog.core.terms.Number ? ((it.denzosoft.jprolog.core.terms.Number) arg).doubleValue() : Double.NaN);
+                // START_CHANGE: ISS-2025-0180 - Core engine bug fixes
+                // Removed redundant Arrays.fill that overwrote the value already set at line 58
+                if (!(arg instanceof it.denzosoft.jprolog.core.terms.Number)) {
+                    numberValues[i] = Double.NaN;
+                }
+                // END_CHANGE: ISS-2025-0180
             }
             this.variableCount = vars.size();
             this.fingerprint = fp.toString();
@@ -105,11 +109,13 @@ public class CompiledClause {
                         return false;
                     }
                     break;
+                // START_CHANGE: ISS-2025-0180 - Core engine bug fixes
                 case NUMBER:
-                    if (!(qArg instanceof it.denzosoft.jprolog.core.terms.Number) || numberValues[i] != ((it.denzosoft.jprolog.core.terms.Number) qArg).doubleValue()) {
+                    if (!(qArg instanceof it.denzosoft.jprolog.core.terms.Number) || Double.compare(numberValues[i], ((it.denzosoft.jprolog.core.terms.Number) qArg).doubleValue()) != 0) {
                         return false;
                     }
                     break;
+                // END_CHANGE: ISS-2025-0180
                 case COMPOUND:
                     if (!(qArg instanceof CompoundTerm)) {
                         return false;

@@ -110,11 +110,14 @@ public class PrologString extends Term {
      * @param str the string to unescape
      * @return the unescaped string
      */
+    // START_CHANGE: ISS-2025-0181 - Term system bug fixes
     public static java.lang.String unescapeString(java.lang.String str) {
-        return str.replace("\\\"", "\"")
-                  .replace("\\\\", "\\")
+        return str.replace("\\\\", "\u0000")
+                  .replace("\\\"", "\"")
                   .replace("\\n", "\n")
                   .replace("\\t", "\t")
-                  .replace("\\r", "\r");
+                  .replace("\\r", "\r")
+                  .replace("\u0000", "\\");
     }
+    // END_CHANGE: ISS-2025-0181
 }

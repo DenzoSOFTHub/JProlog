@@ -165,9 +165,13 @@ public class Number extends Term {
                 if (this.isInteger && other.isInteger) {
                     return this.bigIntegerValue().equals(other.bigIntegerValue());
                 }
-                return this.doubleValue == other.doubleValue;
+                // START_CHANGE: ISS-2025-0181 - Term system bug fixes
+            return Double.compare(this.doubleValue, other.doubleValue) == 0;
+            // END_CHANGE: ISS-2025-0181
             }
-            return this.doubleValue == other.doubleValue;
+            // START_CHANGE: ISS-2025-0181 - Term system bug fixes
+            return Double.compare(this.doubleValue, other.doubleValue) == 0;
+            // END_CHANGE: ISS-2025-0181
         } else {
         	return false;
         }
@@ -208,13 +212,15 @@ public class Number extends Term {
         return Double.compare(number.doubleValue, doubleValue) == 0;
     }
 
+    // START_CHANGE: ISS-2025-0181 - Term system bug fixes
     @Override
     public int hashCode() {
-        if (isBigInteger()) {
-            return bigIntValue.hashCode();
-        }
-        long temp = Double.doubleToLongBits(doubleValue);
+        if (isBigInteger()) return bigIntValue.hashCode();
+        // Normalize -0.0 to 0.0 for hashCode consistency with equals
+        double val = (doubleValue == 0.0) ? 0.0 : doubleValue;
+        long temp = Double.doubleToLongBits(val);
         return (int) (temp ^ (temp >>> 32));
     }
+    // END_CHANGE: ISS-2025-0181
 }
 // END_CHANGE: LIM-008
