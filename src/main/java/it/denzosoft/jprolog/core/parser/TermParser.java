@@ -676,7 +676,9 @@ public class TermParser {
                 if (hex.length() == 0) {
                     throw new PrologParserException("Expected hex digits after 0x at line " + line + ", column " + column);
                 }
-                return new Number((double) Long.parseLong(hex.toString(), 16), true);
+                // START_CHANGE: ISS-2025-0193 - Use BigInteger for hex/octal/binary to preserve precision
+                return new Number(new java.math.BigInteger(hex.toString(), 16));
+                // END_CHANGE: ISS-2025-0193
             }
 
             // 0o77 - octal literal
@@ -691,7 +693,9 @@ public class TermParser {
                 if (oct.length() == 0) {
                     throw new PrologParserException("Expected octal digits after 0o at line " + line + ", column " + column);
                 }
-                return new Number((double) Long.parseLong(oct.toString(), 8), true);
+                // START_CHANGE: ISS-2025-0193 - Use BigInteger for hex/octal/binary to preserve precision
+                return new Number(new java.math.BigInteger(oct.toString(), 8));
+                // END_CHANGE: ISS-2025-0193
             }
 
             // 0b1010 - binary literal
@@ -706,7 +710,9 @@ public class TermParser {
                 if (bin.length() == 0) {
                     throw new PrologParserException("Expected binary digits after 0b at line " + line + ", column " + column);
                 }
-                return new Number((double) Long.parseLong(bin.toString(), 2), true);
+                // START_CHANGE: ISS-2025-0193 - Use BigInteger for hex/octal/binary to preserve precision
+                return new Number(new java.math.BigInteger(bin.toString(), 2));
+                // END_CHANGE: ISS-2025-0193
             }
         }
         // END_CHANGE: ISS-2025-0058

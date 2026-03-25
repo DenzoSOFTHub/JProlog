@@ -14,6 +14,10 @@ import java.util.List;
 public class DCGTransformer {
     
     private int variableCounter = 0;
+    // START_CHANGE: ISS-2025-0193 - Unique rule counter to avoid variable collisions across rules
+    private static final java.util.concurrent.atomic.AtomicLong RULE_COUNTER = new java.util.concurrent.atomic.AtomicLong(0);
+    private long ruleId = 0;
+    // END_CHANGE: ISS-2025-0193
     
     /**
      * Transform a DCG rule into a standard Prolog rule.
@@ -31,6 +35,9 @@ public class DCGTransformer {
         
         // Reset variable counter for each rule
         variableCounter = 0;
+        // START_CHANGE: ISS-2025-0193 - Unique rule ID per transformation
+        ruleId = RULE_COUNTER.incrementAndGet();
+        // END_CHANGE: ISS-2025-0193
         
         // Transform head: add difference list arguments
         Term transformedHead = transformHead(head);
@@ -327,25 +334,19 @@ public class DCGTransformer {
     /**
      * Get the standard input variable S0.
      */
-    // START_CHANGE: ISS-2025-0191 - Use _DCG_ prefix to avoid variable naming collisions
+    // START_CHANGE: ISS-2025-0193 - Use unique ruleId in variable names to avoid collisions
     private Variable getInputVariable() {
-        return new Variable("_DCG_S0");
+        return new Variable("_DCG_R" + ruleId + "_S0");
     }
 
-    /**
-     * Get the standard output variable S.
-     */
     private Variable getOutputVariable() {
-        return new Variable("_DCG_S");
+        return new Variable("_DCG_R" + ruleId + "_S");
     }
 
-    /**
-     * Generate a new unique variable.
-     */
     private Variable getNewVariable() {
-        return new Variable("_DCG_S" + (++variableCounter));
+        return new Variable("_DCG_R" + ruleId + "_S" + (++variableCounter));
     }
-    // END_CHANGE: ISS-2025-0191
+    // END_CHANGE: ISS-2025-0193
     
     /**
      * Check if an atom name represents a string literal.

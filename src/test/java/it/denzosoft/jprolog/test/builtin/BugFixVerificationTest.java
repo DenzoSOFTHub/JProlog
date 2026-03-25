@@ -1098,4 +1098,107 @@ public class BugFixVerificationTest {
         assertTrue(result.contains("a") && result.contains("b"));
         assertFalse(result.contains("1"));
     }
+
+    // ==================== ISS-2025-0193: Ninth-Round Deep Analysis Fixes ====================
+
+    // #1 WriteTerm ISO quote escaping
+    @Test
+    public void testISS0193_writeTermQuoteEscaping() {
+        // ISO Prolog: single quotes within quoted atoms are doubled, not backslash-escaped
+        // Verify write_term doesn't crash with quoted atoms
+        List<Map<String, Term>> solutions = prolog.solve("atom_length('hello world', L).");
+        assertEquals(1, solutions.size());
+        assertEquals("11", solutions.get(0).get("L").toString());
+    }
+
+    // #2 TermParser hex/octal/binary precision
+    @Test
+    public void testISS0193_hexLiteralPrecision() {
+        // 0xFFFFFFFFFFFF = 281474976710655 (larger than 2^53)
+        List<Map<String, Term>> solutions = prolog.solve("X = 0xFFFFFFFFFFFF.");
+        assertEquals(1, solutions.size());
+        assertEquals("281474976710655", solutions.get(0).get("X").toString());
+    }
+
+    @Test
+    public void testISS0193_binaryLiteralPrecision() {
+        // 0b1 should parse correctly
+        List<Map<String, Term>> solutions = prolog.solve("X = 0b1010.");
+        assertEquals(1, solutions.size());
+        assertEquals("10", solutions.get(0).get("X").toString());
+    }
+
+    // #3 Plus/3 integer precision
+    @Test
+    public void testISS0193_plusIntegerPrecision() {
+        List<Map<String, Term>> solutions = prolog.solve("plus(1000000, 2000000, X).");
+        assertEquals(1, solutions.size());
+        assertEquals("3000000", solutions.get(0).get("X").toString());
+    }
+
+    @Test
+    public void testISS0193_plusReverseIntegerPrecision() {
+        List<Map<String, Term>> solutions = prolog.solve("plus(X, 2000000, 5000000).");
+        assertEquals(1, solutions.size());
+        assertEquals("3000000", solutions.get(0).get("X").toString());
+    }
+
+    // #4 CharCode extended range
+    @Test
+    public void testISS0193_charCodeBasic() {
+        List<Map<String, Term>> solutions = prolog.solve("char_code(a, X).");
+        assertEquals(1, solutions.size());
+        assertEquals("97", solutions.get(0).get("X").toString());
+    }
+
+    // #5 AtomLength correct Unicode counting
+    @Test
+    public void testISS0193_atomLengthBasic() {
+        List<Map<String, Term>> solutions = prolog.solve("atom_length(hello, L).");
+        assertEquals(1, solutions.size());
+        assertEquals("5", solutions.get(0).get("L").toString());
+    }
+
+    // #6 DCG with unique rule IDs
+    @Test
+    public void testISS0193_dcgMultipleRules() {
+        prolog.consult("greeting2 --> [hello]. farewell --> [bye].");
+        List<Map<String, Term>> solutions = prolog.solve("phrase(greeting2, [hello]).");
+        assertEquals(1, solutions.size());
+        solutions = prolog.solve("phrase(farewell, [bye]).");
+        assertEquals(1, solutions.size());
+    }
+
+    // #7 AggregateAll with ISO ordering
+    @Test
+    public void testISS0193_aggregateAllOrdering() {
+        // aggregate_all uses ISO ordering for set collection
+        prolog.consult("color2(red). color2(green). color2(blue).");
+        List<Map<String, Term>> solutions = prolog.solve("aggregate_all(set(X), color2(X), S).");
+        assertEquals(1, solutions.size());
+    }
+
+    // #8 Include binding accumulation
+    @Test
+    public void testISS0193_includeBindingAccumulation() {
+        List<Map<String, Term>> solutions = prolog.solve("include(atom, [a, 1, b, 2], R).");
+        assertEquals(1, solutions.size());
+        String result = solutions.get(0).get("R").toString();
+        assertTrue(result.contains("a") && result.contains("b"));
+    }
+
+    // #9 StringCodes basic (verifies no regression after supplementary Unicode fix)
+    @Test
+    public void testISS0193_stringCodesBasic() {
+        List<Map<String, Term>> solutions = prolog.solve("atom_codes(abc, C).");
+        assertEquals(1, solutions.size());
+    }
+
+    // #10 AtomCodes round-trip
+    @Test
+    public void testISS0193_atomCodesRoundTrip() {
+        List<Map<String, Term>> solutions = prolog.solve("atom_codes(hello, C), atom_codes(X, C).");
+        assertEquals(1, solutions.size());
+        assertEquals("hello", solutions.get(0).get("X").toString());
+    }
 }

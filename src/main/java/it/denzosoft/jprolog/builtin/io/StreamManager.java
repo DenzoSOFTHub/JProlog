@@ -87,6 +87,12 @@ public class StreamManager {
     public static InputStream getInputStream(String streamAlias) {
         return INPUT_STREAMS.get(streamAlias);
     }
+
+    // START_CHANGE: ISS-2025-0193 - Allow replacing stream with wrapped version (e.g. PushbackInputStream)
+    public static void registerInputStream(String streamAlias, InputStream stream) {
+        INPUT_STREAMS.put(streamAlias, stream);
+    }
+    // END_CHANGE: ISS-2025-0193
     
     /**
      * Get output stream by alias.

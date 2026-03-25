@@ -39,7 +39,10 @@ public class StringLength implements BuiltIn {
         }
         
         PrologString prologString = (PrologString) stringTerm;
-        int length = prologString.getStringValue().length();
+        // START_CHANGE: ISS-2025-0193 - Use codePointCount for correct Unicode character counting
+        String strVal = prologString.getStringValue();
+        int length = strVal.codePointCount(0, strVal.length());
+        // END_CHANGE: ISS-2025-0193
         Number lengthNumber = new Number((double) length);
         
         // Try to unify with the length

@@ -244,8 +244,10 @@ public class Format extends AbstractBuiltInWithContext {
             Term head = TermUtils.getArgument(cons, 0);
             
             if (head instanceof it.denzosoft.jprolog.core.terms.Number) {
+                // START_CHANGE: ISS-2025-0193 - Handle supplementary Unicode codepoints
                 int charCode = ((it.denzosoft.jprolog.core.terms.Number) head).getValue().intValue();
-                sb.append((char) charCode);
+                sb.append(Character.toChars(charCode));
+                // END_CHANGE: ISS-2025-0193
             } else if (head instanceof Atom && ((Atom) head).getName().length() == 1) {
                 sb.append(((Atom) head).getName());
             } else {

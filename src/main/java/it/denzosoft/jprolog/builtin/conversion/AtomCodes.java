@@ -43,9 +43,10 @@ public class AtomCodes implements BuiltIn {
             String atomValue = ((Atom) atomTerm).getName();
             List<Term> codes = new ArrayList<>();
             
-            for (char c : atomValue.toCharArray()) {
-                codes.add(new it.denzosoft.jprolog.core.terms.Number((double) (int) c));
-            }
+            // START_CHANGE: ISS-2025-0193 - Use codePoints for correct supplementary Unicode
+            atomValue.codePoints().forEach(cp ->
+                codes.add(new it.denzosoft.jprolog.core.terms.Number((long) cp)));
+            // END_CHANGE: ISS-2025-0193
             
             Term codesList = createList(codes);
             Map<String, Term> newBindings = new HashMap<>(bindings);
@@ -72,13 +73,10 @@ public class AtomCodes implements BuiltIn {
                     throw new PrologEvaluationException("atom_codes/2: invalid character code: " + codeValue);
                 }
 
-                // START_CHANGE: ISS-2025-0169 - Fix Unicode truncation for codes > 65535
+                // START_CHANGE: ISS-2025-0193 - Support supplementary Unicode codepoints
                 int intCode = (int) codeValue;
-                if (intCode > Character.MAX_VALUE) {
-                    throw new PrologException(ISOErrorTerms.representationError("character_code", "atom_codes/2"));
-                }
-                // END_CHANGE: ISS-2025-0169
-                atomBuilder.append((char) intCode);
+                atomBuilder.append(Character.toChars(intCode));
+                // END_CHANGE: ISS-2025-0193
             }
             
             Term atomResult = new Atom(atomBuilder.toString());

@@ -58,15 +58,19 @@ public class TermVariables implements BuiltIn {
     /**
      * Recursively collect variables from a term.
      */
+    // START_CHANGE: ISS-2025-0193 - Skip anonymous variables (_) per ISO
     private void collectVariablesHelper(Term term, Set<String> seenVariables, List<Variable> variables) {
         if (term instanceof Variable) {
             Variable var = (Variable) term;
             String varName = var.getName();
+            // Skip anonymous variable
+            if ("_".equals(varName)) return;
             if (!seenVariables.contains(varName)) {
                 seenVariables.add(varName);
                 variables.add(var);
             }
         } else if (term instanceof CompoundTerm) {
+    // END_CHANGE: ISS-2025-0193
             CompoundTerm compound = (CompoundTerm) term;
             if (compound.getArguments() != null) {
                 for (Term arg : compound.getArguments()) {

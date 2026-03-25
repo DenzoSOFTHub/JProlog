@@ -399,9 +399,11 @@ public class WriteTerm extends AbstractBuiltInWithContext {
         return true;
     }
 
+    // START_CHANGE: ISS-2025-0193 - ISO Prolog: single quotes escaped by doubling ('')
     private String escapeAtom(String atom) {
-        return atom.replace("\\", "\\\\").replace("'", "\\'");
+        return atom.replace("'", "''");
     }
+    // END_CHANGE: ISS-2025-0193
 
     private String escapeCharacter(char ch) {
         switch (ch) {

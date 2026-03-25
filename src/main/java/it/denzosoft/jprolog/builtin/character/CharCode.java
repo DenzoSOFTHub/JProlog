@@ -63,14 +63,15 @@ public class CharCode implements BuiltIn {
         
         int code = ((it.denzosoft.jprolog.core.terms.Number) codeTerm).getValue().intValue();
         
-        // Validate character code range
-        if (code < 0 || code > Character.MAX_VALUE) {
+        // START_CHANGE: ISS-2025-0193 - Extend range to full Unicode (up to U+10FFFF)
+        if (code < 0 || code > 0x10FFFF) {
             return false;
         }
-        
-        char ch = (char) code;
+
+        String charStr = new String(Character.toChars(code));
+        // END_CHANGE: ISS-2025-0193
         Map<String, Term> newBindings = new HashMap<>(bindings);
-        if (charVar.unify(new Atom(String.valueOf(ch)), newBindings)) {
+        if (charVar.unify(new Atom(charStr), newBindings)) {
             solutions.add(newBindings);
             return true;
         }

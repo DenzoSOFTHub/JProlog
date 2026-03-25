@@ -1,5 +1,15 @@
 # JProlog - Release Notes
 
+## Release 2.7.0 - 2026-03-25
+
+### Ninth-Round Deep Analysis Fixes — Unicode & Precision
+
+14 fixes across 18 files for Unicode support, arithmetic precision, and correctness.
+
+- **ISS-2025-0193**: ReadTerm variable classification operator precedence, WriteTerm ISO quote escaping (''), TermParser hex/octal/binary BigInteger precision, Plus/3 long arithmetic, CharCode full Unicode range (0-0x10FFFF), AtomLength/StringLength codePointCount, StringCodes/AtomCodes supplementary Unicode support, Format char truncation, Include/Exclude binding accumulation, DCGTransformer unique rule-scoped variables, AggregateAll ISO term ordering, PeekChar/PeekCode pushback stream persistence, TermVariables anonymous skip
+
+---
+
 ## Release 2.6.9 - 2026-03-25
 
 ### Eighth-Round Deep Analysis Fixes

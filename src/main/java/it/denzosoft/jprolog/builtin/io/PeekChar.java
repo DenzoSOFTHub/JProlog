@@ -35,16 +35,15 @@ public class PeekChar implements BuiltIn {
                 throw new PrologEvaluationException("Cannot peek from current input stream: " + currentInputAlias);
             }
 
-            // Use PushbackInputStream to peek without consuming
+            // START_CHANGE: ISS-2025-0193 - Wrap and register PushbackInputStream for reuse
             PushbackInputStream pushbackStream;
             if (inputStream instanceof PushbackInputStream) {
                 pushbackStream = (PushbackInputStream) inputStream;
             } else {
-                // For non-pushback streams, we'll need to handle differently
-                // This is a simplified implementation - in production, you'd want
-                // to wrap streams in PushbackInputStream when they're opened
                 pushbackStream = new PushbackInputStream(inputStream);
+                StreamManager.registerInputStream(currentInputAlias, pushbackStream);
             }
+            // END_CHANGE: ISS-2025-0193
 
             int charCode = pushbackStream.read();
             

@@ -167,7 +167,9 @@ public class ReadTerm extends AbstractBuiltInWithContext {
             Variable var = (Variable) term;
             String name = var.getName();
             // Skip anonymous variables
-            if (name != null && !name.startsWith("_") || (name != null && name.length() > 1 && name.startsWith("_") && Character.isUpperCase(name.charAt(1)))) {
+            // START_CHANGE: ISS-2025-0193 - Fix operator precedence bug in variable classification
+            if ((name != null && !name.startsWith("_")) || (name != null && name.length() > 1 && name.startsWith("_") && Character.isUpperCase(name.charAt(1)))) {
+            // END_CHANGE: ISS-2025-0193
                 namedVars.putIfAbsent(name, var);
                 varCounts.merge(name, 1, Integer::sum);
             } else if (name != null && name.startsWith("_") && name.length() == 1) {

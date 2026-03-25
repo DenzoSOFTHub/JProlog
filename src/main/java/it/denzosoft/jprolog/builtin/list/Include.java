@@ -39,16 +39,20 @@ public class Include implements BuiltInWithContext {
         List<Term> elements = ListUtils.extractElements(list);
         List<Term> included = new ArrayList<>();
 
+        // START_CHANGE: ISS-2025-0193 - Accumulate bindings from goal across iterations
+        Map<String, Term> currentBindings = new HashMap<>(bindings);
         for (Term elem : elements) {
             Term callGoal = new CompoundTerm(new Atom("call"), Arrays.asList(goal, elem));
             List<Map<String, Term>> temp = new ArrayList<>();
-            boolean ok = solver.solve(callGoal, new HashMap<>(bindings), temp, CutStatus.notOccurred());
+            boolean ok = solver.solve(callGoal, new HashMap<>(currentBindings), temp, CutStatus.notOccurred());
             if (ok && !temp.isEmpty()) {
                 included.add(elem);
+                currentBindings = new HashMap<>(temp.get(0));
             }
         }
+        // END_CHANGE: ISS-2025-0193
 
-        Map<String, Term> newBindings = new HashMap<>(bindings);
+        Map<String, Term> newBindings = new HashMap<>(currentBindings);
         if (result.unify(ListUtils.createList(included), newBindings)) {
             solutions.add(newBindings);
             return true;

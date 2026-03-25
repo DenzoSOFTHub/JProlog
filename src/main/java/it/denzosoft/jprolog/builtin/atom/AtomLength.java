@@ -33,7 +33,9 @@ public class AtomLength implements BuiltIn {
         }
 
         String atomString = ((Atom) atomArg).getName();
-        double lengthValue = atomString.length(); // convert int to double
+        // START_CHANGE: ISS-2025-0193 - Use codePointCount for correct Unicode character counting
+        double lengthValue = atomString.codePointCount(0, atomString.length());
+        // END_CHANGE: ISS-2025-0193
 
         Term computedLength = new Number(lengthValue);
 

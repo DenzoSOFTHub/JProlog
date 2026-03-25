@@ -2,6 +2,16 @@
 
 ## Active and Resolved Issues
 
+### ISS-2025-0193: Ninth-Round Deep Analysis Fixes
+
+**Title**: Fix ReadTerm variable classification, WriteTerm quote escaping, TermParser hex/octal/binary precision, Plus/3 integer precision, CharCode Unicode range, AtomLength/StringLength codePointCount, StringCodes/AtomCodes supplementary Unicode, Format char truncation, Include/Exclude binding accumulation, DCGTransformer unique variables, AggregateAll ISO ordering, PeekChar/PeekCode pushback state, TermVariables anonymous skip
+**Date Created**: 2026-03-25
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-25
+**Affected Files**: ReadTerm.java, WriteTerm.java, TermParser.java, Plus.java, CharCode.java, AtomLength.java, StringLength.java, StringCodes.java, AtomCodes.java, Format.java, Include.java, Exclude.java, DCGTransformer.java, AggregateAll.java, PeekChar.java, PeekCode.java, StreamManager.java, TermVariables.java
+
+---
+
 ### ISS-2025-0192: Eighth-Round Deep Analysis Fixes
 
 **Title**: Fix ListTerm unify rollback, Union dedup, Clause TermCopier, SumList/MaxList/MinList precision, Between long, PutCode Unicode, Tab validation, TermCopier PrologString, ListTerm resolveBindings optimization, Read Scanner safety

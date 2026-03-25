@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.7.0] - 2026-03-25
+
+### Ninth-Round Deep Analysis Fixes (ISS-2025-0193)
+
+14 fixes for Unicode support, arithmetic precision, and correctness:
+
+- **ReadTerm.java**: Fix operator precedence bug in variable classification (`||` vs `&&`)
+- **WriteTerm.java**: ISO Prolog quote escaping — use `''` (doubled) not `\'` (backslash)
+- **TermParser.java**: Use BigInteger for hex/octal/binary literals to preserve precision > 2^53
+- **Plus/3**: Use long arithmetic when both operands are integers
+- **CharCode.java**: Extend valid range from BMP (65535) to full Unicode (0x10FFFF)
+- **AtomLength/StringLength**: Use `codePointCount()` instead of `length()` for correct Unicode counting
+- **StringCodes/AtomCodes**: Support supplementary Unicode codepoints via `Character.toChars()`
+- **Format.java**: Handle supplementary codepoints in character list formatting
+- **Include/Exclude**: Accumulate bindings from goal across iterations
+- **DCGTransformer**: Unique rule-scoped variable names via AtomicLong counter
+- **AggregateAll**: Use ISO term ordering (`Sort.compareTerms`) instead of `toString` comparison
+- **PeekChar/PeekCode**: Register wrapped PushbackInputStream in StreamManager for reuse
+- **TermVariables**: Skip anonymous variable `_` per ISO specification
+
+---
+
 ## [2.6.9] - 2026-03-25
 
 ### Eighth-Round Deep Analysis Fixes (ISS-2025-0192)

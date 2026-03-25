@@ -151,7 +151,9 @@ public class AggregateAll implements BuiltInWithContext {
                 collected.add(resolved);
             }
         }
-        Collections.sort(collected, (a, b) -> a.toString().compareTo(b.toString()));
+        // START_CHANGE: ISS-2025-0193 - Use ISO term ordering instead of toString comparison
+        Collections.sort(collected, (a, b) -> it.denzosoft.jprolog.builtin.list.Sort.compareTerms(a, b));
+        // END_CHANGE: ISS-2025-0193
         return CollectionUtils.createListTerm(collected);
     }
 }

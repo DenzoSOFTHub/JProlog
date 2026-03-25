@@ -52,82 +52,85 @@ public class Plus implements BuiltIn {
             throw new PrologEvaluationException("plus/3: at most one argument can be uninstantiated");
         }
         
+        // START_CHANGE: ISS-2025-0193 - Use long arithmetic when all inputs are integers
         if (varCount == 0) {
             // All arguments are instantiated - check the relationship
-            if (!(int1Term instanceof it.denzosoft.jprolog.core.terms.Number) || 
+            if (!(int1Term instanceof it.denzosoft.jprolog.core.terms.Number) ||
                 !(int2Term instanceof it.denzosoft.jprolog.core.terms.Number) ||
                 !(int3Term instanceof it.denzosoft.jprolog.core.terms.Number)) {
                 return false;
             }
-            
-            double value1 = ((it.denzosoft.jprolog.core.terms.Number) int1Term).getValue();
-            double value2 = ((it.denzosoft.jprolog.core.terms.Number) int2Term).getValue();
-            double value3 = ((it.denzosoft.jprolog.core.terms.Number) int3Term).getValue();
-            
-            // START_CHANGE: ISS-2025-0187 - Exact comparison instead of epsilon
-            if (Double.compare(value1 + value2, value3) == 0) {
-            // END_CHANGE: ISS-2025-0187
+
+            it.denzosoft.jprolog.core.terms.Number n1 = (it.denzosoft.jprolog.core.terms.Number) int1Term;
+            it.denzosoft.jprolog.core.terms.Number n2 = (it.denzosoft.jprolog.core.terms.Number) int2Term;
+            it.denzosoft.jprolog.core.terms.Number n3 = (it.denzosoft.jprolog.core.terms.Number) int3Term;
+
+            if (n1.isInteger() && n2.isInteger() && n3.isInteger()) {
+                if (n1.longValue() + n2.longValue() == n3.longValue()) {
+                    solutions.add(new HashMap<>(bindings));
+                    return true;
+                }
+                return false;
+            }
+            if (Double.compare(n1.getValue() + n2.getValue(), n3.getValue()) == 0) {
                 solutions.add(new HashMap<>(bindings));
                 return true;
-            } else {
-                return false;
             }
+            return false;
         }
-        
+
         // Exactly one variable - compute its value
         Map<String, Term> newBindings = new HashMap<>(bindings);
-        
+
         if (int1IsVar) {
-            // Int1 = Int3 - Int2
-            if (!(int2Term instanceof it.denzosoft.jprolog.core.terms.Number) || 
+            if (!(int2Term instanceof it.denzosoft.jprolog.core.terms.Number) ||
                 !(int3Term instanceof it.denzosoft.jprolog.core.terms.Number)) {
                 return false;
             }
-            
-            double value2 = ((it.denzosoft.jprolog.core.terms.Number) int2Term).getValue();
-            double value3 = ((it.denzosoft.jprolog.core.terms.Number) int3Term).getValue();
-            double result = value3 - value2;
-            
-            if (query.getArguments().get(0).unify(new it.denzosoft.jprolog.core.terms.Number(result), newBindings)) {
+            it.denzosoft.jprolog.core.terms.Number n2 = (it.denzosoft.jprolog.core.terms.Number) int2Term;
+            it.denzosoft.jprolog.core.terms.Number n3 = (it.denzosoft.jprolog.core.terms.Number) int3Term;
+            it.denzosoft.jprolog.core.terms.Number result = (n2.isInteger() && n3.isInteger())
+                ? new it.denzosoft.jprolog.core.terms.Number(n3.longValue() - n2.longValue())
+                : new it.denzosoft.jprolog.core.terms.Number(n3.getValue() - n2.getValue());
+
+            if (query.getArguments().get(0).unify(result, newBindings)) {
                 solutions.add(newBindings);
                 return true;
-            } else {
-                return false;
             }
+            return false;
         } else if (int2IsVar) {
-            // Int2 = Int3 - Int1
-            if (!(int1Term instanceof it.denzosoft.jprolog.core.terms.Number) || 
+            if (!(int1Term instanceof it.denzosoft.jprolog.core.terms.Number) ||
                 !(int3Term instanceof it.denzosoft.jprolog.core.terms.Number)) {
                 return false;
             }
-            
-            double value1 = ((it.denzosoft.jprolog.core.terms.Number) int1Term).getValue();
-            double value3 = ((it.denzosoft.jprolog.core.terms.Number) int3Term).getValue();
-            double result = value3 - value1;
-            
-            if (query.getArguments().get(1).unify(new it.denzosoft.jprolog.core.terms.Number(result), newBindings)) {
+            it.denzosoft.jprolog.core.terms.Number n1 = (it.denzosoft.jprolog.core.terms.Number) int1Term;
+            it.denzosoft.jprolog.core.terms.Number n3 = (it.denzosoft.jprolog.core.terms.Number) int3Term;
+            it.denzosoft.jprolog.core.terms.Number result = (n1.isInteger() && n3.isInteger())
+                ? new it.denzosoft.jprolog.core.terms.Number(n3.longValue() - n1.longValue())
+                : new it.denzosoft.jprolog.core.terms.Number(n3.getValue() - n1.getValue());
+
+            if (query.getArguments().get(1).unify(result, newBindings)) {
                 solutions.add(newBindings);
                 return true;
-            } else {
-                return false;
             }
+            return false;
         } else {
-            // int3IsVar: Int3 = Int1 + Int2
-            if (!(int1Term instanceof it.denzosoft.jprolog.core.terms.Number) || 
+            if (!(int1Term instanceof it.denzosoft.jprolog.core.terms.Number) ||
                 !(int2Term instanceof it.denzosoft.jprolog.core.terms.Number)) {
                 return false;
             }
-            
-            double value1 = ((it.denzosoft.jprolog.core.terms.Number) int1Term).getValue();
-            double value2 = ((it.denzosoft.jprolog.core.terms.Number) int2Term).getValue();
-            double result = value1 + value2;
-            
-            if (query.getArguments().get(2).unify(new it.denzosoft.jprolog.core.terms.Number(result), newBindings)) {
+            it.denzosoft.jprolog.core.terms.Number n1 = (it.denzosoft.jprolog.core.terms.Number) int1Term;
+            it.denzosoft.jprolog.core.terms.Number n2 = (it.denzosoft.jprolog.core.terms.Number) int2Term;
+            it.denzosoft.jprolog.core.terms.Number result = (n1.isInteger() && n2.isInteger())
+                ? new it.denzosoft.jprolog.core.terms.Number(n1.longValue() + n2.longValue())
+                : new it.denzosoft.jprolog.core.terms.Number(n1.getValue() + n2.getValue());
+
+            if (query.getArguments().get(2).unify(result, newBindings)) {
                 solutions.add(newBindings);
                 return true;
-            } else {
-                return false;
             }
+            return false;
         }
+        // END_CHANGE: ISS-2025-0193
     }
 }
