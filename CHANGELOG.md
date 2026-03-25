@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.7.1] - 2026-03-25
+
+### Cut Semantics Fixes & DCG Unicode (ISS-2025-0194)
+
+4 fixes for cut propagation correctness and DCG Unicode handling:
+
+- **QuerySolver.handleBuiltIn**: Cut now sets `cutStatus.setCutOccurred()` — previously cut reaching handleBuiltIn path (via meta-call) was silently lost
+- **QuerySolver.solveBodyGoals (LCO prefix)**: Cut from prefix goal control structures now propagates to clause level
+- **QuerySolver.solveBodyGoals (body goal)**: Cut from compound body goals (if-then-else, disjunction) now propagates to clause level, preventing clause backtracking
+- **DCGTransformer**: Use `codePoints()` instead of `toCharArray()` for correct supplementary Unicode in DCG string literals
+
+---
+
 ## [2.7.0] - 2026-03-25
 
 ### Ninth-Round Deep Analysis Fixes (ISS-2025-0193)

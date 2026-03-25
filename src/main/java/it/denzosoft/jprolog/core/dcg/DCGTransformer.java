@@ -370,22 +370,24 @@ public class DCGTransformer {
      * @param output The output variable
      * @return The transformed term
      */
+    // START_CHANGE: ISS-2025-0194 - Fix Unicode supplementary character handling in DCG strings
     private Term transformPrologString(it.denzosoft.jprolog.core.terms.PrologString prologString, Variable input, Variable output) {
         String content = prologString.getStringValue();
-        
+
         if (content.isEmpty()) {
             // Empty string --> Input = Output
             return TermUtils.createCompound("=", input, output);
         }
-        
-        // Convert string to character codes
+
+        // Convert string to character codes (using codePoints for supplementary Unicode)
         List<Term> charCodes = new ArrayList<>();
-        for (char c : content.toCharArray()) {
-            charCodes.add(new it.denzosoft.jprolog.core.terms.Number((double) (int) c));
-        }
-        
+        content.codePoints().forEach(cp ->
+            charCodes.add(new it.denzosoft.jprolog.core.terms.Number((long) cp))
+        );
+
         return buildCharCodeUnifications(charCodes, input, output);
     }
+    // END_CHANGE: ISS-2025-0194
     
     /**
      * Transform a string literal into difference list consumption.
@@ -396,23 +398,25 @@ public class DCGTransformer {
      * @param output The output variable
      * @return The transformed term
      */
+    // START_CHANGE: ISS-2025-0194 - Fix Unicode supplementary character handling in DCG strings
     private Term transformStringLiteral(String stringLiteral, Variable input, Variable output) {
         // Remove quotes
         String content = stringLiteral.substring(1, stringLiteral.length() - 1);
-        
+
         if (content.isEmpty()) {
             // Empty string --> Input = Output
             return TermUtils.createCompound("=", input, output);
         }
-        
-        // Convert string to character codes
+
+        // Convert string to character codes (using codePoints for supplementary Unicode)
         List<Term> charCodes = new ArrayList<>();
-        for (char c : content.toCharArray()) {
-            charCodes.add(new it.denzosoft.jprolog.core.terms.Number((double) (int) c));
-        }
-        
+        content.codePoints().forEach(cp ->
+            charCodes.add(new it.denzosoft.jprolog.core.terms.Number((long) cp))
+        );
+
         return buildCharCodeUnifications(charCodes, input, output);
     }
+    // END_CHANGE: ISS-2025-0194
     
     /**
      * Build a chain of unifications for character code consumption in difference lists.

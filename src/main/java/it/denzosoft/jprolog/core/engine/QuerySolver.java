@@ -391,11 +391,14 @@ public class QuerySolver {
         String name = goal.getName();
         BuiltIn predicate = builtInRegistry.getBuiltIn(name);
 
+        // START_CHANGE: ISS-2025-0194 - Fix cut propagation in handleBuiltIn
         // Special handling for cut
         if ("cut".equals(name) || "!".equals(name)) {
             solutions.add(new HashMap<>(bindings));
+            cutStatus.setCutOccurred();
             return true;
         }
+        // END_CHANGE: ISS-2025-0194
         // END_CHANGE: ISS-2025-0097
 
         boolean result;
@@ -842,7 +845,12 @@ public class QuerySolver {
                             if (solveInternal(prefixGoal, pb, pSol, pCut)) {
                                 nextPrefix.addAll(pSol);
                             }
-                            if (pCut.isCutOccurred()) break;
+                            // START_CHANGE: ISS-2025-0194 - Propagate cut from prefix goal to clause level
+                            if (pCut.isCutOccurred()) {
+                                cutStatus.setCutOccurred();
+                                break;
+                            }
+                            // END_CHANGE: ISS-2025-0194
                         }
                         prefixSolutions = nextPrefix;
                         if (prefixSolutions.isEmpty()) {
@@ -899,13 +907,16 @@ public class QuerySolver {
                 List<Map<String, Term>> termSolutions = new ArrayList<>();
                 CutStatus bodyCutStatus = CutStatus.notOccurred();
 
+                // START_CHANGE: ISS-2025-0194 - Propagate cut from body goal to clause level
                 if (solveInternal(bodyTerm, currentBindings, termSolutions, bodyCutStatus)) {
                     nextSolutions.addAll(termSolutions);
 
                     if (bodyCutStatus.isCutOccurred()) {
+                        cutStatus.setCutOccurred();
                         break;
                     }
                 }
+                // END_CHANGE: ISS-2025-0194
             }
 
             bodySolutions = nextSolutions;

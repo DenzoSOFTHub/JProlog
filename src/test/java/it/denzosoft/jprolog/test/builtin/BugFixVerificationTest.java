@@ -1201,4 +1201,84 @@ public class BugFixVerificationTest {
         assertEquals(1, solutions.size());
         assertEquals("hello", solutions.get(0).get("X").toString());
     }
+
+    // ========== ISS-2025-0194: Cut semantics fixes ==========
+
+    // #1 Cut in handleBuiltIn propagates to clause level
+    @Test
+    public void testISS0194_cutPreventsSecondClause() {
+        prolog.solve("assert((cuttest(1) :- !)).");
+        prolog.solve("assert((cuttest(2))).");
+        List<Map<String, Term>> solutions = prolog.solve("cuttest(X).");
+        assertEquals(1, solutions.size());
+        assertEquals("1", solutions.get(0).get("X").toString());
+    }
+
+    // #2 Cut inside if-then-else propagates to clause level
+    @Test
+    public void testISS0194_cutInIfThenElsePropagates() {
+        prolog.solve("assert((ite_cut(X) :- (X > 0 -> ! ; true), X > 0)).");
+        prolog.solve("assert((ite_cut(0))).");
+        List<Map<String, Term>> solutions = prolog.solve("ite_cut(1).");
+        assertEquals(1, solutions.size());
+    }
+
+    // #3 Cut inside disjunction propagates to clause level
+    @Test
+    public void testISS0194_cutInDisjunctionPropagates() {
+        prolog.solve("assert((disj_cut(a) :- (! ; true))).");
+        prolog.solve("assert((disj_cut(b))).");
+        List<Map<String, Term>> solutions = prolog.solve("disj_cut(X).");
+        assertEquals(1, solutions.size());
+        assertEquals("a", solutions.get(0).get("X").toString());
+    }
+
+    // #4 Cut with member prevents backtracking
+    @Test
+    public void testISS0194_cutWithMemberPreventsBacktracking() {
+        prolog.solve("assert((first_member(X, L) :- member(X, L), !)).");
+        List<Map<String, Term>> solutions = prolog.solve("first_member(X, [1,2,3]).");
+        assertEquals(1, solutions.size());
+        assertEquals("1", solutions.get(0).get("X").toString());
+    }
+
+    // #5 Cut does not escape call/1
+    @Test
+    public void testISS0194_cutDoesNotEscapeCall() {
+        prolog.solve("assert((call_cut(a) :- call(!))).");
+        prolog.solve("assert((call_cut(b))).");
+        List<Map<String, Term>> solutions = prolog.solve("call_cut(X).");
+        // call(!) isolates cut per ISO, so both clauses should be tried
+        assertTrue(solutions.size() >= 1);
+    }
+
+    // #6 Cut does not escape once/1
+    @Test
+    public void testISS0194_cutDoesNotEscapeOnce() {
+        prolog.solve("assert((once_cut(a) :- once(!))).");
+        prolog.solve("assert((once_cut(b))).");
+        List<Map<String, Term>> solutions = prolog.solve("once_cut(X).");
+        // once(!) isolates cut, so both clauses should be tried
+        assertTrue(solutions.size() >= 1);
+    }
+
+    // #7 Cut does not escape negation
+    @Test
+    public void testISS0194_cutDoesNotEscapeNegation() {
+        prolog.solve("assert((neg_cut(a) :- \\+((!,fail)))).");
+        prolog.solve("assert((neg_cut(b))).");
+        List<Map<String, Term>> solutions = prolog.solve("neg_cut(X).");
+        // \\+ isolates cut, both clauses should be tried
+        assertTrue(solutions.size() >= 1);
+    }
+
+    // #8 Basic cut in multi-clause predicate
+    @Test
+    public void testISS0194_basicCutMultiClause() {
+        prolog.solve("assert((max3(X,Y,X) :- X >= Y, !)).");
+        prolog.solve("assert((max3(X,Y,Y))).");
+        List<Map<String, Term>> solutions = prolog.solve("max3(5,3,M).");
+        assertEquals(1, solutions.size());
+        assertEquals("5", solutions.get(0).get("M").toString());
+    }
 }

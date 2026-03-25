@@ -2,6 +2,16 @@
 
 ## Active and Resolved Issues
 
+### ISS-2025-0194: Cut Semantics Fixes & DCG Unicode
+
+**Title**: Fix cut propagation in handleBuiltIn, LCO prefix goals, compound body goals; Fix DCG Unicode supplementary character handling
+**Date Created**: 2026-03-25
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-25
+**Affected Files**: QuerySolver.java, DCGTransformer.java
+
+---
+
 ### ISS-2025-0193: Ninth-Round Deep Analysis Fixes
 
 **Title**: Fix ReadTerm variable classification, WriteTerm quote escaping, TermParser hex/octal/binary precision, Plus/3 integer precision, CharCode Unicode range, AtomLength/StringLength codePointCount, StringCodes/AtomCodes supplementary Unicode, Format char truncation, Include/Exclude binding accumulation, DCGTransformer unique variables, AggregateAll ISO ordering, PeekChar/PeekCode pushback state, TermVariables anonymous skip

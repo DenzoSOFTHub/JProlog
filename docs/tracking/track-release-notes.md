@@ -1,5 +1,15 @@
 # JProlog - Release Notes
 
+## Release 2.7.1 - 2026-03-25
+
+### Cut Semantics Fixes & DCG Unicode
+
+4 fixes for cut propagation correctness and DCG Unicode handling.
+
+- **ISS-2025-0194**: QuerySolver.handleBuiltIn cut flag, LCO prefix goal cut propagation, body goal cut propagation from control structures, DCGTransformer supplementary Unicode in string literals
+
+---
+
 ## Release 2.7.0 - 2026-03-25
 
 ### Ninth-Round Deep Analysis Fixes — Unicode & Precision
