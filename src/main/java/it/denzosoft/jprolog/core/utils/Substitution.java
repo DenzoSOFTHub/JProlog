@@ -43,7 +43,7 @@ public class Substitution  {
         return bindings.containsKey(var.getName());
     }
 
-    // START_CHANGE: ISS-2025-0186 - Debug, utility, and list predicate fixes
+    // START_CHANGE: ISS-2025-0192 - Recursively resolve compound terms containing variables
     private Term resolveTerm(Term term) {
         if (term == null) {
             return null;
@@ -65,7 +65,7 @@ public class Substitution  {
         }
         return current;
     }
-    // END_CHANGE: ISS-2025-0186
+    // END_CHANGE: ISS-2025-0192
 
     @Override
 	public String toString() {

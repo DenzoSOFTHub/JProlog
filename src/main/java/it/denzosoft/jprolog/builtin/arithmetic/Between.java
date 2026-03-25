@@ -71,11 +71,13 @@ public class Between implements BuiltIn {
         Term resolvedValueTerm = valueTerm.resolveBindings(bindings);
 
         if (resolvedValueTerm instanceof Variable) {
+            // START_CHANGE: ISS-2025-0192 - Use long constructor to avoid double precision loss
             // Generate all values in the range
             boolean foundSolution = false;
             for (long i = low; i <= high; i++) {
                 Map<String, Term> newBindings = new HashMap<>(bindings);
-                if (valueTerm.unify(new it.denzosoft.jprolog.core.terms.Number((double) i), newBindings)) {
+                if (valueTerm.unify(new it.denzosoft.jprolog.core.terms.Number(i), newBindings)) {
+            // END_CHANGE: ISS-2025-0192
                     solutions.add(newBindings);
                     foundSolution = true;
                 }

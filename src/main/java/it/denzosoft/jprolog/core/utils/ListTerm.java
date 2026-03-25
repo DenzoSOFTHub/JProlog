@@ -6,6 +6,7 @@ import it.denzosoft.jprolog.core.terms.Term;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Logger;
@@ -43,9 +44,16 @@ public class ListTerm extends Term {
             	LOGGER.fine("List sizes differ, unification failed: " + this.elements.size() + " != " + otherList.elements.size());
                 return false;
             }
+            // START_CHANGE: ISS-2025-0192 - Save substitution state for rollback on partial failure
+            Map<String, Term> saved = new HashMap<>(substitution);
+            // END_CHANGE: ISS-2025-0192
             for (int i = 0; i < this.elements.size(); i++) {
                 if (!this.elements.get(i).unify(otherList.elements.get(i), substitution)) {
                 	LOGGER.fine("Element " + i + " failed to unify: " + this.elements.get(i) + " with " + otherList.elements.get(i));
+                    // START_CHANGE: ISS-2025-0192 - Rollback substitution on partial unification failure
+                    substitution.clear();
+                    substitution.putAll(saved);
+                    // END_CHANGE: ISS-2025-0192
                     return false;
                 }
             }
@@ -90,14 +98,19 @@ public class ListTerm extends Term {
     }
     // END_CHANGE: ISS-2025-0190
 
+    // START_CHANGE: ISS-2025-0192 - Avoid allocation if no bindings apply
     @Override
     public Term resolveBindings(Map<String, Term> bindings) {
-        List<Term> resolvedElements = new ArrayList<>();
+        boolean changed = false;
+        List<Term> resolvedElements = new ArrayList<>(elements.size());
         for (Term element : elements) {
-            resolvedElements.add(element.resolveBindings(bindings));
+            Term resolved = element.resolveBindings(bindings);
+            if (resolved != element) changed = true;
+            resolvedElements.add(resolved);
         }
-        return new ListTerm(resolvedElements);
+        return changed ? new ListTerm(resolvedElements) : this;
     }
+    // END_CHANGE: ISS-2025-0192
 
     @Override
     public Term copy() {

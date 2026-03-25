@@ -7,6 +7,7 @@ import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.util.TermCopier;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -62,12 +63,16 @@ public class Clause implements BuiltInWithContext {
                 bodyTerm = createConjunction(ruleBody);
             }
 
+            // START_CHANGE: ISS-2025-0192 - Use TermCopier.copyRule for proper variable renaming
             // Try to unify head and body patterns with this rule
             Map<String, Term> newBindings = new HashMap<>(bindings);
-            
-            // Make fresh copies of the rule head and body to avoid variable conflicts
-            Term freshHead = ruleHead.copy();
-            Term freshBody = bodyTerm.copy();
+
+            // Make fresh copies with renamed variables to avoid conflicts
+            TermCopier.RuleCopy rc = TermCopier.copyRule(ruleHead,
+                    java.util.Collections.singletonList(bodyTerm));
+            Term freshHead = rc.head;
+            Term freshBody = rc.body.get(0);
+            // END_CHANGE: ISS-2025-0192
             
             if (headPattern.unify(freshHead, newBindings) && 
                 bodyPattern.unify(freshBody, newBindings)) {

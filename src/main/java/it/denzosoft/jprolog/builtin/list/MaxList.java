@@ -23,15 +23,21 @@ public class MaxList implements BuiltIn {
         List<Term> elements = ListUtils.extractElements(list);
         if (elements.isEmpty()) return false;
 
-        double max = Double.NEGATIVE_INFINITY;
-        for (Term elem : elements) {
+        // START_CHANGE: ISS-2025-0192 - Initialize max from first element instead of sentinel
+        if (!(elements.get(0) instanceof Number)) return false;
+        Number maxNum = (Number) elements.get(0);
+        for (int i = 1; i < elements.size(); i++) {
+            Term elem = elements.get(i);
             if (!(elem instanceof Number)) return false;
-            double val = ((Number) elem).getValue();
-            if (val > max) max = val;
+            Number num = (Number) elem;
+            if (num.getValue() > maxNum.getValue()) {
+                maxNum = num;
+            }
         }
 
         Map<String, Term> newBindings = new HashMap<>(bindings);
-        if (result.unify(new Number(max), newBindings)) {
+        if (result.unify(maxNum, newBindings)) {
+        // END_CHANGE: ISS-2025-0192
             solutions.add(newBindings);
             return true;
         }

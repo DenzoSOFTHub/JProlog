@@ -989,4 +989,113 @@ public class BugFixVerificationTest {
         List<Map<String, Term>> solutions = prolog.solve("test_sub.");
         assertEquals(1, solutions.size());
     }
+
+    // ==================== ISS-2025-0192: Eighth-Round Deep Analysis Fixes ====================
+
+    // #1 ListTerm.unify rollback on partial failure
+    @Test
+    public void testISS0192_listTermUnifyRollback() {
+        // If unification fails partway through a list, earlier bindings should be rolled back
+        it.denzosoft.jprolog.core.utils.ListTerm list1 = new it.denzosoft.jprolog.core.utils.ListTerm(
+            java.util.Arrays.asList(new Atom("a"), new Atom("b")));
+        it.denzosoft.jprolog.core.utils.ListTerm list2 = new it.denzosoft.jprolog.core.utils.ListTerm(
+            java.util.Arrays.asList(new Variable("X"), new Atom("c")));
+        Map<String, Term> bindings = new HashMap<>();
+        boolean result = list2.unify(list1, bindings);
+        assertFalse("Unification should fail (b != c)", result);
+        // X should NOT be bound after failed unification
+        assertFalse("X should not be bound after rollback", bindings.containsKey("X"));
+    }
+
+    // #2 Union deduplicates Set1
+    @Test
+    public void testISS0192_unionDeduplicatesSet1() {
+        List<Map<String, Term>> solutions = prolog.solve("union([1, 1, 2], [3], R).");
+        assertEquals(1, solutions.size());
+        String result = solutions.get(0).get("R").toString();
+        // 1 should appear only once
+        int first1 = result.indexOf("1");
+        int last1 = result.lastIndexOf("1");
+        assertEquals("1 should appear only once in union result", first1, last1);
+    }
+
+    // #3 Clause/2 uses TermCopier for proper variable renaming
+    @Test
+    public void testISS0192_clauseVariableRenaming() {
+        prolog.consult("parent(tom, bob). parent(bob, ann).");
+        List<Map<String, Term>> solutions = prolog.solve("clause(parent(X, Y), true).");
+        assertTrue("Should find at least 2 clauses", solutions.size() >= 2);
+    }
+
+    // #4 SumList preserves integer precision
+    @Test
+    public void testISS0192_sumListIntegerPrecision() {
+        List<Map<String, Term>> solutions = prolog.solve("sum_list([1000000, 2000000, 3000000], S).");
+        assertEquals(1, solutions.size());
+        assertEquals("6000000", solutions.get(0).get("S").toString());
+    }
+
+    // #5 MaxList uses first element (preserves type)
+    @Test
+    public void testISS0192_maxListPreservesType() {
+        List<Map<String, Term>> solutions = prolog.solve("max_list([3, 1, 4, 1, 5], M).");
+        assertEquals(1, solutions.size());
+        assertEquals("5", solutions.get(0).get("M").toString());
+    }
+
+    // #6 MinList uses first element (preserves type)
+    @Test
+    public void testISS0192_minListPreservesType() {
+        List<Map<String, Term>> solutions = prolog.solve("min_list([3, 1, 4, 1, 5], M).");
+        assertEquals(1, solutions.size());
+        assertEquals("1", solutions.get(0).get("M").toString());
+    }
+
+    // #7 Between uses long precision
+    @Test
+    public void testISS0192_betweenLongPrecision() {
+        // Large values should not lose precision via double cast
+        List<Map<String, Term>> solutions = prolog.solve("between(1000000000, 1000000002, X).");
+        assertEquals(3, solutions.size());
+        assertEquals("1000000000", solutions.get(0).get("X").toString());
+        assertEquals("1000000001", solutions.get(1).get("X").toString());
+        assertEquals("1000000002", solutions.get(2).get("X").toString());
+    }
+
+    // #8 Tab with negative N fails
+    @Test
+    public void testISS0192_tabNegativeFails() {
+        List<Map<String, Term>> solutions = prolog.solve("tab(-1).");
+        assertEquals("tab(-1) should fail", 0, solutions.size());
+    }
+
+    // #9 ListTerm resolveBindings optimization (no allocation when unchanged)
+    @Test
+    public void testISS0192_listTermResolveNoChange() {
+        it.denzosoft.jprolog.core.utils.ListTerm list = new it.denzosoft.jprolog.core.utils.ListTerm(
+            java.util.Arrays.asList(new Atom("a"), new Atom("b")));
+        Map<String, Term> emptyBindings = new HashMap<>();
+        Term resolved = list.resolveBindings(emptyBindings);
+        // Should return same instance when no bindings apply (ground list)
+        assertSame("Ground list should return same instance", list, resolved);
+    }
+
+    // #10 Include/Exclude basic functionality
+    @Test
+    public void testISS0192_includeBasic() {
+        List<Map<String, Term>> solutions = prolog.solve("include(number, [1, a, 2, b, 3], R).");
+        assertEquals(1, solutions.size());
+        String result = solutions.get(0).get("R").toString();
+        assertTrue(result.contains("1") && result.contains("2") && result.contains("3"));
+        assertFalse(result.contains("a"));
+    }
+
+    @Test
+    public void testISS0192_excludeBasic() {
+        List<Map<String, Term>> solutions = prolog.solve("exclude(number, [1, a, 2, b, 3], R).");
+        assertEquals(1, solutions.size());
+        String result = solutions.get(0).get("R").toString();
+        assertTrue(result.contains("a") && result.contains("b"));
+        assertFalse(result.contains("1"));
+    }
 }

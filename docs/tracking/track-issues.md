@@ -2,6 +2,16 @@
 
 ## Active and Resolved Issues
 
+### ISS-2025-0192: Eighth-Round Deep Analysis Fixes
+
+**Title**: Fix ListTerm unify rollback, Union dedup, Clause TermCopier, SumList/MaxList/MinList precision, Between long, PutCode Unicode, Tab validation, TermCopier PrologString, ListTerm resolveBindings optimization, Read Scanner safety
+**Date Created**: 2026-03-25
+**Status**: RESOLVED
+**Date Resolved**: 2026-03-25
+**Affected Files**: ListTerm.java, Union.java, Clause.java, SumList.java, MaxList.java, MinList.java, Between.java, PutCode.java, Tab.java, TermCopier.java, Substitution.java, Read.java, JpcWriter.java
+
+---
+
 ### ISS-2025-0191: Seventh-Round Deep Analysis Fixes
 
 **Title**: Fix parser precision, PredSort solver call, ToCodes range/list check, TableStore collision, Number NaN hashCode, msb/lsb error types, Nth1 pre-resolution, AtomConcat mode, ListTerm recursion, DCG variable naming, Subtract/Intersection equality

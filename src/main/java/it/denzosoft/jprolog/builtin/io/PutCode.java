@@ -50,10 +50,16 @@ public class PutCode implements BuiltIn {
         }
         
         int charCode = (int) codeValue;
-        
+
+        // START_CHANGE: ISS-2025-0192 - Handle supplementary Unicode characters (codepoints > 0xFFFF)
         // Write the character to standard output
-        System.out.print((char) charCode);
+        if (Character.isSupplementaryCodePoint(charCode)) {
+            System.out.print(new String(Character.toChars(charCode)));
+        } else {
+            System.out.print((char) charCode);
+        }
         System.out.flush();
+        // END_CHANGE: ISS-2025-0192
         
         solutions.add(bindings);
         return true;

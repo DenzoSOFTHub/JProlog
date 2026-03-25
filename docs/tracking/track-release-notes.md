@@ -1,5 +1,15 @@
 # JProlog - Release Notes
 
+## Release 2.6.9 - 2026-03-25
+
+### Eighth-Round Deep Analysis Fixes
+
+13 fixes for unification correctness, precision, and robustness across 13 files.
+
+- **ISS-2025-0192**: ListTerm.unify() rollback on partial failure, Union/3 Set1 dedup, Clause/2 TermCopier variable renaming, SumList integer precision, MaxList/MinList first-element init, Between long precision, PutCode supplementary Unicode, Tab negative validation, TermCopier PrologString handling, ListTerm resolveBindings optimization, Read Scanner safety, JpcWriter Rational documentation
+
+---
+
 ## Release 2.6.8 - 2026-03-24
 
 ### Seventh-Round Deep Analysis Fixes

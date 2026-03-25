@@ -125,8 +125,13 @@ public class TermCopier {
             return term;
 
         } else if (term instanceof it.denzosoft.jprolog.core.terms.Number) {
-            // Numbers are immutable - reuse the same instance (no copy needed)
+            // Numbers (including Rational) are immutable - reuse the same instance (no copy needed)
             return term;
+
+        // START_CHANGE: ISS-2025-0192 - Handle PrologString explicitly (immutable, no copy needed)
+        } else if (term instanceof PrologString) {
+            return term;
+        // END_CHANGE: ISS-2025-0192
 
         // START_CHANGE: ISS-2025-0103 - Fast-path: skip recursion for ground compound terms
         } else if (term instanceof CompoundTerm) {

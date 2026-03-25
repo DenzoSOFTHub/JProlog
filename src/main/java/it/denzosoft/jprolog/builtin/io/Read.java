@@ -30,9 +30,18 @@ public class Read implements BuiltInWithContext {
              throw new PrologEvaluationException("read/1 argument must be variable.");
         }
 
+        // START_CHANGE: ISS-2025-0192 - Do not close Scanner wrapping System.in (would close stdin)
         System.out.print("?- ");
         Scanner scanner = new Scanner(System.in);
-        String inputLine = scanner.nextLine().trim();
+        String inputLine;
+        try {
+            inputLine = scanner.nextLine().trim();
+        } catch (java.util.NoSuchElementException e) {
+            // EOF on stdin
+            return false;
+        }
+        // Note: Do NOT close this Scanner — closing it would close System.in
+        // END_CHANGE: ISS-2025-0192
 
         if (inputLine.isEmpty()) {
              throw new PrologEvaluationException("read/1: No input provided.");

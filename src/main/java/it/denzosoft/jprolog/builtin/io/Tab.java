@@ -19,7 +19,10 @@ public class Tab implements BuiltIn {
         Term nTerm = query.getArguments().get(0).resolveBindings(bindings);
         if (!(nTerm instanceof Number)) return false;
 
+        // START_CHANGE: ISS-2025-0192 - Validate N >= 0
         int n = ((Number) nTerm).getValue().intValue();
+        if (n < 0) return false;
+        // END_CHANGE: ISS-2025-0192
         for (int i = 0; i < n; i++) {
             System.out.print(' ');
         }

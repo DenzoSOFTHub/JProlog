@@ -23,10 +23,18 @@ public class Union implements BuiltIn {
 
         List<Term> elems1 = ListUtils.extractElements(set1);
         List<Term> elems2 = ListUtils.extractElements(set2);
-        List<Term> union = new ArrayList<>(elems1);
+
+        // START_CHANGE: ISS-2025-0192 - Deduplicate Set1 before merging
+        List<Term> union = new ArrayList<>();
+        for (Term e : elems1) {
+            if (!Subtract.memberOf(e, union)) {
+                union.add(e);
+            }
+        }
+        // END_CHANGE: ISS-2025-0192
 
         for (Term e : elems2) {
-            if (!Subtract.memberOf(e, elems1)) {
+            if (!Subtract.memberOf(e, union)) {
                 union.add(e);
             }
         }

@@ -21,14 +21,25 @@ public class SumList implements BuiltIn {
         Term result = query.getArguments().get(1);
 
         List<Term> elements = ListUtils.extractElements(list);
-        double sum = 0;
+        // START_CHANGE: ISS-2025-0192 - Use long accumulation for integer lists to avoid precision loss
+        boolean allIntegers = true;
+        long longSum = 0;
+        double doubleSum = 0;
         for (Term elem : elements) {
             if (!(elem instanceof Number)) return false;
-            sum += ((Number) elem).getValue();
+            Number num = (Number) elem;
+            doubleSum += num.getValue();
+            if (allIntegers && num.isInteger() && !num.isBigInteger()) {
+                longSum += num.longValue();
+            } else {
+                allIntegers = false;
+            }
         }
 
         Map<String, Term> newBindings = new HashMap<>(bindings);
-        if (result.unify(new Number(sum), newBindings)) {
+        Number sumResult = allIntegers ? new Number(longSum) : new Number(doubleSum);
+        if (result.unify(sumResult, newBindings)) {
+        // END_CHANGE: ISS-2025-0192
             solutions.add(newBindings);
             return true;
         }

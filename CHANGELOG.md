@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.9] - 2026-03-25
+
+### Eighth-Round Deep Analysis Fixes (ISS-2025-0192)
+
+13 fixes for unification correctness, precision, and robustness:
+
+- **ListTerm.unify()**: Rollback substitution on partial unification failure
+- **Union/3**: Deduplicate Set1 elements before merging with Set2
+- **Clause/2**: Use TermCopier.copyRule() for proper variable renaming (was using Term.copy())
+- **SumList**: Use long accumulation for integer lists to avoid double precision loss
+- **MaxList/MinList**: Initialize from first element instead of Double.POSITIVE/NEGATIVE_INFINITY
+- **Between/3**: Use Number(long) constructor instead of Number(double) to preserve precision
+- **PutCode/1**: Handle supplementary Unicode codepoints > 0xFFFF via Character.toChars()
+- **Tab/1**: Validate N >= 0, fail for negative values
+- **TermCopier**: Add explicit PrologString handling (immutable, no copy needed)
+- **ListTerm.resolveBindings()**: Skip allocation when no bindings apply (optimization)
+- **Read/1**: Handle NoSuchElementException on EOF, document Scanner/System.in lifecycle
+- **JpcWriter**: Document Rational handling in collectStrings()
+
+---
+
 ## [2.6.8] - 2026-03-24
 
 ### Seventh-Round Deep Analysis Fixes (ISS-2025-0191)

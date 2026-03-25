@@ -145,7 +145,11 @@ public class JpcWriter {
                 collectStrings(arg);
             }
         }
-        // Number has no strings
+        // START_CHANGE: ISS-2025-0192 - Handle Rational in collectStrings (Rational extends Number)
+        // Rational has no strings to intern, but must be checked before Number
+        // to avoid falling through to the implicit "no strings" path incorrectly.
+        // END_CHANGE: ISS-2025-0192
+        // Number and Rational have no strings
     }
 
     private void writeTerm(DataOutputStream dos, Term term) throws IOException {
