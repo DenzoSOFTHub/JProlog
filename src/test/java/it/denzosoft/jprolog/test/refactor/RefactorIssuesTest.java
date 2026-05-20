@@ -88,7 +88,7 @@ public class RefactorIssuesTest {
         assertEquals("operator must not leak to m2", 0, r.size());
     }
 
-    @Ignore("R2: module-qualified call dispatch does not check export list visibility (deferred)")
+    // re-enabled v2.9.3
     @Test
     public void testR2_emptyExportListHidesAll() {
         prolog.consult(":- module(secret, []).");
@@ -186,7 +186,7 @@ public class RefactorIssuesTest {
         assertEquals("a    b", baos.toString());
     }
 
-    @Ignore("R4: portray hook captured-output route conflicts with stdout redirection in test harness (works in CLI)")
+    // re-enabled v2.9.3
     @Test
     public void testR4_portrayHook() {
         java.io.PrintStream orig = System.out;
@@ -248,11 +248,9 @@ public class RefactorIssuesTest {
         assertEquals(1, r.size());
     }
 
-    @Ignore("Coroutining when re-suspension across solve() boundaries requires var-identity preservation (deferred)")
+    @Ignore("API design limitation: variables across separate solve() calls are different parsed objects; SWI REPL maintains identity via var-name map. JProlog programmatic API would need session-level identity tracking — deferred as scope expansion.")
     @Test
     public void testCoroutining_whenReSuspends() {
-        // Note: across separate solve() calls, parsed variables are different objects.
-        // True cross-query suspension/resumption needs first-class attribute persistence.
         prolog.solve("when(ground(f(X, Y)), assertz(probe(fired))), X = 1.");
         List<Map<String, Term>> r1 = prolog.solve("probe(fired).");
         assertEquals("when must not fire while Y unbound", 0, r1.size());

@@ -99,6 +99,12 @@ public class TermParser {
 
         char c = currentChar();
 
+        // START_CHANGE: Round5 final - recognize ".." as multi-char operator
+        if (c == '.' && position + 1 < input.length() && input.charAt(position + 1) == '.') {
+            nextChar(); nextChar();
+            return "..";
+        }
+        // END_CHANGE: Round5 final
         // Handle special characters
         if (c == '(' || c == ')' || c == '[' || c == ']' || c == '|' || c == '.') {
             nextChar();

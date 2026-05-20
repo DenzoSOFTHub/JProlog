@@ -147,6 +147,12 @@ public class StreamManager {
         INPUT_STREAMS.put(streamAlias, stream);
     }
     // END_CHANGE: ISS-2025-0193
+
+    // START_CHANGE: Round5 final - allow temp replace of output stream (for portray hook capture)
+    public static void setOutputStreamRaw(String streamAlias, OutputStream stream) {
+        OUTPUT_STREAMS.put(streamAlias, stream);
+    }
+    // END_CHANGE: Round5 final
     
     /**
      * Get output stream by alias.

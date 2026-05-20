@@ -309,16 +309,21 @@ public class Format extends AbstractBuiltInWithContext {
 
     // START_CHANGE: R4 - portray hook: invoke user-defined portray/1 capturing its output
     private String formatViaPortray(Term arg, Map<String, Term> bindings) {
-        // Test if user defined portray/1 (any clause)
         if (solver == null || solver.getKnowledgeBase() == null) return formatTerm(arg);
         java.util.List<it.denzosoft.jprolog.core.engine.Rule> rules =
             solver.getKnowledgeBase().getRulesForPredicate("portray", 1);
         if (rules == null || rules.isEmpty()) return formatTerm(arg);
 
+        // START_CHANGE: Round5 final - capture System.out output during portray execution
         java.io.PrintStream origOut = System.out;
+        // Also redirect StreamManager's user_output to capture writes
+        java.io.OutputStream prevUserOutput = StreamManager.getOutputStream("user_output");
         java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
         java.io.PrintStream wrapped = new java.io.PrintStream(baos);
         System.setOut(wrapped);
+        if (prevUserOutput != null) {
+            StreamManager.setOutputStreamRaw("user_output", baos);
+        }
         try {
             Term portrayGoal = new it.denzosoft.jprolog.core.terms.CompoundTerm(
                 new it.denzosoft.jprolog.core.terms.Atom("portray"),
@@ -327,15 +332,19 @@ public class Format extends AbstractBuiltInWithContext {
             boolean ok = solver.solve(portrayGoal, new java.util.HashMap<>(bindings), sols,
                 it.denzosoft.jprolog.core.engine.CutStatus.notOccurred());
             wrapped.flush();
-            if (ok && !sols.isEmpty()) {
+            if (ok && baos.size() > 0) {
                 return baos.toString();
             }
         } catch (Exception e) {
             // fall through to default
         } finally {
             System.setOut(origOut);
+            if (prevUserOutput != null) {
+                StreamManager.setOutputStreamRaw("user_output", prevUserOutput);
+            }
         }
         return formatTerm(arg);
+        // END_CHANGE: Round5 final
     }
     // END_CHANGE: R4
 

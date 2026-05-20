@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.3] - 2026-05-20
+
+### Deferred Items Resolved
+
+- **`..` tokenizer**: parser now recognizes `..` as single multi-char token. Enables full CLP(FD) syntax like `X in 1..5`.
+- **`format/2` `~p` portray hook**: now properly captures output via both `System.out` redirect AND `StreamManager.user_output` swap, so `format/2`'s internal writes during portray are captured. Test re-enabled.
+- **Module-qualified call with empty export list**: `secret:hidden(_)` properly fails when `hidden/1` not in module's export list. Test re-enabled.
+
+### Test Coverage
+- Previously @Ignore'd `testR2_emptyExportListHidesAll` and `testR4_portrayHook` re-enabled and passing
+- **509/509 JUnit tests pass** (only 1 skipped: cross-`solve()` variable identity — fundamental programmatic API limitation; SWI REPL maintains via var-name map but JProlog programmatic `solve()` spawns fresh state each call)
+- **20/20 examples regression pass**
+
+### Acknowledged design limitations (documented, not bugs)
+- **R6 solver dispatch unification**: organizational refactor; no new behavior. Skipped (no test to satisfy).
+- **R7 doc split**: organizational; current single-file reference (6800 lines) navigable via TOC.
+- **Cross-`solve()` variable identity**: programmatic API limitation; each `solve()` parses fresh terms. SWI REPL-style identity tracking would require session-level var-name map (scope expansion).
+- **KnowledgeBase concurrent index race**: JProlog is single-threaded by design (per CLAUDE.md). Concurrent access not actively supported.
+
+---
+
 ## [2.9.2] - 2026-05-20
 
 ### Round 5 Minor Fixes + Cleanup
