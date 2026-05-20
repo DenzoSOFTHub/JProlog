@@ -41,30 +41,34 @@ public class Between implements BuiltIn {
         Term highTerm = query.getArguments().get(1).resolveBindings(bindings);
         Term valueTerm = query.getArguments().get(2);
         
-        // Low and High must be instantiated
+        // START_CHANGE: Round5 - structured ISO error terms via ISOErrorTerms
         if (lowTerm instanceof Variable || highTerm instanceof Variable) {
-            throw new PrologEvaluationException("between/3: Low and High arguments must be instantiated");
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError("between/3"));
         }
-        
-        // START_CHANGE: ISS-2025-0209 - between/3 accept inf/infinite for upper bound
+
         boolean highIsInfinity = false;
         if (highTerm instanceof it.denzosoft.jprolog.core.terms.Atom) {
             String n = ((it.denzosoft.jprolog.core.terms.Atom) highTerm).getName();
             if ("inf".equals(n) || "infinite".equals(n)) {
                 highIsInfinity = true;
             } else {
-                throw new PrologEvaluationException("type_error(integer, " + n + ")");
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("integer", highTerm, "between/3"));
             }
         } else if (!(highTerm instanceof it.denzosoft.jprolog.core.terms.Number)) {
-            throw new PrologEvaluationException("between/3: High must be integer or inf");
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("integer", highTerm, "between/3"));
         }
         if (!(lowTerm instanceof it.denzosoft.jprolog.core.terms.Number)) {
-            throw new PrologEvaluationException("between/3: Low must be integer");
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("integer", lowTerm, "between/3"));
         }
 
         double lowValue = ((it.denzosoft.jprolog.core.terms.Number) lowTerm).getValue();
         if (Double.isInfinite(lowValue) || lowValue != Math.floor(lowValue)) {
-            throw new PrologEvaluationException("type_error(integer, " + lowTerm + ")");
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("integer", lowTerm, "between/3"));
         }
         long low = (long) lowValue;
 
@@ -74,9 +78,11 @@ public class Between implements BuiltIn {
         } else {
             double highValue = ((it.denzosoft.jprolog.core.terms.Number) highTerm).getValue();
             if (Double.isInfinite(highValue) || highValue != Math.floor(highValue)) {
-                throw new PrologEvaluationException("type_error(integer, " + highTerm + ")");
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("integer", highTerm, "between/3"));
             }
             high = (long) highValue;
+        // END_CHANGE: Round5
         }
         // END_CHANGE: ISS-2025-0209
 

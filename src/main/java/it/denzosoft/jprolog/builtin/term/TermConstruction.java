@@ -99,21 +99,23 @@ public class TermConstruction implements BuiltIn {
             Term resolvedFunctor = functor;
             Term resolvedArity = arity;
 
-            // Functor and arity must be sufficiently instantiated
+            // START_CHANGE: Round5 - structured ISO error terms
             if (resolvedFunctor instanceof Variable || resolvedArity instanceof Variable) {
-                throw new PrologEvaluationException("functor/3: functor and arity must be instantiated when first arg is variable.");
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError("functor/3"));
             }
             if (!(resolvedArity instanceof Number) || !((Number) resolvedArity).isInteger()) {
-                throw new PrologEvaluationException("type_error(integer, " + resolvedArity + ")");
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("integer", resolvedArity, "functor/3"));
             }
             int arityValue = (int) ((Number) resolvedArity).longValue();
             if (arityValue < 0) {
-                throw new PrologEvaluationException("domain_error(not_less_than_zero, " + arityValue + ")");
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.domainError("not_less_than_zero", resolvedArity, "functor/3"));
             }
             Map<String, Term> newBindings = new HashMap<>(bindings);
 
             if (arityValue == 0) {
-                // Both atoms and numbers are valid 0-ary "functors"
                 if (resolvedFunctor instanceof Atom || resolvedFunctor instanceof Number) {
                     if (term.unify(resolvedFunctor, newBindings)) {
                         solutions.add(new HashMap<>(newBindings));
@@ -121,12 +123,14 @@ public class TermConstruction implements BuiltIn {
                     }
                     return false;
                 }
-                throw new PrologEvaluationException("type_error(atomic, " + resolvedFunctor + ")");
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("atomic", resolvedFunctor, "functor/3"));
             } else {
-                // arityValue > 0 requires atom functor
                 if (!(resolvedFunctor instanceof Atom)) {
-                    throw new PrologEvaluationException("type_error(atom, " + resolvedFunctor + ")");
+                    throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                        it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("atom", resolvedFunctor, "functor/3"));
                 }
+                // END_CHANGE: Round5
                 List<Term> args = new ArrayList<>();
                 for (int i = 0; i < arityValue; i++) {
                     args.add(new Variable("_G" + i));
@@ -246,7 +250,10 @@ public class TermConstruction implements BuiltIn {
             return null;
         }
         if (first instanceof Number) {
-            throw new PrologEvaluationException("type_error(atom, " + first + ")");
+            // START_CHANGE: Round5 - structured ISO error term
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("atom", first, "=../2"));
+            // END_CHANGE: Round5
         }
         if (first instanceof Atom) {
             Atom functor = (Atom) first;

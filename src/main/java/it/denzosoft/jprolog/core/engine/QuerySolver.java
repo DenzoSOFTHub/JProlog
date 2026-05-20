@@ -79,22 +79,19 @@ public class QuerySolver {
         // START_CHANGE: LIM-002 - Set up attribute unification hook for this solver
         Variable.AttributeUnifyHook previousHook = Variable.getAttributeUnifyHook();
         Variable.setAttributeUnifyHook(this::handleAttributeUnification);
+        // START_CHANGE: Round5 - clear trail on every top-level solve to prevent stale entries on exception
+        Trail.clear();
         try {
-        // END_CHANGE: LIM-002
             solve(query, new HashMap<>(), solutions, CutStatus.notOccurred());
-            // START_CHANGE: ISS-2025-0069 - Deep-resolve variable chains in returned solutions
-            // After solving, variable bindings may contain chains like X→Y→Z→hello.
-            // Resolve all chains so the caller gets final values.
             for (Map<String, Term> solution : solutions) {
                 deepResolveSolution(solution);
             }
-            // END_CHANGE: ISS-2025-0069
             return solutions;
-        // START_CHANGE: LIM-002 - Restore previous hook
         } finally {
             Variable.setAttributeUnifyHook(previousHook);
+            Trail.clear();
         }
-        // END_CHANGE: LIM-002
+        // END_CHANGE: Round5
     }
 
     // START_CHANGE: ISS-2025-0098 - Single-pass deep resolve with path compression
@@ -632,6 +629,20 @@ public class QuerySolver {
         // START_CHANGE: ISS-2025-0167 - module_transparent: use caller's module context
         String gName = goal.getName();
         int gArity = it.denzosoft.jprolog.util.TermUtils.getArity(goal);
+        // START_CHANGE: Round5 - enforce export list for external module-qualified calls
+        if (gName != null) {
+            it.denzosoft.jprolog.core.module.PredicateSignature sig =
+                new it.denzosoft.jprolog.core.module.PredicateSignature(gName, gArity);
+            // If predicate is NOT exported by the module AND caller is in a different module,
+            // the call must fail (no visibility). Built-ins always visible.
+            if (!builtInRegistry.isBuiltIn(gName, gArity)
+                && !",".equals(gName) && !";".equals(gName) && !"->".equals(gName)
+                && !module.isExported(sig)
+                && (currentModuleContext == null || !module.equals(currentModuleContext))) {
+                return false;
+            }
+        }
+        // END_CHANGE: Round5
         if (gName != null) {
             it.denzosoft.jprolog.core.module.PredicateSignature sig =
                 new it.denzosoft.jprolog.core.module.PredicateSignature(gName, gArity);

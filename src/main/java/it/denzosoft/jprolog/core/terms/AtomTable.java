@@ -54,14 +54,23 @@ public class AtomTable {
         Atom permanent = permanentAtoms.get(name);
         if (permanent != null) return permanent;
 
-        WeakReference<Atom> ref = internTable.compute(name, (k, existingRef) -> {
+        // START_CHANGE: Round5 - hold strong reference inside compute so GC can't null it
+        // between compute() and the subsequent get(). Returns the strong reference directly.
+        Atom[] strongHolder = new Atom[1];
+        internTable.compute(name, (k, existingRef) -> {
             if (existingRef != null) {
                 Atom existing = existingRef.get();
-                if (existing != null) return existingRef;
+                if (existing != null) {
+                    strongHolder[0] = existing;
+                    return existingRef;
+                }
             }
-            return new WeakReference<>(new Atom(k));
+            Atom fresh = new Atom(k);
+            strongHolder[0] = fresh;
+            return new WeakReference<>(fresh);
         });
-        return ref.get();
+        return strongHolder[0];
+        // END_CHANGE: Round5
     }
     // END_CHANGE: ISS-2025-0181
 

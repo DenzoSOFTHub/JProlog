@@ -132,6 +132,17 @@ public class JpcWriter {
     // END_CHANGE: ISS-2025-0188
 
     private void collectStrings(Term term) {
+        // START_CHANGE: Round5 - cycle detection via IdentityHashMap
+        collectStrings(term, new java.util.IdentityHashMap<>());
+    }
+    private void collectStrings(Term term, java.util.IdentityHashMap<Term, Boolean> visited) {
+        if (term == null) return;
+        if (term instanceof CompoundTerm) {
+            if (visited.put(term, Boolean.TRUE) != null) {
+                // cycle: skip
+                return;
+            }
+        }
         if (term instanceof Atom) {
             intern(((Atom) term).getName());
         } else if (term instanceof Variable) {
@@ -142,17 +153,27 @@ public class JpcWriter {
             CompoundTerm ct = (CompoundTerm) term;
             intern(ct.getFunctor().getName());
             for (Term arg : ct.getArguments()) {
-                collectStrings(arg);
+                collectStrings(arg, visited);
             }
         }
-        // START_CHANGE: ISS-2025-0192 - Handle Rational in collectStrings (Rational extends Number)
-        // Rational has no strings to intern, but must be checked before Number
-        // to avoid falling through to the implicit "no strings" path incorrectly.
-        // END_CHANGE: ISS-2025-0192
         // Number and Rational have no strings
+        // END_CHANGE: Round5
     }
 
     private void writeTerm(DataOutputStream dos, Term term) throws IOException {
+        // START_CHANGE: Round5 - cycle detection (throws IOException on cyclic terms instead of SOE)
+        writeTerm(dos, term, new java.util.IdentityHashMap<>());
+    }
+    private void writeTerm(DataOutputStream dos, Term term, java.util.IdentityHashMap<Term, Boolean> visited) throws IOException {
+        if (term instanceof CompoundTerm) {
+            if (visited.put(term, Boolean.TRUE) != null) {
+                throw new IOException("Cannot serialize cyclic term: " + term);
+            }
+        }
+        writeTermInner(dos, term, visited);
+        // END_CHANGE: Round5
+    }
+    private void writeTermInner(DataOutputStream dos, Term term, java.util.IdentityHashMap<Term, Boolean> visited) throws IOException {
         // START_CHANGE: ISS-2025-0185 - Handle Rational before Number (Rational extends Number)
         if (term instanceof Rational) {
             Rational r = (Rational) term;
@@ -181,7 +202,9 @@ public class JpcWriter {
             writeVarint(dos, indexOf(ct.getFunctor().getName()));
             writeVarint(dos, ct.getArguments().size());
             for (Term arg : ct.getArguments()) {
-                writeTerm(dos, arg);
+                // START_CHANGE: Round5 - propagate visited map for cycle detection
+                writeTerm(dos, arg, visited);
+                // END_CHANGE: Round5
             }
         } else if (term instanceof PrologString) {
             dos.writeByte(JpcFormat.TERM_PROLOG_STRING);

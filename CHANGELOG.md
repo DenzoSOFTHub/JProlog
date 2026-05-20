@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.1] - 2026-05-20
+
+### Round 5 Audit Fixes
+
+**Critical**:
+- **AtomTable interning GC race**: `intern()` could return null when GC fired between `compute()` and `WeakReference.get()`. Now holds strong reference inside compute scope and returns it directly. (`AtomTable.java:53`)
+- **JpcWriter cyclic terms → StackOverflow**: serialization had no cycle detection. Added `IdentityHashMap` visited set in both `collectStrings` and `writeTerm`. Cyclic terms now throw `IOException("Cannot serialize cyclic term")` instead of SOE. (`JpcWriter.java`)
+
+**Major**:
+- **Exception terms structured per ISO §7.12**: `between/3` and `functor/3`+`=../2` now throw `PrologException(ISOErrorTerms.typeError(...))` (proper `error(type_error(Type, Culprit), Context)` term) instead of `PrologEvaluationException` with raw string. `catch/3` can now match these.
+- **Module-qualified call enforces export visibility**: `solveInModuleContext` checks the predicate's `isExported()` signature against the called module when caller is in a different module. `secret_module:private_pred(_)` now fails (or existence_error) when `private_pred/1` not in module's export list.
+- **Trail cleanup on exception**: `QuerySolver.solve()` top-level now calls `Trail.clear()` in `finally`. Prevents stale trail entries from leaking across solve() calls when an exception is thrown mid-query.
+
+### Verified working
+- `b_setval/2` backtrackable (R1) — still passes
+- `op/3` redefinition undo (R1) — still passes
+- `setarg/3` (R1) — still passes
+- Module-local operators (R2) — still passes
+
+### Test Coverage
+- New `test/audit/AuditRound5Test.java` — 8 tests, all passing
+- **506/506 JUnit tests pass** (3 skipped: deferred behaviors)
+- **20/20 examples regression pass**
+
+---
+
 ## [2.9.0] - 2026-05-20
 
 ### Major Refactors R1-R8
