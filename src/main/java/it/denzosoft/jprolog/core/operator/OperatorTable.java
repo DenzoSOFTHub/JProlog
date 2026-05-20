@@ -80,6 +80,9 @@ public class OperatorTable {
         
         defineOperator(1100, Operator.Type.XFY, ";");
         defineOperator(1050, Operator.Type.XFY, "->");
+        // START_CHANGE: ISS-2025-0201 - soft-cut operator
+        defineOperator(1050, Operator.Type.XFY, "*->");
+        // END_CHANGE: ISS-2025-0201
         
         defineOperator(1000, Operator.Type.XFY, ",");
         

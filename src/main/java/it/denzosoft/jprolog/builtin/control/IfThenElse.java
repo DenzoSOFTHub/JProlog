@@ -62,6 +62,13 @@ public class IfThenElse implements BuiltInWithContext {
 
                 return executeIfThenElse(condition, thenTerm, elseTerm, bindings, solutions, solver);
             }
+            // START_CHANGE: ISS-2025-0201 - soft-cut (Cond *-> Then ; Else)
+            if (leftCompound.getFunctor().getName().equals("*->") && leftCompound.getArguments().size() == 2) {
+                Term condition = leftCompound.getArguments().get(0);
+                Term thenTerm = leftCompound.getArguments().get(1);
+                return executeSoftCut(condition, thenTerm, elseTerm, bindings, solutions, solver);
+            }
+            // END_CHANGE: ISS-2025-0201
         }
 
         // If not if-then-else, treat as simple disjunction (A ; B)
@@ -106,6 +113,41 @@ public class IfThenElse implements BuiltInWithContext {
             return elseSuccess;
         }
     }
+
+    // START_CHANGE: ISS-2025-0201 - soft cut: enumerate all condition solutions
+    private boolean executeSoftCut(Term condition, Term thenTerm, Term elseTerm,
+                                    Map<String, Term> bindings, List<Map<String, Term>> solutions, QuerySolver solver) {
+        CutStatus parentCutStatus = solver.getCurrentCutStatus();
+        List<Map<String, Term>> conditionSolutions = new ArrayList<>();
+        solver.solve(condition, new HashMap<>(bindings), conditionSolutions, CutStatus.notOccurred());
+
+        if (!conditionSolutions.isEmpty()) {
+            boolean anyThenSuccess = false;
+            for (Map<String, Term> cb : conditionSolutions) {
+                List<Map<String, Term>> thenSolutions = new ArrayList<>();
+                CutStatus thenCutStatus = CutStatus.notOccurred();
+                boolean ok = solver.solve(thenTerm, new HashMap<>(cb), thenSolutions, thenCutStatus);
+                if (ok) {
+                    solutions.addAll(thenSolutions);
+                    anyThenSuccess = true;
+                }
+                if (thenCutStatus.isCutOccurred()) {
+                    if (parentCutStatus != null) parentCutStatus.setCutOccurred();
+                    break;
+                }
+            }
+            return anyThenSuccess;
+        }
+        List<Map<String, Term>> elseSolutions = new ArrayList<>();
+        CutStatus elseCutStatus = CutStatus.notOccurred();
+        boolean ok = solver.solve(elseTerm, new HashMap<>(bindings), elseSolutions, elseCutStatus);
+        if (ok) solutions.addAll(elseSolutions);
+        if (elseCutStatus.isCutOccurred() && parentCutStatus != null) {
+            parentCutStatus.setCutOccurred();
+        }
+        return ok;
+    }
+    // END_CHANGE: ISS-2025-0201
 
     private boolean executeDisjunction(Term leftTerm, Term rightTerm,
                                      Map<String, Term> bindings, List<Map<String, Term>> solutions, QuerySolver solver) {

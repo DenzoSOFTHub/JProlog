@@ -1281,4 +1281,96 @@ public class BugFixVerificationTest {
         assertEquals(1, solutions.size());
         assertEquals("5", solutions.get(0).get("M").toString());
     }
+
+    // START_CHANGE: ISS-2025-0195 - setof/3 sort+dedup
+    @Test
+    public void testISS0195_setofSortsAndDedups() {
+        prolog.consult("p(3). p(1). p(2). p(1).");
+        List<Map<String, Term>> s = prolog.solve("setof(X, p(X), L).");
+        assertEquals(1, s.size());
+        assertEquals("[1, 2, 3]", s.get(0).get("L").toString());
+    }
+    // END_CHANGE: ISS-2025-0195
+
+    // START_CHANGE: ISS-2025-0196 - bagof/3 witness grouping
+    @Test
+    public void testISS0196_bagofGroupsByFreeVar() {
+        prolog.consult("q(1,a). q(1,b). q(2,c). q(2,d).");
+        List<Map<String, Term>> s = prolog.solve("bagof(Y, q(X,Y), B).");
+        assertEquals(2, s.size());
+    }
+
+    @Test
+    public void testISS0196_bagofExistentialNoGrouping() {
+        prolog.consult("r(1,a). r(1,b). r(2,c).");
+        List<Map<String, Term>> s = prolog.solve("bagof(Y, X^r(X,Y), B).");
+        assertEquals(1, s.size());
+    }
+    // END_CHANGE: ISS-2025-0196
+
+    // START_CHANGE: ISS-2025-0205 - functor/3 supports numbers
+    @Test
+    public void testISS0205_functorNumber() {
+        List<Map<String, Term>> s = prolog.solve("functor(42, F, A).");
+        assertEquals(1, s.size());
+        assertEquals("42", s.get(0).get("F").toString());
+        assertEquals("0", s.get(0).get("A").toString());
+    }
+    // END_CHANGE: ISS-2025-0205
+
+    // START_CHANGE: ISS-2025-0209 - between/3 accepts inf
+    @Test
+    public void testISS0209_betweenInfAccepted() {
+        List<Map<String, Term>> s = prolog.solve("between(1, inf, 5).");
+        assertEquals(1, s.size());
+    }
+    // END_CHANGE: ISS-2025-0209
+
+    // START_CHANGE: ISS-2025-0210 - gcd/2 evaluable
+    @Test
+    public void testISS0210_gcdEvaluable() {
+        List<Map<String, Term>> s = prolog.solve("X is gcd(12, 18).");
+        assertEquals(1, s.size());
+        assertEquals("6", s.get(0).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0210
+
+    // START_CHANGE: ISS-2025-0201 - soft-cut *-> operator
+    @Test
+    public void testISS0201_softCutEnumeratesAll() {
+        prolog.consult("m(a). m(b). m(c).");
+        List<Map<String, Term>> s = prolog.solve("(m(X) *-> true ; X = none).");
+        assertEquals(3, s.size());
+    }
+
+    @Test
+    public void testISS0201_softCutElseOnEmpty() {
+        List<Map<String, Term>> s = prolog.solve("(fail *-> X = then ; X = else).");
+        assertEquals(1, s.size());
+        assertEquals("else", s.get(0).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0201
+
+    // START_CHANGE: ISS-2025-0198 - hex escape in quoted atom
+    @Test
+    public void testISS0198_hexEscape() {
+        List<Map<String, Term>> s = prolog.solve("atom_codes('\\x41\\', C).");
+        assertEquals(1, s.size());
+        assertEquals("[65]", s.get(0).get("C").toString());
+    }
+    // END_CHANGE: ISS-2025-0198
+
+    // START_CHANGE: ISS-2025-0200 - double_quotes flag honored
+    @Test
+    public void testISS0200_doubleQuotesCodes() {
+        prolog.solve("set_prolog_flag(double_quotes, codes).");
+        try {
+            List<Map<String, Term>> s = prolog.solve("X = \"AB\".");
+            assertEquals(1, s.size());
+            assertEquals("[65, 66]", s.get(0).get("X").toString());
+        } finally {
+            prolog.solve("set_prolog_flag(double_quotes, string).");
+        }
+    }
+    // END_CHANGE: ISS-2025-0200
 }

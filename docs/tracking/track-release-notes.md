@@ -1,5 +1,31 @@
 # JProlog - Release Notes
 
+## Release 2.8.0 - 2026-05-20
+
+### Tenth-Round ISO Audit Fixes (ISS-2025-0195..0214)
+
+Deep theoretical audit per ISO 13211-1 covering resolution, arithmetic, parser, built-ins, and I/O. 18 fixes applied; 3 verified already correct or design choice; 1 deferred.
+
+- **ISS-2025-0195** setof/3 now sorts + dedups via StandardTermOrdering
+- **ISS-2025-0196** bagof/3 implements free-variable witness grouping
+- **ISS-2025-0198** Full ISO escape sequences in strings/atoms (octal `\NNN\`, hex `\xH+\`, line continuation), tokenizer-aware
+- **ISS-2025-0199** Line-continuation `\<newline>` returns empty
+- **ISS-2025-0200** double_quotes flag honored (codes|chars|atom|string)
+- **ISS-2025-0201** Soft-cut `*->` operator + IfThenElse semantics
+- **ISS-2025-0202** read_term/3 dispatches to passed stream via StreamManager
+- **ISS-2025-0203** read/2 new arity for stream-based reading
+- **ISS-2025-0204** syntax_errors option in read_term/2,3
+- **ISS-2025-0205** functor/3 supports numbers as 0-ary; proper type_error on bad construction
+- **ISS-2025-0209** between/3 accepts atom inf as upper bound
+- **ISS-2025-0210** gcd/2 evaluable functor added
+- **ISS-2025-0211** char_code/2 + atom_chars/2 handle supplementary Unicode codepoints
+- **ISS-2025-0212** number_codes/2 accepts up to U+10FFFF (consistency)
+- **ISS-2025-0213** PeekByte registers PushbackInputStream wrapper
+
+**Tests**: 459 JUnit (10 new), 20/20 examples regression.
+
+---
+
 ## Release 2.7.1 - 2026-03-25
 
 ### Cut Semantics Fixes & DCG Unicode

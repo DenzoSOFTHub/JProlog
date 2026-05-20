@@ -774,7 +774,7 @@ public class QuerySolver {
                     // Only apply trampoline to simple user-defined predicate calls
                     // (not conjunction, disjunction, built-in, cut, true, etc.)
                     if (gName == null || ",".equals(gName) || ";".equals(gName) ||
-                        "->".equals(gName) || "!".equals(gName) || "true".equals(gName) ||
+                        "->".equals(gName) || "*->".equals(gName) || "!".equals(gName) || "true".equals(gName) ||
                         ":".equals(gName) || "\\+".equals(gName)) {
                         break; // Fall through to normal solve
                     }

@@ -1,5 +1,6 @@
 package it.denzosoft.jprolog.core.utils;
 
+import it.denzosoft.jprolog.builtin.list.Sort;
 import it.denzosoft.jprolog.core.engine.CutStatus;
 import it.denzosoft.jprolog.core.engine.QuerySolver;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
@@ -7,12 +8,18 @@ import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.terms.Variable;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 
 public final class CollectionUtils {
 
@@ -45,52 +52,146 @@ public final class CollectionUtils {
         Term listVariable = query.getArguments().get(2);
 
         // START_CHANGE: ISS-2025-0107 - Resolve bindings on goal before solving (meta-variable support)
-        // When goal is a variable bound to a term (e.g., findall(X, Goal, L) where Goal=member(X,[a,b,c])),
-        // we must resolve it to the actual goal term before attempting to solve it.
         Term resolvedGoal = rawGoal.resolveBindings(bindings);
         // END_CHANGE: ISS-2025-0107
 
-        // START_CHANGE: ISS-2025-0062 - Handle ^ existential quantification in bagof/setof
-        // Strip existential quantification: Var^Goal -> Goal (ignore Var for grouping)
-        Term goal = stripExistentialQuantification(resolvedGoal);
-        // END_CHANGE: ISS-2025-0062
+        // START_CHANGE: ISS-2025-0196 - bagof/setof: collect existential vars + witness grouping
+        Set<String> existentialVars = new HashSet<>();
+        Term goal = stripExistentialAndCollect(resolvedGoal, existentialVars);
+        boolean isFindall = "findall".equals(collectorType);
+        boolean isSetof = "setof".equals(collectorType);
 
-        List<Term> collectedTerms = new ArrayList<>();
         List<Map<String, Term>> tempSolutions = new ArrayList<>();
-        
         try {
-            // Solve the goal to get all solutions
             querySolver.solve(goal, bindings, tempSolutions, CutStatus.notOccurred());
-            // START_CHANGE: ISS-2025-0072 - findall returns empty list on no solutions (ISO compliant)
-            // ISO Prolog: findall/3 succeeds with empty list when goal has no solutions.
-            // bagof/3 and setof/3 should fail when goal has no solutions.
-            if (tempSolutions.isEmpty() && !"findall".equals(collectorType)) {
+            if (tempSolutions.isEmpty() && !isFindall) {
                 return false;
             }
-            // END_CHANGE: ISS-2025-0072
-        // START_CHANGE: ISS-2025-0189 - Let PrologException propagate with ISO error terms
         } catch (PrologException e) {
             throw e;
         } catch (Exception e) {
             throw new PrologEvaluationException("Error solving goal in " + collectorType + ": " + e.getMessage(), e);
         }
-        // END_CHANGE: ISS-2025-0189
 
-        // Process each solution to create the collected terms
-        for (Map<String, Term> solution : tempSolutions) {
-            Term resolvedTemplate = template.copy().resolveBindings(solution);
-            collectedTerms.add(resolvedTemplate);
+        if (isFindall) {
+            List<Term> collected = new ArrayList<>();
+            for (Map<String, Term> sol : tempSolutions) {
+                collected.add(template.copy().resolveBindings(sol));
+            }
+            Map<String, Term> newBindings = new HashMap<>(bindings);
+            if (listVariable.unify(createListTerm(collected), newBindings)) {
+                solutions.add(newBindings);
+                return true;
+            }
+            return false;
         }
 
-        // Create the list term and unify with the list variable
-        Term collectedList = createListTerm(collectedTerms);
-        Map<String, Term> newBindings = new HashMap<>(bindings);
-        if (listVariable.unify(collectedList, newBindings)) {
-            solutions.add(newBindings);
-            return true;
+        // bagof/setof — compute witness (free) variables: vars(Goal) - vars(Template) - existential - pre-bound
+        Set<String> templateVars = new LinkedHashSet<>();
+        collectVars(template, templateVars);
+        Set<String> goalVars = new LinkedHashSet<>();
+        collectVars(goal, goalVars);
+        Set<String> witnessVars = new LinkedHashSet<>(goalVars);
+        witnessVars.removeAll(templateVars);
+        witnessVars.removeAll(existentialVars);
+        // Exclude variables already bound to non-variable terms on entry
+        witnessVars.removeIf(v -> {
+            Term b = bindings.get(v);
+            return b != null && !(b instanceof Variable);
+        });
+
+        if (witnessVars.isEmpty()) {
+            // No grouping needed — one solution
+            List<Term> collected = new ArrayList<>();
+            for (Map<String, Term> sol : tempSolutions) {
+                collected.add(template.copy().resolveBindings(sol));
+            }
+            if (isSetof) collected = sortAndDedup(collected);
+            Map<String, Term> newBindings = new HashMap<>(bindings);
+            if (listVariable.unify(createListTerm(collected), newBindings)) {
+                solutions.add(newBindings);
+                return true;
+            }
+            return false;
         }
-        return false;
+
+        // Group by witness binding signature; preserve discovery order via LinkedHashMap
+        Map<String, List<Term>> groups = new LinkedHashMap<>();
+        Map<String, Map<String, Term>> groupWitness = new LinkedHashMap<>();
+        for (Map<String, Term> sol : tempSolutions) {
+            Map<String, Term> witness = new TreeMap<>();
+            for (String wv : witnessVars) {
+                Term v = sol.containsKey(wv) ? sol.get(wv).resolveBindings(sol) : new Variable(wv);
+                witness.put(wv, v);
+            }
+            StringBuilder sig = new StringBuilder();
+            for (Map.Entry<String, Term> e : witness.entrySet()) {
+                sig.append(e.getKey()).append('=').append(termCanonical(e.getValue())).append(';');
+            }
+            String key = sig.toString();
+            groups.computeIfAbsent(key, k -> new ArrayList<>())
+                  .add(template.copy().resolveBindings(sol));
+            groupWitness.putIfAbsent(key, witness);
+        }
+
+        // For setof, also sort the GROUPS by witness-binding order (ISO §8.10.3 says results enumerated in standard order)
+        List<String> groupOrder = new ArrayList<>(groups.keySet());
+        if (isSetof) {
+            groupOrder.sort(java.util.Comparator.naturalOrder());
+        }
+
+        boolean any = false;
+        for (String key : groupOrder) {
+            List<Term> bag = groups.get(key);
+            if (isSetof) bag = sortAndDedup(bag);
+            Map<String, Term> newBindings = new HashMap<>(bindings);
+            boolean ok = true;
+            for (Map.Entry<String, Term> we : groupWitness.get(key).entrySet()) {
+                Variable v = new Variable(we.getKey());
+                if (!v.unify(we.getValue(), newBindings)) { ok = false; break; }
+            }
+            if (!ok) continue;
+            if (listVariable.unify(createListTerm(bag), newBindings)) {
+                solutions.add(newBindings);
+                any = true;
+            }
+        }
+        return any;
+        // END_CHANGE: ISS-2025-0196
     }
+
+    // START_CHANGE: ISS-2025-0195 - sort+dedup helper for setof/3
+    private static List<Term> sortAndDedup(List<Term> in) {
+        List<Term> sorted = new ArrayList<>(in);
+        sorted.sort(Sort::compareTerms);
+        List<Term> out = new ArrayList<>(sorted.size());
+        for (int i = 0; i < sorted.size(); i++) {
+            if (i == 0 || Sort.compareTerms(sorted.get(i), sorted.get(i - 1)) != 0) {
+                out.add(sorted.get(i));
+            }
+        }
+        return out;
+    }
+
+    private static String termCanonical(Term t) {
+        // Stable canonical key — uses toString of resolved term; sufficient for grouping
+        return t == null ? "<null>" : t.toString();
+    }
+    // END_CHANGE: ISS-2025-0195
+
+    // START_CHANGE: ISS-2025-0196 - collect variables in a term
+    private static void collectVars(Term t, Set<String> out) {
+        if (t instanceof Variable) {
+            String n = ((Variable) t).getName();
+            if (n != null && !"_".equals(n)) out.add(n);
+        } else if (t instanceof CompoundTerm) {
+            CompoundTerm ct = (CompoundTerm) t;
+            if (ct.getArguments() != null) {
+                for (Term a : ct.getArguments()) collectVars(a, out);
+            }
+        }
+    }
+    // END_CHANGE: ISS-2025-0196
 
     // START_CHANGE: ISS-2025-0062 - Strip existential quantification from goal
     /**
@@ -107,6 +208,21 @@ public final class CollectionUtils {
         return goal;
     }
     // END_CHANGE: ISS-2025-0062
+
+    // START_CHANGE: ISS-2025-0196 - strip ^ and record existential variable names
+    private static Term stripExistentialAndCollect(Term goal, Set<String> existentialVars) {
+        while (goal instanceof CompoundTerm) {
+            CompoundTerm ct = (CompoundTerm) goal;
+            if ("^".equals(ct.getName()) && ct.getArguments().size() == 2) {
+                collectVars(ct.getArguments().get(0), existentialVars);
+                goal = ct.getArguments().get(1);
+            } else {
+                break;
+            }
+        }
+        return goal;
+    }
+    // END_CHANGE: ISS-2025-0196
 
     /**
      * Create a Prolog list term from a Java list of terms.

@@ -41,11 +41,14 @@ public class BuiltInRegistry {
         }
         // Unary predicates
         for (String p : new String[]{"assert", "asserta", "assertz", "retract", "retractall",
-                "current_predicate", "once", "ignore", "\\+", "read", "writeln",
+                "current_predicate", "once", "ignore", "\\+", "writeln",
                 "get_char", "put_char", "get_code", "put_code", "close", "write",
                 "throw"}) {
             putArity(p, 1);
         }
+        // START_CHANGE: ISS-2025-0203 - read/1 and read/2
+        putArity("read", 1, 2);
+        // END_CHANGE: ISS-2025-0203
         // Zero-arity predicates
         putArity("!", 0);
         putArity("repeat", 0);

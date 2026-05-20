@@ -83,21 +83,18 @@ public class CharCode implements BuiltIn {
      * Convert character to character code.
      */
     private boolean charToCode(Term charTerm, Variable codeVar, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        char ch = getCharacter(charTerm);
-        if (ch == 0 && !isValidNullChar(charTerm)) {
-            return false;
-        }
-        
-        int code = (int) ch;
+        // START_CHANGE: ISS-2025-0211 - support supplementary codepoints
+        int code = getCodepoint(charTerm);
+        if (code < 0) return false;
         Map<String, Term> newBindings = new HashMap<>(bindings);
-        if (codeVar.unify(new it.denzosoft.jprolog.core.terms.Number((double) code), newBindings)) {
+        if (codeVar.unify(new it.denzosoft.jprolog.core.terms.Number((long) code), newBindings)) {
             solutions.add(newBindings);
             return true;
         }
-        
         return false;
+        // END_CHANGE: ISS-2025-0211
     }
-    
+
     /**
      * Test character-code conversion.
      */
@@ -105,32 +102,23 @@ public class CharCode implements BuiltIn {
         if (!(codeTerm instanceof it.denzosoft.jprolog.core.terms.Number)) {
             return false;
         }
-        
-        char ch = getCharacter(charTerm);
-        int expectedCode = ((it.denzosoft.jprolog.core.terms.Number) codeTerm).getValue().intValue();
-        
-        return (int) ch == expectedCode;
+        // START_CHANGE: ISS-2025-0211 - codepoint comparison
+        int code = getCodepoint(charTerm);
+        if (code < 0) return false;
+        int expectedCode = (int) ((it.denzosoft.jprolog.core.terms.Number) codeTerm).longValue();
+        return code == expectedCode;
+        // END_CHANGE: ISS-2025-0211
     }
-    
-    /**
-     * Extract character from term.
-     */
-    private char getCharacter(Term term) {
-        if (term instanceof Atom) {
-            String str = ((Atom) term).getName();
-            return str.length() == 1 ? str.charAt(0) : 0;
-        }
-        return 0;
+
+    // START_CHANGE: ISS-2025-0211 - extract full codepoint from a single-character atom
+    private int getCodepoint(Term term) {
+        if (!(term instanceof Atom)) return -1;
+        String str = ((Atom) term).getName();
+        if (str.isEmpty()) return -1;
+        int cp = str.codePointAt(0);
+        // Must be exactly one codepoint
+        if (Character.charCount(cp) != str.length()) return -1;
+        return cp;
     }
-    
-    /**
-     * Check if term represents valid null character.
-     */
-    private boolean isValidNullChar(Term term) {
-        if (term instanceof Atom) {
-            String str = ((Atom) term).getName();
-            return str.length() == 1 && str.charAt(0) == 0;
-        }
-        return false;
-    }
+    // END_CHANGE: ISS-2025-0211
 }

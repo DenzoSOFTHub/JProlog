@@ -46,7 +46,9 @@ public class PrologFlags {
         FLAGS.put("unknown", new Atom("error"));
         
         // double_quotes/1 - How to interpret double-quoted strings
-        FLAGS.put("double_quotes", new Atom("codes"));
+        // START_CHANGE: ISS-2025-0200 - default "string" preserves JProlog legacy behaviour; set to "codes" for strict ISO
+        FLAGS.put("double_quotes", new Atom("string"));
+        // END_CHANGE: ISS-2025-0200
         
         // prolog_version/1 - Version information
         FLAGS.put("prolog_version", new Atom("jprolog-2.0.15"));
@@ -215,7 +217,9 @@ public class PrologFlags {
                 return "error".equals(atomValue) || "fail".equals(atomValue) || "warning".equals(atomValue);
                 
             case "double_quotes":
-                return "codes".equals(atomValue) || "chars".equals(atomValue) || "atom".equals(atomValue);
+                // START_CHANGE: ISS-2025-0200 - accept "string" as additional value
+                return "codes".equals(atomValue) || "chars".equals(atomValue) || "atom".equals(atomValue) || "string".equals(atomValue);
+                // END_CHANGE: ISS-2025-0200
                 
             default:
                 return true; // Allow any value for user-defined flags

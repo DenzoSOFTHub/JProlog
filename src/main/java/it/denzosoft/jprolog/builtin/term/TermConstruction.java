@@ -66,21 +66,29 @@ public class TermConstruction implements BuiltIn {
         Term arity = query.getArguments().get(2).resolveBindings(bindings);
         // END_CHANGE: ISS-2025-0084
 
+        // START_CHANGE: ISS-2025-0205 - functor/3 must support numbers as 0-ary atomic terms
         if (term.isGround()) {
             // Extract functor and arity
             Term resolvedTerm = term;
             Map<String, Term> newBindings = new HashMap<>(bindings);
-            
+
             if (resolvedTerm instanceof Atom) {
-                if (functor.unify(resolvedTerm, newBindings) && 
-                    arity.unify(new Number(0), newBindings)) {
+                if (functor.unify(resolvedTerm, newBindings) &&
+                    arity.unify(new Number(0L), newBindings)) {
+                    solutions.add(new HashMap<>(newBindings));
+                    return true;
+                }
+            } else if (resolvedTerm instanceof Number) {
+                // ISO §8.5.1: functor(N, N, 0) for any number N
+                if (functor.unify(resolvedTerm, newBindings) &&
+                    arity.unify(new Number(0L), newBindings)) {
                     solutions.add(new HashMap<>(newBindings));
                     return true;
                 }
             } else if (resolvedTerm instanceof CompoundTerm) {
                 CompoundTerm ct = (CompoundTerm) resolvedTerm;
-                if (functor.unify(ct.getFunctor(), newBindings) && 
-                    arity.unify(new Number(ct.getArguments().size()), newBindings)) {
+                if (functor.unify(ct.getFunctor(), newBindings) &&
+                    arity.unify(new Number((long) ct.getArguments().size()), newBindings)) {
                     solutions.add(new HashMap<>(newBindings));
                     return true;
                 }
@@ -90,33 +98,48 @@ public class TermConstruction implements BuiltIn {
             // Construct term from functor and arity
             Term resolvedFunctor = functor;
             Term resolvedArity = arity;
-            
-            if (resolvedFunctor instanceof Atom && resolvedArity instanceof Number) {
-                int arityValue = (int) Math.round(((Number) resolvedArity).getValue());
-                Map<String, Term> newBindings = new HashMap<>(bindings);
-                
-                if (arityValue == 0) {
+
+            // Functor and arity must be sufficiently instantiated
+            if (resolvedFunctor instanceof Variable || resolvedArity instanceof Variable) {
+                throw new PrologEvaluationException("functor/3: functor and arity must be instantiated when first arg is variable.");
+            }
+            if (!(resolvedArity instanceof Number) || !((Number) resolvedArity).isInteger()) {
+                throw new PrologEvaluationException("type_error(integer, " + resolvedArity + ")");
+            }
+            int arityValue = (int) ((Number) resolvedArity).longValue();
+            if (arityValue < 0) {
+                throw new PrologEvaluationException("domain_error(not_less_than_zero, " + arityValue + ")");
+            }
+            Map<String, Term> newBindings = new HashMap<>(bindings);
+
+            if (arityValue == 0) {
+                // Both atoms and numbers are valid 0-ary "functors"
+                if (resolvedFunctor instanceof Atom || resolvedFunctor instanceof Number) {
                     if (term.unify(resolvedFunctor, newBindings)) {
                         solutions.add(new HashMap<>(newBindings));
                         return true;
                     }
-                } else if (arityValue > 0) {
-                    // START_CHANGE: ISS-2025-0182 - Built-in predicate bug fixes
-                    // Use "_G" prefix to avoid collision with user variables like _0, _1
-                    List<Term> args = new ArrayList<>();
-                    for (int i = 0; i < arityValue; i++) {
-                        args.add(new Variable("_G" + i));
-                    }
-                    // END_CHANGE: ISS-2025-0182
-                    Term constructed = new CompoundTerm((Atom) resolvedFunctor, args);
-                    if (term.unify(constructed, newBindings)) {
-                        solutions.add(new HashMap<>(newBindings));
-                        return true;
-                    }
+                    return false;
                 }
+                throw new PrologEvaluationException("type_error(atomic, " + resolvedFunctor + ")");
+            } else {
+                // arityValue > 0 requires atom functor
+                if (!(resolvedFunctor instanceof Atom)) {
+                    throw new PrologEvaluationException("type_error(atom, " + resolvedFunctor + ")");
+                }
+                List<Term> args = new ArrayList<>();
+                for (int i = 0; i < arityValue; i++) {
+                    args.add(new Variable("_G" + i));
+                }
+                Term constructed = new CompoundTerm((Atom) resolvedFunctor, args);
+                if (term.unify(constructed, newBindings)) {
+                    solutions.add(new HashMap<>(newBindings));
+                    return true;
+                }
+                return false;
             }
-            return false;
         }
+        // END_CHANGE: ISS-2025-0205
     }
     
     private boolean handleArg(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {

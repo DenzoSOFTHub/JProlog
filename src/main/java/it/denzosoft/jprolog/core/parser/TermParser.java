@@ -112,12 +112,33 @@ public class TermParser {
             nextChar();
             while (position < input.length() && currentChar() != '"') {
                 if (currentChar() == '\\') {
-                    token.append(currentChar());
+                    // START_CHANGE: ISS-2025-0198 - handle multi-char escape sequences in string tokenizer
+                    token.append(currentChar()); // backslash
                     nextChar();
-                    if (position < input.length()) {
-                        token.append(currentChar());
-                        nextChar();
+                    if (position >= input.length()) break;
+                    char esc = currentChar();
+                    if (esc == 'x') {
+                        token.append(esc); nextChar();
+                        while (position < input.length() &&
+                               ((currentChar() >= '0' && currentChar() <= '9') ||
+                                (currentChar() >= 'a' && currentChar() <= 'f') ||
+                                (currentChar() >= 'A' && currentChar() <= 'F'))) {
+                            token.append(currentChar()); nextChar();
+                        }
+                        if (position < input.length() && currentChar() == '\\') {
+                            token.append(currentChar()); nextChar();
+                        }
+                    } else if (esc >= '0' && esc <= '7') {
+                        while (position < input.length() && currentChar() >= '0' && currentChar() <= '7') {
+                            token.append(currentChar()); nextChar();
+                        }
+                        if (position < input.length() && currentChar() == '\\') {
+                            token.append(currentChar()); nextChar();
+                        }
+                    } else {
+                        token.append(esc); nextChar();
                     }
+                    // END_CHANGE: ISS-2025-0198
                 } else {
                     token.append(currentChar());
                     nextChar();
@@ -138,8 +159,40 @@ public class TermParser {
             nextChar();
             while (position < input.length() && currentChar() != '\'') {
                 if (currentChar() == '\\') {
-                    token.append(currentChar());
+                    // START_CHANGE: ISS-2025-0198 - handle multi-char escape sequences in tokenizer
+                    token.append(currentChar()); // backslash
                     nextChar();
+                    if (position >= input.length()) break;
+                    char esc = currentChar();
+                    if (esc == 'x') {
+                        // hex escape: \xH+\
+                        token.append(esc); nextChar();
+                        while (position < input.length() &&
+                               ((currentChar() >= '0' && currentChar() <= '9') ||
+                                (currentChar() >= 'a' && currentChar() <= 'f') ||
+                                (currentChar() >= 'A' && currentChar() <= 'F'))) {
+                            token.append(currentChar()); nextChar();
+                        }
+                        if (position < input.length() && currentChar() == '\\') {
+                            token.append(currentChar()); nextChar();
+                        }
+                        continue;
+                    } else if (esc >= '0' && esc <= '7') {
+                        // octal escape: \NNN\
+                        while (position < input.length() && currentChar() >= '0' && currentChar() <= '7') {
+                            token.append(currentChar()); nextChar();
+                        }
+                        if (position < input.length() && currentChar() == '\\') {
+                            token.append(currentChar()); nextChar();
+                        }
+                        continue;
+                    } else {
+                        // single-char escape OR line continuation
+                        token.append(esc);
+                        nextChar();
+                        continue;
+                    }
+                    // END_CHANGE: ISS-2025-0198
                 }
                 token.append(currentChar());
                 nextChar();
@@ -581,17 +634,19 @@ public class TermParser {
 
         if (currentChar() == '\'') {
             // START_CHANGE: ISS-2025-0059 - Fix quoted atom escape processing
+            // START_CHANGE: ISS-2025-0198 - use full escape processor
             nextChar(); // consume opening quote
             while (position < input.length() && currentChar() != '\'') {
                 if (currentChar() == '\\') {
                     nextChar(); // consume backslash
                     if (position >= input.length()) break;
-                    name.append(processEscapeChar(currentChar()));
+                    name.append(processEscapeSequence());
                 } else {
                     name.append(currentChar());
+                    nextChar();
                 }
-                nextChar();
             }
+            // END_CHANGE: ISS-2025-0198
             // END_CHANGE: ISS-2025-0059
             if (position >= input.length()) {
                 throw new PrologParserException("Unterminated quoted atom at line " + line + ", column " + column);
@@ -650,18 +705,26 @@ public class TermParser {
                 if (position >= input.length()) {
                     throw new PrologParserException("Incomplete character literal at line " + line + ", column " + column);
                 }
-                char literalChar;
+                // START_CHANGE: ISS-2025-0198 - support octal/hex char-code literals 0'\xHH\
+                int literalCode;
                 if (currentChar() == '\\') {
                     nextChar();
                     if (position >= input.length()) {
                         throw new PrologParserException("Incomplete escape in character literal at line " + line + ", column " + column);
                     }
-                    literalChar = processEscapeChar(currentChar());
+                    String esc = processEscapeSequence();
+                    if (esc.isEmpty()) {
+                        throw new PrologParserException("Empty escape in character literal at line " + line);
+                    }
+                    literalCode = esc.codePointAt(0);
                 } else {
-                    literalChar = currentChar();
+                    literalCode = input.codePointAt(position);
+                    int charCount = Character.charCount(literalCode);
+                    for (int i = 0; i < charCount; i++) nextChar();
+                    return new Number((long) literalCode);
                 }
-                nextChar();
-                return new Number((double) literalChar, true);
+                return new Number((long) literalCode);
+                // END_CHANGE: ISS-2025-0198
             }
 
             // 0xFF - hexadecimal literal
@@ -881,8 +944,9 @@ public class TermParser {
                 if (position >= input.length()) {
                     throw new PrologParserException("Unexpected end of input in string escape at line " + line + ", column " + column);
                 }
-                value.append(processEscapeChar(currentChar()));
-                nextChar();
+                // START_CHANGE: ISS-2025-0198 - use full escape processor
+                value.append(processEscapeSequence());
+                // END_CHANGE: ISS-2025-0198
             } else {
                 value.append(currentChar());
                 nextChar();
@@ -894,7 +958,38 @@ public class TermParser {
         }
 
         nextChar(); // consume closing quote
-        return new PrologString(value.toString());
+        // START_CHANGE: ISS-2025-0200 - honor double_quotes flag (codes|chars|atom|string)
+        String s = value.toString();
+        Term flagValue = it.denzosoft.jprolog.core.system.PrologFlags.getFlag("double_quotes");
+        String mode = (flagValue instanceof Atom) ? ((Atom) flagValue).getName() : "codes";
+        switch (mode) {
+            case "chars": {
+                List<Term> chars = new ArrayList<>();
+                int i = 0;
+                while (i < s.length()) {
+                    int cp = s.codePointAt(i);
+                    chars.add(new Atom(new String(Character.toChars(cp))));
+                    i += Character.charCount(cp);
+                }
+                return buildList(chars);
+            }
+            case "atom":
+                return new Atom(s);
+            case "string":
+                return new PrologString(s);
+            case "codes":
+            default: {
+                List<Term> codes = new ArrayList<>();
+                int i = 0;
+                while (i < s.length()) {
+                    int cp = s.codePointAt(i);
+                    codes.add(new Number((long) cp));
+                    i += Character.charCount(cp);
+                }
+                return buildList(codes);
+            }
+        }
+        // END_CHANGE: ISS-2025-0200
     }
 
     private boolean isHexDigit(char c) {
@@ -916,5 +1011,77 @@ public class TermParser {
             default: return c;
         }
     }
+
+    // START_CHANGE: ISS-2025-0198 - ISO 6.4.2.1 full escape sequences: octal \NNN\, hex \xH+\, line continuation \<nl>
+    private String processEscapeSequence() throws PrologParserException {
+        if (position >= input.length()) {
+            throw new PrologParserException("Unexpected end of input in escape at line " + line + ", column " + column);
+        }
+        char c = currentChar();
+        if (c == '\n') { nextChar(); return ""; }
+        if (c == '\r') {
+            nextChar();
+            if (position < input.length() && currentChar() == '\n') nextChar();
+            return "";
+        }
+        if (c >= '0' && c <= '7') {
+            StringBuilder oct = new StringBuilder();
+            while (position < input.length() && currentChar() >= '0' && currentChar() <= '7') {
+                oct.append(currentChar());
+                nextChar();
+            }
+            if (position < input.length() && currentChar() == '\\') nextChar();
+            try {
+                int code = Integer.parseInt(oct.toString(), 8);
+                if (code < 0 || code > 0x10FFFF) {
+                    throw new PrologParserException("Octal escape out of range at line " + line);
+                }
+                return new String(Character.toChars(code));
+            } catch (NumberFormatException nfe) {
+                throw new PrologParserException("Invalid octal escape at line " + line);
+            }
+        }
+        if (c == 'x') {
+            nextChar();
+            StringBuilder hex = new StringBuilder();
+            while (position < input.length() && isHexDigit(currentChar())) {
+                hex.append(currentChar());
+                nextChar();
+            }
+            if (position < input.length() && currentChar() == '\\') nextChar();
+            if (hex.length() == 0) {
+                throw new PrologParserException("Invalid hex escape at line " + line + ", column " + column);
+            }
+            try {
+                int code = Integer.parseInt(hex.toString(), 16);
+                if (code < 0 || code > 0x10FFFF) {
+                    throw new PrologParserException("Hex escape out of range at line " + line);
+                }
+                return new String(Character.toChars(code));
+            } catch (NumberFormatException nfe) {
+                throw new PrologParserException("Invalid hex escape at line " + line);
+            }
+        }
+        char res;
+        switch (c) {
+            case 'a': res = ''; break;
+            case 'b': res = '\b'; break;
+            case 'f': res = '\f'; break;
+            case 'n': res = '\n'; break;
+            case 'r': res = '\r'; break;
+            case 't': res = '\t'; break;
+            case 'v': res = ''; break;
+            case 's': res = ' '; break;
+            case 'e': res = ''; break;
+            case '\\': res = '\\'; break;
+            case '\'': res = '\''; break;
+            case '"': res = '"'; break;
+            case '`': res = '`'; break;
+            default: res = c;
+        }
+        nextChar();
+        return String.valueOf(res);
+    }
+    // END_CHANGE: ISS-2025-0198
 }
 // END_CHANGE: ISS-2025-0085

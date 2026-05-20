@@ -450,6 +450,13 @@ public class ArithmeticEvaluator {
                     return integerMax(left, right);
                 case "min":
                     return integerMin(left, right);
+                // START_CHANGE: ISS-2025-0210 - gcd/2 evaluable functor
+                case "gcd": {
+                    java.math.BigInteger bl = left.bigIntegerValue().abs();
+                    java.math.BigInteger br = right.bigIntegerValue().abs();
+                    return new Number(bl.gcd(br));
+                }
+                // END_CHANGE: ISS-2025-0210
                 case "/": {
                     // Integer division: if result is exact, return integer; otherwise float
                     long lv = left.longValue();

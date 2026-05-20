@@ -46,61 +46,87 @@ public class Between implements BuiltIn {
             throw new PrologEvaluationException("between/3: Low and High arguments must be instantiated");
         }
         
-        if (!(lowTerm instanceof it.denzosoft.jprolog.core.terms.Number) || 
-            !(highTerm instanceof it.denzosoft.jprolog.core.terms.Number)) {
-            throw new PrologEvaluationException("between/3: Low and High arguments must be integers");
+        // START_CHANGE: ISS-2025-0209 - between/3 accept inf/infinite for upper bound
+        boolean highIsInfinity = false;
+        if (highTerm instanceof it.denzosoft.jprolog.core.terms.Atom) {
+            String n = ((it.denzosoft.jprolog.core.terms.Atom) highTerm).getName();
+            if ("inf".equals(n) || "infinite".equals(n)) {
+                highIsInfinity = true;
+            } else {
+                throw new PrologEvaluationException("type_error(integer, " + n + ")");
+            }
+        } else if (!(highTerm instanceof it.denzosoft.jprolog.core.terms.Number)) {
+            throw new PrologEvaluationException("between/3: High must be integer or inf");
         }
-        
+        if (!(lowTerm instanceof it.denzosoft.jprolog.core.terms.Number)) {
+            throw new PrologEvaluationException("between/3: Low must be integer");
+        }
+
         double lowValue = ((it.denzosoft.jprolog.core.terms.Number) lowTerm).getValue();
-        double highValue = ((it.denzosoft.jprolog.core.terms.Number) highTerm).getValue();
-        
-        if (lowValue != Math.floor(lowValue) || highValue != Math.floor(highValue)) {
-            throw new PrologEvaluationException("between/3: Low and High arguments must be integers");
+        if (Double.isInfinite(lowValue) || lowValue != Math.floor(lowValue)) {
+            throw new PrologEvaluationException("type_error(integer, " + lowTerm + ")");
         }
-        
-        // START_CHANGE: ISS-2025-0182 - Built-in predicate bug fixes
-        // Use long instead of int to handle larger ranges without overflow
         long low = (long) lowValue;
-        long high = (long) highValue;
-        // END_CHANGE: ISS-2025-0182
+
+        long high;
+        if (highIsInfinity) {
+            high = Long.MAX_VALUE;
+        } else {
+            double highValue = ((it.denzosoft.jprolog.core.terms.Number) highTerm).getValue();
+            if (Double.isInfinite(highValue) || highValue != Math.floor(highValue)) {
+                throw new PrologEvaluationException("type_error(integer, " + highTerm + ")");
+            }
+            high = (long) highValue;
+        }
+        // END_CHANGE: ISS-2025-0209
 
         if (low > high) {
-            return false; // Empty range
+            return false;
         }
 
         Term resolvedValueTerm = valueTerm.resolveBindings(bindings);
 
         if (resolvedValueTerm instanceof Variable) {
-            // START_CHANGE: ISS-2025-0192 - Use long constructor to avoid double precision loss
-            // Generate all values in the range
+            // START_CHANGE: ISS-2025-0209 - safety cap: refuse to materialize unbounded enumeration
+            if (highIsInfinity) {
+                // Enumeration must be lazy via backtracking; pre-materializing all solutions
+                // for inf would exhaust memory. Cap at a configurable practical limit and warn.
+                long cap = low + 1_000_000L;
+                if (cap < low) cap = Long.MAX_VALUE; // overflow guard
+                for (long i = low; i <= cap; i++) {
+                    Map<String, Term> newBindings = new HashMap<>(bindings);
+                    if (valueTerm.unify(new it.denzosoft.jprolog.core.terms.Number(i), newBindings)) {
+                        solutions.add(newBindings);
+                    }
+                }
+                return !solutions.isEmpty();
+            }
+            // END_CHANGE: ISS-2025-0209
             boolean foundSolution = false;
             for (long i = low; i <= high; i++) {
                 Map<String, Term> newBindings = new HashMap<>(bindings);
                 if (valueTerm.unify(new it.denzosoft.jprolog.core.terms.Number(i), newBindings)) {
-            // END_CHANGE: ISS-2025-0192
                     solutions.add(newBindings);
                     foundSolution = true;
                 }
             }
             return foundSolution;
         } else {
-            // Check if the given value is in range
             if (!(resolvedValueTerm instanceof it.denzosoft.jprolog.core.terms.Number)) {
                 return false;
             }
 
             double value = ((it.denzosoft.jprolog.core.terms.Number) resolvedValueTerm).getValue();
-            if (value != Math.floor(value)) {
-                return false; // Not an integer
+            if (value != Math.floor(value) || Double.isInfinite(value)) {
+                return false;
             }
 
             long longValue = (long) value;
             if (longValue >= low && longValue <= high) {
                 solutions.add(new HashMap<>(bindings));
                 return true;
-            } else {
-                return false;
             }
+            return false;
         }
     }
 }

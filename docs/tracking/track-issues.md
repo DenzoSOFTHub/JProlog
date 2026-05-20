@@ -3541,3 +3541,165 @@ Already implemented in `builtin/database/Clause.java` and registered in BuiltInF
 ---
 
 **Last Updated**: 2026-03-18
+
+---
+
+## ISS-2025-0195: setof/3 missing sort and deduplication
+
+**Status**: RESOLVED v2.8.0  **Priority**: HIGH  **Date**: 2026-05-20
+
+`setof/3` delegated to bag collector and never sorted/deduped per ISO §8.10.3.
+
+**Resolution**: `CollectionUtils.sortAndDedup` applies `Sort.compareTerms` after collection; setof groups also sorted by witness signature.
+
+---
+
+## ISS-2025-0196: bagof/3 missing witness grouping
+
+**Status**: RESOLVED v2.8.0  **Priority**: HIGH  **Date**: 2026-05-20
+
+`bagof/3` returned all solutions in a single bag, ignoring ISO §8.10.2 free-variable splitting.
+
+**Resolution**: `CollectionUtils` now computes witness variables (`vars(Goal) - vars(Template) - existential - pre-bound`), groups solutions by their canonical signature, and emits one solution per group with the witness bound.
+
+---
+
+## ISS-2025-0198: Missing octal/hex escapes + line continuation in quoted atoms/strings
+
+**Status**: RESOLVED v2.8.0  **Priority**: HIGH  **Date**: 2026-05-20
+
+ISO §6.4.2.1 mandates `\NNN\` octal, `\xH+\` hex, and `\<newline>` line continuation.
+
+**Resolution**: New `processEscapeSequence()` in `TermParser` handles full ISO escape grammar; tokenizer updated to lookahead across multi-char escapes; character literals `0'\xHH\` work.
+
+---
+
+## ISS-2025-0199: Line continuation escape
+
+**Status**: RESOLVED v2.8.0 (covered by ISS-0198)
+
+---
+
+## ISS-2025-0200: double_quotes flag not honored
+
+**Status**: RESOLVED v2.8.0  **Priority**: HIGH  **Date**: 2026-05-20
+
+Parser always emitted `PrologString` regardless of `double_quotes` flag (ISO §6.5.5).
+
+**Resolution**: `parseString` checks the flag and emits codes list, chars list, atom, or PrologString accordingly. Default kept as "string" for backward compatibility with existing JProlog code; users can `set_prolog_flag(double_quotes, codes)` for strict ISO.
+
+---
+
+## ISS-2025-0201: Missing soft-cut `*->` operator
+
+**Status**: RESOLVED v2.8.0  **Priority**: MEDIUM  **Date**: 2026-05-20
+
+**Resolution**: `*->/2` added at 1050 xfy in `OperatorTable`. `IfThenElse` recognizes `(C *-> T ; E)` and enumerates all C solutions for T (vs `->` which commits to first). QuerySolver LCO trampoline updated to skip `*->`.
+
+---
+
+## ISS-2025-0202: read_term/3 ignored stream argument
+
+**Status**: RESOLVED v2.8.0  **Priority**: HIGH  **Date**: 2026-05-20
+
+**Resolution**: `ReadTerm.resolveReader` dispatches stream alias via `StreamManager.getInputStream`; `isStream` accepts any registered alias.
+
+---
+
+## ISS-2025-0203: Missing read/2 stream variant
+
+**Status**: RESOLVED v2.8.0  **Priority**: HIGH  **Date**: 2026-05-20
+
+**Resolution**: `Read` accepts arity 1 or 2; stream argument dispatches via StreamManager. `BuiltInRegistry` updated to accept both arities.
+
+---
+
+## ISS-2025-0204: Incomplete read_term/write_term options
+
+**Status**: PARTIALLY RESOLVED v2.8.0  **Priority**: MEDIUM  **Date**: 2026-05-20
+
+**Resolution**: `syntax_errors(error|fail|quiet)` option added to `read_term/2,3`. Other options (`term_position`, write_term `quoted/numbervars/max_depth`) remain deferred.
+
+---
+
+## ISS-2025-0205: functor/3 does not support numbers
+
+**Status**: RESOLVED v2.8.0  **Priority**: HIGH  **Date**: 2026-05-20
+
+**Resolution**: `TermConstruction.handleFunctor` extracts `(N, N, 0)` for numeric terms; construction with `functor(X, 3.14, 0)` binds X=3.14 if arity 0, or throws `type_error(atom, _)` if arity > 0.
+
+---
+
+## ISS-2025-0206: Compound unify rollback
+
+**Status**: VERIFIED CORRECT v2.8.0  **Date**: 2026-05-20
+
+Audit suggested snapshot taken after head unification. Source inspection confirmed snapshot is taken pre-loop (line 77 of CompoundTerm.java), maintaining atomicity per ISO §8.2.3. No change needed.
+
+---
+
+## ISS-2025-0207: LCO does not extend through conjunctions/disjunctions
+
+**Status**: DEFERRED  **Date**: 2026-05-20
+
+Risky change: extending LCO through control structures may break cut propagation. Deferred to dedicated future analysis.
+
+---
+
+## ISS-2025-0208: xfx non-associativity enforcement
+
+**Status**: VERIFIED CORRECT v2.8.0  **Date**: 2026-05-20
+
+Audit suggested parser permits `X=Y=Z`. Source inspection shows `parseExpression` enforces `leftPrec > infixOp.getLeftPrecedence()` correctly; xfx returns `prec-1` for both sides. No change needed.
+
+---
+
+## ISS-2025-0209: between/3 should accept inf upper bound
+
+**Status**: RESOLVED v2.8.0  **Priority**: MEDIUM  **Date**: 2026-05-20
+
+**Resolution**: `Between` accepts atom `inf`/`infinite`; materialization capped at 1M solutions (JProlog uses solution-list model, not lazy). Throws `type_error(integer, _)` on other non-integer atoms.
+
+---
+
+## ISS-2025-0210: gcd/2 evaluable functor missing
+
+**Status**: RESOLVED v2.8.0  **Priority**: LOW  **Date**: 2026-05-20
+
+**Resolution**: `ArithmeticEvaluator.applyBinaryToNumber` handles `gcd` via `BigInteger.gcd` on absolute values.
+
+---
+
+## ISS-2025-0211: Supplementary Unicode codepoints
+
+**Status**: RESOLVED v2.8.0  **Priority**: LOW  **Date**: 2026-05-20
+
+**Resolution**: `CharCode.getCodepoint` uses `codePointAt`; `AtomChars.buildCharList` iterates by codepoint via `Character.charCount`.
+
+---
+
+## ISS-2025-0212: number_codes/2 limited to BMP
+
+**Status**: RESOLVED v2.8.0  **Priority**: LOW  **Date**: 2026-05-20
+
+**Resolution**: Upper bound extended to U+10FFFF for consistency with `atom_codes/2`.
+
+---
+
+## ISS-2025-0213: PeekByte loses PushbackInputStream wrapper
+
+**Status**: RESOLVED v2.8.0  **Priority**: LOW  **Date**: 2026-05-20
+
+**Resolution**: `PeekByte` calls `StreamManager.registerInputStream` to persist wrapper so subsequent operations see the same buffered state, mirroring `PeekChar`/`PeekCode`.
+
+---
+
+## ISS-2025-0214: Dereference cycle detection threshold
+
+**Status**: VERIFIED CORRECT v2.8.0  **Date**: 2026-05-20
+
+Audit noted that cycle detection only engages at depth >16 in `Variable.dereferenceIterative`. Verified: this is a performance optimization for the common case, not a correctness bug. Fallback path uses HashSet detection. No change needed.
+
+---
+
+**Last Updated**: 2026-05-20

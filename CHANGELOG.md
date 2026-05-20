@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.8.0] - 2026-05-20
+
+### Tenth-Round ISO Audit Fixes (ISS-2025-0195..0214)
+
+Deep theoretical ISO 13211-1 audit identified 21 issues across resolution, arithmetic, parser, built-ins, and I/O. 18 fixes applied; 3 verified as already correct or design choices.
+
+**Critical (silent semantic bugs)**:
+- **ISS-2025-0195 setof/3**: Now sorts via standard order and dedups results (was returning raw bag)
+- **ISS-2025-0196 bagof/3**: Implements free-variable witness grouping per ISO §8.10.2 (was returning all solutions in one bag)
+
+**Major (ISO compliance gaps)**:
+- **ISS-2025-0198 string escapes**: Full ISO §6.4.2.1 — octal `\NNN\`, hex `\xH+\`, line continuation `\<nl>`, plus tokenizer support for multi-char escapes
+- **ISS-2025-0199 line continuation**: `\<newline>` in quoted atoms/strings produces empty string
+- **ISS-2025-0200 double_quotes flag**: Parser honors flag (codes|chars|atom|string); default kept as "string" for back-compat
+- **ISS-2025-0201 soft-cut `*->`**: Operator added at 1050 xfy with enumeration semantics in `( Cond *-> Then ; Else )`
+- **ISS-2025-0202 read_term/3 stream**: Respects stream argument, dispatching via StreamManager (was always reading stdin)
+- **ISS-2025-0203 read/2**: New `read(Stream, Term)` arity dispatching to named streams
+- **ISS-2025-0204 syntax_errors option**: `read_term/2,3` honors `syntax_errors(error|fail|quiet)`
+- **ISS-2025-0205 functor/3 numbers**: `functor(42, F, A)` binds `F=42, A=0`; `functor(X, 3.14, 0)` throws `type_error(atom, _)`
+
+**Minor**:
+- **ISS-2025-0209 between/3 inf**: Accepts atom `inf`/`infinite` as upper bound (was throwing); caps materialization at 1M solutions
+- **ISS-2025-0210 gcd/2 evaluable**: Added per ISO §9.2 — `X is gcd(12,18)` → 6
+- **ISS-2025-0211 supplementary Unicode**: `char_code/2`, `atom_chars/2` handle codepoints beyond BMP via `codePoints()`/`Character.toChars`
+- **ISS-2025-0212 number_codes full Unicode**: Range extended to U+10FFFF for consistency with `atom_codes/2`
+- **ISS-2025-0213 PeekByte pushback**: `PushbackInputStream` wrapper now registered via `StreamManager` so subsequent operations see the same wrapper
+
+**Verified already-correct** (no change needed): ISS-2025-0206 compound unify rollback (snapshot pre-loop), ISS-2025-0208 xfx non-associativity (parser enforces maxPrecedence), ISS-2025-0214 dereference cycle threshold (correct, performance-only consideration).
+
+**Deferred**: ISS-2025-0207 (LCO extension to compound bodies) — risky, defers to future work.
+
+### Test Coverage
+
+- 459 JUnit tests (10 new verification tests for above fixes), all pass
+- 20/20 examples regression suite pass
+
+---
+
 ## [2.7.1] - 2026-03-25
 
 ### Cut Semantics Fixes & DCG Unicode (ISS-2025-0194)

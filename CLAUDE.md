@@ -13,7 +13,9 @@ JProlog is a Prolog interpreter written in Java (1.8). It includes a core engine
 
 ```bash
 mvn compile                  # Build
-mvn test                     # JUnit tests
+mvn test                     # JUnit tests (full suite)
+mvn test -Dtest=BugFixVerificationTest                  # Single test class
+mvn test -Dtest=BugFixVerificationTest#testISS0188_ModNegativeDivisor   # Single method
 mvn clean compile            # Clean rebuild
 
 # Run CLI
@@ -27,11 +29,15 @@ java -cp target/classes it.denzosoft.jprolog.editor.PrologIDE
 # Success rate >= 75% for maintenance, >= 85% for new features
 
 # Other test scripts
-./comprehensive_test.sh      # Built-in predicates
-./test_phase1_features.sh    # ISO Phase 1
-./test_phase2_features.sh    # Exception handling
-./test_phase3_features.sh    # Arithmetic functions
-./test-debug.sh              # Debug features
+./comprehensive_test.sh         # Built-in predicates
+./test_phase1_features.sh       # ISO Phase 1
+./test_phase2_features.sh       # Exception handling
+./test_phase3_features.sh       # Arithmetic functions
+./test-debug.sh                 # Debug features
+./test_iso_examples.sh          # ISO conformance examples
+./test_all_dcg_examples.sh      # DCG examples
+./test_dcg_comprehensive.sh     # DCG comprehensive scenarios
+./test_all_40_examples.sh       # 40-example regression set
 ```
 
 ## Architecture
@@ -102,6 +108,10 @@ QuerySolver hooks are guarded by `if (debugController != null)` — zero overhea
 ### Compilation Diagnostics
 
 `Prolog.consultWithDiagnostics(program, filename)` compiles per-clause, collecting errors with line numbers instead of throwing on first error. Returns `CompilationResult` with `List<CompilationError>`.
+
+### Binary Compiled Format (.jpc)
+
+JProlog compiles `.pl` source to `.jpc` (JProlog Compiled) for fast loading. Implemented by `JpcWriter` / `JpcReader` in `core.engine` — uses string interning, varint encoding, and source-hash validation to detect stale compilations. The unified `OperatorTable` is shared between parser, `op/3`, and query resolution so dynamic operators round-trip through `.jpc`.
 
 ### Key Design Decisions
 

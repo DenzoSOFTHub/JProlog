@@ -7,6 +7,7 @@ import it.denzosoft.jprolog.core.terms.*;
 
 import it.denzosoft.jprolog.util.TermUtils;
 import java.io.BufferedReader;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.*;
 
@@ -68,11 +69,20 @@ public class ReadTerm extends AbstractBuiltInWithContext {
      * END_CHANGE: ISS-2025-0182
      */
     private boolean readTermFromStream(Term streamTerm, Term termVar, List<ReadOption> options, Map<String, Term> bindings) {
+        // START_CHANGE: ISS-2025-0204 - read syntax_errors option upfront
+        String syntaxErrorsMode = "error";
+        for (ReadOption opt : options) {
+            if (opt.getType() == ReadOption.Type.SYNTAX_ERRORS && opt.getValue() instanceof Atom) {
+                String v = ((Atom) opt.getValue()).getName();
+                if ("error".equals(v) || "fail".equals(v) || "quiet".equals(v)) syntaxErrorsMode = v;
+            }
+        }
+        // END_CHANGE: ISS-2025-0204
         try {
-            // Get stream (currently always returns current input - stream parameter is ignored)
-            BufferedReader reader = getCurrentInputStream();
+            // START_CHANGE: ISS-2025-0202 - honor stream argument; resolve to actual InputStream via StreamManager
+            BufferedReader reader = resolveReader(streamTerm);
+            // END_CHANGE: ISS-2025-0202
 
-            // Read and parse term
             String input = reader.readLine();
             if (input == null) {
                 // End of file
@@ -138,7 +148,14 @@ public class ReadTerm extends AbstractBuiltInWithContext {
             return unifyTerm(termVar, parsedTerm, bindings);
 
         } catch (Exception e) {
+            // START_CHANGE: ISS-2025-0204 - honor syntax_errors option
+            if ("error".equals(syntaxErrorsMode)) {
+                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
+                    "syntax_error(" + e.getMessage() + ")");
+            }
+            // fail or quiet -> return false silently
             return false;
+            // END_CHANGE: ISS-2025-0204
         }
     }
 
@@ -281,6 +298,10 @@ public class ReadTerm extends AbstractBuiltInWithContext {
                         return new ReadOption(ReadOption.Type.SINGLETONS, arg);
                     case "module":
                         return new ReadOption(ReadOption.Type.MODULE, arg);
+                    // START_CHANGE: ISS-2025-0204 - syntax_errors(error|fail|quiet) option
+                    case "syntax_errors":
+                        return new ReadOption(ReadOption.Type.SYNTAX_ERRORS, arg);
+                    // END_CHANGE: ISS-2025-0204
                     default:
                         return null;
                 }
@@ -294,15 +315,17 @@ public class ReadTerm extends AbstractBuiltInWithContext {
      * Check if a term represents a stream.
      */
     private boolean isStream(Term term) {
-        // Simplified stream detection
+        // START_CHANGE: ISS-2025-0202 - recognize any registered stream alias as a stream
         if (term instanceof Atom) {
             String name = ((Atom) term).getName();
-            return name.equals("current_input") || name.equals("current_output") ||
-                   name.equals("user_input") || name.equals("user_output");
+            if (name.equals("current_input") || name.equals("current_output") ||
+                name.equals("user_input") || name.equals("user_output")) {
+                return true;
+            }
+            return StreamManager.hasStream(name);
         }
-
-        // Could also be a stream handle (compound term)
         return term instanceof CompoundTerm && "stream".equals(TermUtils.getFunctorName(term));
+        // END_CHANGE: ISS-2025-0202
     }
 
     // START_CHANGE: ISS-2025-0173 - Cache stdin BufferedReader to prevent resource leak
@@ -318,6 +341,32 @@ public class ReadTerm extends AbstractBuiltInWithContext {
         return STDIN_READER;
         // END_CHANGE: ISS-2025-0173
     }
+
+    // START_CHANGE: ISS-2025-0202 - resolve stream argument to a BufferedReader
+    private static final Map<String, BufferedReader> READER_CACHE = new HashMap<>();
+    private BufferedReader resolveReader(Term streamTerm) {
+        String alias = null;
+        if (streamTerm instanceof Atom) {
+            alias = ((Atom) streamTerm).getName();
+        } else if (streamTerm instanceof CompoundTerm && "stream".equals(TermUtils.getFunctorName(streamTerm))) {
+            Term inner = TermUtils.getArgument((CompoundTerm) streamTerm, 0);
+            if (inner instanceof Atom) alias = ((Atom) inner).getName();
+        }
+        if (alias == null || "current_input".equals(alias) || "user_input".equals(alias)) {
+            return STDIN_READER;
+        }
+        BufferedReader cached = READER_CACHE.get(alias);
+        if (cached != null) return cached;
+        InputStream is = StreamManager.getInputStream(alias);
+        if (is == null) {
+            // unknown stream — fall back to stdin to preserve legacy behaviour
+            return STDIN_READER;
+        }
+        BufferedReader br = new BufferedReader(new InputStreamReader(is));
+        READER_CACHE.put(alias, br);
+        return br;
+    }
+    // END_CHANGE: ISS-2025-0202
 
     /**
      * Unify a term with a variable.
@@ -357,7 +406,10 @@ public class ReadTerm extends AbstractBuiltInWithContext {
             VARIABLES,
             VARIABLE_NAMES,
             SINGLETONS,
-            MODULE
+            MODULE,
+            // START_CHANGE: ISS-2025-0204
+            SYNTAX_ERRORS
+            // END_CHANGE: ISS-2025-0204
         }
 
         private final Type type;

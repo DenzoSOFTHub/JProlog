@@ -47,12 +47,15 @@ public class PeekByte implements BuiltIn {
                 throw new PrologEvaluationException("peek_byte: stream does not exist: " + streamAlias);
             }
 
+            // START_CHANGE: ISS-2025-0213 - register PushbackInputStream so subsequent ops see same wrapper
             PushbackInputStream pushbackStream;
             if (inputStream instanceof PushbackInputStream) {
                 pushbackStream = (PushbackInputStream) inputStream;
             } else {
                 pushbackStream = new PushbackInputStream(inputStream);
+                StreamManager.registerInputStream(streamAlias, pushbackStream);
             }
+            // END_CHANGE: ISS-2025-0213
 
             int b = pushbackStream.read();
             Term byteValue;

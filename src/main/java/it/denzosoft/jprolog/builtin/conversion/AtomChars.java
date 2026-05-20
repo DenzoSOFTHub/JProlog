@@ -85,14 +85,23 @@ public class AtomChars implements BuiltIn {
     }
     
     private Term buildCharList(String str) {
+        // START_CHANGE: ISS-2025-0211 - iterate by codepoint, not by Java char, to handle surrogate pairs
+        List<String> chars = new ArrayList<>();
+        int i = 0;
+        while (i < str.length()) {
+            int cp = str.codePointAt(i);
+            chars.add(new String(Character.toChars(cp)));
+            i += Character.charCount(cp);
+        }
         Term result = new Atom("[]");
-        for (int i = str.length() - 1; i >= 0; i--) {
+        for (int k = chars.size() - 1; k >= 0; k--) {
             List<Term> args = new ArrayList<>();
-            args.add(new Atom(String.valueOf(str.charAt(i))));
+            args.add(new Atom(chars.get(k)));
             args.add(result);
             result = new CompoundTerm(new Atom("."), args);
         }
         return result;
+        // END_CHANGE: ISS-2025-0211
     }
     
     private List<String> extractChars(Term list) {

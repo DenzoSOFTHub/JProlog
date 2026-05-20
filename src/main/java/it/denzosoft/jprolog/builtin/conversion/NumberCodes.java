@@ -168,15 +168,15 @@ public class NumberCodes implements BuiltIn {
                 Term element = compound.getArguments().get(0);
                 if (element instanceof Number) {
                     double code = ((Number) element).getValue();
-                    // START_CHANGE: ISS-2025-0190 - Extend to full Unicode BMP range
-                    if (code == Math.floor(code) && code >= 0 && code <= Character.MAX_VALUE) {
+                    // START_CHANGE: ISS-2025-0212 - Extend to full Unicode (U+10FFFF) for consistency with atom_codes
+                    if (code == Math.floor(code) && code >= 0 && code <= 0x10FFFF) {
                         codes.add((int) code);
                     } else {
-                        return null; // Invalid character code
+                        return null;
                     }
-                    // END_CHANGE: ISS-2025-0190
+                    // END_CHANGE: ISS-2025-0212
                 } else {
-                    return null; // Element must be a number
+                    return null;
                 }
                 current = compound.getArguments().get(1);
             } else {
