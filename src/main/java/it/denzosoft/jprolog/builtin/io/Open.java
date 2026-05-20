@@ -44,8 +44,11 @@ public class Open implements BuiltIn {
         String filename = ((Atom) fileTerm).getName();
         String mode = ((Atom) modeTerm).getName();
 
-        // START_CHANGE: ISS-2025-0252 - parse open/4 options
+        // START_CHANGE: R3 - parse all open/4 options
         String aliasName = null;
+        String typeOpt = null;
+        String encodingOpt = null;
+        String eofActionOpt = null;
         if (arity == 4) {
             Term optsTerm = query.getArguments().get(3).resolveBindings(bindings);
             List<Term> opts = ListUtils.extractElements(optsTerm);
@@ -54,26 +57,44 @@ public class Open implements BuiltIn {
                     if (opt instanceof CompoundTerm) {
                         CompoundTerm c = (CompoundTerm) opt;
                         String n = c.getName();
-                        if ("alias".equals(n) && c.getArguments() != null && c.getArguments().size() == 1) {
-                            Term aTerm = c.getArguments().get(0);
-                            if (aTerm instanceof Atom) aliasName = ((Atom) aTerm).getName();
+                        if (c.getArguments() == null || c.getArguments().size() != 1) continue;
+                        Term v = c.getArguments().get(0);
+                        if (!(v instanceof Atom)) continue;
+                        String vs = ((Atom) v).getName();
+                        switch (n) {
+                            case "alias": aliasName = vs; break;
+                            case "type": typeOpt = vs; break;
+                            case "encoding": encodingOpt = vs; break;
+                            case "eof_action": eofActionOpt = vs; break;
+                            default: break;
                         }
-                        // type/encoding/eof_action/reposition: accepted but not enforced for now
                     }
                 }
             }
         }
-        // END_CHANGE: ISS-2025-0252
+        // END_CHANGE: R3
 
         try {
             String streamAlias = StreamManager.openStream(filename, mode);
-            // START_CHANGE: ISS-2025-0252 - register user alias if provided
+            // START_CHANGE: R3 - register user alias + record stream properties
             String userAlias = (aliasName != null) ? aliasName : streamAlias;
             if (aliasName != null) {
                 StreamManager.aliasStream(streamAlias, aliasName);
             }
+            if (typeOpt != null) {
+                StreamManager.setProperty(streamAlias, StreamManager.PROP_TYPE, typeOpt);
+                StreamManager.setProperty(userAlias, StreamManager.PROP_TYPE, typeOpt);
+            }
+            if (encodingOpt != null) {
+                StreamManager.setProperty(streamAlias, StreamManager.PROP_ENCODING, encodingOpt);
+                StreamManager.setProperty(userAlias, StreamManager.PROP_ENCODING, encodingOpt);
+            }
+            if (eofActionOpt != null) {
+                StreamManager.setProperty(streamAlias, StreamManager.PROP_EOF_ACTION, eofActionOpt);
+                StreamManager.setProperty(userAlias, StreamManager.PROP_EOF_ACTION, eofActionOpt);
+            }
             Atom streamAtom = new Atom(userAlias);
-            // END_CHANGE: ISS-2025-0252
+            // END_CHANGE: R3
 
             Term resolvedStreamTerm = streamTerm.resolveBindings(bindings);
             Map<String, Term> newBindings = new HashMap<>(bindings);

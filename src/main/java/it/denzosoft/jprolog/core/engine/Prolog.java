@@ -242,6 +242,12 @@ public class Prolog {
                 switch (functor) {
                     case "module":
                         if (moduleManager.parseModuleDirective(directive)) {
+                            // START_CHANGE: R2 - publish current module name to OperatorDefinition for op visibility
+                            it.denzosoft.jprolog.builtin.system.OperatorDefinition.setCurrentModuleContext(
+                                moduleManager.getCurrentModule() != null
+                                    ? moduleManager.getCurrentModule().getName()
+                                    : "user");
+                            // END_CHANGE: R2
                             LOGGER.log(Level.INFO, "Module directive processed: " + directive);
                         } else {
                             LOGGER.log(Level.WARNING, "Failed to process module directive: " + directive);

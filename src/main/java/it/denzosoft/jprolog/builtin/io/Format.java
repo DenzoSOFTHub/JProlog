@@ -94,6 +94,11 @@ public class Format extends AbstractBuiltInWithContext {
     private String processFormat(String formatString, List<Term> arguments, Map<String, Term> bindings) {
         StringBuilder result = new StringBuilder();
         int[] argIdxRef = {0}; // boxed for helper
+        // START_CHANGE: R4 - column tabbing state
+        java.util.List<Integer> tabMarks = new java.util.ArrayList<>();
+        int segmentStart = 0;
+        int segmentBaseCol = 0;
+        // END_CHANGE: R4
 
         for (int i = 0; i < formatString.length(); i++) {
             char ch = formatString.charAt(i);
@@ -126,11 +131,62 @@ public class Format extends AbstractBuiltInWithContext {
                 }
                 if (j < formatString.length()) {
                     char formatChar = formatString.charAt(j);
+                    // START_CHANGE: R4 - column tabbing specifiers (~t / ~N| / ~N+)
+                    if (formatChar == 't') {
+                        tabMarks.add(result.length());
+                        i = j;
+                        continue;
+                    }
+                    if (formatChar == '|' || formatChar == '+') {
+                        int currentColInSegment = result.length() - segmentStart;
+                        int targetColInSegment;
+                        if (formatChar == '|') {
+                            int absTarget = (numArg != null) ? numArg : (segmentBaseCol + currentColInSegment);
+                            targetColInSegment = absTarget - segmentBaseCol;
+                        } else {
+                            int rel = (numArg != null) ? numArg : currentColInSegment;
+                            targetColInSegment = rel;
+                        }
+                        int padding = targetColInSegment - currentColInSegment;
+                        if (padding > 0 && !tabMarks.isEmpty()) {
+                            int slots = tabMarks.size();
+                            int perTab = padding / slots;
+                            int remainder = padding - perTab * slots;
+                            StringBuilder pad = new StringBuilder();
+                            for (int k = 0; k < perTab; k++) pad.append(' ');
+                            String padStr = pad.toString();
+                            for (int t = tabMarks.size() - 1; t >= 0; t--) {
+                                int pos = tabMarks.get(t);
+                                if (t == tabMarks.size() - 1 && remainder > 0) {
+                                    StringBuilder r = new StringBuilder(padStr);
+                                    for (int k = 0; k < remainder; k++) r.append(' ');
+                                    result.insert(pos, r);
+                                } else {
+                                    result.insert(pos, padStr);
+                                }
+                            }
+                        } else if (padding > 0) {
+                            for (int k = 0; k < padding; k++) result.append(' ');
+                        }
+                        tabMarks.clear();
+                        segmentBaseCol = segmentBaseCol + Math.max(currentColInSegment, targetColInSegment);
+                        segmentStart = result.length();
+                        i = j;
+                        continue;
+                    }
+                    // END_CHANGE: R4
                     String formatted = processFormatCode(formatChar, arguments, argIdxRef[0], numArg, bindings);
                     result.append(formatted);
                     if (consumesArgument(formatChar)) {
                         argIdxRef[0]++;
                     }
+                    // START_CHANGE: R4 - reset column tracking on newline output
+                    if (formatted.indexOf('\n') >= 0) {
+                        segmentBaseCol = 0;
+                        segmentStart = result.length();
+                        tabMarks.clear();
+                    }
+                    // END_CHANGE: R4
                     i = j; // Skip the format character
                 } else {
                     result.append(ch); // Lone ~ at end
@@ -138,6 +194,13 @@ public class Format extends AbstractBuiltInWithContext {
                 // END_CHANGE: ISS-2025-0249
             } else {
                 result.append(ch);
+                // START_CHANGE: R4 - literal newline resets column
+                if (ch == '\n') {
+                    segmentBaseCol = 0;
+                    segmentStart = result.length();
+                    tabMarks.clear();
+                }
+                // END_CHANGE: R4
             }
         }
 
@@ -218,8 +281,11 @@ public class Format extends AbstractBuiltInWithContext {
             case 'i': // Ignore argument
                 return "";
 
-            case 'p': // Print (same as write for now)
-                return arg != null ? formatTerm(arg) : "";
+            case 'p': // Print - try portray/1 hook, fall back to write
+                // START_CHANGE: R4 - portray hook
+                if (arg == null) return "";
+                return formatViaPortray(arg, bindings);
+                // END_CHANGE: R4
 
             case 'c': // Character code (repeat N times if numArg given)
                 if (arg == null) return "";
@@ -240,6 +306,38 @@ public class Format extends AbstractBuiltInWithContext {
                 return "~" + formatChar; // Unknown format code
         }
     }
+
+    // START_CHANGE: R4 - portray hook: invoke user-defined portray/1 capturing its output
+    private String formatViaPortray(Term arg, Map<String, Term> bindings) {
+        // Test if user defined portray/1 (any clause)
+        if (solver == null || solver.getKnowledgeBase() == null) return formatTerm(arg);
+        java.util.List<it.denzosoft.jprolog.core.engine.Rule> rules =
+            solver.getKnowledgeBase().getRulesForPredicate("portray", 1);
+        if (rules == null || rules.isEmpty()) return formatTerm(arg);
+
+        java.io.PrintStream origOut = System.out;
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        java.io.PrintStream wrapped = new java.io.PrintStream(baos);
+        System.setOut(wrapped);
+        try {
+            Term portrayGoal = new it.denzosoft.jprolog.core.terms.CompoundTerm(
+                new it.denzosoft.jprolog.core.terms.Atom("portray"),
+                java.util.Arrays.asList(arg));
+            java.util.List<Map<String, Term>> sols = new java.util.ArrayList<>();
+            boolean ok = solver.solve(portrayGoal, new java.util.HashMap<>(bindings), sols,
+                it.denzosoft.jprolog.core.engine.CutStatus.notOccurred());
+            wrapped.flush();
+            if (ok && !sols.isEmpty()) {
+                return baos.toString();
+            }
+        } catch (Exception e) {
+            // fall through to default
+        } finally {
+            System.setOut(origOut);
+        }
+        return formatTerm(arg);
+    }
+    // END_CHANGE: R4
 
     // START_CHANGE: ISS-2025-0249 - format helpers for width/precision/radix
     private String padToWidth(String s, Integer width) {

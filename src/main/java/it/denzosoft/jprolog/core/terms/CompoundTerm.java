@@ -33,6 +33,20 @@ public class CompoundTerm extends Term {
         }
         return unmodifiableArguments;
     }
+
+    // START_CHANGE: R1 - setarg/3 support: destructive arg replacement
+    /** Replace argument at 1-based index. Used by setarg/3; caller must record undo via Trail. */
+    public Term setArgument(int index1based, Term newArg) {
+        if (index1based < 1 || index1based > arguments.size()) {
+            throw new IndexOutOfBoundsException("setarg: index " + index1based + " out of range 1.." + arguments.size());
+        }
+        Term old = arguments.get(index1based - 1);
+        arguments.set(index1based - 1, newArg);
+        // Invalidate cached unmodifiable view
+        unmodifiableArguments = null;
+        return old;
+    }
+    // END_CHANGE: R1
     // END_CHANGE: ISS-2025-0091
 
     @Override

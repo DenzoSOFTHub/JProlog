@@ -79,6 +79,19 @@ public class TableStore {
         inProgress.remove(cacheKey);
     }
 
+    // START_CHANGE: R5 - partial cache for in-progress tabled goals (enables WFS-style iteration)
+    private final Map<String, List<Map<String, Term>>> partialCache = new HashMap<>();
+    public List<Map<String, Term>> getPartialCache(String cacheKey) {
+        return partialCache.get(cacheKey);
+    }
+    public void setPartialCache(String cacheKey, List<Map<String, Term>> sols) {
+        partialCache.put(cacheKey, sols);
+    }
+    public void clearPartialCache(String cacheKey) {
+        partialCache.remove(cacheKey);
+    }
+    // END_CHANGE: R5
+
     public void abolishAllTables() {
         cache.clear();
         inProgress.clear();

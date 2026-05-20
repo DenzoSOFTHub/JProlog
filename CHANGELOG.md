@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.0] - 2026-05-20
+
+### Major Refactors R1-R8
+
+Six structural refactors landed (R6/R7 are organizational, no behavior change).
+
+### R1 — Trail engine
+New `core/engine/Trail.java` — stack of `Runnable` undo actions per thread. Solver-integrated rollback in `IfThenElse.executeDisjunction`.
+- **`b_setval/2`** now backtrackable: failed branch restores previous value
+- **`op/3`** redefinitions undone on backtrack
+- **`setarg/3`** destructive arg update with trail-based undo. `CompoundTerm.setArgument(int, Term)` API.
+
+### R2 — Module-local operators
+- `OperatorDefinition` now tags every op with its defining module
+- `current_op/3` filters by current module + global ("user") visibility
+- `:- module(m, ...)` directive publishes current module context to op layer
+
+### R3 — Stream encoding / EOF action / binary
+- `open/4` options now honored: `alias`, `type(text|binary)`, `encoding(utf8|ascii|iso_latin_1|utf16|...)`, `eof_action(error|eof_code|reset)`
+- `StreamManager` provides encoding-aware `Reader` via `Charset` lookup
+- `get_char/2` reads via Reader (encoding-aware) + checks `eof_action` past EOF
+- Codepoint reassembly for supplementary plane surrogates
+
+### R4 — Format column tabbing + portray hook
+- Column tracking state machine: `~t`, `~N|` (absolute column), `~N+` (relative tab)
+- Multiple `~t` markers distribute padding equally
+- Newline resets segment base column
+- `~p` invokes `portray/1` user-defined hook (output captured via System.out redirect)
+
+### R5 — Tabling fixpoint iteration
+- TableStore tracks `partialCache` for in-progress goals
+- `solveWithTabling` iterates up to 100 rounds until fixpoint
+- Left-recursive predicates now terminate correctly (e.g. transitive closure via tabled `path/2`)
+- New `:- table p/N.` syntax: `table`/`dynamic`/`discontiguous`/`multifile`/`meta_predicate`/`module_transparent` declared as prefix operators fx 1150 (SWI-compat)
+
+### R8 — ListTerm consolidation
+- `PrologParser.parseList` emits cons-cell form directly via `ListUtils.createList`
+- `ListTerm` retained for back-compat but no longer the canonical list representation
+
+### Deferred refactors
+- **R6** Solver dispatch unification — pure organizational, deferred
+- **R7** Documentation split — deferred
+- Module-qualified call dispatch with export visibility (3 tests @Ignore'd)
+- Portray hook test-harness stdout capture interaction (works in CLI; deferred test)
+- when/2 cross-solve() var-identity preservation (deferred)
+
+### Test Coverage
+- **498/498 JUnit tests pass** (3 skipped: deferred refactors)
+- **20/20 examples regression pass**
+- New `RefactorIssuesTest` (16 tests) — 13 enabled passing, 3 @Ignore documenting deferred work
+
+---
+
 ## [2.8.3] - 2026-05-20
 
 ### Thirteenth-Round Coroutining + Format + Stream Fixes (ISS-2025-0245..0253)

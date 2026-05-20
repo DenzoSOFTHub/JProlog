@@ -26,7 +26,9 @@ public class Op extends AbstractBuiltInWithContext {
      */
     public Op(QuerySolver solver) {
         super(solver);
-        this.operatorTable = new OperatorTable(); // Simplified for now
+        // START_CHANGE: R1/R2 - use the shared default OperatorTable (was creating a private one)
+        this.operatorTable = OperatorTable.getDefault();
+        // END_CHANGE: R1/R2
     }
     
     @Override
@@ -93,28 +95,48 @@ public class Op extends AbstractBuiltInWithContext {
      */
     private boolean defineOrRemoveOperator(int precedence, Operator.Type type, String name) {
         try {
+            // START_CHANGE: R1 - record current op state for trail-based undo
+            final Operator existing = findExisting(type, name);
+            final OperatorTable t = operatorTable;
             if (precedence == 0) {
-                // Remove operator
-                return operatorTable.removeOperator(0, type, name) || 
+                if (existing != null) {
+                    it.denzosoft.jprolog.core.engine.Trail.record(() -> {
+                        t.defineOperator(existing.getPrecedence(), existing.getType(), existing.getName());
+                    });
+                }
+                return operatorTable.removeOperator(0, type, name) ||
                        removeAllOperators(name, type);
             } else {
-                // Define operator
-                if (precedence < 1 || precedence > 1200) {
-                    return false; // Invalid precedence
+                if (precedence < 1 || precedence > 1200) return false;
+                if (!isValidOperatorDefinition(precedence, type, name)) return false;
+                if (existing != null) {
+                    it.denzosoft.jprolog.core.engine.Trail.record(() -> {
+                        t.defineOperator(existing.getPrecedence(), existing.getType(), existing.getName());
+                    });
+                } else {
+                    final Operator.Type capturedType = type;
+                    final String capturedName = name;
+                    it.denzosoft.jprolog.core.engine.Trail.record(() -> {
+                        t.removeOperator(0, capturedType, capturedName);
+                    });
                 }
-                
-                // Check for conflicts with existing operators
-                if (!isValidOperatorDefinition(precedence, type, name)) {
-                    return false;
-                }
-                
                 operatorTable.defineOperator(precedence, type, name);
                 return true;
             }
+            // END_CHANGE: R1
         } catch (Exception e) {
             return false;
         }
     }
+
+    // START_CHANGE: R1 - lookup existing op by type+name
+    private Operator findExisting(Operator.Type type, String name) {
+        for (Operator op : operatorTable.getOperators(name)) {
+            if (op.getType() == type) return op;
+        }
+        return null;
+    }
+    // END_CHANGE: R1
     
     /**
      * Define or remove operators from a list.

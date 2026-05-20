@@ -36,34 +36,74 @@ public class GetChar implements BuiltIn {
     
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        if (query.getArguments() == null || query.getArguments().size() != 1) {
-            throw new PrologEvaluationException("get_char/1 requires exactly 1 argument");
+        int arity = query.getArguments() == null ? 0 : query.getArguments().size();
+        if (arity != 1 && arity != 2) {
+            throw new PrologEvaluationException("get_char/1 or get_char/2 expected");
         }
-        
-        Term charTerm = query.getArguments().get(0);
-        
+
+        // START_CHANGE: R3 - get_char/2 dispatches to named stream with eof_action + encoding support
+        String streamAlias = null;
+        Term charTerm;
+        if (arity == 1) {
+            charTerm = query.getArguments().get(0);
+        } else {
+            Term sTerm = query.getArguments().get(0).resolveBindings(bindings);
+            if (!(sTerm instanceof Atom)) {
+                throw new PrologEvaluationException("get_char/2: stream must be atom");
+            }
+            streamAlias = ((Atom) sTerm).getName();
+            charTerm = query.getArguments().get(1);
+        }
+        // END_CHANGE: R3
+
         try {
-            int charCode = reader.read();
+            int charCode;
+            // START_CHANGE: R3 - read via Reader when stream alias known (encoding-aware)
+            if (streamAlias != null && !"user_input".equals(streamAlias) && !"current_input".equals(streamAlias)) {
+                java.io.Reader r = StreamManager.getReader(streamAlias);
+                if (r == null) {
+                    throw new PrologEvaluationException("existence_error(stream, " + streamAlias + ")");
+                }
+                charCode = r.read();
+                if (charCode == -1) {
+                    String eofAction = StreamManager.getProperty(streamAlias, StreamManager.PROP_EOF_ACTION);
+                    if ("error".equals(eofAction)) {
+                        throw new PrologEvaluationException("permission_error(input, past_end_of_stream, " + streamAlias + ")");
+                    }
+                    // default eof_code: bind end_of_file atom
+                }
+            } else {
+                charCode = reader.read();
+            }
+            // END_CHANGE: R3
+
             Term charValue;
-            
             if (charCode == -1) {
-                // End of file
                 charValue = new Atom("end_of_file");
             } else {
-                // Convert to character atom
-                charValue = new Atom(String.valueOf((char) charCode));
+                // codepoint-aware: high surrogate handling
+                if (Character.isHighSurrogate((char) charCode)) {
+                    java.io.Reader r2 = (streamAlias != null) ? StreamManager.getReader(streamAlias) : reader;
+                    int low = r2 != null ? r2.read() : -1;
+                    if (low != -1) {
+                        int cp = Character.toCodePoint((char) charCode, (char) low);
+                        charValue = new Atom(new String(Character.toChars(cp)));
+                    } else {
+                        charValue = new Atom(String.valueOf((char) charCode));
+                    }
+                } else {
+                    charValue = new Atom(String.valueOf((char) charCode));
+                }
             }
-            
-            // Try to unify
+
             if (charTerm.unify(charValue, bindings)) {
                 solutions.add(bindings);
                 return true;
-            } else {
-                return false;
             }
-            
+            return false;
+
         } catch (IOException e) {
-            throw new PrologEvaluationException("get_char/1: I/O error - " + e.getMessage());
+            throw new PrologEvaluationException("get_char: I/O error - " + e.getMessage());
         }
     }
 }

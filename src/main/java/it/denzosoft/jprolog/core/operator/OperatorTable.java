@@ -104,6 +104,14 @@ public class OperatorTable {
         defineOperator(1200, Operator.Type.XFX, "-->");
         defineOperator(1200, Operator.Type.FX, ":-");
         defineOperator(1200, Operator.Type.FX, "?-");
+        // START_CHANGE: R5 - tabling directives: declared as fx 1150 like SWI
+        defineOperator(1150, Operator.Type.FX, "table");
+        defineOperator(1150, Operator.Type.FX, "dynamic");
+        defineOperator(1150, Operator.Type.FX, "discontiguous");
+        defineOperator(1150, Operator.Type.FX, "multifile");
+        defineOperator(1150, Operator.Type.FX, "meta_predicate");
+        defineOperator(1150, Operator.Type.FX, "module_transparent");
+        // END_CHANGE: R5
         
         defineOperator(1100, Operator.Type.XFY, ";");
         defineOperator(1050, Operator.Type.XFY, "->");

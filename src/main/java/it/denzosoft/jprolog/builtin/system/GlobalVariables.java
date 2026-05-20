@@ -63,8 +63,13 @@ public class GlobalVariables implements BuiltInWithContext {
 
         switch (mode) {
             case NB_SETVAL:
-            case B_SETVAL:
-                return executeSetval(solver, args, bindings);
+            case B_SETVAL: {
+                boolean ok = executeSetval(solver, args, bindings);
+                // START_CHANGE: R1 - emit bindings as solution so conjunction continues
+                if (ok) solutions.add(new HashMap<>(bindings));
+                return ok;
+                // END_CHANGE: R1
+            }
 
             case NB_GETVAL:
             case B_GETVAL:
@@ -73,8 +78,11 @@ public class GlobalVariables implements BuiltInWithContext {
             case NB_CURRENT:
                 return executeCurrent(solver, args, bindings, solutions);
 
-            case NB_DELETE:
-                return executeDelete(solver, args, bindings);
+            case NB_DELETE: {
+                boolean okd = executeDelete(solver, args, bindings);
+                if (okd) solutions.add(new HashMap<>(bindings));
+                return okd;
+            }
 
             default:
                 return false;
@@ -101,8 +109,18 @@ public class GlobalVariables implements BuiltInWithContext {
         }
 
         String name = ((Atom) nameTerm).getName();
+        // START_CHANGE: R1 - b_setval records undo on Trail; nb_setval does not
+        if (mode == Mode.B_SETVAL) {
+            final Term oldValue = solver.getPrologContext().nbGetval(name);
+            final it.denzosoft.jprolog.core.engine.Prolog ctx = solver.getPrologContext();
+            it.denzosoft.jprolog.core.engine.Trail.record(() -> {
+                if (oldValue == null) ctx.nbDelete(name);
+                else ctx.nbSetval(name, oldValue);
+            });
+        }
         solver.getPrologContext().nbSetval(name, valueTerm);
         return true;
+        // END_CHANGE: R1
     }
 
     private boolean executeGetval(QuerySolver solver, List<Term> args, Map<String, Term> bindings,

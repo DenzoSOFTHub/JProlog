@@ -42,10 +42,14 @@ public class BuiltInRegistry {
         // Unary predicates
         for (String p : new String[]{"assert", "asserta", "assertz", "retract", "retractall",
                 "current_predicate", "once", "ignore", "\\+", "writeln",
-                "get_char", "put_char", "get_code", "put_code", "write",
+                "put_char", "put_code", "write",
                 "throw"}) {
             putArity(p, 1);
         }
+        // START_CHANGE: R3 - get_char/1,2  get_code/1,2 with stream argument
+        putArity("get_char", 1, 2);
+        putArity("get_code", 1, 2);
+        // END_CHANGE: R3
         // START_CHANGE: ISS-2025-0253 - close/1,2
         putArity("close", 1, 2);
         // END_CHANGE: ISS-2025-0253
@@ -76,6 +80,9 @@ public class BuiltInRegistry {
         // START_CHANGE: ISS-2025-0238 - atom_to_term/3
         putArity("atom_to_term", 3);
         // END_CHANGE: ISS-2025-0238
+        // START_CHANGE: R1 - setarg/3
+        putArity("setarg", 3);
+        // END_CHANGE: R1
         // START_CHANGE: ISS-2025-0092 - Tabling predicates
         putArity("table", 1);
         putArity("abolish_all_tables", 0);

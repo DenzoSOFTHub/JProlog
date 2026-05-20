@@ -43,6 +43,14 @@ public class OperatorDefinition implements BuiltIn {
     // Global operator registry - shared across all instances
     // Key format: "name:typeClass" where typeClass is "prefix", "infix", or "postfix"
     private static final Map<String, OperatorInfo> OPERATORS = new ConcurrentHashMap<>();
+    // START_CHANGE: R2 - track which module each operator was defined in
+    private static final Map<String, String> OP_MODULE = new ConcurrentHashMap<>();
+    private static volatile String currentModuleContext = "user";
+    public static void setCurrentModuleContext(String mod) {
+        currentModuleContext = (mod == null) ? "user" : mod;
+    }
+    public static String getCurrentModuleContext() { return currentModuleContext; }
+    // END_CHANGE: R2
     // END_CHANGE: ISS-2025-0177
 
     // START_CHANGE: ISS-2025-0085 - Shared OperatorTable for parser integration
@@ -234,6 +242,9 @@ public class OperatorDefinition implements BuiltIn {
             // START_CHANGE: ISS-2025-0177 - Remove using composite key
             // Remove operator by composite key (name:typeClass)
             OPERATORS.remove(compositeKey(name, operatorType));
+            // START_CHANGE: R2 - drop module assoc
+            OP_MODULE.remove(compositeKey(name, operatorType));
+            // END_CHANGE: R2
             // END_CHANGE: ISS-2025-0177
             if (sharedOperatorTable != null) {
                 // Remove all operators with this name and compatible type
@@ -246,9 +257,27 @@ public class OperatorDefinition implements BuiltIn {
                 }
             }
         } else {
+            // START_CHANGE: R1 - record trail entry to undo op definition on backtrack
+            final String ckey = compositeKey(name, operatorType);
+            final OperatorInfo previous = OPERATORS.get(ckey);
+            final String prevModule = OP_MODULE.get(ckey);
+            it.denzosoft.jprolog.core.engine.Trail.record(() -> {
+                if (previous == null) {
+                    OPERATORS.remove(ckey);
+                    OP_MODULE.remove(ckey);
+                } else {
+                    OPERATORS.put(ckey, previous);
+                    if (prevModule != null) OP_MODULE.put(ckey, prevModule);
+                    else OP_MODULE.remove(ckey);
+                }
+            });
+            // END_CHANGE: R1
             // START_CHANGE: ISS-2025-0177 - Register using composite key
             // Register or update the operator
             putOperator(new OperatorInfo(precedence, operatorType, name));
+            // START_CHANGE: R2 - tag operator with defining module
+            OP_MODULE.put(compositeKey(name, operatorType), currentModuleContext);
+            // END_CHANGE: R2
             // END_CHANGE: ISS-2025-0177
             if (sharedOperatorTable != null) {
                 Operator.Type type = Operator.parseType(operatorType);
@@ -278,30 +307,24 @@ public class OperatorDefinition implements BuiltIn {
         
         boolean foundSolution = false;
         
-        // Iterate through all defined operators
-        for (OperatorInfo opInfo : OPERATORS.values()) {
+        // START_CHANGE: R2 - filter operators by current module (or "user" for global)
+        String curMod = currentModuleContext;
+        for (Map.Entry<String, OperatorInfo> e : OPERATORS.entrySet()) {
+            OperatorInfo opInfo = e.getValue();
+            String defMod = OP_MODULE.get(e.getKey());
+            // Visibility rule: op is visible if defined in "user" (global) OR in current module
+            if (defMod != null && !defMod.equals("user") && !defMod.equals(curMod)) {
+                continue;
+            }
             Map<String, Term> newBindings = new HashMap<>(bindings);
-            
-            // Try to unify precedence
-            if (!unifyTerm(precedenceTerm, new Number((double) opInfo.precedence), newBindings)) {
-                continue;
-            }
-            
-            // Try to unify type
-            if (!unifyTerm(typeTerm, new Atom(opInfo.type), newBindings)) {
-                continue;
-            }
-            
-            // Try to unify name
-            if (!unifyTerm(nameTerm, new Atom(opInfo.name), newBindings)) {
-                continue;
-            }
-            
-            // All unified successfully
+            if (!unifyTerm(precedenceTerm, new Number((double) opInfo.precedence), newBindings)) continue;
+            if (!unifyTerm(typeTerm, new Atom(opInfo.type), newBindings)) continue;
+            if (!unifyTerm(nameTerm, new Atom(opInfo.name), newBindings)) continue;
             solutions.add(newBindings);
             foundSolution = true;
         }
-        
+        // END_CHANGE: R2
+
         return foundSolution;
     }
     

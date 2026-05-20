@@ -345,38 +345,63 @@ public class QuerySolver {
             return !cached.isEmpty();
         }
 
-        // Loop detection: if this goal is already being computed, return no solutions
+        // START_CHANGE: R5 - tabling fixpoint iteration for left-recursion
+        // If already in progress, return the partial cache built so far (variant tabling)
         if (tableStore.isInProgress(cacheKey)) {
+            List<Map<String, Term>> partial = tableStore.getPartialCache(cacheKey);
+            if (partial != null) {
+                for (Map<String, Term> cachedSol : partial) {
+                    Map<String, Term> replayed = new HashMap<>(bindings);
+                    for (Map.Entry<String, Term> entry : cachedSol.entrySet()) {
+                        String origName = normalized.canonicalToOrig.get(entry.getKey());
+                        if (origName != null) replayed.put(origName, entry.getValue());
+                    }
+                    solutions.add(replayed);
+                }
+                return !partial.isEmpty();
+            }
             return false;
         }
 
-        // Mark as in-progress and compute
         tableStore.markInProgress(cacheKey);
+        tableStore.setPartialCache(cacheKey, new ArrayList<>());
         try {
-            List<Map<String, Term>> computed = new ArrayList<>();
-            boolean result = solveAgainstKnowledgeBase(goal, bindings, computed, cutStatus);
-
-            // Extract only the tabled variable bindings for caching (using canonical names)
-            List<Map<String, Term>> toCache = new ArrayList<>();
-            for (Map<String, Term> sol : computed) {
-                Map<String, Term> canonicalSol = new HashMap<>();
-                for (Map.Entry<String, String> mapping : normalized.canonicalToOrig.entrySet()) {
-                    String canonicalName = mapping.getKey();
-                    String origName = mapping.getValue();
-                    Term value = sol.get(origName);
-                    if (value != null) {
-                        canonicalSol.put(canonicalName, value);
+            // Fixpoint iteration: keep solving until no new canonical solutions appear
+            List<Map<String, Term>> aggregated = new ArrayList<>();
+            java.util.Set<String> seenKeys = new java.util.HashSet<>();
+            int maxIters = 100;
+            for (int iter = 0; iter < maxIters; iter++) {
+                List<Map<String, Term>> computed = new ArrayList<>();
+                boolean result = solveAgainstKnowledgeBase(goal, bindings, computed, cutStatus);
+                boolean changed = false;
+                for (Map<String, Term> sol : computed) {
+                    Map<String, Term> canonicalSol = new HashMap<>();
+                    for (Map.Entry<String, String> mapping : normalized.canonicalToOrig.entrySet()) {
+                        String origName = mapping.getValue();
+                        Term value = sol.get(origName);
+                        if (value != null) canonicalSol.put(mapping.getKey(), value);
+                    }
+                    String key = canonicalSol.toString();
+                    if (seenKeys.add(key)) {
+                        aggregated.add(canonicalSol);
+                        changed = true;
                     }
                 }
-                toCache.add(canonicalSol);
+                tableStore.setPartialCache(cacheKey, new ArrayList<>(aggregated));
+                if (!changed) {
+                    // Fixpoint reached
+                    tableStore.cacheSolutions(cacheKey, aggregated);
+                    solutions.addAll(computed);
+                    return result;
+                }
             }
-            tableStore.cacheSolutions(cacheKey, toCache);
-
-            // Add computed solutions to output
-            solutions.addAll(computed);
-            return result;
+            // Hit max iterations: cache what we have
+            tableStore.cacheSolutions(cacheKey, aggregated);
+            return !aggregated.isEmpty();
         } finally {
+            tableStore.clearPartialCache(cacheKey);
             tableStore.unmarkInProgress(cacheKey);
+        // END_CHANGE: R5
         }
     }
     // END_CHANGE: ISS-2025-0092

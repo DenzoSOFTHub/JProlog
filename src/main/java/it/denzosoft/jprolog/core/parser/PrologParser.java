@@ -158,7 +158,7 @@ public class PrologParser {
         }
     }
 
-    private ListTerm parseList() throws PrologParserException {
+    private Term parseList() throws PrologParserException {
         nextToken(); // Consume '['
         List<Term> elements = new ArrayList<>();
         while (true) {
@@ -181,7 +181,9 @@ public class PrologParser {
                 nextToken(); // Consume ','
             }
         }
-        return new ListTerm(elements);
+        // START_CHANGE: R8 - emit canonical cons-cells instead of ListTerm
+        return it.denzosoft.jprolog.core.util.ListUtils.createList(elements);
+        // END_CHANGE: R8
     }
 
 

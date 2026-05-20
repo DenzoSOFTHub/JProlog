@@ -151,19 +151,24 @@ public class IfThenElse implements BuiltInWithContext {
 
     private boolean executeDisjunction(Term leftTerm, Term rightTerm,
                                      Map<String, Term> bindings, List<Map<String, Term>> solutions, QuerySolver solver) {
-        // Get parent cut status from solver
         CutStatus parentCutStatus = solver.getCurrentCutStatus();
         boolean success = false;
 
-        // Try left term first
+        // START_CHANGE: R1 - mark Trail before each branch; rollback on left failure
+        int trailMark = it.denzosoft.jprolog.core.engine.Trail.mark();
+        // END_CHANGE: R1
+
         List<Map<String, Term>> leftSolutions = new ArrayList<>();
         CutStatus leftCutStatus = CutStatus.notOccurred();
         boolean leftSuccess = solver.solve(leftTerm, new HashMap<>(bindings), leftSolutions, leftCutStatus);
         if (leftSuccess) {
             solutions.addAll(leftSolutions);
             success = true;
+        } else {
+            // START_CHANGE: R1 - undo any backtrackable mutations from failed left branch
+            it.denzosoft.jprolog.core.engine.Trail.rollbackTo(trailMark);
+            // END_CHANGE: R1
         }
-        // If cut occurred in left branch, propagate and skip right branch
         if (leftCutStatus.isCutOccurred()) {
             if (parentCutStatus != null) {
                 parentCutStatus.setCutOccurred();
@@ -171,7 +176,6 @@ public class IfThenElse implements BuiltInWithContext {
             return success;
         }
 
-        // Try right term
         List<Map<String, Term>> rightSolutions = new ArrayList<>();
         CutStatus rightCutStatus = CutStatus.notOccurred();
         boolean rightSuccess = solver.solve(rightTerm, new HashMap<>(bindings), rightSolutions, rightCutStatus);

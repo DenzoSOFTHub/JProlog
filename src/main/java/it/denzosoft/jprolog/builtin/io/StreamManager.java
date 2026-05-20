@@ -16,6 +16,46 @@ public class StreamManager {
     private static final Map<String, InputStream> INPUT_STREAMS = new HashMap<>();
     private static final Map<String, OutputStream> OUTPUT_STREAMS = new HashMap<>();
     private static final AtomicInteger STREAM_COUNTER = new AtomicInteger(1000);
+    // START_CHANGE: R3 - per-stream properties (type/encoding/eof_action)
+    public static final String PROP_TYPE = "type";          // "text" | "binary"
+    public static final String PROP_ENCODING = "encoding";  // e.g. "utf8" / "iso_latin_1"
+    public static final String PROP_EOF_ACTION = "eof_action"; // "error" | "eof_code" | "reset"
+    private static final Map<String, Map<String, String>> STREAM_PROPS = new HashMap<>();
+    private static final Map<String, java.io.Reader> READERS = new HashMap<>();
+
+    public static void setProperty(String alias, String prop, String value) {
+        STREAM_PROPS.computeIfAbsent(alias, k -> new HashMap<>()).put(prop, value);
+    }
+    public static String getProperty(String alias, String prop) {
+        Map<String, String> p = STREAM_PROPS.get(alias);
+        return (p != null) ? p.get(prop) : null;
+    }
+    public static java.io.Reader getReader(String alias) {
+        java.io.Reader r = READERS.get(alias);
+        if (r != null) return r;
+        InputStream is = INPUT_STREAMS.get(alias);
+        if (is == null) return null;
+        String enc = getProperty(alias, PROP_ENCODING);
+        java.nio.charset.Charset cs = resolveCharset(enc);
+        java.io.Reader nr = new java.io.InputStreamReader(is, cs);
+        READERS.put(alias, nr);
+        return nr;
+    }
+    private static java.nio.charset.Charset resolveCharset(String enc) {
+        if (enc == null) return java.nio.charset.StandardCharsets.UTF_8;
+        String s = enc.toLowerCase();
+        switch (s) {
+            case "utf8": case "utf-8": return java.nio.charset.StandardCharsets.UTF_8;
+            case "ascii": return java.nio.charset.StandardCharsets.US_ASCII;
+            case "iso_latin_1": case "latin1": case "iso-8859-1": return java.nio.charset.StandardCharsets.ISO_8859_1;
+            case "utf16": case "utf-16": return java.nio.charset.StandardCharsets.UTF_16;
+            default:
+                try { return java.nio.charset.Charset.forName(enc); } catch (Exception e) {
+                    return java.nio.charset.StandardCharsets.UTF_8;
+                }
+        }
+    }
+    // END_CHANGE: R3
     
     private static String currentInputStream = "user_input";
     private static String currentOutputStream = "user_output";
