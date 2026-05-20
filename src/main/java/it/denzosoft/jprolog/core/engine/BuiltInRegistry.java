@@ -62,6 +62,11 @@ public class BuiltInRegistry {
         putArity("sub_atom", 5);
         // call/1..8
         BUILTIN_ARITY_RANGES.put("call", new int[]{1, 8});
+        // START_CHANGE: ISS-2025-0222 - maplist/2..5, sort/4
+        BUILTIN_ARITY_RANGES.put("maplist", new int[]{2, 5});
+        putArity("sort", 2, 4);
+        // partition/4 not registered: would shadow user-defined partition (e.g. quicksort)
+        // END_CHANGE: ISS-2025-0222
         // START_CHANGE: ISS-2025-0092 - Tabling predicates
         putArity("table", 1);
         putArity("abolish_all_tables", 0);

@@ -35,9 +35,11 @@ public class MapList implements BuiltInWithContext {
                                      Map<String, Term> bindings,
                                      List<Map<String, Term>> solutions) {
         int arity = query.getArguments().size();
-        if (arity < 2 || arity > 4) {
+        // START_CHANGE: ISS-2025-0222 - support maplist/5
+        if (arity < 2 || arity > 5) {
             return false;
         }
+        // END_CHANGE: ISS-2025-0222
 
         Term goal = query.getArguments().get(0).resolveBindings(bindings);
         Term list1 = query.getArguments().get(1).resolveBindings(bindings);
@@ -47,12 +49,55 @@ public class MapList implements BuiltInWithContext {
         } else if (arity == 3) {
             Term list2 = query.getArguments().get(2);
             return maplist3(solver, goal, list1, list2, bindings, solutions);
-        } else {
+        } else if (arity == 4) {
             Term list2 = query.getArguments().get(2);
             Term list3 = query.getArguments().get(3);
             return maplist4(solver, goal, list1, list2, list3, bindings, solutions);
+        } else {
+            // START_CHANGE: ISS-2025-0222 - maplist/5: Goal applied to 4 lists
+            Term list2 = query.getArguments().get(2);
+            Term list3 = query.getArguments().get(3);
+            Term list4 = query.getArguments().get(4);
+            return maplist5(solver, goal, list1, list2, list3, list4, bindings, solutions);
+            // END_CHANGE: ISS-2025-0222
         }
     }
+
+    // START_CHANGE: ISS-2025-0222 - maplist/5
+    private boolean maplist5(QuerySolver solver, Term goal, Term list1, Term list2Raw, Term list3Raw, Term list4Raw,
+                             Map<String, Term> bindings,
+                             List<Map<String, Term>> solutions) {
+        List<Term> elems1 = ListUtils.extractElements(list1);
+        List<Term> result2 = new ArrayList<>();
+        List<Term> result3 = new ArrayList<>();
+        List<Term> result4 = new ArrayList<>();
+        Map<String, Term> currentBindings = new HashMap<>(bindings);
+
+        for (int i = 0; i < elems1.size(); i++) {
+            Variable o2 = new Variable("_MapOut2_" + i);
+            Variable o3 = new Variable("_MapOut3_" + i);
+            Variable o4 = new Variable("_MapOut4_" + i);
+            Term callGoal = buildCall(goal, elems1.get(i), o2, o3, o4);
+            List<Map<String, Term>> temp = new ArrayList<>();
+            if (!solver.solve(callGoal, new HashMap<>(currentBindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
+                return false;
+            }
+            currentBindings = new HashMap<>(temp.get(0));
+            result2.add(o2.resolveBindings(currentBindings));
+            result3.add(o3.resolveBindings(currentBindings));
+            result4.add(o4.resolveBindings(currentBindings));
+        }
+
+        Map<String, Term> newBindings = new HashMap<>(currentBindings);
+        if (list2Raw.unify(ListUtils.createList(result2), newBindings) &&
+            list3Raw.unify(ListUtils.createList(result3), newBindings) &&
+            list4Raw.unify(ListUtils.createList(result4), newBindings)) {
+            solutions.add(newBindings);
+            return true;
+        }
+        return false;
+    }
+    // END_CHANGE: ISS-2025-0222
 
     private boolean maplist2(QuerySolver solver, Term goal, Term list,
                              Map<String, Term> bindings,

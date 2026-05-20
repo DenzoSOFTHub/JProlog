@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.8.1] - 2026-05-20
+
+### Eleventh-Round List & Arithmetic Fixes (ISS-2025-0215..0231)
+
+Deep dive into list handling and `is/2` evaluator. 12 fixes applied; 6 audit findings verified already correct (overzealous).
+
+**Lists**:
+- **ISS-2025-0215**: `length/2` fresh variables use global counter — prevents collision when same query has multiple `length(L1, N), length(L2, N)`
+- **ISS-2025-0216**: `is_list/1`, `proper_list/1`, `length/2` countElements all use iterative walk + IdentityHashMap cycle detection — prevents stack overflow on cyclic terms `X = [a|X]`
+- **ISS-2025-0220**: `sort/4` added — `sort(+Key, +Order, +List, -Sorted)` with `@<`, `@=<`, `@>`, `@>=` and key index
+- **ISS-2025-0222**: `maplist/5` added (was 2..4)
+- **ISS-2025-0221**: `Partition` class added (intentionally NOT registered as builtin to avoid shadowing user-defined `partition/N` in code like quicksort)
+- **ISS-2025-0223**: `partial_list/1` iterative + var/cons cycle detection
+
+**Arithmetic (`is/2` ISO §9 completeness)**:
+- **ISS-2025-0224**: `^/2` integer power evaluable (ISO §9.3.10) — alias to `**` for integer operands, `Math.pow` for floats
+- **ISS-2025-0225**: `integer/1` evaluable functor — truncates toward zero (ISO §9.1.6.5)
+- **ISS-2025-0226**: Hyperbolic functions added — `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh` with domain error handling
+- **ISS-2025-0227**: `log/2` base-N logarithm; `cot/1`, `acot/1`, `cbrt/1`; `epsilon/0`, `max_tagged_integer/0`, `min_tagged_integer/0` constants
+- **ISS-2025-0229**: `0.0 ** -N` and `0.0 ^ -N` now throw `evaluation_error(undefined)` (was returning Infinity)
+- **ISS-2025-0231**: `rational/1`, `rationalize/1` evaluable functors (passthrough for now; full Rational arithmetic deferred)
+
+**Verified already correct** (audit overzealous): ISS-0217 (ListTerm already delegates to cons-cell `.` form), ISS-0218 (append handleSplit covers all result-ground modes), ISS-0219 (member/2 backtrack independence is fine), ISS-0228 (`/` already throws `zero_divisor`), ISS-0230 (sign on float already returns float), ISS-0232 (float/1 already in FLOAT_UNARY_OPS).
+
+### Test Coverage
+
+- 471 JUnit tests pass (12 new verification tests)
+- 20/20 examples regression pass
+
+---
+
 ## [2.8.0] - 2026-05-20
 
 ### Tenth-Round ISO Audit Fixes (ISS-2025-0195..0214)

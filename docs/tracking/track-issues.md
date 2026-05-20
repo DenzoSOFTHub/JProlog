@@ -3703,3 +3703,131 @@ Audit noted that cycle detection only engages at depth >16 in `Variable.derefere
 ---
 
 **Last Updated**: 2026-05-20
+
+---
+
+## ISS-2025-0215: length/2 fresh variables collision
+
+**Status**: RESOLVED v2.8.1  **Date**: 2026-05-20
+
+`length(L, N)` generated vars `_G0`, `_G1`, ... — colliding across calls in same query.
+
+**Resolution**: Use `AtomicLong` global counter for fresh-var naming in `Length.generateList`.
+
+---
+
+## ISS-2025-0216: is_list/proper_list stack overflow on cycles
+
+**Status**: RESOLVED v2.8.1  **Date**: 2026-05-20
+
+Recursive list checks could SOE on cyclic terms `X = [a|X]` (possible because occurs-check off by default).
+
+**Resolution**: `IsListCheck`, `ProperListCheck`, `Length.countElements` rewritten iteratively with `IdentityHashMap` cycle detection.
+
+---
+
+## ISS-2025-0220: sort/4 missing
+
+**Status**: RESOLVED v2.8.1  **Date**: 2026-05-20
+
+**Resolution**: `Sort.executeSort4` added supporting key index (0 = full term), order operators `@<`/`@=<`/`@>`/`@>=`. Registered as `sort/2,4` in registry.
+
+---
+
+## ISS-2025-0221: partition/4
+
+**Status**: RESOLVED v2.8.1 (partial — class only)  **Date**: 2026-05-20
+
+Class `Partition` implemented but NOT registered as builtin to avoid shadowing user-defined `partition/N` (e.g. in quicksort). Can be exposed in a library file later.
+
+---
+
+## ISS-2025-0222: maplist/5 missing
+
+**Status**: RESOLVED v2.8.1  **Date**: 2026-05-20
+
+**Resolution**: `MapList` extended to arity 5; registry arity range updated to 2..5.
+
+---
+
+## ISS-2025-0223: partial_list/1 stack overflow + missing cycle detection
+
+**Status**: RESOLVED v2.8.1  **Date**: 2026-05-20
+
+**Resolution**: Iterative walk with separate cycle detection for vars and cons cells.
+
+---
+
+## ISS-2025-0224: ^/2 integer power evaluable
+
+**Status**: RESOLVED v2.8.1  **Date**: 2026-05-20
+
+**Resolution**: Added `^` case in `applyBinaryToNumber` integer branch (aliases to `integerPower`); registered `^` in `BINARY_OPERATIONS` for float operands.
+
+---
+
+## ISS-2025-0225: integer/1 evaluable functor
+
+**Status**: RESOLVED v2.8.1  **Date**: 2026-05-20
+
+**Resolution**: `integer/1` UNARY_FUNCTION truncating toward zero; added to `INTEGER_UNARY_OPS`.
+
+---
+
+## ISS-2025-0226: Hyperbolic functions
+
+**Status**: RESOLVED v2.8.1  **Date**: 2026-05-20
+
+**Resolution**: Added `sinh`, `cosh`, `tanh` (via `Math.sinh/cosh/tanh`), `asinh`/`acosh`/`atanh` via series identities. `acosh` domain check x>=1, `atanh` domain check -1<x<1.
+
+---
+
+## ISS-2025-0227: log/2, cot, acot, cbrt, epsilon
+
+**Status**: RESOLVED v2.8.1  **Date**: 2026-05-20
+
+**Resolution**: `log(Base, X) = ln(X)/ln(Base)` registered in BINARY_OPERATIONS with domain checks. `cot/acot/cbrt` unary functions. Atom constants `epsilon`, `max_tagged_integer`, `min_tagged_integer`.
+
+---
+
+## ISS-2025-0228: 0.0 / 0.0
+
+**Status**: VERIFIED ALREADY CORRECT v2.8.1  **Date**: 2026-05-20
+
+Division operator already throws `zero_divisor` at `b == 0.0` check (line 56). No change needed.
+
+---
+
+## ISS-2025-0229: 0.0**-N infinity instead of error
+
+**Status**: RESOLVED v2.8.1  **Date**: 2026-05-20
+
+**Resolution**: Explicit check before BINARY_OPERATIONS dispatch — `0.0 ** -N` or `0.0 ^ -N` throws `evaluation_error(undefined)`.
+
+---
+
+## ISS-2025-0230: sign/1 type preservation
+
+**Status**: VERIFIED ALREADY CORRECT v2.8.1  **Date**: 2026-05-20
+
+Line 380 in `applyUnaryToNumber` excludes float sign from INTEGER path: `!("sign".equals(name) && !arg.isInteger())`. Float input → default path → Number(result, false). No change needed.
+
+---
+
+## ISS-2025-0231: rational/rationalize evaluables
+
+**Status**: RESOLVED v2.8.1 (passthrough)  **Date**: 2026-05-20
+
+**Resolution**: Added as identity functions (full Rational integration in `is/2` deferred).
+
+---
+
+## ISS-2025-0232: float/1 always float
+
+**Status**: VERIFIED ALREADY CORRECT v2.8.1  **Date**: 2026-05-20
+
+`float` is in `FLOAT_UNARY_OPS`. Code path skips int-preservation. No change needed.
+
+---
+
+**Last Updated**: 2026-05-20

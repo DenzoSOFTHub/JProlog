@@ -15,8 +15,14 @@ import java.util.Map;
 public class Sort implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException("sort/2 requires exactly 2 arguments.");
+        int arity = query.getArguments().size();
+        // START_CHANGE: ISS-2025-0220 - sort/4 with Key + Order
+        if (arity == 4) {
+            return executeSort4(query, bindings, solutions);
+        }
+        // END_CHANGE: ISS-2025-0220
+        if (arity != 2) {
+            throw new PrologEvaluationException("sort/2 or sort/4 expected.");
         }
 
         Term inputList = query.getArguments().get(0).resolveBindings(bindings);
@@ -25,7 +31,6 @@ public class Sort implements BuiltIn {
         if (inputList.isGround()) {
             List<Term> elements = ListUtils.extractElements(inputList);
 
-            // START_CHANGE: ISS-2025-0188 - Sort first, then dedup using compareTerms
             Collections.sort(elements, Sort::compareTerms);
             List<Term> uniqueElements = new ArrayList<>();
             for (int i = 0; i < elements.size(); i++) {
@@ -33,7 +38,6 @@ public class Sort implements BuiltIn {
                     uniqueElements.add(elements.get(i));
                 }
             }
-            // END_CHANGE: ISS-2025-0184
 
             Term sortedListTerm = ListUtils.createList(uniqueElements);
 
@@ -46,6 +50,64 @@ public class Sort implements BuiltIn {
             return false;
         }
     }
+
+    // START_CHANGE: ISS-2025-0220 - sort(+Key, +Order, +List, -Sorted)
+    private boolean executeSort4(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        Term keyT = query.getArguments().get(0).resolveBindings(bindings);
+        Term orderT = query.getArguments().get(1).resolveBindings(bindings);
+        Term inputList = query.getArguments().get(2).resolveBindings(bindings);
+        Term resultVar = query.getArguments().get(3);
+
+        if (!(keyT instanceof it.denzosoft.jprolog.core.terms.Number) || !((it.denzosoft.jprolog.core.terms.Number) keyT).isInteger()) {
+            throw new PrologEvaluationException("sort/4: Key must be integer");
+        }
+        int key = (int) ((it.denzosoft.jprolog.core.terms.Number) keyT).longValue();
+        if (!(orderT instanceof Atom)) {
+            throw new PrologEvaluationException("sort/4: Order must be atom (@<, @=<, @>, @>=)");
+        }
+        String order = ((Atom) orderT).getName();
+        boolean ascending;
+        boolean dedup;
+        switch (order) {
+            case "@<":  ascending = true;  dedup = true; break;
+            case "@=<": ascending = true;  dedup = false; break;
+            case "@>":  ascending = false; dedup = true; break;
+            case "@>=": ascending = false; dedup = false; break;
+            default: throw new PrologEvaluationException("sort/4: Order must be @<, @=<, @>, or @>=");
+        }
+        if (!inputList.isGround()) return false;
+        List<Term> elements = ListUtils.extractElements(inputList);
+        java.util.Comparator<Term> cmp = (a, b) -> {
+            Term ka = key == 0 ? a : extractKey(a, key);
+            Term kb = key == 0 ? b : extractKey(b, key);
+            int c = compareTerms(ka, kb);
+            return ascending ? c : -c;
+        };
+        List<Term> sorted = new ArrayList<>(elements);
+        sorted.sort(cmp);
+        if (dedup) {
+            List<Term> out = new ArrayList<>(sorted.size());
+            for (int i = 0; i < sorted.size(); i++) {
+                if (i == 0 || cmp.compare(sorted.get(i), sorted.get(i - 1)) != 0) out.add(sorted.get(i));
+            }
+            sorted = out;
+        }
+        Term sortedTerm = ListUtils.createList(sorted);
+        if (resultVar.unify(sortedTerm, bindings)) {
+            solutions.add(new HashMap<>(bindings));
+            return true;
+        }
+        return false;
+    }
+
+    private static Term extractKey(Term t, int key) {
+        if (t instanceof CompoundTerm) {
+            CompoundTerm ct = (CompoundTerm) t;
+            if (key >= 1 && key <= ct.getArguments().size()) return ct.getArguments().get(key - 1);
+        }
+        return t;
+    }
+    // END_CHANGE: ISS-2025-0220
 
     // START_CHANGE: ISS-2025-0184 - ISO standard order of terms
     /**

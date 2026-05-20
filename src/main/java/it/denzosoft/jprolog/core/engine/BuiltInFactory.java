@@ -157,6 +157,9 @@ public class BuiltInFactory {
         registerFactory("include", () -> new it.denzosoft.jprolog.builtin.list.Include(null));
         registerFactory("exclude", () -> new it.denzosoft.jprolog.builtin.list.Exclude(null));
         registerFactory("foldl", () -> new it.denzosoft.jprolog.builtin.list.Foldl(null));
+        // START_CHANGE: ISS-2025-0221 - partition/4 NOT registered as builtin to avoid shadowing user-defined partition/N
+        // (e.g. quicksort uses partition(Pivot,List,Less,Greater)). Class exists for explicit invocation.
+        // END_CHANGE: ISS-2025-0221
         // END_CHANGE: CR-2025-0008
         // END_CHANGE: ISS-2025-0061
         

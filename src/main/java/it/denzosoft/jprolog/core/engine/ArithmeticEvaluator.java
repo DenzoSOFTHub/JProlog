@@ -128,6 +128,43 @@ public class ArithmeticEvaluator {
         UNARY_FUNCTIONS.put("random", x -> Math.random()); // Random number (ignores argument)
         UNARY_FUNCTIONS.put("float", x -> x.doubleValue()); // ISO: convert to float
 
+        // START_CHANGE: ISS-2025-0226 - hyperbolic functions
+        UNARY_FUNCTIONS.put("sinh", Math::sinh);
+        UNARY_FUNCTIONS.put("cosh", Math::cosh);
+        UNARY_FUNCTIONS.put("tanh", Math::tanh);
+        UNARY_FUNCTIONS.put("asinh", x -> Math.log(x + Math.sqrt(x * x + 1.0)));
+        UNARY_FUNCTIONS.put("acosh", x -> {
+            if (x < 1.0) throw new PrologException(ISOErrorTerms.evaluationError("undefined", "acosh/1"));
+            return Math.log(x + Math.sqrt(x * x - 1.0));
+        });
+        UNARY_FUNCTIONS.put("atanh", x -> {
+            if (x <= -1.0 || x >= 1.0) throw new PrologException(ISOErrorTerms.evaluationError("undefined", "atanh/1"));
+            return 0.5 * Math.log((1.0 + x) / (1.0 - x));
+        });
+        // END_CHANGE: ISS-2025-0226
+
+        // START_CHANGE: ISS-2025-0227 - cot, acot, cbrt
+        UNARY_FUNCTIONS.put("cot", x -> {
+            double t = Math.tan(x);
+            if (t == 0.0) throw new PrologException(ISOErrorTerms.evaluationError("undefined", "cot/1"));
+            return 1.0 / t;
+        });
+        UNARY_FUNCTIONS.put("acot", x -> {
+            if (x == 0.0) return Math.PI / 2.0;
+            return Math.atan(1.0 / x);
+        });
+        UNARY_FUNCTIONS.put("cbrt", Math::cbrt);
+        // END_CHANGE: ISS-2025-0227
+
+        // START_CHANGE: ISS-2025-0225 - integer/1 truncating evaluable functor (ISO §9.1.6.5)
+        UNARY_FUNCTIONS.put("integer", x -> x < 0 ? Math.ceil(x) : Math.floor(x));
+        // END_CHANGE: ISS-2025-0225
+
+        // START_CHANGE: ISS-2025-0231 - rational/1, rationalize/1
+        UNARY_FUNCTIONS.put("rational", x -> x);
+        UNARY_FUNCTIONS.put("rationalize", x -> x);
+        // END_CHANGE: ISS-2025-0231
+
         // START_CHANGE: ISS-2025-0170 - Add msb/1, lsb/1, popcount/1 ISO arithmetic functions
         // START_CHANGE: ISS-2025-0191 - Correct error types: typeError for non-integer, evaluationError for <= 0
         UNARY_FUNCTIONS.put("msb", x -> {
@@ -171,6 +208,19 @@ public class ArithmeticEvaluator {
         // Register ISO arithmetic functions
         ISOArithmeticFunctions.registerAll();
 
+        // START_CHANGE: ISS-2025-0224 - ^/2 evaluable for float operands
+        BINARY_OPERATIONS.put("^", Math::pow);
+        // END_CHANGE: ISS-2025-0224
+
+        // START_CHANGE: ISS-2025-0227 - log/2 base-N logarithm: log(Base, X) = ln(X)/ln(Base)
+        BINARY_OPERATIONS.put("log", (base, x) -> {
+            if (x <= 0 || base <= 0 || base == 1.0) {
+                throw new PrologException(ISOErrorTerms.evaluationError("undefined", "log/2"));
+            }
+            return Math.log(x) / Math.log(base);
+        });
+        // END_CHANGE: ISS-2025-0227
+
         // START_CHANGE: LIM-008 - Classify operations by result type
         // Binary operations that always produce integer results (when inputs are integers)
         INTEGER_BINARY_OPS.add("//");
@@ -205,6 +255,22 @@ public class ArithmeticEvaluator {
         FLOAT_UNARY_OPS.add("float");
         FLOAT_UNARY_OPS.add("float_integer_part");
         FLOAT_UNARY_OPS.add("float_fractional_part");
+        // START_CHANGE: ISS-2025-0226 - hyperbolics produce floats
+        FLOAT_UNARY_OPS.add("sinh");
+        FLOAT_UNARY_OPS.add("cosh");
+        FLOAT_UNARY_OPS.add("tanh");
+        FLOAT_UNARY_OPS.add("asinh");
+        FLOAT_UNARY_OPS.add("acosh");
+        FLOAT_UNARY_OPS.add("atanh");
+        // END_CHANGE: ISS-2025-0226
+        // START_CHANGE: ISS-2025-0227 - cot/acot/cbrt produce floats
+        FLOAT_UNARY_OPS.add("cot");
+        FLOAT_UNARY_OPS.add("acot");
+        FLOAT_UNARY_OPS.add("cbrt");
+        // END_CHANGE: ISS-2025-0227
+        // START_CHANGE: ISS-2025-0225 - integer/1 produces integer
+        INTEGER_UNARY_OPS.add("integer");
+        // END_CHANGE: ISS-2025-0225
         // END_CHANGE: LIM-008
     }
 
@@ -299,6 +365,17 @@ public class ArithmeticEvaluator {
             } else if ("nan".equals(atomName)) {
                 return new Number(Double.NaN, false);
             }
+            // START_CHANGE: ISS-2025-0227 - epsilon constant + max_tagged_integer/min_tagged_integer
+            if ("epsilon".equals(atomName)) {
+                return new Number(Math.ulp(1.0), false);
+            }
+            if ("max_tagged_integer".equals(atomName)) {
+                return new Number(Long.MAX_VALUE);
+            }
+            if ("min_tagged_integer".equals(atomName)) {
+                return new Number(Long.MIN_VALUE);
+            }
+            // END_CHANGE: ISS-2025-0227
             throw new PrologException(ISOErrorTerms.typeError("evaluable", new Atom(atomName + "/0"), "is/2"));
         } else if (term instanceof CompoundTerm) {
             CompoundTerm compoundTerm = (CompoundTerm) term;
@@ -446,6 +523,10 @@ public class ArithmeticEvaluator {
                     return shiftRight(left, right);
                 case "**":
                     return integerPower(left, right);
+                // START_CHANGE: ISS-2025-0224 - ^/2 ISO §9.3.10 integer power
+                case "^":
+                    return integerPower(left, right);
+                // END_CHANGE: ISS-2025-0224
                 case "max":
                     return integerMax(left, right);
                 case "min":
@@ -495,6 +576,12 @@ public class ArithmeticEvaluator {
             return lr.divide(rr);
         }
         // END_CHANGE: LIM-012
+
+        // START_CHANGE: ISS-2025-0229 - 0.0**negative or 0.0^negative -> evaluation_error(undefined)
+        if (("**".equals(name) || "^".equals(name)) && left.doubleValue() == 0.0 && right.doubleValue() < 0.0) {
+            throw new PrologException(ISOErrorTerms.evaluationError("undefined", "(" + name + ")/2"));
+        }
+        // END_CHANGE: ISS-2025-0229
 
         // Default: use double-based operations
         // Check legacy operations first

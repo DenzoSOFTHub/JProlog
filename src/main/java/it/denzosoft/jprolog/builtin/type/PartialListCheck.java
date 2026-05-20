@@ -39,29 +39,31 @@ public class PartialListCheck implements BuiltIn {
      * Recursively checks if a term is a partial list.
      * A partial list is a list structure that ends with an unbound variable.
      */
+    // START_CHANGE: ISS-2025-0223 - iterative + cycle detection
     private boolean isPartialListTerm(Term term, Map<String, Term> bindings) {
-        if (term instanceof Variable) {
-            Variable var = (Variable) term;
-            Term boundValue = bindings.get(var.getName());
-            if (boundValue == null) {
-                return true; // Unbound variable at the end makes it a partial list
+        java.util.IdentityHashMap<Term, Boolean> visited = new java.util.IdentityHashMap<>();
+        java.util.Set<String> visitedVars = new java.util.HashSet<>();
+        Term current = term;
+        while (true) {
+            if (current instanceof Variable) {
+                Variable var = (Variable) current;
+                if (!visitedVars.add(var.getName())) return true; // bound cycle, treat as partial
+                Term bound = bindings.get(var.getName());
+                if (bound == null) return true;
+                current = bound;
+                continue;
             }
-            return isPartialListTerm(boundValue, bindings);
-        }
-        
-        if (term instanceof Atom) {
-            // If it's [], then it's a proper list, not partial
+            if (current instanceof Atom) return false;
+            if (current instanceof CompoundTerm) {
+                CompoundTerm c = (CompoundTerm) current;
+                if (".".equals(c.getName()) && c.getArguments().size() == 2) {
+                    if (visited.put(c, Boolean.TRUE) != null) return false; // cycle of cons
+                    current = c.getArguments().get(1);
+                    continue;
+                }
+            }
             return false;
         }
-        
-        if (term instanceof CompoundTerm) {
-            CompoundTerm compound = (CompoundTerm) term;
-            if (".".equals(compound.getName()) && compound.getArguments().size() == 2) {
-                // Check the tail (second argument)
-                return isPartialListTerm(compound.getArguments().get(1), bindings);
-            }
-        }
-        
-        return false;
     }
+    // END_CHANGE: ISS-2025-0223
 }

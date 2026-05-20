@@ -36,25 +36,20 @@ public class IsListCheck implements BuiltIn {
         }
     }
     
-    /**
-     * Recursively checks if a term is a proper list.
-     * A proper list is either:
-     * - An atom [] (empty list)
-     * - A compound term with functor ./2 where the tail is also a proper list
-     */
+    // START_CHANGE: ISS-2025-0216 - iterative + cycle detection to avoid SOE on cyclic terms
     private boolean isProperList(Term term) {
-        if (term instanceof Atom) {
-            return "[]".equals(((Atom) term).getName());
-        }
-        
-        if (term instanceof CompoundTerm) {
-            CompoundTerm compound = (CompoundTerm) term;
-            if (".".equals(compound.getName()) && compound.getArguments().size() == 2) {
-                // Check if the tail (second argument) is also a proper list
-                return isProperList(compound.getArguments().get(1));
+        java.util.IdentityHashMap<Term, Boolean> visited = new java.util.IdentityHashMap<>();
+        Term current = term;
+        while (true) {
+            if (current instanceof Atom) {
+                return "[]".equals(((Atom) current).getName());
             }
+            if (!(current instanceof CompoundTerm)) return false;
+            CompoundTerm c = (CompoundTerm) current;
+            if (!".".equals(c.getName()) || c.getArguments().size() != 2) return false;
+            if (visited.put(c, Boolean.TRUE) != null) return false; // cycle
+            current = c.getArguments().get(1);
         }
-        
-        return false;
     }
+    // END_CHANGE: ISS-2025-0216
 }

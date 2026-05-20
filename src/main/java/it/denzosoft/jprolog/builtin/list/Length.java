@@ -12,10 +12,15 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
+import java.util.concurrent.atomic.AtomicLong;
 
 
 public class Length implements BuiltIn {
+
+    // START_CHANGE: ISS-2025-0215 - global counter for fresh vars to prevent collisions across calls
+    private static final AtomicLong FRESH_COUNTER = new AtomicLong(0);
+    // END_CHANGE: ISS-2025-0215
+
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
@@ -63,25 +68,27 @@ public class Length implements BuiltIn {
     }
 
     private int countElements(Term list) {
+        // START_CHANGE: ISS-2025-0216 - cycle detection prevents infinite loop on X = [a|X]
+        java.util.IdentityHashMap<Term, Boolean> visited = new java.util.IdentityHashMap<>();
         int count = 0;
         Term current = list;
-        
+
         while (current instanceof CompoundTerm) {
             CompoundTerm compound = (CompoundTerm) current;
             if (compound.getName().equals(".") && compound.getArguments().size() == 2) {
+                if (visited.put(compound, Boolean.TRUE) != null) return -1; // cycle
                 count++;
                 current = compound.getArguments().get(1);
             } else {
                 break;
             }
         }
-        
-        // If final term is not the empty list atom [], it's malformed
+
         if (current instanceof Atom && ((Atom) current).getName().equals("[]")) {
             return count;
-        } else {
-            return -1; // Indicates malformed list
         }
+        return -1;
+        // END_CHANGE: ISS-2025-0216
     }
 
     private Term generateList(int length) {
@@ -90,14 +97,14 @@ public class Length implements BuiltIn {
         }
         
         Term current = new Atom("[]");
+        // START_CHANGE: ISS-2025-0215 - global counter prevents cross-call collisions
         for (int i = 0; i < length; i++) {
             List<Term> args = new ArrayList<>();
-            // START_CHANGE: ISS-2025-0187 - Unique variable names to avoid unification
-            args.add(new Variable("_G" + i));
-            // END_CHANGE: ISS-2025-0187
+            args.add(new Variable("_Glen" + FRESH_COUNTER.incrementAndGet()));
             args.add(current);
             current = new CompoundTerm(new Atom("."), args);
         }
+        // END_CHANGE: ISS-2025-0215
         return current;
     }
 }

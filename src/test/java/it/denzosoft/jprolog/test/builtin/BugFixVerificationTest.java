@@ -1373,4 +1373,110 @@ public class BugFixVerificationTest {
         }
     }
     // END_CHANGE: ISS-2025-0200
+
+    // START_CHANGE: ISS-2025-0215 - length/2 fresh vars don't collide
+    @Test
+    public void testISS0215_lengthFreshVarsDistinct() {
+        List<Map<String, Term>> s = prolog.solve("length(L1, 2), length(L2, 2), L1 = [a, b], L2 = [c, d].");
+        assertEquals(1, s.size());
+        // If vars collided, L1 = L2 = [a, b] would unify L2 with [c, d] -> fail
+    }
+    // END_CHANGE: ISS-2025-0215
+
+    // START_CHANGE: ISS-2025-0216 - is_list/proper_list cycle detection
+    @Test
+    public void testISS0216_isListOnGround() {
+        List<Map<String, Term>> s = prolog.solve("is_list([a, b, c]).");
+        assertEquals(1, s.size());
+    }
+
+    @Test
+    public void testISS0216_isListOnNonList() {
+        List<Map<String, Term>> s = prolog.solve("is_list(foo).");
+        assertEquals(0, s.size());
+    }
+    // END_CHANGE: ISS-2025-0216
+
+    // START_CHANGE: ISS-2025-0221 - Partition class exists (not registered as builtin to avoid shadowing user partition/N)
+    // Verification via direct class invocation deferred to standalone test if needed.
+    // END_CHANGE: ISS-2025-0221
+
+    // START_CHANGE: ISS-2025-0220 - sort/4
+    @Test
+    public void testISS0220_sort4Descending() {
+        List<Map<String, Term>> s = prolog.solve("sort(0, @>, [3, 1, 2, 1], L).");
+        assertEquals(1, s.size());
+        assertEquals("[3, 2, 1]", s.get(0).get("L").toString());
+    }
+
+    @Test
+    public void testISS0220_sort4StableNoDedup() {
+        List<Map<String, Term>> s = prolog.solve("sort(0, @=<, [3, 1, 2, 1], L).");
+        assertEquals(1, s.size());
+        assertEquals("[1, 1, 2, 3]", s.get(0).get("L").toString());
+    }
+    // END_CHANGE: ISS-2025-0220
+
+    // START_CHANGE: ISS-2025-0224 - ^/2 integer power
+    @Test
+    public void testISS0224_caretIntegerPower() {
+        List<Map<String, Term>> s = prolog.solve("X is 2 ^ 10.");
+        assertEquals(1, s.size());
+        assertEquals("1024", s.get(0).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0224
+
+    // START_CHANGE: ISS-2025-0225 - integer/1 evaluable truncates toward zero
+    @Test
+    public void testISS0225_integerEvaluable() {
+        List<Map<String, Term>> s = prolog.solve("X is integer(3.7).");
+        assertEquals(1, s.size());
+        assertEquals("3", s.get(0).get("X").toString());
+    }
+
+    @Test
+    public void testISS0225_integerEvaluableNegative() {
+        List<Map<String, Term>> s = prolog.solve("X is integer(-3.7).");
+        assertEquals(1, s.size());
+        assertEquals("-3", s.get(0).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0225
+
+    // START_CHANGE: ISS-2025-0226 - hyperbolic functions
+    @Test
+    public void testISS0226_sinh() {
+        List<Map<String, Term>> s = prolog.solve("X is sinh(0.0).");
+        assertEquals(1, s.size());
+        assertEquals("0.0", s.get(0).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0226
+
+    // START_CHANGE: ISS-2025-0227 - log/2 + epsilon
+    @Test
+    public void testISS0227_logBase() {
+        List<Map<String, Term>> s = prolog.solve("X is log(10, 100).");
+        assertEquals(1, s.size());
+        // log_10(100) = 2.0
+        double v = Double.parseDouble(s.get(0).get("X").toString());
+        org.junit.Assert.assertEquals(2.0, v, 1e-9);
+    }
+
+    @Test
+    public void testISS0227_epsilon() {
+        List<Map<String, Term>> s = prolog.solve("X is epsilon.");
+        assertEquals(1, s.size());
+    }
+    // END_CHANGE: ISS-2025-0227
+
+    // START_CHANGE: ISS-2025-0229 - 0.0**negative throws undefined
+    @Test
+    public void testISS0229_zeroFloatNegPowerErrors() {
+        try {
+            prolog.solve("X is 0.0 ** -1.");
+            org.junit.Assert.fail("expected evaluation_error(undefined)");
+        } catch (RuntimeException e) {
+            // accept ISO error wrapping
+        }
+    }
+    // END_CHANGE: ISS-2025-0229
 }

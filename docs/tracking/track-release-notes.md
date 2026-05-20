@@ -1,5 +1,31 @@
 # JProlog - Release Notes
 
+## Release 2.8.1 - 2026-05-20
+
+### Eleventh-Round List & Arithmetic Fixes (ISS-2025-0215..0231)
+
+Deep dive into list handling + `is/2`. 12 fixes; 6 audit findings verified already-correct.
+
+**Lists**:
+- ISS-0215 length/2 fresh-vars global counter
+- ISS-0216 is_list/proper_list/length cycle detection (IdentityHashMap)
+- ISS-0220 sort/4 (Key, Order, List, Sorted)
+- ISS-0222 maplist/5
+- ISS-0221 Partition class (unregistered to avoid shadowing)
+- ISS-0223 partial_list iterative + cycle detect
+
+**Arithmetic ISO §9**:
+- ISS-0224 ^/2 integer power evaluable
+- ISS-0225 integer/1 truncating evaluable
+- ISS-0226 sinh/cosh/tanh/asinh/acosh/atanh
+- ISS-0227 log/2 base-N, cot/acot/cbrt, epsilon constant
+- ISS-0229 0.0**-N → evaluation_error(undefined)
+- ISS-0231 rational/rationalize evaluables
+
+**Tests**: 471 JUnit (12 new), 20/20 examples.
+
+---
+
 ## Release 2.8.0 - 2026-05-20
 
 ### Tenth-Round ISO Audit Fixes (ISS-2025-0195..0214)
