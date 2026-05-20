@@ -17,6 +17,9 @@ public class Module {
     
     private final String name;
     private final Set<PredicateSignature> exportedPredicates;
+    // START_CHANGE: ISS-2025-0248 - distinguish empty-explicit list from "no list provided"
+    private boolean hasExplicitExportList = false;
+    // END_CHANGE: ISS-2025-0248
     private final Map<PredicateSignature, Module> importedPredicates;
     private final List<Rule> localRules;
     private final Map<String, Module> importedModules;
@@ -63,18 +66,21 @@ public class Module {
     public Module(String name, List<PredicateSignature> exportList) {
         this(name);
         this.exportedPredicates.addAll(exportList);
+        // START_CHANGE: ISS-2025-0248 - mark explicit list (even if empty)
+        this.hasExplicitExportList = true;
+        // END_CHANGE: ISS-2025-0248
     }
-    
+
     /**
      * Add a rule to this module.
-     * 
+     *
      * @param rule The rule to add
      */
     public void addRule(Rule rule) {
         localRules.add(rule);
-        
-        // Auto-export predicates if no explicit export list
-        if (exportedPredicates.isEmpty()) {
+
+        // START_CHANGE: ISS-2025-0248 - only auto-export when no explicit list given
+        if (!hasExplicitExportList) {
             Term head = rule.getHead();
             if (head instanceof Atom) {
                 exportedPredicates.add(new PredicateSignature(((Atom) head).getName(), 0));
@@ -84,6 +90,7 @@ public class Module {
                 exportedPredicates.add(new PredicateSignature(functor, arity));
             }
         }
+        // END_CHANGE: ISS-2025-0248
     }
     
     /**

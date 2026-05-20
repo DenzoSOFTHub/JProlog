@@ -58,6 +58,20 @@ public class StreamManager {
         return streamAlias;
     }
     
+    // START_CHANGE: ISS-2025-0252 - alias support: map user-friendly name to underlying stream
+    public static void aliasStream(String existingAlias, String userAlias) {
+        InputStream is = INPUT_STREAMS.get(existingAlias);
+        if (is != null) {
+            INPUT_STREAMS.put(userAlias, is);
+            return;
+        }
+        OutputStream os = OUTPUT_STREAMS.get(existingAlias);
+        if (os != null) {
+            OUTPUT_STREAMS.put(userAlias, os);
+        }
+    }
+    // END_CHANGE: ISS-2025-0252
+
     /**
      * Close a stream by alias.
      */

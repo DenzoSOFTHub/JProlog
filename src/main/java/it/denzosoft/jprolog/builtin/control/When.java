@@ -127,12 +127,42 @@ public class When implements BuiltInWithContext {
                     CutStatus cutStatus = CutStatus.notOccurred();
                     return solver.solve(resolvedGoal, bindings, solutions, cutStatus);
                 }
-                // Condition not yet satisfied — keep waiting (return true to not fail)
+                // START_CHANGE: ISS-2025-0247 - re-suspend on remaining unbound variables
+                // condition still false: re-attach the when-term to any vars still unbound
+                Set<Variable> remaining = new HashSet<>();
+                collectRemainingUnbound(condition, bindings, remaining);
+                for (Variable v : remaining) {
+                    v.putAttribute(WHEN_MODULE, whenTerm);
+                }
                 return true;
+                // END_CHANGE: ISS-2025-0247
             }
         }
         return true;
     }
+
+    // START_CHANGE: ISS-2025-0247 - static helper for re-suspension
+    private static void collectRemainingUnbound(Term condition, Map<String, Term> bindings, Set<Variable> out) {
+        if (condition instanceof CompoundTerm) {
+            CompoundTerm ct = (CompoundTerm) condition;
+            String name = ct.getName();
+            List<Term> args = ct.getArguments();
+            if (("nonvar".equals(name) || "ground".equals(name)) && args != null && args.size() == 1) {
+                collectVarsStatic(args.get(0), bindings, out);
+            } else if ((",".equals(name) || ";".equals(name)) && args != null && args.size() == 2) {
+                collectRemainingUnbound(args.get(0), bindings, out);
+                collectRemainingUnbound(args.get(1), bindings, out);
+            }
+        }
+    }
+    private static void collectVarsStatic(Term term, Map<String, Term> bindings, Set<Variable> out) {
+        Term r = resolveToEnd(term, bindings);
+        if (r instanceof Variable) out.add((Variable) r);
+        else if (r instanceof CompoundTerm) {
+            for (Term a : ((CompoundTerm) r).getArguments()) collectVarsStatic(a, bindings, out);
+        }
+    }
+    // END_CHANGE: ISS-2025-0247
 
     /**
      * Collect all unbound variables referenced in a condition.

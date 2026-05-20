@@ -93,31 +93,54 @@ public class Format extends AbstractBuiltInWithContext {
      */
     private String processFormat(String formatString, List<Term> arguments, Map<String, Term> bindings) {
         StringBuilder result = new StringBuilder();
-        int argIndex = 0;
-        
+        int[] argIdxRef = {0}; // boxed for helper
+
         for (int i = 0; i < formatString.length(); i++) {
             char ch = formatString.charAt(i);
-            
+
             if (ch == '~') {
-                if (i + 1 < formatString.length()) {
-                    char formatChar = formatString.charAt(i + 1);
-                    String formatted = processFormatCode(formatChar, arguments, argIndex, bindings);
-                    result.append(formatted);
-                    
-                    // Advance argument index for most format codes
-                    if (consumesArgument(formatChar)) {
-                        argIndex++;
+                // START_CHANGE: ISS-2025-0249 - parse optional numeric prefix or '*' for width/precision/radix
+                int j = i + 1;
+                Integer numArg = null;
+                boolean starArg = false;
+                if (j < formatString.length() && formatString.charAt(j) == '*') {
+                    // Take count from next argument
+                    starArg = true;
+                    if (argIdxRef[0] < arguments.size()) {
+                        Term a = arguments.get(argIdxRef[0]).resolveBindings(bindings);
+                        if (a instanceof it.denzosoft.jprolog.core.terms.Number) {
+                            numArg = (int) ((it.denzosoft.jprolog.core.terms.Number) a).longValue();
+                        }
+                        argIdxRef[0]++;
                     }
-                    
-                    i++; // Skip the format character
+                    j++;
+                } else {
+                    StringBuilder num = new StringBuilder();
+                    while (j < formatString.length() && Character.isDigit(formatString.charAt(j))) {
+                        num.append(formatString.charAt(j));
+                        j++;
+                    }
+                    if (num.length() > 0) {
+                        try { numArg = Integer.parseInt(num.toString()); } catch (NumberFormatException e) { /* ignore */ }
+                    }
+                }
+                if (j < formatString.length()) {
+                    char formatChar = formatString.charAt(j);
+                    String formatted = processFormatCode(formatChar, arguments, argIdxRef[0], numArg, bindings);
+                    result.append(formatted);
+                    if (consumesArgument(formatChar)) {
+                        argIdxRef[0]++;
+                    }
+                    i = j; // Skip the format character
                 } else {
                     result.append(ch); // Lone ~ at end
                 }
+                // END_CHANGE: ISS-2025-0249
             } else {
                 result.append(ch);
             }
         }
-        
+
         return result.toString();
     }
     
@@ -130,60 +153,136 @@ public class Format extends AbstractBuiltInWithContext {
      * @param bindings Variable bindings
      * @return The formatted string
      */
-    private String processFormatCode(char formatChar, List<Term> arguments, int argIndex, Map<String, Term> bindings) {
+    private String processFormatCode(char formatChar, List<Term> arguments, int argIndex, Integer numArg, Map<String, Term> bindings) {
         Term arg = null;
         if (argIndex < arguments.size()) {
             arg = arguments.get(argIndex);
-            // Resolve variable if needed
             if (arg instanceof Variable && bindings.containsKey(((Variable) arg).getName())) {
                 arg = bindings.get(((Variable) arg).getName());
             }
         }
-        
+
         switch (formatChar) {
             case 'a': // Atom
                 return arg != null ? formatAtom(arg) : "";
-                
-            case 'd': // Decimal integer
-                return arg != null ? formatInteger(arg) : "0";
-                
-            case 'f': // Float
-                return arg != null ? formatFloat(arg) : "0.0";
-                
+
+            case 'd': // Decimal integer (with optional width N or N=decimal positions)
+                if (arg == null) return "0";
+                if (numArg != null && numArg > 0) {
+                    // ~Nd: insert decimal point N digits from right
+                    String s = formatInteger(arg);
+                    boolean neg = s.startsWith("-");
+                    if (neg) s = s.substring(1);
+                    while (s.length() < numArg + 1) s = "0" + s;
+                    s = s.substring(0, s.length() - numArg) + "." + s.substring(s.length() - numArg);
+                    return neg ? "-" + s : s;
+                }
+                return formatInteger(arg);
+
+            case 'D': // Decimal with comma grouping (SWI extension)
+                if (arg == null) return "0";
+                return formatIntegerGrouped(arg);
+
+            case 'f': // Float (~Nf with N decimals)
+                if (arg == null) return "0.0";
+                return formatFloatPrec(arg, numArg);
+
+            case 'e': // Exponential (~Ne)
+                if (arg == null) return "0.0";
+                return formatExponential(arg, numArg);
+
+            case 'g': // General float
+                if (arg == null) return "0.0";
+                return formatGeneral(arg, numArg);
+
             case 's': // String/list of characters
                 return arg != null ? formatString(arg) : "";
-                
-            case 'w': // Write term
-                return arg != null ? formatTerm(arg) : "";
-                
+
+            case 'w': // Write term (with optional width)
+                if (arg == null) return "";
+                return padToWidth(formatTerm(arg), numArg);
+
             case 'q': // Quoted term
-                return arg != null ? formatQuoted(arg) : "";
-                
+                if (arg == null) return "";
+                return padToWidth(formatQuoted(arg), numArg);
+
             case 'n': // Newline
                 return "\n";
-                
-            case 't': // Tab
+
+            case 't': // Fill char placeholder (column tabbing). Without column tab, just tab char.
                 return "\t";
-                
+
             case '~': // Literal ~
                 return "~";
-                
+
             case 'i': // Ignore argument
                 return "";
-                
-            case 'p': // Print (same as write)
+
+            case 'p': // Print (same as write for now)
                 return arg != null ? formatTerm(arg) : "";
-                
-            case 'c': // Character code
-                return arg != null ? formatCharacter(arg) : "";
-                
-            case 'r': // Radix (base conversion)
-                return arg != null ? formatRadix(arg) : "";
-                
+
+            case 'c': // Character code (repeat N times if numArg given)
+                if (arg == null) return "";
+                int reps = (numArg != null && numArg > 0) ? numArg : 1;
+                StringBuilder sb = new StringBuilder();
+                String ch = formatCharacter(arg);
+                for (int k = 0; k < reps; k++) sb.append(ch);
+                return sb.toString();
+
+            case 'r': // Radix N (e.g. ~2r → binary)
+                if (arg == null || numArg == null) return arg != null ? formatRadix(arg) : "";
+                return formatRadixBase(arg, numArg, false);
+            case 'R': // Radix N uppercase
+                if (arg == null || numArg == null) return arg != null ? formatRadix(arg) : "";
+                return formatRadixBase(arg, numArg, true);
+
             default:
                 return "~" + formatChar; // Unknown format code
         }
     }
+
+    // START_CHANGE: ISS-2025-0249 - format helpers for width/precision/radix
+    private String padToWidth(String s, Integer width) {
+        if (width == null || s.length() >= width) return s;
+        StringBuilder sb = new StringBuilder();
+        for (int k = 0; k < width - s.length(); k++) sb.append(' ');
+        sb.append(s);
+        return sb.toString();
+    }
+    private String formatFloatPrec(Term t, Integer prec) {
+        double v = (t instanceof it.denzosoft.jprolog.core.terms.Number)
+            ? ((it.denzosoft.jprolog.core.terms.Number) t).doubleValue()
+            : 0.0;
+        int p = (prec != null && prec >= 0) ? prec : 6;
+        return String.format("%." + p + "f", v);
+    }
+    private String formatExponential(Term t, Integer prec) {
+        double v = (t instanceof it.denzosoft.jprolog.core.terms.Number)
+            ? ((it.denzosoft.jprolog.core.terms.Number) t).doubleValue()
+            : 0.0;
+        int p = (prec != null && prec >= 0) ? prec : 6;
+        return String.format("%." + p + "e", v);
+    }
+    private String formatGeneral(Term t, Integer prec) {
+        double v = (t instanceof it.denzosoft.jprolog.core.terms.Number)
+            ? ((it.denzosoft.jprolog.core.terms.Number) t).doubleValue()
+            : 0.0;
+        int p = (prec != null && prec >= 0) ? prec : 6;
+        return String.format("%." + p + "g", v);
+    }
+    private String formatIntegerGrouped(Term t) {
+        if (!(t instanceof it.denzosoft.jprolog.core.terms.Number)) return "0";
+        long v = ((it.denzosoft.jprolog.core.terms.Number) t).longValue();
+        return String.format("%,d", v);
+    }
+    private String formatRadixBase(Term t, int base, boolean upper) {
+        if (!(t instanceof it.denzosoft.jprolog.core.terms.Number)) return "";
+        if (base < 2 || base > 36) return t.toString();
+        long v = ((it.denzosoft.jprolog.core.terms.Number) t).longValue();
+        String s = Long.toString(v, base);
+        return upper ? s.toUpperCase() : s;
+    }
+    // END_CHANGE: ISS-2025-0249
     
     /**
      * Format a term as atom.
@@ -283,8 +382,11 @@ public class Format extends AbstractBuiltInWithContext {
      */
     private String formatCharacter(Term term) {
         if (term instanceof it.denzosoft.jprolog.core.terms.Number) {
-            int charCode = ((it.denzosoft.jprolog.core.terms.Number) term).getValue().intValue();
-            return String.valueOf((char) charCode);
+            // START_CHANGE: ISS-2025-0251 - codepoint-aware (Character.toChars handles supplementary plane)
+            int charCode = (int) ((it.denzosoft.jprolog.core.terms.Number) term).longValue();
+            if (charCode < 0 || charCode > 0x10FFFF) return "";
+            return new String(Character.toChars(charCode));
+            // END_CHANGE: ISS-2025-0251
         } else {
             return "";
         }

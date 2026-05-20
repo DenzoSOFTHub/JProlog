@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.8.3] - 2026-05-20
+
+### Thirteenth-Round Coroutining + Format + Stream Fixes (ISS-2025-0245..0253)
+
+Round 4 deep audit. **8 fixes applied; 1 audit finding verified already-correct.**
+
+### Coroutining
+- **ISS-0246** `freeze/2`: multiple `freeze(X, Goal)` calls on same variable now aggregate as conjunction `(G1, G2)` instead of overwriting (storage-side fix; full attribute-hook firing on `=/2` remains a known limitation)
+- **ISS-0247** `when/2`: re-suspension on remaining unbound variables — goal no longer silently disappears when condition still false after partial binding
+
+### Module system
+- **ISS-0248** auto-export bug fixed: `:- module(secret, []).` now properly hides all predicates (was auto-exporting). Added `hasExplicitExportList` flag to distinguish explicit-empty from no-list-provided.
+
+### Format (`format/1,2,3`)
+- **ISS-0249** parses numeric prefix in format spec: `~Nw` width, `~Nd` decimal places, `~Nf` float precision, `~Ne` exponential, `~Ng` general, `~Nr`/`~NR` radix N (2..36), `~D` integer with comma grouping
+- **ISS-0250** star arg `~*c` for character repeat-count from arguments
+- **ISS-0251** `~c` codepoint-aware via `Character.toChars` (supplementary plane emoji etc.)
+
+### Streams
+- **ISS-0252** `open/4` with options list parsing: `alias(Name)` registered via `StreamManager.aliasStream`. Other options (`type`, `encoding`, `eof_action`, `reposition`) accepted (parsed) but not enforced; full enforcement deferred.
+- **ISS-0253** `close/2` accepts `force(true)` option — succeeds silently even if stream already closed/missing
+
+### Verified already-correct
+- **ISS-0245** DCG negation `\+` state threading: investigation showed transform is actually correct — `\+` wraps the threaded-form (which is fine because negation only checks success/failure, not the threaded output). Audit was overzealous.
+
+### Deferred (not feasible in this round)
+- `b_setval/2` true backtrackability (LIM-003 partial) — requires trail engine, large refactor
+- Module-local operator scoping — large refactor of parser+module dispatch
+- Tabling + negation/cut interaction — needs theory work
+
+### Test Coverage
+- 482/482 JUnit tests pass
+- 20/20 examples regression pass
+
+---
+
 ## [2.8.2] - 2026-05-20
 
 ### Twelfth-Round String/Term/Write Fixes (ISS-2025-0233..0243)

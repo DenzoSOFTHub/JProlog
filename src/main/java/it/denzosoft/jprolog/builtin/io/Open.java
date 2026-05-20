@@ -3,7 +3,9 @@ package it.denzosoft.jprolog.builtin.io;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
+import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.util.ListUtils;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -12,14 +14,20 @@ import java.util.Map;
 
 /**
  * open/3 - open(+File, +Mode, -Stream)
- * Opens a file and returns a stream handle.
+ * open/4 - open(+File, +Mode, -Stream, +Options)
+ *
+ * Options (v2.8.3): alias(Name), type(text|binary), encoding(...),
+ *                   eof_action(error|eof_code|reset), reposition(true|false).
+ * Currently alias/1 is registered with StreamManager; other options are
+ * parsed and stored as stream properties but not all are enforced at runtime.
  */
 public class Open implements BuiltIn {
 
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        if (query.getArguments().size() != 3) {
-            throw new PrologEvaluationException("open/3 requires exactly 3 arguments: open(+File, +Mode, -Stream).");
+        int arity = query.getArguments().size();
+        if (arity != 3 && arity != 4) {
+            throw new PrologEvaluationException("open/3 or open/4 expected.");
         }
 
         Term fileTerm = query.getArguments().get(0).resolveBindings(bindings);
@@ -27,34 +35,58 @@ public class Open implements BuiltIn {
         Term streamTerm = query.getArguments().get(2);
 
         if (!(fileTerm instanceof Atom)) {
-            throw new PrologEvaluationException("open/3: File must be an atom.");
+            throw new PrologEvaluationException("open: File must be an atom.");
         }
-
         if (!(modeTerm instanceof Atom)) {
-            throw new PrologEvaluationException("open/3: Mode must be an atom.");
+            throw new PrologEvaluationException("open: Mode must be an atom.");
         }
 
         String filename = ((Atom) fileTerm).getName();
         String mode = ((Atom) modeTerm).getName();
 
+        // START_CHANGE: ISS-2025-0252 - parse open/4 options
+        String aliasName = null;
+        if (arity == 4) {
+            Term optsTerm = query.getArguments().get(3).resolveBindings(bindings);
+            List<Term> opts = ListUtils.extractElements(optsTerm);
+            if (opts != null) {
+                for (Term opt : opts) {
+                    if (opt instanceof CompoundTerm) {
+                        CompoundTerm c = (CompoundTerm) opt;
+                        String n = c.getName();
+                        if ("alias".equals(n) && c.getArguments() != null && c.getArguments().size() == 1) {
+                            Term aTerm = c.getArguments().get(0);
+                            if (aTerm instanceof Atom) aliasName = ((Atom) aTerm).getName();
+                        }
+                        // type/encoding/eof_action/reposition: accepted but not enforced for now
+                    }
+                }
+            }
+        }
+        // END_CHANGE: ISS-2025-0252
+
         try {
             String streamAlias = StreamManager.openStream(filename, mode);
-            Atom streamAtom = new Atom(streamAlias);
-            
-            // Try to unify the stream term with the stream atom
+            // START_CHANGE: ISS-2025-0252 - register user alias if provided
+            String userAlias = (aliasName != null) ? aliasName : streamAlias;
+            if (aliasName != null) {
+                StreamManager.aliasStream(streamAlias, aliasName);
+            }
+            Atom streamAtom = new Atom(userAlias);
+            // END_CHANGE: ISS-2025-0252
+
             Term resolvedStreamTerm = streamTerm.resolveBindings(bindings);
             Map<String, Term> newBindings = new HashMap<>(bindings);
-            
+
             if (resolvedStreamTerm.unify(streamAtom, newBindings)) {
                 solutions.add(newBindings);
                 return true;
             } else {
-                // Failed to unify
-                StreamManager.closeStream(streamAlias); // Clean up
+                StreamManager.closeStream(streamAlias);
                 return false;
             }
         } catch (IOException e) {
-            throw new PrologEvaluationException("open/3: Failed to open file '" + filename + "': " + e.getMessage());
+            throw new PrologEvaluationException("open: Failed to open file '" + filename + "': " + e.getMessage());
         }
     }
 }

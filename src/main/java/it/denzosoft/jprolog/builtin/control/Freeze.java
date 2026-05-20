@@ -4,8 +4,12 @@ package it.denzosoft.jprolog.builtin.control;
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.CutStatus;
 import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.terms.Atom;
+import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
+
+import java.util.Arrays;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -44,10 +48,14 @@ public class Freeze implements BuiltInWithContext {
 
         if (derefVar instanceof Variable) {
             Variable var = (Variable) derefVar;
-            // Variable is unbound — attach the goal as a freeze attribute
-            // Resolve the goal with current bindings to capture any already-bound variables
+            // START_CHANGE: ISS-2025-0246 - aggregate multiple frozen goals as conjunction
             Term resolvedGoal = goal.resolveBindings(bindings);
-            var.putAttribute(FREEZE_MODULE, resolvedGoal);
+            Term existing = var.getAttribute(FREEZE_MODULE);
+            Term combined = existing == null
+                ? resolvedGoal
+                : new CompoundTerm(new Atom(","), Arrays.asList(existing, resolvedGoal));
+            var.putAttribute(FREEZE_MODULE, combined);
+            // END_CHANGE: ISS-2025-0246
             solutions.add(new HashMap<>(bindings));
             return true;
         } else {

@@ -1527,6 +1527,63 @@ public class BugFixVerificationTest {
     }
     // END_CHANGE: ISS-2025-0238
 
+    // START_CHANGE: ISS-2025-0246 - freeze multi-goal aggregation (storage-side fix only;
+    // full hook firing on =/2 requires solver-level attvar trigger improvements deferred to future)
+
+    // START_CHANGE: ISS-2025-0249 - format width
+    @Test
+    public void testISS0249_formatWidth() {
+        java.io.PrintStream orig = System.out;
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(baos));
+        try {
+            prolog.solve("format('~5w!', [hi]).");
+        } finally {
+            System.setOut(orig);
+        }
+        assertEquals("   hi!", baos.toString());
+    }
+
+    @Test
+    public void testISS0249_formatFloatPrec() {
+        java.io.PrintStream orig = System.out;
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(baos));
+        try {
+            prolog.solve("format('~2f', [3.14159]).");
+        } finally {
+            System.setOut(orig);
+        }
+        assertEquals("3.14", baos.toString());
+    }
+
+    @Test
+    public void testISS0249_formatRadix() {
+        java.io.PrintStream orig = System.out;
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(baos));
+        try {
+            prolog.solve("format('~2r', [10]).");
+        } finally {
+            System.setOut(orig);
+        }
+        assertEquals("1010", baos.toString());
+    }
+
+    @Test
+    public void testISS0249_formatGrouped() {
+        java.io.PrintStream orig = System.out;
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(baos));
+        try {
+            prolog.solve("format('~D', [1234567]).");
+        } finally {
+            System.setOut(orig);
+        }
+        assertEquals("1,234,567", baos.toString());
+    }
+    // END_CHANGE: ISS-2025-0249
+
     // START_CHANGE: ISS-2025-0242 - operator-aware write
     @Test
     public void testISS0242_writeOperator() {
