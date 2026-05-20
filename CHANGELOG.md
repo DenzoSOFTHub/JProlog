@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.2] - 2026-05-20
+
+### Round 5 Minor Fixes + Cleanup
+
+- **.jpc source hash**: MD5 → SHA-256 (collision-resistant)
+- **.jpc signed varint**: new `writeSignedVarint`/`readSignedVarint` (zigzag encoding) — future-proof for signed integer fields
+- **AtomTable.gc()**: now atomic via `compute()` — no race with concurrent `intern()`
+- **ThreadLocal cleanup**: `Variable.setAttributeUnifyHook(null)` calls `remove()`; `Trail.clear()` calls `remove()` instead of `get().clear()` — releases ThreadLocal references properly
+- **CHR dead code removed**: `CHRStore.java` deleted (was never integrated; LIM-010 was misclassified as resolved)
+- **`:- use_module(library(Name))` accepted**: SWI-compatible directive form. Known libraries (clpfd, lists, between, apply, assoc, format) treated as no-op (built-ins already registered). Other module names imported normally.
+- **CLP(FD) operators registered**: `in/2`, `ins/2`, `#=/2`, `#\\=/2`, `#</2`, `#>/2`, `#=</2`, `#>=/2`, `../2` declared at standard SWI precedences. Note: `..` tokenization in expressions still requires parser improvement (full CLP(FD) usage tracked separately).
+
+### Test Coverage
+- 3 new tests in `AuditRound5Test.java` (use_module, zigzag varint, ...)
+- **509/509 JUnit tests pass** (3 skipped: deferred behaviors)
+- **20/20 examples regression pass**
+
+---
+
 ## [2.9.1] - 2026-05-20
 
 ### Round 5 Audit Fixes

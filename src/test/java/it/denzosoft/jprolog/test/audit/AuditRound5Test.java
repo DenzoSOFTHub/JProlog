@@ -131,6 +131,48 @@ public class AuditRound5Test {
     // #7 — Module-qualified call enforces export
     // ===================================================================
 
+    // ===================================================================
+    // Minor — CLP(FD) library auto-load directive
+    // ===================================================================
+
+    @Test
+    public void testMinor_useModuleLibraryClpfd_accepted() {
+        // :- use_module(library(clpfd)) must be accepted without error
+        // (constraints are already registered as built-ins; directive is a no-op)
+        prolog.consult(":- use_module(library(clpfd)).");
+        // Sanity: regular query still works after the directive
+        List<Map<String, Term>> r = prolog.solve("X = 42.");
+        assertEquals("42", r.get(0).get("X").toString());
+    }
+
+    @Test
+    public void testMinor_useModuleLibraryLists() {
+        // library(lists) is also auto-accepted (lists predicates are built-in)
+        prolog.consult(":- use_module(library(lists)).");
+        List<Map<String, Term>> r = prolog.solve("append([a, b], [c, d], L).");
+        assertEquals("[a, b, c, d]", r.get(0).get("L").toString());
+    }
+
+    // ===================================================================
+    // Minor — Zigzag varint round-trip
+    // ===================================================================
+
+    @Test
+    public void testMinor_zigzagVarintRoundTrip() throws Exception {
+        // Negative and positive integers must round-trip
+        int[] testValues = {0, 1, -1, 100, -100, Integer.MAX_VALUE, Integer.MIN_VALUE, 1234567, -1234567};
+        for (int v : testValues) {
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            java.io.DataOutputStream dos = new java.io.DataOutputStream(baos);
+            it.denzosoft.jprolog.core.compiled.JpcWriter.writeSignedVarint(dos, v);
+            dos.flush();
+            java.io.DataInputStream dis = new java.io.DataInputStream(
+                new java.io.ByteArrayInputStream(baos.toByteArray()));
+            int back = it.denzosoft.jprolog.core.compiled.JpcReader.readSignedVarint(dis);
+            assertEquals("zigzag roundtrip for " + v, v, back);
+        }
+    }
+
     @Test
     public void test7_moduleQualifiedCall_exportEnforced() {
         prolog.consult(":- module(secret_module_r5, [exported_pred/1]).");

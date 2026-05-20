@@ -98,7 +98,13 @@ public class Variable extends Term {
      * @param hook the hook, or null to clear
      */
     public static void setAttributeUnifyHook(AttributeUnifyHook hook) {
-        attributeUnifyHook.set(hook);
+        // START_CHANGE: Round5 minor - null clears the ThreadLocal entry for proper cleanup
+        if (hook == null) {
+            attributeUnifyHook.remove();
+        } else {
+            attributeUnifyHook.set(hook);
+        }
+        // END_CHANGE: Round5 minor
     }
 
     /**

@@ -141,6 +141,17 @@ public class OperatorTable {
         defineOperator(700, Operator.Type.XFX, ">=");
         
         defineOperator(600, Operator.Type.XFY, ":");
+        // START_CHANGE: Round5 minor - CLP(FD) operators (SWI-compat)
+        defineOperator(700, Operator.Type.XFX, "in");
+        defineOperator(700, Operator.Type.XFX, "ins");
+        defineOperator(700, Operator.Type.XFX, "#=");
+        defineOperator(700, Operator.Type.XFX, "#\\=");
+        defineOperator(700, Operator.Type.XFX, "#<");
+        defineOperator(700, Operator.Type.XFX, "#>");
+        defineOperator(700, Operator.Type.XFX, "#=<");
+        defineOperator(700, Operator.Type.XFX, "#>=");
+        defineOperator(450, Operator.Type.XFX, "..");
+        // END_CHANGE: Round5 minor
         
         defineOperator(500, Operator.Type.YFX, "+");
         defineOperator(500, Operator.Type.YFX, "-");

@@ -378,15 +378,36 @@ public class Prolog {
     private void processUseModuleDirective(Term directive) {
         if (directive instanceof CompoundTerm && TermUtils.getArity(directive) >= 1) {
             Term moduleTerm = TermUtils.getArgument((CompoundTerm) directive, 0);
+            // START_CHANGE: Round5 minor - accept library(Name) form for SWI compatibility
+            String moduleName = null;
             if (moduleTerm instanceof Atom) {
-                String moduleName = ((Atom) moduleTerm).getName();
-                try {
-                    moduleManager.importModule(moduleName);
-                    LOGGER.log(Level.INFO, "Module imported: " + moduleName);
-                } catch (IllegalArgumentException e) {
-                    LOGGER.log(Level.WARNING, "Failed to import module: " + moduleName + " - " + e.getMessage());
+                moduleName = ((Atom) moduleTerm).getName();
+            } else if (moduleTerm instanceof CompoundTerm
+                       && "library".equals(TermUtils.getFunctorName(moduleTerm))
+                       && TermUtils.getArity(moduleTerm) == 1) {
+                Term inner = TermUtils.getArgument((CompoundTerm) moduleTerm, 0);
+                if (inner instanceof Atom) {
+                    moduleName = ((Atom) inner).getName();
+                    // Known auto-loadable libraries: built-ins already registered, treat as no-op success
+                    if ("clpfd".equals(moduleName) || "lists".equals(moduleName)
+                        || "between".equals(moduleName) || "apply".equals(moduleName)
+                        || "assoc".equals(moduleName) || "format".equals(moduleName)) {
+                        LOGGER.log(Level.INFO, "Library auto-load (built-in): " + moduleName);
+                        return;
+                    }
                 }
             }
+            if (moduleName == null) {
+                LOGGER.log(Level.WARNING, "use_module: unrecognized module spec: " + moduleTerm);
+                return;
+            }
+            try {
+                moduleManager.importModule(moduleName);
+                LOGGER.log(Level.INFO, "Module imported: " + moduleName);
+            } catch (IllegalArgumentException e) {
+                LOGGER.log(Level.WARNING, "Failed to import module: " + moduleName + " - " + e.getMessage());
+            }
+            // END_CHANGE: Round5 minor
         }
     }
     

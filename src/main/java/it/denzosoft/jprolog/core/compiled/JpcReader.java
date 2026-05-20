@@ -172,6 +172,14 @@ public class JpcReader {
             }
         } while ((b & 0x80) != 0);
         return value;
+        // START_CHANGE: Round5 minor - readSignedVarint for zigzag-decoded ints
+    }
+
+    /** Read a signed variable-length integer (zigzag-encoded). */
+    public static int readSignedVarint(DataInputStream dis) throws IOException {
+        int zigzag = readVarint(dis);
+        return (zigzag >>> 1) ^ -(zigzag & 1);
+        // END_CHANGE: Round5 minor
     }
 }
 // END_CHANGE: ISS-2025-0085

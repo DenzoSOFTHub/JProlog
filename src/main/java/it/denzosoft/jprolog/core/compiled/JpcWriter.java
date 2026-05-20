@@ -96,8 +96,9 @@ public class JpcWriter {
      * Compute a source hash for cache invalidation.
      */
     public static long computeSourceHash(String source) {
+        // START_CHANGE: Round5 minor - upgrade MD5 → SHA-256 (MD5 is collision-broken)
         try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
             byte[] digest = md.digest(source.getBytes(StandardCharsets.UTF_8));
             long hash = 0;
             for (int i = 0; i < 8; i++) {
@@ -105,8 +106,9 @@ public class JpcWriter {
             }
             return hash;
         } catch (NoSuchAlgorithmException e) {
-            // Fallback: simple hash
+            // Fallback: simple hash (defensive; SHA-256 always available on JREs ≥ 1.7)
             return source.hashCode();
+            // END_CHANGE: Round5 minor
         }
     }
 
@@ -222,5 +224,13 @@ public class JpcWriter {
         }
         dos.writeByte(value);
     }
+
+    // START_CHANGE: Round5 minor - signed varint (zigzag encoding) for future use
+    /** Write a signed variable-length integer using zigzag encoding (1-5 bytes). */
+    public static void writeSignedVarint(DataOutputStream dos, int value) throws IOException {
+        int zigzag = (value << 1) ^ (value >> 31);
+        writeVarint(dos, zigzag);
+    }
+    // END_CHANGE: Round5 minor
 }
 // END_CHANGE: ISS-2025-0085

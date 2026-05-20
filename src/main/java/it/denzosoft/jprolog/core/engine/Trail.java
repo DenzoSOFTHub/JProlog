@@ -41,7 +41,9 @@ public final class Trail {
 
     /** Clear all actions from current trail. For top-level solve completion. */
     public static void clear() {
-        ACTIONS.get().clear();
+        // START_CHANGE: Round5 minor - ThreadLocal.remove to release reference fully
+        ACTIONS.remove();
+        // END_CHANGE: Round5 minor
     }
 
     /** Current depth, for debugging. */

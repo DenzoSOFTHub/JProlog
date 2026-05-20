@@ -81,22 +81,25 @@ public class AtomTable {
      */
     // START_CHANGE: ISS-2025-0181 - Term system bug fixes
     public static int gc() {
-        int reclaimed = 0;
-        java.util.List<String> deadKeys = new java.util.ArrayList<>();
-        for (Map.Entry<String, WeakReference<Atom>> entry : internTable.entrySet()) {
-            if (entry.getValue().get() == null) {
-                deadKeys.add(entry.getKey());
-            }
+        // START_CHANGE: Round5 minor - atomic remove-if-dead via compute (no race with concurrent intern)
+        int[] reclaimed = {0};
+        // Snapshot keys; for each, atomic compute to remove only if WeakRef still dead.
+        for (String key : new java.util.ArrayList<>(internTable.keySet())) {
+            internTable.compute(key, (k, ref) -> {
+                if (ref == null) return null;
+                Atom alive = ref.get();
+                if (alive == null) {
+                    reclaimed[0]++;
+                    return null; // remove entry
+                }
+                return ref; // keep
+            });
         }
-        for (String key : deadKeys) {
-            if (internTable.remove(key) != null) {
-                reclaimed++;
-            }
+        if (reclaimed[0] > 0) {
+            LOGGER.fine("Atom GC: reclaimed " + reclaimed[0] + " atoms");
         }
-        if (reclaimed > 0) {
-            LOGGER.fine("Atom GC: reclaimed " + reclaimed + " atoms");
-        }
-        return reclaimed;
+        return reclaimed[0];
+        // END_CHANGE: Round5 minor
     }
     // END_CHANGE: ISS-2025-0181
 
