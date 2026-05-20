@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.5] - 2026-05-20
+
+### Cleanup + final deferred items
+
+- **`seek/4`** (CR-2025-0005, previously deferred): SWI-Prolog stream repositioning with `bof | current | eof` method. Uses `FileChannel.position`. New `Seek.java` builtin.
+- **Stale comments removed**:
+  - `ReadTerm.java` — "KNOWN LIMITATION: stream parameter ignored" (false since v2.8.3 ISS-0202)
+  - `GlobalVariables.java` — "KNOWN LIMITATION: b_setval non-backtrackable" (false since v2.9.0 R1 Trail engine)
+- **Test cleanup**: removed leftover `// @Ignore enabled` stub comments in `RefactorIssuesTest.java`
+
+### Test Coverage
+- **509/509 JUnit tests pass, 0 skipped**
+- **20/20 examples regression pass**
+
+---
+
 ## [2.9.4] - 2026-05-20
 
 ### Final Limitations Resolved

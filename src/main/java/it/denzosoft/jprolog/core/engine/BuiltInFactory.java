@@ -198,6 +198,9 @@ public class BuiltInFactory {
         
         // Stream I/O (ISO Prolog)
         registerFactory("open", Open::new);
+        // START_CHANGE: CR-2025-0005 - seek/4
+        registerFactory("seek", () -> new it.denzosoft.jprolog.builtin.io.Seek());
+        // END_CHANGE: CR-2025-0005
         registerFactory("close", Close::new);
         registerFactory("current_input", CurrentInput::new);
         registerFactory("current_output", CurrentOutput::new);

@@ -83,6 +83,9 @@ public class BuiltInRegistry {
         // START_CHANGE: R1 - setarg/3
         putArity("setarg", 3);
         // END_CHANGE: R1
+        // START_CHANGE: CR-2025-0005 - seek/4
+        putArity("seek", 4);
+        // END_CHANGE: CR-2025-0005
         // START_CHANGE: ISS-2025-0092 - Tabling predicates
         putArity("table", 1);
         putArity("abolish_all_tables", 0);

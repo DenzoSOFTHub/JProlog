@@ -36,7 +36,6 @@ public class RefactorIssuesTest {
     // Goal: introduce a trail stack so backtrackable mutation is possible.
     // Affects: b_setval/2, op/3 undo, setarg/3, attribute changes.
 
-    // @Ignore enabled
     @Test
     public void testR1_bSetvalBacktrackable() {
         // After binding x=1, the alternative branch sets x=2, then fail.
@@ -59,7 +58,6 @@ public class RefactorIssuesTest {
         assertEquals(0, r.size());
     }
 
-    // @Ignore enabled
     @Test
     public void testR1_setargDestructive() {
         prolog.solve(
@@ -76,7 +74,6 @@ public class RefactorIssuesTest {
     // that module (and modules that import it explicitly).
     // Affects: parser, op/3 dispatch, TermFormatter.
 
-    // @Ignore enabled
     @Test
     public void testR2_operatorLocalToModule() {
         prolog.consult(":- module(m1, []).");
@@ -106,7 +103,6 @@ public class RefactorIssuesTest {
     // ===================================================================
     // Goal: open/4 honors options (type, encoding, eof_action, reposition).
 
-    // @Ignore enabled
     @Test
     public void testR3_openWithEncoding() throws Exception {
         java.io.File f = java.io.File.createTempFile("utf8test", ".txt");
@@ -119,7 +115,6 @@ public class RefactorIssuesTest {
         assertEquals("c", r.get(0).get("C").toString());
     }
 
-    // @Ignore enabled
     @Test
     public void testR3_eofActionError() throws Exception {
         java.io.File f = java.io.File.createTempFile("eoftest", ".txt");
@@ -136,7 +131,6 @@ public class RefactorIssuesTest {
         }
     }
 
-    // @Ignore enabled
     @Test
     public void testR3_binaryStream() throws Exception {
         java.io.File f = java.io.File.createTempFile("bintest", ".bin");
@@ -154,7 +148,6 @@ public class RefactorIssuesTest {
     // ===================================================================
     // Goal: implement ~|, ~t, ~+ column control and ~p portray hook.
 
-    // @Ignore enabled
     @Test
     public void testR4_columnTab() {
         java.io.PrintStream orig = System.out;
@@ -170,7 +163,6 @@ public class RefactorIssuesTest {
         assertEquals("        hi", baos.toString());
     }
 
-    // @Ignore enabled
     @Test
     public void testR4_relativeTab() {
         java.io.PrintStream orig = System.out;
@@ -206,7 +198,6 @@ public class RefactorIssuesTest {
     // ===================================================================
     // Goal: tabled predicates handle left-recursion + negation correctly.
 
-    // @Ignore enabled
     @Test
     public void testR5_tabledLeftRecursion() {
         prolog.consult(":- table path/2.");
@@ -218,7 +209,6 @@ public class RefactorIssuesTest {
         assertEquals(1, r.size());
     }
 
-    // @Ignore enabled
     @Test
     public void testR5_tabledNegation() {
         prolog.consult(":- table p/1.");
@@ -239,7 +229,6 @@ public class RefactorIssuesTest {
     // Coroutining (refinement, complements R1)
     // ===================================================================
 
-    // @Ignore enabled
     @Test
     public void testCoroutining_freezeFiresOnUnify() {
         // Use a fresh predicate (no anonymous-matching fact) to assert.
@@ -263,7 +252,6 @@ public class RefactorIssuesTest {
     // R8 - LISTTERM CONSOLIDATION (behavior check, not feature)
     // ===================================================================
 
-    // @Ignore enabled
     @Test
     public void testR8_listTermVsConsCellIdentity() {
         // After consolidation, parser should emit one canonical form
