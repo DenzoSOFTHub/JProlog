@@ -30,15 +30,19 @@ public class StringChars implements BuiltIn {
         
         Term stringTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term charsTerm = query.getArguments().get(1).resolveBindings(bindings);
-        
+
         if (stringTerm.isGround() && !charsTerm.isGround()) {
-            // Convert string to character list
-            if (!(stringTerm instanceof PrologString)) {
+            // START_CHANGE: ISS-2025-0233/0236 - accept atom or string; codepoint-aware
+            java.lang.String stringValue;
+            if (stringTerm instanceof PrologString) {
+                stringValue = ((PrologString) stringTerm).getStringValue();
+            } else if (stringTerm instanceof Atom) {
+                stringValue = ((Atom) stringTerm).getName();
+            } else {
                 return false;
             }
-            
-            java.lang.String stringValue = ((PrologString) stringTerm).getStringValue();
             Term charList = buildCharList(stringValue);
+            // END_CHANGE: ISS-2025-0233/0236
             
             Map<java.lang.String, Term> newBindings = new HashMap<>(bindings);
             if (charsTerm.unify(charList, newBindings)) {
@@ -94,14 +98,23 @@ public class StringChars implements BuiltIn {
     }
     
     private Term buildCharList(java.lang.String str) {
+        // START_CHANGE: ISS-2025-0233 - codepoint-aware (supplementary Unicode plane)
+        List<java.lang.String> chars = new ArrayList<>();
+        int i = 0;
+        while (i < str.length()) {
+            int cp = str.codePointAt(i);
+            chars.add(new java.lang.String(Character.toChars(cp)));
+            i += Character.charCount(cp);
+        }
         Term result = new Atom("[]");
-        for (int i = str.length() - 1; i >= 0; i--) {
+        for (int k = chars.size() - 1; k >= 0; k--) {
             List<Term> args = new ArrayList<>();
-            args.add(new Atom(java.lang.String.valueOf(str.charAt(i))));
+            args.add(new Atom(chars.get(k)));
             args.add(result);
             result = new CompoundTerm(new Atom("."), args);
         }
         return result;
+        // END_CHANGE: ISS-2025-0233
     }
     
     private List<java.lang.String> extractChars(Term list) {
@@ -114,13 +127,15 @@ public class StringChars implements BuiltIn {
                 Term element = compound.getArguments().get(0);
                 if (element instanceof Atom) {
                     java.lang.String charStr = ((Atom) element).getName();
-                    if (charStr.length() == 1) {  // Must be single character
+                    // START_CHANGE: ISS-2025-0233 - allow single codepoint (1 or 2 surrogate chars)
+                    if (charStr.length() == 1 || (charStr.length() == 2 && Character.isHighSurrogate(charStr.charAt(0)))) {
                         chars.add(charStr);
                     } else {
-                        return null; // Invalid character
+                        return null;
                     }
+                    // END_CHANGE: ISS-2025-0233
                 } else {
-                    return null; // Invalid character
+                    return null;
                 }
                 current = compound.getArguments().get(1);
             } else {

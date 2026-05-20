@@ -3702,7 +3702,113 @@ Audit noted that cycle detection only engages at depth >16 in `Variable.derefere
 
 ---
 
-**Last Updated**: 2026-05-20
+**Last Updated**: 2026-05-20 (v2.8.2)
+
+---
+
+## ISS-2025-0233: Unicode supplementary in string predicates
+
+**Status**: RESOLVED v2.8.2  **Date**: 2026-05-20
+
+`string_chars/2`, `split_string/4`, `atomic_list_concat/3` empty-sep used `charAt()`/`toCharArray()` which break supplementary codepoints.
+
+**Resolution**: All three now use `codePointAt`/`Character.charCount`/`codePoints()`.
+
+---
+
+## ISS-2025-0234: =../2 number support
+
+**Status**: RESOLVED v2.8.2  **Date**: 2026-05-20
+
+`42 =.. L` failed. ISO §8.5.3 mandates `L = [42]` for numbers.
+
+**Resolution**: `TermConstruction.termToList` handles Number; `listToTerm` accepts single-element [number] list; numeric functor with arity > 0 throws `type_error(atom, _)`.
+
+---
+
+## ISS-2025-0235: atom_number/2 hex/binary/octal
+
+**Status**: RESOLVED v2.8.2  **Date**: 2026-05-20
+
+`atom_number('0xFF', X)` failed. SWI accepts Prolog number syntax including prefixes.
+
+**Resolution**: `AtomNumber.parsePrologNumber` recognizes `0x`/`0X`, `0b`/`0B`, `0o`/`0O` prefixes via BigInteger.
+
+---
+
+## ISS-2025-0236: string_chars accepts atom input
+
+**Status**: RESOLVED v2.8.2  **Date**: 2026-05-20
+
+**Resolution**: `StringChars` accepts Atom or PrologString as first arg.
+
+---
+
+## ISS-2025-0237: atomic_list_concat/2
+
+**Status**: RESOLVED v2.8.2  **Date**: 2026-05-20
+
+Only `/3` was implemented. SWI library has `/2` (no separator).
+
+**Resolution**: `JoinString.execute` dispatches arity 2 to plain concat; registry arity range `{2, 3}`.
+
+---
+
+## ISS-2025-0238: atom_to_term/3
+
+**Status**: RESOLVED v2.8.2  **Date**: 2026-05-20
+
+**Resolution**: New `AtomToTerm` class parses atom, returns term + bindings list of `Name=Var` pairs.
+
+---
+
+## ISS-2025-0239: atom_string both-var error
+
+**Status**: RESOLVED v2.8.2  **Date**: 2026-05-20
+
+**Resolution**: Throws `instantiation_error` per ISO instead of generic exception.
+
+---
+
+## ISS-2025-0240: number_string epsilon comparison
+
+**Status**: RESOLVED v2.8.2  **Date**: 2026-05-20
+
+**Resolution**: Use `Double.doubleToLongBits` for exact bit-pattern comparison (no false positives near 1e-10).
+
+---
+
+## ISS-2025-0241: WriteCanonical list expansion
+
+**Status**: VERIFIED ALREADY CORRECT v2.8.2  **Date**: 2026-05-20
+
+`canonicalRepresentation` already emits `'.'(...)` since `.` triggers compound path with quoteAtom. `[]` becomes `'[]'`. No change needed.
+
+---
+
+## ISS-2025-0242: Operator-aware writer
+
+**Status**: RESOLVED v2.8.2  **Date**: 2026-05-20
+
+`write/1`, `writeln/1`, `writeq/1`, `format ~w/~q` previously emitted functional notation (`+(1,2)` instead of `1+2`) by calling `term.toString()`.
+
+**Resolution**: New `core/util/TermFormatter.java` consults `OperatorTable.getDefault()`. Handles operator precedence wrapping, lists `[...]`, curly braces `{...}`, `'$VAR'(N)` rendering for `numbervars(true)`, atom quoting. `OperatorTable` exposes static `getDefault()`/`setDefault()` with first-standard-init publishing (and unpublish in `createEmpty`).
+
+---
+
+## ISS-2025-0243: term_to_atom operator roundtrip
+
+**Status**: RESOLVED v2.8.2  **Date**: 2026-05-20
+
+**Resolution**: `TermToAtom` term→atom path now uses `TermFormatter.format(t, true, false, false, 1200)` so `1+2` roundtrips correctly.
+
+---
+
+## ISS-2025-0244: Logical Update View
+
+**Status**: VERIFIED ALREADY CORRECT v2.8.2  **Date**: 2026-05-20
+
+KB methods (`getRulesForPredicate`, `getRulesWithFirstArgIndex`) return `Collections.unmodifiableList(new ArrayList<>(...))` (snapshot). QuerySolver line 499 wraps in another snapshot before iteration. ISO §7.5.4 LUV correctly implemented. No change needed.
 
 ---
 

@@ -40,6 +40,24 @@ public class OperatorTable {
     /**
      * Create a new operator table with standard ISO operators.
      */
+    // START_CHANGE: ISS-2025-0242 - shared default instance for write-side operator awareness
+    private static volatile OperatorTable defaultInstance;
+    public static OperatorTable getDefault() {
+        OperatorTable d = defaultInstance;
+        if (d == null) {
+            synchronized (OperatorTable.class) {
+                d = defaultInstance;
+                if (d == null) {
+                    d = new OperatorTable();
+                    // setDefault below handled by constructor publishing
+                }
+            }
+        }
+        return d;
+    }
+    public static void setDefault(OperatorTable t) { defaultInstance = t; }
+    // END_CHANGE: ISS-2025-0242
+
     public OperatorTable() {
         this.operators = new ConcurrentHashMap<>();
         this.prefixOperators = new ConcurrentHashMap<>();
@@ -47,6 +65,11 @@ public class OperatorTable {
         this.infixOperators = new ConcurrentHashMap<>();
 
         initializeStandardOperators();
+
+        // START_CHANGE: ISS-2025-0242 - publish first standard-init instance as default.
+        // createEmpty() clears the table after construction; ensure that doesn't poison the default.
+        if (defaultInstance == null && !this.infixOperators.isEmpty()) defaultInstance = this;
+        // END_CHANGE: ISS-2025-0242
     }
 
     // START_CHANGE: ISS-2025-0167 - Factory method for empty operator table (per-module scope)
@@ -58,11 +81,15 @@ public class OperatorTable {
      */
     public static OperatorTable createEmpty() {
         OperatorTable table = new OperatorTable();
+        // START_CHANGE: ISS-2025-0242 - if we just published an empty-after-clear as default, undo it
+        boolean wasDefault = (defaultInstance == table);
         table.operators.clear();
         table.prefixOperators.clear();
         table.postfixOperators.clear();
         table.infixOperators.clear();
         table.cachedOperatorNames = null;
+        if (wasDefault) defaultInstance = null;
+        // END_CHANGE: ISS-2025-0242
         return table;
     }
     // END_CHANGE: ISS-2025-0167

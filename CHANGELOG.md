@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.8.2] - 2026-05-20
+
+### Twelfth-Round String/Term/Write Fixes (ISS-2025-0233..0243)
+
+Third deep audit round covering string/atom predicates, term ops, write semantics. 11 fixes applied; 2 verified already correct.
+
+**Strings**:
+- **ISS-2025-0233**: `string_chars/2`, `split_string/4`, `atomic_list_concat/3` (empty-sep split mode) now codepoint-aware (supplementary Unicode plane)
+- **ISS-2025-0236**: `string_chars/2` accepts atom input (SWI-compat)
+- **ISS-2025-0237**: `atomic_list_concat/2` (no separator) added
+- **ISS-2025-0239**: `atom_string(X, Y)` with both vars now throws `instantiation_error` (was generic exception)
+- **ISS-2025-0240**: `number_string/2` exact bit-pattern comparison instead of `1e-10` fuzzy
+
+**Term ops**:
+- **ISS-2025-0234**: `=../2` supports numbers per ISO §8.5.3 — `42 =.. [42]`; numeric functor with arity > 0 throws `type_error(atom, _)`
+- **ISS-2025-0235**: `atom_number/2` accepts `0xFF`, `0b101`, `0o77` prefixes via BigInteger parsing
+- **ISS-2025-0238**: `atom_to_term/3` added — parses atom, returns term + variable bindings list
+
+**Write semantics**:
+- **ISS-2025-0242**: New `TermFormatter` consults `OperatorTable.getDefault()` for operator-aware output. Now `write(1+2)` → `1+2`, `write([a,b,c])` → `[a,b,c]`, `write({a,b})` → `{a,b}`. Used by `write/1`, `writeln/1`, `writeq/1`, `format/2` `~w` and `~q`. Operator precedence wrapping for parens.
+- **ISS-2025-0243**: `term_to_atom/2` uses TermFormatter (operator roundtrip)
+
+**Verified already correct** (audit overzealous): ISS-0241 (WriteCanonical already emits canonical functional form with quoted `[]`), ISS-0244 (LUV: KB methods return unmodifiable copies + iteration snapshots in QuerySolver).
+
+### Test Coverage
+
+- 478 JUnit tests pass (7 new verification tests)
+- 20/20 examples regression pass
+
+---
+
 ## [2.8.1] - 2026-05-20
 
 ### Eleventh-Round List & Arithmetic Fixes (ISS-2025-0215..0231)

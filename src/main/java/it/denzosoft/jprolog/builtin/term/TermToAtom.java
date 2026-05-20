@@ -21,8 +21,9 @@ public class TermToAtom implements BuiltIn {
         Term atomArg = query.getArguments().get(1).resolveBindings(bindings);
 
         if (termArg.isGround()) {
-            // Term -> Atom: convert term to string
-            String str = termArg.toString();
+            // START_CHANGE: ISS-2025-0243 - operator-aware roundtrip via TermFormatter
+            String str = it.denzosoft.jprolog.core.util.TermFormatter.format(termArg, true, false, false, 1200);
+            // END_CHANGE: ISS-2025-0243
             Map<String, Term> newBindings = new HashMap<>(bindings);
             if (atomArg.unify(new Atom(str), newBindings)) {
                 solutions.add(newBindings);

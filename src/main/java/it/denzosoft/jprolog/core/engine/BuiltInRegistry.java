@@ -67,6 +67,12 @@ public class BuiltInRegistry {
         putArity("sort", 2, 4);
         // partition/4 not registered: would shadow user-defined partition (e.g. quicksort)
         // END_CHANGE: ISS-2025-0222
+        // START_CHANGE: ISS-2025-0237 - atomic_list_concat/2,3
+        putArity("atomic_list_concat", 2, 3);
+        // END_CHANGE: ISS-2025-0237
+        // START_CHANGE: ISS-2025-0238 - atom_to_term/3
+        putArity("atom_to_term", 3);
+        // END_CHANGE: ISS-2025-0238
         // START_CHANGE: ISS-2025-0092 - Tabling predicates
         putArity("table", 1);
         putArity("abolish_all_tables", 0);

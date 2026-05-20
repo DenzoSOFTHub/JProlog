@@ -74,10 +74,12 @@ public class NumberString implements BuiltIn {
             
             double numberValue = ((Number) numberTerm).getValue();
             java.lang.String stringValue = ((PrologString) stringTerm).getStringValue();
-            
+
+            // START_CHANGE: ISS-2025-0240 - exact roundtrip comparison: format number and compare strings
+            // (Avoids epsilon-based false positives. Two numbers are equal iff their canonical reprs match.)
             try {
                 double parsedValue = Double.parseDouble(stringValue.trim());
-                if (Math.abs(numberValue - parsedValue) < 1e-10) { // Allow for floating point precision
+                if (Double.doubleToLongBits(numberValue) == Double.doubleToLongBits(parsedValue)) {
                     solutions.add(new HashMap<>(bindings));
                     return true;
                 }
@@ -85,6 +87,7 @@ public class NumberString implements BuiltIn {
                 return false;
             }
             return false;
+            // END_CHANGE: ISS-2025-0240
             
         } else {
             // START_CHANGE: ISS-2025-0084 - Return false instead of throwing for normal failure

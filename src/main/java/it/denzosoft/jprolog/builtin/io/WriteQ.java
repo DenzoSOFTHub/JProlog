@@ -86,32 +86,9 @@ public class WriteQ implements BuiltIn {
      * This includes quoting atoms that need quotes, escaping special characters, etc.
      */
     private String getQuotedRepresentation(Term term) {
-        if (term instanceof Atom) {
-            Atom atom = (Atom) term;
-            String atomName = atom.getName();
-            return getQuotedAtomRepresentation(atomName);
-        } else if (term instanceof Number) {
-            return term.toString();
-        } else if (term instanceof CompoundTerm) {
-            CompoundTerm compound = (CompoundTerm) term;
-            StringBuilder sb = new StringBuilder();
-            
-            String functorName = compound.getName();
-            sb.append(getQuotedAtomRepresentation(functorName));
-            
-            if (compound.getArguments() != null && compound.getArguments().size() > 0) {
-                sb.append("(");
-                for (int i = 0; i < compound.getArguments().size(); i++) {
-                    if (i > 0) sb.append(", ");
-                    sb.append(getQuotedRepresentation(compound.getArguments().get(i)));
-                }
-                sb.append(")");
-            }
-            
-            return sb.toString();
-        } else {
-            return term.toString();
-        }
+        // START_CHANGE: ISS-2025-0242 - delegate to operator-aware formatter with quoted=true
+        return it.denzosoft.jprolog.core.util.TermFormatter.format(term, true, false, false, 1200);
+        // END_CHANGE: ISS-2025-0242
     }
 
     /**

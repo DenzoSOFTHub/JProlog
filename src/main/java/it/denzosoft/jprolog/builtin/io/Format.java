@@ -264,23 +264,18 @@ public class Format extends AbstractBuiltInWithContext {
      * Format a term in its natural representation.
      */
     private String formatTerm(Term term) {
-        return term.toString();
+        // START_CHANGE: ISS-2025-0242 - operator-aware
+        return it.denzosoft.jprolog.core.util.TermFormatter.format(term, false, false, false, 1200);
+        // END_CHANGE: ISS-2025-0242
     }
-    
+
     /**
      * Format a term with quotes if necessary.
      */
     private String formatQuoted(Term term) {
-        if (term instanceof Atom) {
-            String name = ((Atom) term).getName();
-            if (needsQuoting(name)) {
-                return "'" + escapeAtom(name) + "'";
-            } else {
-                return name;
-            }
-        } else {
-            return term.toString();
-        }
+        // START_CHANGE: ISS-2025-0242 - operator-aware quoted
+        return it.denzosoft.jprolog.core.util.TermFormatter.format(term, true, false, false, 1200);
+        // END_CHANGE: ISS-2025-0242
     }
     
     /**

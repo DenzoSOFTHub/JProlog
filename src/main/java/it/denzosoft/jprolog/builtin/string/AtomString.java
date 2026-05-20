@@ -76,7 +76,9 @@ public class AtomString implements BuiltIn {
             return false;
             
         } else {
-            throw new PrologEvaluationException("atom_string/2: at least one argument must be instantiated.");
+            // START_CHANGE: ISS-2025-0239 - ISO instantiation_error
+            throw new PrologEvaluationException("instantiation_error");
+            // END_CHANGE: ISS-2025-0239
         }
         
         return false;

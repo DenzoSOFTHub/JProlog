@@ -64,71 +64,71 @@ public class SplitString implements BuiltIn {
      */
     private List<String> splitString(String input, String separators, String padChars) {
         List<String> result = new ArrayList<>();
-        
+
         if (input.isEmpty()) {
             return result;
         }
-        
-        // Convert separators and pad chars to sets for efficient lookup
-        Set<Character> sepSet = new HashSet<>();
-        for (char c : separators.toCharArray()) {
-            sepSet.add(c);
-        }
-        
-        Set<Character> padSet = new HashSet<>();
-        for (char c : padChars.toCharArray()) {
-            padSet.add(c);
-        }
-        
-        // Split the string
+
+        // START_CHANGE: ISS-2025-0233 - codepoint-aware separators + pad
+        Set<Integer> sepSet = new HashSet<>();
+        separators.codePoints().forEach(sepSet::add);
+        Set<Integer> padSet = new HashSet<>();
+        padChars.codePoints().forEach(padSet::add);
+
         StringBuilder current = new StringBuilder();
-        
-        for (char c : input.toCharArray()) {
-            if (sepSet.contains(c)) {
-                // Found separator - process current substring
+        int i = 0;
+        while (i < input.length()) {
+            int cp = input.codePointAt(i);
+            if (sepSet.contains(cp)) {
                 String trimmed = trimPadding(current.toString(), padSet);
                 if (!trimmed.isEmpty()) {
                     result.add(trimmed);
                 }
                 current.setLength(0);
             } else {
-                current.append(c);
+                current.appendCodePoint(cp);
             }
+            i += Character.charCount(cp);
         }
-        
-        // Process final substring
+
         if (current.length() > 0) {
             String trimmed = trimPadding(current.toString(), padSet);
             if (!trimmed.isEmpty()) {
                 result.add(trimmed);
             }
         }
-        
+
         return result;
+        // END_CHANGE: ISS-2025-0233
     }
-    
+
     /**
-     * Remove padding characters from start and end of string.
+     * Remove padding characters from start and end of string (codepoint-aware).
      */
-    private String trimPadding(String str, Set<Character> padChars) {
+    private String trimPadding(String str, Set<Integer> padChars) {
         if (str.isEmpty()) {
             return str;
         }
-        
+        // START_CHANGE: ISS-2025-0233 - codepoint-aware trim
         int start = 0;
-        int end = str.length() - 1;
-        
-        // Trim from start
-        while (start <= end && padChars.contains(str.charAt(start))) {
-            start++;
+        while (start < str.length()) {
+            int cp = str.codePointAt(start);
+            if (!padChars.contains(cp)) break;
+            start += Character.charCount(cp);
         }
-        
-        // Trim from end
-        while (end >= start && padChars.contains(str.charAt(end))) {
-            end--;
+        int end = str.length();
+        while (end > start) {
+            int prev = end - 1;
+            if (Character.isLowSurrogate(str.charAt(prev)) && prev > 0
+                && Character.isHighSurrogate(str.charAt(prev - 1))) {
+                prev--;
+            }
+            int cp = str.codePointAt(prev);
+            if (!padChars.contains(cp)) break;
+            end = prev;
         }
-        
-        return str.substring(start, end + 1);
+        return str.substring(start, end);
+        // END_CHANGE: ISS-2025-0233
     }
     
     /**

@@ -17,7 +17,9 @@ public class Writeln implements BuiltIn {
 
         Term termToWrite = query.getArguments().get(0);
         Term resolvedTerm = termToWrite.resolveBindings(bindings);
-        System.out.println(resolvedTerm.toString());
+        // START_CHANGE: ISS-2025-0242 - operator-aware formatting
+        System.out.println(it.denzosoft.jprolog.core.util.TermFormatter.format(resolvedTerm, false, false, false, 1200));
+        // END_CHANGE: ISS-2025-0242
 
         solutions.add(bindings);
         return true;

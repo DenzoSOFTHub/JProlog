@@ -107,6 +107,9 @@ public class BuiltInFactory {
         registerFactory("term_variables", it.denzosoft.jprolog.builtin.term.TermVariables::new);
         registerFactory("subsumes_term", it.denzosoft.jprolog.builtin.term.SubsumesTerm::new);
         registerFactory("term_to_atom", it.denzosoft.jprolog.builtin.term.TermToAtom::new);
+        // START_CHANGE: ISS-2025-0238 - atom_to_term/3
+        registerFactory("atom_to_term", it.denzosoft.jprolog.builtin.term.AtomToTerm::new);
+        // END_CHANGE: ISS-2025-0238
         registerFactory("numbervars", it.denzosoft.jprolog.builtin.term.NumberVars::new);
         registerFactory("number_vars", it.denzosoft.jprolog.builtin.term.NumberVars::new);
         

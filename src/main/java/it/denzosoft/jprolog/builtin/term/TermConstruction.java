@@ -218,6 +218,12 @@ public class TermConstruction implements BuiltIn {
             List<Term> list = new ArrayList<>();
             list.add(term);
             return buildList(list);
+        } else if (term instanceof Number) {
+            // START_CHANGE: ISS-2025-0234 - ISO §8.5.3: number =.. [number]
+            List<Term> list = new ArrayList<>();
+            list.add(term);
+            return buildList(list);
+            // END_CHANGE: ISS-2025-0234
         } else if (term instanceof CompoundTerm) {
             CompoundTerm ct = (CompoundTerm) term;
             List<Term> list = new ArrayList<>();
@@ -227,21 +233,28 @@ public class TermConstruction implements BuiltIn {
         }
         return null;
     }
-    
+
     private Term listToTerm(Term list) {
         List<Term> elements = extractElements(list);
         if (elements.isEmpty()) {
             return null;
         }
-        
-        if (elements.size() == 1 && elements.get(0) instanceof Atom) {
-            return elements.get(0); // Simple atom
-        } else if (elements.size() >= 1 && elements.get(0) instanceof Atom) {
-            Atom functor = (Atom) elements.get(0);
+        // START_CHANGE: ISS-2025-0234 - single-element list: atom or number
+        Term first = elements.get(0);
+        if (elements.size() == 1) {
+            if (first instanceof Atom || first instanceof Number) return first;
+            return null;
+        }
+        if (first instanceof Number) {
+            throw new PrologEvaluationException("type_error(atom, " + first + ")");
+        }
+        if (first instanceof Atom) {
+            Atom functor = (Atom) first;
             List<Term> args = elements.subList(1, elements.size());
             return new CompoundTerm(functor, new ArrayList<>(args));
         }
         return null;
+        // END_CHANGE: ISS-2025-0234
     }
     
     // START_CHANGE: ISS-2025-0084 - Consolidate to use ListUtils

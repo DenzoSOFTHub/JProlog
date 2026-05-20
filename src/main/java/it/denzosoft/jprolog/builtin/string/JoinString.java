@@ -18,10 +18,27 @@ public class JoinString implements BuiltIn {
     
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        if (query.getArguments().size() != 3) {
-            throw new PrologEvaluationException("atomic_list_concat/3 requires exactly 3 arguments");
+        int arity = query.getArguments().size();
+        // START_CHANGE: ISS-2025-0237 - atomic_list_concat/2: no separator (just concat)
+        if (arity == 2) {
+            Term listTerm2 = query.getArguments().get(0).resolveBindings(bindings);
+            Term atomTerm2 = query.getArguments().get(1);
+            List<String> parts = extractStringList(listTerm2);
+            if (parts == null) return false;
+            StringBuilder sb = new StringBuilder();
+            for (String p : parts) sb.append(p);
+            Map<String, Term> nb = new HashMap<>(bindings);
+            if (atomTerm2.unify(new Atom(sb.toString()), nb)) {
+                solutions.add(nb);
+                return true;
+            }
+            return false;
         }
-        
+        // END_CHANGE: ISS-2025-0237
+        if (arity != 3) {
+            throw new PrologEvaluationException("atomic_list_concat requires 2 or 3 arguments");
+        }
+
         Term listTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term separatorTerm = query.getArguments().get(1).resolveBindings(bindings);
         Term atomTerm = query.getArguments().get(2).resolveBindings(bindings);
@@ -63,11 +80,17 @@ public class JoinString implements BuiltIn {
         
         String[] parts;
         if (separator.isEmpty()) {
-            // Empty separator - split into individual characters
-            parts = new String[atomValue.length()];
-            for (int i = 0; i < atomValue.length(); i++) {
-                parts[i] = String.valueOf(atomValue.charAt(i));
+            // START_CHANGE: ISS-2025-0233 - codepoint-aware char-by-char split
+            int cpCount = atomValue.codePointCount(0, atomValue.length());
+            parts = new String[cpCount];
+            int idx = 0;
+            int i = 0;
+            while (i < atomValue.length()) {
+                int cp = atomValue.codePointAt(i);
+                parts[idx++] = new String(Character.toChars(cp));
+                i += Character.charCount(cp);
             }
+            // END_CHANGE: ISS-2025-0233
         } else {
             parts = atomValue.split(java.util.regex.Pattern.quote(separator), -1);
         }

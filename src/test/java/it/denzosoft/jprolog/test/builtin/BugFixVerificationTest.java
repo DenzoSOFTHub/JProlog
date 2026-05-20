@@ -1479,4 +1479,79 @@ public class BugFixVerificationTest {
         }
     }
     // END_CHANGE: ISS-2025-0229
+
+    // START_CHANGE: ISS-2025-0234 - =.. supports numbers
+    @Test
+    public void testISS0234_univNumber() {
+        List<Map<String, Term>> s = prolog.solve("42 =.. L.");
+        assertEquals(1, s.size());
+        assertEquals("[42]", s.get(0).get("L").toString());
+    }
+    // END_CHANGE: ISS-2025-0234
+
+    // START_CHANGE: ISS-2025-0235 - atom_number hex
+    @Test
+    public void testISS0235_atomNumberHex() {
+        List<Map<String, Term>> s = prolog.solve("atom_number('0xFF', X).");
+        assertEquals(1, s.size());
+        assertEquals("255", s.get(0).get("X").toString());
+    }
+
+    @Test
+    public void testISS0235_atomNumberBinary() {
+        List<Map<String, Term>> s = prolog.solve("atom_number('0b1010', X).");
+        assertEquals(1, s.size());
+        assertEquals("10", s.get(0).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0235
+
+    // START_CHANGE: ISS-2025-0237 - atomic_list_concat/2
+    @Test
+    public void testISS0237_atomicListConcat2() {
+        List<Map<String, Term>> s = prolog.solve("atomic_list_concat([hello, ' ', world], R).");
+        assertEquals(1, s.size());
+        assertEquals("hello world", s.get(0).get("R").toString());
+    }
+    // END_CHANGE: ISS-2025-0237
+
+    // START_CHANGE: ISS-2025-0238 - atom_to_term/3
+    @Test
+    public void testISS0238_atomToTerm() {
+        List<Map<String, Term>> s = prolog.solve("atom_to_term('foo(X, Y)', T, B).");
+        assertEquals(1, s.size());
+        // Term should be foo(_, _) parsed; bindings list contains pairs name=var
+        String b = s.get(0).get("B").toString();
+        // Term form of bindings is [=(X,_),=(Y,_)] — check both X and Y appear as binding names
+        org.junit.Assert.assertTrue("expected X in bindings: " + b, b.contains("X"));
+        org.junit.Assert.assertTrue("expected Y in bindings: " + b, b.contains("Y"));
+    }
+    // END_CHANGE: ISS-2025-0238
+
+    // START_CHANGE: ISS-2025-0242 - operator-aware write
+    @Test
+    public void testISS0242_writeOperator() {
+        java.io.PrintStream origOut = System.out;
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(baos));
+        try {
+            prolog.solve("write(1+2).");
+        } finally {
+            System.setOut(origOut);
+        }
+        org.junit.Assert.assertEquals("1+2", baos.toString().trim());
+    }
+
+    @Test
+    public void testISS0242_writeList() {
+        java.io.PrintStream origOut = System.out;
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(baos));
+        try {
+            prolog.solve("write([a,b,c]).");
+        } finally {
+            System.setOut(origOut);
+        }
+        org.junit.Assert.assertEquals("[a,b,c]", baos.toString().trim());
+    }
+    // END_CHANGE: ISS-2025-0242
 }

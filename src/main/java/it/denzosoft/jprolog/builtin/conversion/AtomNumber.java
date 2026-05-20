@@ -29,18 +29,18 @@ public class AtomNumber implements BuiltIn {
             if (!(atomTerm instanceof Atom)) {
                 return false; // First argument must be an atom
             }
-            
+
             String atomValue = ((Atom) atomTerm).getName();
-            try {
-                double value = Double.parseDouble(atomValue);
-                Map<String, Term> newBindings = new HashMap<>(bindings);
-                if (numberTerm.unify(new Number(value), newBindings)) {
-                    solutions.add(new HashMap<>(newBindings));
-                    return true;
-                }
-            } catch (NumberFormatException e) {
-                return false; // Atom is not a valid number
+            // START_CHANGE: ISS-2025-0235 - support hex/binary/octal prefixes
+            Number parsed = parsePrologNumber(atomValue);
+            if (parsed == null) return false;
+            Map<String, Term> newBindings = new HashMap<>(bindings);
+            if (numberTerm.unify(parsed, newBindings)) {
+                solutions.add(new HashMap<>(newBindings));
+                return true;
             }
+            return false;
+            // END_CHANGE: ISS-2025-0235
         } else if (!atomTerm.isGround() && numberTerm.isGround()) {
             // Convert number to atom
             if (!(numberTerm instanceof Number)) {
@@ -89,4 +89,43 @@ public class AtomNumber implements BuiltIn {
             return String.valueOf(value);
         }
     }
+
+    // START_CHANGE: ISS-2025-0235 - parse Prolog number syntax: decimals, floats, hex, binary, octal
+    private static Number parsePrologNumber(String s) {
+        if (s == null || s.isEmpty()) return null;
+        String t = s.trim();
+        boolean neg = false;
+        int i = 0;
+        if (t.startsWith("-")) { neg = true; i = 1; }
+        else if (t.startsWith("+")) { i = 1; }
+        String body = t.substring(i);
+        try {
+            if (body.startsWith("0x") || body.startsWith("0X")) {
+                java.math.BigInteger bi = new java.math.BigInteger(body.substring(2), 16);
+                if (neg) bi = bi.negate();
+                return new Number(bi);
+            }
+            if (body.startsWith("0o") || body.startsWith("0O")) {
+                java.math.BigInteger bi = new java.math.BigInteger(body.substring(2), 8);
+                if (neg) bi = bi.negate();
+                return new Number(bi);
+            }
+            if (body.startsWith("0b") || body.startsWith("0B")) {
+                java.math.BigInteger bi = new java.math.BigInteger(body.substring(2), 2);
+                if (neg) bi = bi.negate();
+                return new Number(bi);
+            }
+            // Default: try double
+            double d = Double.parseDouble(t);
+            // Preserve integer type if value has no fractional part and was without exponent/decimal
+            boolean hasFraction = t.contains(".") || t.toLowerCase().contains("e");
+            if (!hasFraction && d == Math.floor(d) && !Double.isInfinite(d)) {
+                return new Number((long) d);
+            }
+            return new Number(d, false);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+    // END_CHANGE: ISS-2025-0235
 }

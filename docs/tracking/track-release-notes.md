@@ -1,5 +1,31 @@
 # JProlog - Release Notes
 
+## Release 2.8.2 - 2026-05-20
+
+### Twelfth-Round String/Term/Write Fixes (ISS-2025-0233..0243)
+
+11 fixes; 2 verified already-correct.
+
+**Strings**:
+- ISS-0233 codepoint-aware string_chars/split_string/atomic_list_concat
+- ISS-0236 string_chars accepts atom input
+- ISS-0237 atomic_list_concat/2 (no separator)
+- ISS-0239 atom_string both-var → instantiation_error
+- ISS-0240 number_string exact bit-pattern compare
+
+**Term ops**:
+- ISS-0234 =../2 number support (ISO §8.5.3)
+- ISS-0235 atom_number hex/binary/octal prefixes
+- ISS-0238 atom_to_term/3
+
+**Write semantics**:
+- ISS-0242 new TermFormatter — operator-aware output for write/writeln/writeq/format
+- ISS-0243 term_to_atom roundtrip with operators
+
+**Tests**: 478 JUnit (7 new), 20/20 examples.
+
+---
+
 ## Release 2.8.1 - 2026-05-20
 
 ### Eleventh-Round List & Arithmetic Fixes (ISS-2025-0215..0231)
