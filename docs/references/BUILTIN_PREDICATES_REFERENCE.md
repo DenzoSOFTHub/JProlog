@@ -437,10 +437,18 @@ City = london.
 
 **When to use**: Use for generic term manipulation, creating terms dynamically, or converting between representations.
 
+ISO §8.5.3 — handles atoms, numbers, and compound terms. Numbers are 0-ary atomic terms: `42 =.. [42]` *(v2.8.2)*. Construction with numeric functor and arity > 0 throws `type_error(atom, _)`.
+
 ```prolog
 % Example: Convert term to list and back
 ?- person(john, 25, london) =.. List.
 List = [person, john, 25, london].
+
+?- 42 =.. L.
+L = [42].
+
+?- X =.. [42, a, b].  % Error: numeric functor not allowed with args
+% throws type_error(atom, 42)
 
 ?- Term =.. [student, mary, 20, 'computer science'].
 Term = student(mary, 20, 'computer science').
@@ -598,13 +606,30 @@ Match = person(john, _, _).
 
 ### term_to_atom/2
 **Purpose**: Convert between a term and its atom representation. Bidirectional.
+
+*v2.8.2*: term→atom direction uses operator-aware formatter for proper roundtrip (`1+2` is written as `1+2`, not `+(1,2)`).
+
 ```prolog
 ?- term_to_atom(f(a, b), X).
 X = 'f(a, b)'.
 
 ?- term_to_atom(T, 'f(a, b)').
 T = f(a, b).
+
+?- term_to_atom(1+2*3, A).
+A = '1+2*3'.   % operator notation preserved
 ```
+
+### atom_to_term/3
+**Purpose**: Parse an atom as a Prolog term, returning the term plus a list of variable bindings (`Name=Var` pairs). *(v2.8.2+)*
+
+```prolog
+?- atom_to_term('foo(X, Y)', T, B).
+T = foo(_42, _43),
+B = ['X'=_42, 'Y'=_43].
+```
+
+Use case: reading and post-processing user input that may contain variables.
 
 ### numbervars/3
 **Purpose**: Number unbound variables in a term with `$VAR(N)` terms.
@@ -868,10 +893,26 @@ P = [c, a, b] ;
 P = [c, b, a].
 ```
 
-### sort/2 and msort/2
+### sort/2, sort/4 and msort/2
 **Purpose**: Sort lists in standard order.
 - `sort/2` removes duplicates
 - `msort/2` keeps duplicates
+- `sort/4` (v2.8.1+) accepts key index + order operator: `sort(+Key, +Order, +List, -Sorted)`
+
+```prolog
+% sort/4 with custom order
+?- sort(0, @>, [3, 1, 2, 1], L).      % descending, dedup
+L = [3, 2, 1].
+
+?- sort(0, @=<, [3, 1, 2, 1], L).     % ascending, KEEP dups
+L = [1, 1, 2, 3].
+
+% sort by 2nd arg of compound
+?- sort(2, @<, [pair(a, 30), pair(b, 10), pair(c, 20)], L).
+L = [pair(b, 10), pair(c, 20), pair(a, 30)].
+```
+
+Key = 0 means compare whole terms; Key = N (N≥1) extracts N-th argument of compound. Order operators: `@<`, `@=<`, `@>`, `@>=` (the `=<`/`>=` variants keep duplicates).
 
 **When to use**: Use for ordering data, removing duplicates, or preparing data for efficient searching.
 
@@ -978,15 +1019,19 @@ X = [2, 3].
 X = [1, 2, 3, 4].
 ```
 
-### maplist/2, maplist/3, maplist/4
-**Purpose**: Apply a goal to each element of a list. Higher-order predicate.
+### maplist/2, maplist/3, maplist/4, maplist/5
+**Purpose**: Apply a goal to each element of a list (or each tuple across multiple lists). Higher-order predicate.
 ```prolog
 ?- maplist(atom, [a, b, c]).
 true.
 
 ?- maplist(succ, [1, 2, 3], Result).
 Result = [2, 3, 4].
+
+?- maplist(plus, [1,2,3], [10,20,30], R).
+R = [11, 22, 33].
 ```
+*Added in v2.8.1*: `maplist/5` arity for `call(Goal, E1, E2, E3, E4)` across 4 lists.
 
 ### include/3, exclude/3
 **Purpose**: Filter a list by keeping (include) or removing (exclude) elements where Goal succeeds.
@@ -1024,6 +1069,18 @@ Prolog treats arithmetic expressions differently from other terms:
 
 **When to use**: Use for all arithmetic calculations where you need the computed value.
 
+#### Available evaluable functors
+
+**Arithmetic** (`+`, `-`, `*`, `/`, `//` integer div, `mod`, `rem`, `div`, `**` (always float on neg-exp), `^` integer power *(v2.8.1)*, unary `-`, `+`, `abs`, `sign`, `min`, `max`, `gcd` *(v2.8.0)*)
+
+**Float-only** (`sqrt`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `exp`, `log`, `log/2` *(v2.8.1)*, `cot` *(v2.8.1)*, `acot` *(v2.8.1)*, `cbrt` *(v2.8.1)*, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh` *(all v2.8.1)*)
+
+**Float manipulation** (`truncate`, `round`, `floor`, `ceiling`, `float`, `integer` *(v2.8.1)*, `float_integer_part`, `float_fractional_part`, `rational` / `rationalize` *(v2.8.1)*)
+
+**Bitwise integer** (`/\`, `\/`, `xor`, `\` (NOT), `<<`, `>>`, `msb`, `lsb`, `popcount`)
+
+**Constants** (`pi`, `e`, `inf`, `nan`, `epsilon` *(v2.8.1)*, `max_tagged_integer` *(v2.8.1)*, `min_tagged_integer` *(v2.8.1)*)
+
 ```prolog
 % Basic arithmetic
 ?- X is 2 + 3.
@@ -1045,6 +1102,33 @@ Y = 0.0.
 
 ?- Z is max(5, 3).
 Z = 5.
+
+% Integer power
+?- X is 2 ^ 10.
+X = 1024.
+
+% Truncating cast
+?- X is integer(3.7).
+X = 3.
+
+?- X is integer(-3.7).
+X = -3.
+
+% Hyperbolic
+?- X is sinh(0.0).
+X = 0.0.
+
+% Base-N logarithm
+?- X is log(10, 100).
+X = 2.0.
+
+% GCD
+?- X is gcd(12, 18).
+X = 6.
+
+% Epsilon
+?- X is epsilon.
+X = 2.220446049250313e-16.
 
 % Practical example: Calculate compound interest
 compound_interest(Principal, Rate, Time, Amount) :-
@@ -1794,6 +1878,8 @@ I/O predicates handle reading from and writing to files and streams.
 
 **When to use**: Use for displaying results, debugging, or user interaction.
 
+*v2.8.2*: Output is now **operator-aware** — consults the operator table for infix/prefix/postfix notation, list notation, curly braces, and `'$VAR'(N)` rendering when `numbervars(true)`. Output of `write(1+2)` is `1+2` (was `+(1,2)`); lists print as `[a,b,c]`; precedence-aware parens added when needed.
+
 ```prolog
 % write/1 - Output without newline
 ?- write('Hello'), write(' '), write('World').
@@ -1867,8 +1953,17 @@ true.
 
 ### Basic Input
 
-### read/1
+### read/1, read/2
 **Purpose**: Reads a Prolog term from input (must end with period).
+- `read/1` reads from `current_input` (stdin by default)
+- `read/2` reads from given stream: `read(+Stream, -Term)` *(added v2.8.0)*
+
+```prolog
+% From file stream
+?- open('data.pl', read, S), read(S, T), close(S).
+T = foo(1, 2).
+```
+On end-of-file, both bind the term to the atom `end_of_file`.
 
 **When to use**: Use for reading structured Prolog data.
 
@@ -2433,6 +2528,8 @@ Encrypted = bcd.
 
 **When to use**: Use for parsing numeric input or formatting numbers.
 
+*v2.8.2*: accepts hex (`0xFF`), binary (`0b1010`), octal (`0o77`) prefixes when parsing atom→number.
+
 ```prolog
 % Convert atom to number
 ?- atom_number('42', N).
@@ -2440,6 +2537,16 @@ N = 42.
 
 ?- atom_number('3.14', N).
 N = 3.14.
+
+% Hex / binary / octal (v2.8.2+)
+?- atom_number('0xFF', N).
+N = 255.
+
+?- atom_number('0b1010', N).
+N = 10.
+
+?- atom_number('0o77', N).
+N = 63.
 
 % Convert number to atom
 ?- atom_number(A, 42).
@@ -2515,8 +2622,11 @@ tokenize(Sentence, Tokens) :-
 T = ['Hello', 'world', 'How', 'are', 'you'].
 ```
 
-### atomic_list_concat/3
-**Purpose**: Joins atoms with separators or splits by separator.
+### atomic_list_concat/2, atomic_list_concat/3
+**Purpose**: Joins atoms (optionally with separator) or splits by separator.
+
+- `atomic_list_concat/2` (v2.8.2+): joins without separator
+- `atomic_list_concat/3`: joins with separator; reverse mode splits
 
 **When to use**: Use for building formatted strings or parsing.
 

@@ -983,7 +983,7 @@ safe_operation(Input, Output) :-
 ### ->/2 (If-Then)
 **Purpose**: If-then construct - execute consequent only if condition succeeds.
 
-**Precedence**: 1100 (xfy - right-associative)
+**Precedence**: 1050 (xfy - right-associative)
 
 **When to use**: Use for conditional execution without explicit else clause.
 
@@ -1051,6 +1051,37 @@ debug_print(Message) :-
     ->  write('[DEBUG] '), write(Message), nl
     ;   true  % Do nothing if not in debug mode
     ).
+```
+
+### *->/2 (Soft-cut) *(v2.8.0+)*
+**Purpose**: Like `->` but does NOT commit to first solution of the condition.
+
+**Precedence**: 1050 (xfy - right-associative)
+
+**When to use**: When you want to enumerate all condition solutions but still want an `Else` branch for the empty case.
+
+Semantics of `(Cond *-> Then ; Else)`:
+- If `Cond` has at least one solution: for each solution, execute `Then`. All solutions of the whole construct are kept.
+- If `Cond` has no solutions: execute `Else`.
+
+Contrast with `->` which commits to the FIRST solution of `Cond` and never backtracks into alternatives.
+
+```prolog
+% Enumerate all members; fall back to default if list empty
+all_members(L, Default) :-
+    (   member(X, L) *-> write(X), nl
+    ;   write(Default), nl
+    ).
+
+?- all_members([a,b,c], none).
+a
+b
+c
+true.
+
+?- all_members([], none).
+none
+true.
 ```
 
 ### \\+/1 (Negation as Failure)
@@ -1418,9 +1449,10 @@ Complete precedence table for JProlog operators:
 
 | Precedence | Type | Operators | Description |
 |------------|------|-----------|-------------|
-| 1200 | xfx | :- | Rule definition |
-| 1200 | xfy | ; | Disjunction (OR) |
-| 1100 | xfy | -> | If-then |
+| 1200 | xfx | :- --> | Rule / DCG rule |
+| 1200 | fx  | :- ?- | Directive / Query |
+| 1100 | xfy | ; | Disjunction (OR) |
+| 1050 | xfy | -> *-> | If-then / Soft-cut |
 | 1000 | xfy | , | Conjunction (AND) |
 | 900 | fy | \\+ | Negation as failure |
 | 700 | xfx | = \\= == \\== | Unification operators |

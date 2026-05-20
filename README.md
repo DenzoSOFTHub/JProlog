@@ -10,11 +10,13 @@ JProlog is a complete and robust Prolog implementation in Java that provides a c
 
 JProlog aims to provide ISO-compliant Prolog functionality with modern development tools, offering:
 - **Full ISO Compliance**: 100% ISO 13211-1 core predicate coverage (111/111 predicates)
-- **Robust Parser**: Unified operator-precedence Pratt parser with shared OperatorTable and dynamic operator support via `op/3`
+- **Robust Parser**: Unified operator-precedence Pratt parser with shared OperatorTable, dynamic operator support via `op/3`, full ISO §6.4.2.1 escape sequences (octal, hex, line continuation)
+- **Operator-Aware Output**: `write/1`, `writeq/1`, `format ~w/~q` use operator notation (e.g. `1+2`, `[a,b,c]`, `{a,b}`) via shared OperatorTable
 - **Binary Compiled Format**: `.jpc` (JProlog Compiled) format with string interning for fast loading
 - **Professional Development Environment**: Full-featured IDE with debugging capabilities
 - **Command Line Interface**: Interactive Prolog console for quick testing and scripting
-- **Comprehensive Built-in Library**: 265+ built-in predicates including higher-order list operations
+- **Comprehensive Built-in Library**: 270+ built-in predicates including higher-order list operations, soft-cut `*->`, `maplist/2..5`, `sort/4`, `read/2`, `atom_to_term/3`, `atomic_list_concat/2,3`
+- **Full ISO §9 arithmetic**: `gcd`, `^/2` integer power, `integer/1` evaluable, hyperbolic functions (sinh/cosh/tanh + arc/h), `log/2` base-N, `cot`/`acot`/`cbrt`, `epsilon` constant, rational numbers, BigInteger auto-promotion
 - **Advanced DCG Support**: 85% success rate on comprehensive DCG parsing scenarios
 - **Java Integration**: Easy embedding of Prolog logic in Java applications
 
