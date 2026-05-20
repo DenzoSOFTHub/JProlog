@@ -242,13 +242,13 @@ public class RefactorIssuesTest {
     // @Ignore enabled
     @Test
     public void testCoroutining_freezeFiresOnUnify() {
-        prolog.consult("probe(_).");
-        prolog.solve("freeze(X, assertz(probe(triggered))), X = 1.");
-        List<Map<String, Term>> r = prolog.solve("probe(triggered).");
+        // Use a fresh predicate (no anonymous-matching fact) to assert.
+        prolog.solve("freeze(X, assertz(triggered_marker)), X = 1.");
+        List<Map<String, Term>> r = prolog.solve("triggered_marker.");
         assertEquals(1, r.size());
     }
 
-    @Ignore("API design limitation: variables across separate solve() calls are different parsed objects; SWI REPL maintains identity via var-name map. JProlog programmatic API would need session-level identity tracking — deferred as scope expansion.")
+    // v2.9.4: session-scoped attributed variables enable cross-solve identity
     @Test
     public void testCoroutining_whenReSuspends() {
         prolog.solve("when(ground(f(X, Y)), assertz(probe(fired))), X = 1.");

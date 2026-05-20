@@ -608,27 +608,79 @@ public class Prolog {
      * @param queryString The query as a string
      * @return List of all solutions
      */
+    // START_CHANGE: v2.9.4 - session-scoped attributed variables (cross-solve identity)
+    /** Per-Prolog map of variable name → Variable instance, ONLY for vars with pending attribute goals. */
+    private final Map<String, Variable> attributedSessionVars = new HashMap<>();
+
     public List<Map<String, Term>> solve(String queryString) {
         try {
-            // Remove trailing period if present
             if (queryString.endsWith(".")) {
                 queryString = queryString.substring(0, queryString.length() - 1);
             }
-
             Term query = parser.parseTerm(queryString);
+            // Splice any previously-suspended attributed variables (by name)
+            query = spliceAttributedSessionVars(query);
             List<Map<String, Term>> solutions = querySolver.solve(query);
-
-            // START_CHANGE: ISS-2025-0010 - Fix variable name mapping
-            // Post-process solutions to map internal variable names back to query variables
+            // After solve: refresh session map — keep only currently-attributed (unbound) named vars
+            refreshAttributedSessionVars(query, solutions);
             return mapInternalVariablesToQueryVariables(query, solutions);
-            // END_CHANGE: ISS-2025-0010
         } catch (DebugController.DebugStopException e) {
-            // Re-throw debug stop so DebugPanel can catch it
             throw e;
         } catch (PrologParserException e) {
             throw new PrologException("Error parsing query: " + e.getMessage(), e);
         }
     }
+
+    private Term spliceAttributedSessionVars(Term term) {
+        if (attributedSessionVars.isEmpty()) return term;
+        if (term instanceof Variable) {
+            Variable v = (Variable) term;
+            String n = v.getName();
+            if (n != null && !n.startsWith("_") && attributedSessionVars.containsKey(n)) {
+                return attributedSessionVars.get(n);
+            }
+            return term;
+        }
+        if (term instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) term;
+            List<Term> args = c.getArguments();
+            if (args == null || args.isEmpty()) return term;
+            List<Term> newArgs = new ArrayList<>(args.size());
+            boolean changed = false;
+            for (Term a : args) {
+                Term na = spliceAttributedSessionVars(a);
+                if (na != a) changed = true;
+                newArgs.add(na);
+            }
+            return changed ? new CompoundTerm(c.getFunctor(), newArgs) : term;
+        }
+        return term;
+    }
+
+    private void refreshAttributedSessionVars(Term query, List<Map<String, Term>> solutions) {
+        // Walk query for named vars
+        Map<String, Variable> qVars = new HashMap<>();
+        extractVariablesRecursive(query, qVars);
+        Map<String, Term> sol = solutions.isEmpty() ? new HashMap<>() : solutions.get(0);
+        for (Map.Entry<String, Variable> e : qVars.entrySet()) {
+            String name = e.getKey();
+            Variable v = e.getValue();
+            if (name == null || name.startsWith("_")) continue;
+            Term bound = sol.get(name);
+            boolean stillUnbound = (bound == null) || (bound instanceof Variable);
+            if (stillUnbound && v.hasAttributes()) {
+                attributedSessionVars.put(name, v);
+            } else {
+                attributedSessionVars.remove(name);
+            }
+        }
+    }
+
+    /** Clear cross-solve attributed-var state (used by tests / REPL restart). */
+    public void clearSession() {
+        attributedSessionVars.clear();
+    }
+    // END_CHANGE: v2.9.4
     
     /**
      * Map internal variable names (created by TermCopier) back to original query variable names.

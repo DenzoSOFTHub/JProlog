@@ -76,10 +76,8 @@ public class QuerySolver {
      */
     public List<Map<String, Term>> solve(Term query) {
         List<Map<String, Term>> solutions = new ArrayList<>();
-        // START_CHANGE: LIM-002 - Set up attribute unification hook for this solver
         Variable.AttributeUnifyHook previousHook = Variable.getAttributeUnifyHook();
         Variable.setAttributeUnifyHook(this::handleAttributeUnification);
-        // START_CHANGE: Round5 - clear trail on every top-level solve to prevent stale entries on exception
         Trail.clear();
         try {
             solve(query, new HashMap<>(), solutions, CutStatus.notOccurred());
@@ -91,7 +89,6 @@ public class QuerySolver {
             Variable.setAttributeUnifyHook(previousHook);
             Trail.clear();
         }
-        // END_CHANGE: Round5
     }
 
     // START_CHANGE: ISS-2025-0098 - Single-pass deep resolve with path compression

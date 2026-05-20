@@ -21,6 +21,9 @@ public class TermParser {
     private int position;
     private int line;
     private int column;
+    // START_CHANGE: v2.9.4 - intern Variables by name within a single parse (clause-scope canonicalization)
+    private java.util.Map<java.lang.String, Variable> parseScopeVars = new java.util.HashMap<>();
+    // END_CHANGE: v2.9.4
 
     private final OperatorTable operatorTable;
 
@@ -41,6 +44,9 @@ public class TermParser {
         this.position = 0;
         this.line = 1;
         this.column = 1;
+        // START_CHANGE: v2.9.4 - reset per-parse variable interning
+        this.parseScopeVars = new java.util.HashMap<>();
+        // END_CHANGE: v2.9.4
 
         Term result = parseExpression(1200);
         skipWhitespace();
@@ -688,7 +694,18 @@ public class TermParser {
             throw new PrologParserException("Expected variable name at line " + line + ", column " + column);
         }
 
-        return new Variable(name.toString());
+        // START_CHANGE: v2.9.4 - intern Variables by name in current parse scope
+        // Anonymous `_` is NEVER interned (each occurrence is a fresh variable).
+        String varName = name.toString();
+        if ("_".equals(varName)) {
+            return new Variable(varName);
+        }
+        Variable existing = parseScopeVars.get(varName);
+        if (existing != null) return existing;
+        Variable fresh = new Variable(varName);
+        parseScopeVars.put(varName, fresh);
+        return fresh;
+        // END_CHANGE: v2.9.4
     }
 
     private Term parseNumber() throws PrologParserException {

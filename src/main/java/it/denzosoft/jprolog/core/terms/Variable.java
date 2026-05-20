@@ -196,19 +196,15 @@ public class Variable extends Term {
             // Bind the variable to the term
             substitution.put(var.name, derefTerm);
 
-            // START_CHANGE: LIM-002 - Trigger attribute unification hooks
-            // When an attributed variable is bound to a non-variable, invoke hooks
             if (var.hasAttributes() && !(derefTerm instanceof Variable)) {
                 AttributeUnifyHook hook = attributeUnifyHook.get();
                 if (hook != null) {
                     if (!hook.onAttributeUnify(var, derefTerm, substitution)) {
-                        // Hook failed — undo the binding and fail unification
                         substitution.remove(var.name);
                         return false;
                     }
                 }
             }
-            // END_CHANGE: LIM-002
             return true;
         }
 

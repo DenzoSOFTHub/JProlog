@@ -127,15 +127,18 @@ public class When implements BuiltInWithContext {
                     CutStatus cutStatus = CutStatus.notOccurred();
                     return solver.solve(resolvedGoal, bindings, solutions, cutStatus);
                 }
-                // START_CHANGE: ISS-2025-0247 - re-suspend on remaining unbound variables
-                // condition still false: re-attach the when-term to any vars still unbound
+                // START_CHANGE: v2.9.4 - re-suspend with RESOLVED condition + goal so cross-solve hooks still see prior bindings
+                Term resolvedCondition = condition.resolveBindings(bindings);
+                Term resolvedGoal = goal.resolveBindings(bindings);
+                Term resuspendedWhen = new CompoundTerm(new Atom("when"),
+                    java.util.Arrays.asList(resolvedCondition, resolvedGoal));
                 Set<Variable> remaining = new HashSet<>();
-                collectRemainingUnbound(condition, bindings, remaining);
+                collectRemainingUnbound(resolvedCondition, bindings, remaining);
                 for (Variable v : remaining) {
-                    v.putAttribute(WHEN_MODULE, whenTerm);
+                    v.putAttribute(WHEN_MODULE, resuspendedWhen);
                 }
                 return true;
-                // END_CHANGE: ISS-2025-0247
+                // END_CHANGE: v2.9.4
             }
         }
         return true;

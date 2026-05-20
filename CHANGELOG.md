@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.4] - 2026-05-20
+
+### Final Limitations Resolved
+
+**Cross-solve attributed-variable identity** (the last `@Ignore`'d test):
+
+Root cause discovered: `TermParser.parseVariable` was creating a NEW `Variable` instance for each textual occurrence of a variable name (even within the same parse). So `when(ground(f(X, Y)), Goal), X = 1` parsed two different X objects — when() attached attributes to one, but `X = 1` bound the OTHER (no attributes, no hook fire).
+
+Three coordinated fixes:
+1. **Parser variable interning** (`TermParser.java`): per-parse `Map<String, Variable>` so all occurrences of `X` in one parse share the same instance. Anonymous `_` is intentionally NOT interned.
+2. **When.java re-suspend stores RESOLVED condition**: when a partial binding fires the hook but the condition is still not satisfied, the re-suspended attribute carries the condition with already-bound variables substituted. So `when(ground(f(X,Y)), G), X=1` re-suspends as `when(ground(f(1,Y)), G)` on Y.
+3. **Session-scoped attributed variables** (`Prolog.java`): cross-`solve()` survival via `attributedSessionVars: Map<String, Variable>`. When a query var still has pending attribute goals after solve completes, it's saved by name. Next `solve()`'s parser output is spliced: variables matching session names are replaced with the surviving instances. Var without attributes are NOT persisted (so unrelated queries stay independent).
+
+Now `prolog.solve("when(ground(f(X,Y)), assertz(p)), X = 1")` followed by `prolog.solve("Y = 2")` correctly fires the suspended goal — `p` is asserted.
+
+### Test Coverage
+- `testCoroutining_whenReSuspends` re-enabled and passing
+- Fixed test logic in `testCoroutining_freezeFiresOnUnify` (anonymous fact `probe(_)` was matching anything; use distinct atom marker)
+- **509/509 JUnit tests pass, 0 skipped**
+- **20/20 examples regression pass**
+
+### Acknowledged design considerations (no fix needed)
+- **R6 solver dispatch unification**: organizational; no behavior delta.
+- **R7 doc split**: organizational; current TOC sufficient.
+- **KnowledgeBase concurrent index race**: KB methods are all `synchronized (this)`. Single-threaded design (per CLAUDE.md). No concrete concurrent-mutation use case to motivate ReadWriteLock refactor.
+
+---
+
 ## [2.9.3] - 2026-05-20
 
 ### Deferred Items Resolved
