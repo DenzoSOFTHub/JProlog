@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.6] - 2026-05-21
+
+### CR-2025-0009 Debug + Profile Completion
+
+The four-port debug model was already implemented (v2.6+) but several acceptance criteria remained unchecked. This release closes them.
+
+**New debug builtins**:
+- **`debugging/0`** — reports current debug state (trace on/off, list of active spy points). Always succeeds.
+- **`spying/1`** — non-deterministic enumeration of active spy points as `Name/Arity`.
+
+**New profiler infrastructure**:
+- `core/engine/Profiler.java` — thread-safe per-predicate call counter with `ConcurrentHashMap<String, AtomicLong>`. Zero overhead when disabled.
+- **`profile/0`** — enable profiling
+- **`noprofile/0`** — disable profiling
+- **`profile_data/1`** — unify with sorted list of `Name/Arity-Count` pairs (descending by count)
+- **`reset_profile/0`** — clear counters
+- `QuerySolver.solveAgainstKnowledgeBase` records call when `Profiler.isEnabled()`
+
+**CR-2025-0009 acceptance criteria** (all checked):
+- Four-port model (CALL/EXIT/REDO/FAIL) ✓
+- `debugging/0` ✓
+- Trace output formatted (DebugPanel colored) ✓
+- Stack trace visualization (IDE DebugPanel) ✓
+- Performance profiling basic ✓
+- Configurable debug detail (trace/notrace + spy/nospy + profile/noprofile) ✓
+- Integration with spy/nospy via `spying/1` ✓
+
+### Test Coverage
+- **512/512 JUnit tests pass, 0 skipped** (+3 new CR-009 tests)
+- **20/20 examples regression pass**
+
+### Documentation
+- CR-2025-0005 (`seek/4`) and CR-2025-0009 (debug ports) checkboxes updated in `track-change-requests.md`
+
+---
+
 ## [2.9.5] - 2026-05-20
 
 ### Cleanup + final deferred items

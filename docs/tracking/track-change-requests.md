@@ -256,9 +256,9 @@ Extend I/O system for full ISO Prolog stream support.
 - [x] `stream_property/2` complete
 - [x] Binary I/O predicates (get_byte, put_byte, peek_byte)
 - [x] `format/2` and `format/3` with ISO format specifiers
-- [ ] `seek/4` and stream positioning (deferred - rarely needed)
 - [x] Stream aliases supported
 - [x] Error handling for stream operations
+- [x] `seek/4` and stream positioning — v2.9.5
 
 ---
 
@@ -383,13 +383,13 @@ Implementare il modello completo di debugging con ports ISO Prolog:
 - Integration con IDE debugging features
 
 ### Criteri di Accettazione
-- [ ] Four-port model completo (Call, Exit, Redo, Fail)
-- [ ] `debugging/0` per query stato debug
-- [ ] Trace output formattato secondo standard
-- [ ] Stack trace visualization nell'IDE
-- [ ] Performance profiling basic
-- [ ] Configurabilità livelli debug detail
-- [ ] Integration con existing spy/nospy system
+- [x] Four-port model completo (Call, Exit, Redo, Fail) — DebugController CALL/EXIT/FAIL/REDO ports
+- [x] `debugging/0` per query stato debug — v2.9.6
+- [x] Trace output formattato secondo standard — DebugPanel colored trace
+- [x] Stack trace visualization nell'IDE — DebugPanel real-time call stack
+- [x] Performance profiling basic — `profile/0`, `noprofile/0`, `profile_data/1`, `reset_profile/0` (v2.9.6)
+- [x] Configurabilità livelli debug detail — trace/notrace + spy/nospy + profile/noprofile
+- [x] Integration con existing spy/nospy system — `spying/1` enumerates spy points (v2.9.6)
 
 ---
 

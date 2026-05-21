@@ -459,15 +459,13 @@ public class QuerySolver {
                                               List<Map<String, Term>> solutions, CutStatus cutStatus) {
         boolean foundMatch = false;
 
-        // START_CHANGE: ISS-2025-0166 - Copy-on-read protection for rule lists during query resolution
-        // KnowledgeBase.getRulesForPredicate() and getRulesWithFirstArgIndex() return
-        // defensive copies (unmodifiableList wrapping new ArrayList) inside synchronized blocks.
-        // The candidateRules variable below holds a local snapshot that is safe from
-        // concurrent assert/retract modifications during backtracking iteration.
-        // END_CHANGE: ISS-2025-0166
-        // START_CHANGE: CR-2025-0002 - Check module context first for rule lookup
         String functor = goal.getName();
         int arity = it.denzosoft.jprolog.util.TermUtils.getArity(goal);
+        // START_CHANGE: CR-2025-0009 - record predicate call for profiler (zero overhead when disabled)
+        if (Profiler.isEnabled()) {
+            Profiler.recordCall(functor, arity);
+        }
+        // END_CHANGE: CR-2025-0009
         List<Rule> candidateRules;
 
         if (currentModuleContext != null && functor != null) {

@@ -173,6 +173,42 @@ public class AuditRound5Test {
         }
     }
 
+    // ===================================================================
+    // CR-2025-0009 — Debug + profile predicates
+    // ===================================================================
+
+    @Test
+    public void testCR009_debuggingZero() {
+        // debugging/0 always succeeds
+        List<Map<String, Term>> r = prolog.solve("debugging.");
+        assertEquals(1, r.size());
+    }
+
+    @Test
+    public void testCR009_spyingEnumerates() {
+        prolog.solve("spy(foo/2).");
+        prolog.solve("spy(bar/1).");
+        List<Map<String, Term>> r = prolog.solve("spying(X).");
+        // Should enumerate at least the 2 spy points
+        org.junit.Assert.assertTrue("expected >=2 spy points, got " + r.size(), r.size() >= 2);
+    }
+
+    @Test
+    public void testCR009_profile() {
+        prolog.solve("reset_profile.");
+        prolog.solve("profile.");
+        prolog.consult("counter_test(1). counter_test(2). counter_test(3).");
+        prolog.solve("counter_test(_).");
+        prolog.solve("counter_test(_).");
+        prolog.solve("noprofile.");
+        List<Map<String, Term>> r = prolog.solve("profile_data(D).");
+        assertEquals(1, r.size());
+        String dataStr = r.get(0).get("D").toString();
+        // Data should mention counter_test/1
+        org.junit.Assert.assertTrue("profile_data must mention counter_test: " + dataStr,
+            dataStr.contains("counter_test"));
+    }
+
     @Test
     public void test7_moduleQualifiedCall_exportEnforced() {
         prolog.consult(":- module(secret_module_r5, [exported_pred/1]).");

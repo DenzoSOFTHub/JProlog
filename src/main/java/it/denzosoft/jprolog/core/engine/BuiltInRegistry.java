@@ -86,6 +86,14 @@ public class BuiltInRegistry {
         // START_CHANGE: CR-2025-0005 - seek/4
         putArity("seek", 4);
         // END_CHANGE: CR-2025-0005
+        // START_CHANGE: CR-2025-0009 - debug + profile predicates
+        putArity("debugging", 0);
+        putArity("spying", 1);
+        putArity("profile", 0);
+        putArity("noprofile", 0);
+        putArity("profile_data", 1);
+        putArity("reset_profile", 0);
+        // END_CHANGE: CR-2025-0009
         // START_CHANGE: ISS-2025-0092 - Tabling predicates
         putArity("table", 1);
         putArity("abolish_all_tables", 0);

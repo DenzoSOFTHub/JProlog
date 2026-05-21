@@ -289,6 +289,18 @@ public class BuiltInFactory {
         registerFactory("notrace", NoTrace::new);
         registerFactory("spy", Spy::new);
         registerFactory("nospy", NoSpy::new);
+        // START_CHANGE: CR-2025-0009 - debugging/0, spying/1, profile/0, noprofile/0, profile_data/1, reset_profile/0
+        registerFactory("debugging", () -> new it.denzosoft.jprolog.builtin.debug.Debugging());
+        registerFactory("spying", () -> new it.denzosoft.jprolog.builtin.debug.Spying());
+        registerFactory("profile", () -> new it.denzosoft.jprolog.builtin.debug.Profile(
+            it.denzosoft.jprolog.builtin.debug.Profile.Mode.PROFILE));
+        registerFactory("noprofile", () -> new it.denzosoft.jprolog.builtin.debug.Profile(
+            it.denzosoft.jprolog.builtin.debug.Profile.Mode.NOPROFILE));
+        registerFactory("profile_data", () -> new it.denzosoft.jprolog.builtin.debug.Profile(
+            it.denzosoft.jprolog.builtin.debug.Profile.Mode.PROFILE_DATA));
+        registerFactory("reset_profile", () -> new it.denzosoft.jprolog.builtin.debug.Profile(
+            it.denzosoft.jprolog.builtin.debug.Profile.Mode.RESET_PROFILE));
+        // END_CHANGE: CR-2025-0009
         // START_CHANGE: ISS-2025-0172 - Leash built-in for debug port filtering
         registerFactory("leash", Leash::new);
         // END_CHANGE: ISS-2025-0172
