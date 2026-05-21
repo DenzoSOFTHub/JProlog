@@ -193,6 +193,45 @@ public class AuditRound5Test {
         org.junit.Assert.assertTrue("expected >=2 spy points, got " + r.size(), r.size() >= 2);
     }
 
+    // ===================================================================
+    // v2.9.7 - SWI library: pairs_*, must_be
+    // ===================================================================
+
+    @Test
+    public void test_pairsKeys() {
+        prolog.consult("pair_data([a-1, b-2, c-3]).");
+        List<Map<String, Term>> r = prolog.solve("pair_data(P), pairs_keys(P, K).");
+        assertEquals("[a, b, c]", r.get(0).get("K").toString());
+    }
+
+    @Test
+    public void test_pairsValues() {
+        List<Map<String, Term>> r = prolog.solve("pairs_values([a-1, b-2], V).");
+        assertEquals("[1, 2]", r.get(0).get("V").toString());
+    }
+
+    @Test
+    public void test_pairsKeysValuesReverse() {
+        List<Map<String, Term>> r = prolog.solve("pairs_keys_values(P, [x, y], [1, 2]).");
+        assertEquals(1, r.size());
+    }
+
+    @Test
+    public void test_mustBeAccepts() {
+        List<Map<String, Term>> r = prolog.solve("must_be(integer, 42).");
+        assertEquals(1, r.size());
+    }
+
+    @Test
+    public void test_mustBeRejects() {
+        try {
+            prolog.solve("must_be(integer, hello).");
+            org.junit.Assert.fail("expected type_error");
+        } catch (RuntimeException e) {
+            // ISO type_error expected
+        }
+    }
+
     @Test
     public void testCR009_profile() {
         prolog.solve("reset_profile.");

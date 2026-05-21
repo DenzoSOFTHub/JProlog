@@ -2,9 +2,9 @@
 
 **A Full-Featured Prolog System with Engine, IDE, CLI, and Comprehensive Built-ins**
 
-[![Version](https://img.shields.io/badge/version-2.9.6-blue.svg)](https://github.com/DenzoSOFTHub/JProlog/releases/tag/v2.9.6) [![Java](https://img.shields.io/badge/java-1.8%2B-orange.svg)]() [![ISO](https://img.shields.io/badge/ISO%2013211--1-100%25%20core-green.svg)]()
+[![Version](https://img.shields.io/badge/version-2.9.7-blue.svg)](https://github.com/DenzoSOFTHub/JProlog/releases/tag/v2.9.7) [![Java](https://img.shields.io/badge/java-1.8%2B-orange.svg)]() [![ISO](https://img.shields.io/badge/ISO%2013211--1-100%25%20core-green.svg)]()
 
-**Current version**: `2.9.6` — see [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/DenzoSOFTHub/JProlog/releases).
+**Current version**: `2.9.7` — see [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/DenzoSOFTHub/JProlog/releases).
 
 ## Overview
 

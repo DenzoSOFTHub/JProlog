@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.7] - 2026-05-21
+
+### SWI Library Utilities
+
+- **`pairs_keys/2`** — `pairs_keys([a-1, b-2], [a, b])`
+- **`pairs_values/2`** — `pairs_values([a-1, b-2], [1, 2])`
+- **`pairs_keys_values/3`** — bidirectional: pairs ↔ keys + values lists
+- **`must_be/2`** — type-checking helper with ISO-compliant errors. Supported types: `atom`, `atomic`, `integer`, `float`, `number`, `compound`, `callable`, `var`, `nonvar`, `ground`, `list`, `boolean`, `positive_integer`, `nonneg`
+
+### Test Coverage
+- **517/517 JUnit tests pass, 0 skipped** (+5 new)
+- **20/20 examples regression pass**
+
+---
+
 ## [2.9.6] - 2026-05-21
 
 ### CR-2025-0009 Debug + Profile Completion

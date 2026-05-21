@@ -158,6 +158,16 @@ public class BuiltInFactory {
         registerFactory("subtract", it.denzosoft.jprolog.builtin.list.Subtract::new);
         registerFactory("intersection", it.denzosoft.jprolog.builtin.list.Intersection::new);
         registerFactory("union", it.denzosoft.jprolog.builtin.list.Union::new);
+        // START_CHANGE: v2.9.7 - pairs_* + must_be SWI library predicates
+        registerFactory("pairs_keys", () -> new it.denzosoft.jprolog.builtin.list.Pairs(
+            it.denzosoft.jprolog.builtin.list.Pairs.Mode.KEYS));
+        registerFactory("pairs_values", () -> new it.denzosoft.jprolog.builtin.list.Pairs(
+            it.denzosoft.jprolog.builtin.list.Pairs.Mode.VALUES));
+        registerFactory("pairs_keys_values", () -> new it.denzosoft.jprolog.builtin.list.Pairs(
+            it.denzosoft.jprolog.builtin.list.Pairs.Mode.KEYS_VALUES));
+        registerFactory("must_be", () -> new it.denzosoft.jprolog.builtin.type.MustBe());
+        // END_CHANGE: v2.9.7
+
         // Higher-order list predicates (context-dependent)
         registerFactory("maplist", () -> new it.denzosoft.jprolog.builtin.list.MapList(null));
         registerFactory("include", () -> new it.denzosoft.jprolog.builtin.list.Include(null));

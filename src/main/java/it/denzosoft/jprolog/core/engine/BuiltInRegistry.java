@@ -94,6 +94,12 @@ public class BuiltInRegistry {
         putArity("profile_data", 1);
         putArity("reset_profile", 0);
         // END_CHANGE: CR-2025-0009
+        // START_CHANGE: v2.9.7 - pairs_* + must_be SWI utilities
+        putArity("pairs_keys", 2);
+        putArity("pairs_values", 2);
+        putArity("pairs_keys_values", 3);
+        putArity("must_be", 2);
+        // END_CHANGE: v2.9.7
         // START_CHANGE: ISS-2025-0092 - Tabling predicates
         putArity("table", 1);
         putArity("abolish_all_tables", 0);
