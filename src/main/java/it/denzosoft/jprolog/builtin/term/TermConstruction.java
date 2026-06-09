@@ -213,7 +213,9 @@ public class TermConstruction implements BuiltIn {
             }
             return false;
         } else {
-            throw new PrologEvaluationException("=../2: At least one argument must be ground.");
+            // ISS-2025-0337: under-instantiated =.. is an ISO instantiation_error, not a raw message.
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError("=.."));
         }
     }
     

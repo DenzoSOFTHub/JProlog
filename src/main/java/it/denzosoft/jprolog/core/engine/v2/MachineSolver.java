@@ -55,7 +55,12 @@ public final class MachineSolver {
     private final ModuleManager modules;       // nullable: when set, clause lookup is module-aware
     private final TableStore tableStore;       // nullable: when set, tabled predicates delegate to the legacy solver
     private DebugController debugController;    // ISS-2025-0331: nullable; when set, fire four-port debug events
+    private long inferenceBudget = 0;          // ISS-2025-0339: max resolution steps (0 = unlimited)
+    private long steps = 0;
     private int renameCounter = 0;
+
+    /** Abort the query with resource_error after this many resolution steps (0 = unlimited). */
+    public void setInferenceBudget(long budget) { this.inferenceBudget = budget; }
 
     public MachineSolver(List<Rule> rules) { this(rules, null); }
 
@@ -103,6 +108,9 @@ public final class MachineSolver {
             String f; int ar;
             if (lookup instanceof Atom) { f = ((Atom) lookup).getName(); ar = 0; }
             else { CompoundTerm c = (CompoundTerm) lookup; f = c.getName(); ar = c.getArguments().size(); }
+            // ISS-2025-0340: first-arg indexing was reverted — KnowledgeBase.getRulesWithFirstArgIndex
+            // returns empty for predicates whose first-arg index was never built, which silently drops
+            // all their clauses. Needs the KB index made reliably-populated first (tracked, not done).
             return liveKb.getRulesForPredicate(f, ar);
         }
         return kb.get(key(lookup));
@@ -170,11 +178,26 @@ public final class MachineSolver {
     /** Coroutining wake-up under v2 (ISS-2025-0318): when an attributed variable {@code v} is bound to
      *  {@code value}, invoke the engine's attribute-unify hook (set by {@code Prolog.solveWithV2Engine})
      *  so freeze/when/dif goals fire (or re-suspend). Returns false if the hook fails the unification. */
+    /** Goals woken by binding a frozen variable — drained onto the goal stack so they run in THIS
+     *  machine's binding/trail context and their bindings propagate (ISS-2025-0336). */
+    private final List<Term> woken = new ArrayList<>();
+
     private boolean wakeAttrs(Variable v, Term value) {
         if (!v.hasAttributes()) return true;
+        // freeze/2: run the delayed goal on the v2 goal stack (NOT via the legacy hook) so the bindings
+        // it makes land in this machine's `binding` map. Remove the attribute (trailed) to avoid re-firing.
+        Term fg = v.getAttribute(it.denzosoft.jprolog.builtin.control.Freeze.FREEZE_MODULE);
+        if (fg != null) {
+            final Variable fv = v; final Term ffg = fg;
+            v.removeAttribute(it.denzosoft.jprolog.builtin.control.Freeze.FREEZE_MODULE);
+            it.denzosoft.jprolog.core.engine.Trail.record(() ->
+                fv.putAttribute(it.denzosoft.jprolog.builtin.control.Freeze.FREEZE_MODULE, ffg));
+            woken.add(fg);
+        }
+        // other attribute kinds (when/dif) still go through the legacy attribute-unify hook
         Variable.AttributeUnifyHook hook = Variable.getAttributeUnifyHook();
-        if (hook == null) return true;
-        return hook.onAttributeUnify(v, value, binding);
+        if (hook != null && v.hasAttributes()) return hook.onAttributeUnify(v, value, binding);
+        return true;
     }
 
     private boolean unify(Term a, Term b) {
@@ -244,7 +267,7 @@ public final class MachineSolver {
 
     /** Solve {@code query}, streaming each solution; the sink returns false to stop. */
     public void solve(Term query, SolutionSink sink) {
-        binding.clear(); trail.clear(); cps.clear();
+        binding.clear(); trail.clear(); cps.clear(); woken.clear();
         // ISS-2025-0331: pick up the IDE debugger (set on the shared QuerySolver) so the v2 engine
         // fires four-port CALL/EXIT/FAIL/REDO events and honours breakpoints/stepping.
         debugController = (contextSolver != null) ? contextSolver.getDebugController() : null;
@@ -263,7 +286,17 @@ public final class MachineSolver {
           // Cancellation: the IDE Stop button interrupts the solver thread; abort the query promptly
           // (a non-PrologException so user catch/3 cannot trap it). (ISS-2025-0320)
           if (Thread.currentThread().isInterrupted()) throw new it.denzosoft.jprolog.core.engine.QueryCancelledException();
+          // Inference budget: hard per-query step cap. Thrown as a NON-PrologException so untrusted
+          // catch/3 cannot trap it and loop forever — it propagates to the embedder. (ISS-2025-0339)
+          if (inferenceBudget > 0 && ++steps > inferenceBudget) {
+              throw new it.denzosoft.jprolog.core.engine.InferenceLimitException(inferenceBudget);
+          }
           try {
+            if (!woken.isEmpty()) {                                    // freeze-woken goals run next (ISS-0336)
+                for (int i = woken.size() - 1; i >= 0; i--) goalStack = new Goal(woken.get(i), cps.size(), goalStack);
+                woken.clear();
+                continue;
+            }
             if (goalStack == null) {                                   // all goals solved -> a solution
                 if (!onSol.onSolution() || !backtrack(floor)) return;
                 continue;
@@ -365,8 +398,15 @@ public final class MachineSolver {
                 if (!callUser(t, t)) { if (!backtrack(floor)) return; }
                 continue;
             }
-            // variable / number in goal position -> not callable
-            if (!backtrack(floor)) return;
+            // ISS-2025-0337: a non-callable in goal position is an ISO error, not a silent failure —
+            // an unbound variable -> instantiation_error; any other non-callable (number, string) ->
+            // type_error(callable, Term). (Reaches call/123, X (uncalled var), etc.)
+            if (t instanceof Variable) {
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError("call"));
+            }
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("callable", resolve(t), "call"));
           } catch (it.denzosoft.jprolog.core.exceptions.PrologException e) {
             // route the ball to the nearest catch frame within this run's floor; if none, re-throw
             // so an enclosing drive (lower floor) — e.g. a catch/3 around findall/3 — can handle it.

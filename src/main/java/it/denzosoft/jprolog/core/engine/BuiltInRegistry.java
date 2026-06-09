@@ -143,6 +143,19 @@ public class BuiltInRegistry {
         builtIns.put(name, builtIn);
     }
 
+    // START_CHANGE: ISS-2025-0338 - support a sandbox/safe-mode that removes unsafe built-ins
+    /** Snapshot of the registered predicate names (this instance only). */
+    public java.util.Set<String> getBuiltInNames() {
+        return new java.util.HashSet<>(builtIns.keySet());
+    }
+
+    /** Remove a built-in from THIS instance. isBuiltIn() checks {@code builtIns} first, so an
+     *  unregistered predicate becomes unavailable (it falls through to user clauses / existence_error). */
+    public void unregisterBuiltIn(String name) {
+        builtIns.remove(name);
+    }
+    // END_CHANGE: ISS-2025-0338
+
     /**
      * Get a built-in predicate by name.
      */

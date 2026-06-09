@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.4.0] - 2026-06-09
+
+### Production hardening (sandbox, resource budget, robustness, correctness)
+
+Driven by a multi-agent production-readiness audit
+(`docs/reports/report-production-readiness-audit-2026-06-09.md`). Baseline: **705/705 JUnit tests,
+20/20 example programs.**
+
+**Security / robustness**
+- **ISS-2025-0338 — sandbox / safe mode**: `Prolog.enableSafeMode()` removes every host-touching
+  built-in (OS shell, Java FFI/reflection, filesystem, network, HTTP, JDBC, persistence — deny by
+  package), so an untrusted program cannot run processes, reflect into the JVM, or touch
+  files/sockets/databases. Core logic and arithmetic remain available.
+- **ISS-2025-0339 — inference budget**: `Prolog.setInferenceBudget(steps)` aborts a runaway query
+  with an **uncatchable** `InferenceLimitException` (not a `PrologException`, so an untrusted `catch/3`
+  cannot trap it and loop). Bounds CPU.
+- **ISS-2025-0341 — no crash on deep structures**: a deep TERM (during resolve) and deeply nested
+  untrusted INPUT (during parse) now raise a catchable `resource_error(...)` instead of escaping as a
+  raw `StackOverflowError`.
+
+**Correctness**
+- **ISS-2025-0335**: `sort/2`, `msort/2`, `sort/4` no longer fail on lists containing unbound variables
+  — they require a *proper* list (not a *ground* one) and sort by standard order (variables lowest).
+- **ISS-2025-0336**: `freeze/2` now propagates the bindings its woken goal makes (the goal runs on the
+  v2 machine's own binding/trail, not the legacy hook) — `freeze(X,Y=hello), X=1, Y==hello` succeeds.
+- **ISS-2025-0337**: a non-callable goal raises `type_error(callable, _)` (or `instantiation_error` for
+  a variable); under-instantiated `=../2` raises `instantiation_error` instead of a raw message.
+
+**Attempted & reverted**
+- **ISS-2025-0340 — first-argument indexing** in the v2 engine: reverted because
+  `KnowledgeBase.getRulesWithFirstArgIndex` returns empty for predicates whose first-arg index was
+  never populated, silently dropping their clauses. The KB index must be made reliable first.
+
+All findings captured as executable tests in `test/audit/ProductionAuditTest.java`.
+
+---
+
 ## [3.3.0] - 2026-06-09
 
 ### Call tracing & full debugging on the v2 engine

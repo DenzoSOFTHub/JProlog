@@ -25,7 +25,7 @@ public class Msort implements BuiltIn {
         Term sortedList = query.getArguments().get(1);
         // END_CHANGE: ISS-2025-0080
 
-        if (inputList.isGround()) {
+        if (it.denzosoft.jprolog.core.util.ListUtils.isProperList(inputList)) {   // ISS-2025-0335: not isGround
             // START_CHANGE: ISS-2025-0076 - Use centralized ListUtils
             // Extract elements from the input list (preserving duplicates)
             List<Term> elements = ListUtils.extractElements(inputList);

@@ -28,7 +28,9 @@ public class Sort implements BuiltIn {
         Term inputList = query.getArguments().get(0).resolveBindings(bindings);
         Term sortedList = query.getArguments().get(1);
 
-        if (inputList.isGround()) {
+        // ISS-2025-0335: sort by standard order of terms — a list need only be PROPER (complete),
+        // not ground; unbound variables are valid elements (lowest in standard order).
+        if (it.denzosoft.jprolog.core.util.ListUtils.isProperList(inputList)) {
             List<Term> elements = ListUtils.extractElements(inputList);
 
             Collections.sort(elements, Sort::compareTerms);
@@ -75,7 +77,7 @@ public class Sort implements BuiltIn {
             case "@>=": ascending = false; dedup = false; break;
             default: throw new PrologEvaluationException("sort/4: Order must be @<, @=<, @>, or @>=");
         }
-        if (!inputList.isGround()) return false;
+        if (!it.denzosoft.jprolog.core.util.ListUtils.isProperList(inputList)) return false;   // ISS-2025-0335
         List<Term> elements = ListUtils.extractElements(inputList);
         java.util.Comparator<Term> cmp = (a, b) -> {
             Term ka = key == 0 ? a : extractKey(a, key);

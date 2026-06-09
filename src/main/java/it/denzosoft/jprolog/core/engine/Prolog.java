@@ -801,6 +801,8 @@ public class Prolog {
             if (USE_V2_PARSER) {
                 try {
                     query = it.denzosoft.jprolog.core.parser.v2.TermReader.parseTerm(queryString, operatorTable);
+                } catch (StackOverflowError e) {   // ISS-2025-0341: deeply nested untrusted input
+                    throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("parser_nesting", "read"));
                 } catch (RuntimeException e) {
                     throw new PrologException("Error parsing query: " + e.getMessage(), e);
                 }
@@ -836,10 +838,16 @@ public class Prolog {
         try {
             it.denzosoft.jprolog.core.engine.v2.MachineSolver m =
                 new it.denzosoft.jprolog.core.engine.v2.MachineSolver(knowledgeBase, builtInRegistry, querySolver, moduleManager, tableStore);
+            m.setInferenceBudget(inferenceBudget);   // ISS-2025-0339
             List<Map<String, Term>> out = new ArrayList<>();
             m.solve(query, sol -> { out.add(sol); return true; });
             refreshAttributedSessionVars(query, out);
             return out;
+        } catch (StackOverflowError e) {
+            // ISS-2025-0341: deep TERM structures still recurse in resolve/unify; convert the raw error
+            // into a catchable ISO resource_error instead of crashing the embedder.
+            throw new PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("stack_overflow", "solve"));
         } finally {
             Variable.setAttributeUnifyHook(prevHook);
         }
@@ -861,6 +869,8 @@ public class Prolog {
             query = USE_V2_PARSER
                 ? it.denzosoft.jprolog.core.parser.v2.TermReader.parseTerm(queryString, operatorTable)
                 : parser.parseTerm(queryString);
+        } catch (StackOverflowError e) {   // ISS-2025-0341: deeply nested untrusted input
+            throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("parser_nesting", "read"));
         } catch (RuntimeException e) {
             throw new PrologException("Error parsing query: " + e.getMessage(), e);
         }
@@ -878,6 +888,8 @@ public class Prolog {
             query = USE_V2_PARSER
                 ? it.denzosoft.jprolog.core.parser.v2.TermReader.parseTerm(queryString, operatorTable)
                 : parser.parseTerm(queryString);
+        } catch (StackOverflowError e) {   // ISS-2025-0341: deeply nested untrusted input
+            throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("parser_nesting", "read"));
         } catch (RuntimeException e) {
             throw new PrologException("Error parsing query: " + e.getMessage(), e);
         }
@@ -886,9 +898,13 @@ public class Prolog {
             Variable.AttributeUnifyHook prevHook = Variable.getAttributeUnifyHook();
             Variable.setAttributeUnifyHook(querySolver::handleAttributeUnification);
             try {
-                new it.denzosoft.jprolog.core.engine.v2.MachineSolver(
-                        knowledgeBase, builtInRegistry, querySolver, moduleManager, tableStore)
-                    .solve(query, sink::test);   // sink returns false to stop the search
+            {
+                it.denzosoft.jprolog.core.engine.v2.MachineSolver m =
+                    new it.denzosoft.jprolog.core.engine.v2.MachineSolver(
+                        knowledgeBase, builtInRegistry, querySolver, moduleManager, tableStore);
+                m.setInferenceBudget(inferenceBudget);   // ISS-2025-0339
+                m.solve(query, sink::test);              // sink returns false to stop the search
+            }
             } finally {
                 Variable.setAttributeUnifyHook(prevHook);
             }
@@ -1326,6 +1342,47 @@ public class Prolog {
     public BuiltInRegistry getBuiltInRegistry() {
         return builtInRegistry;
     }
+
+    // START_CHANGE: ISS-2025-0338 - sandbox / safe mode for untrusted programs
+    /** Built-in packages that can touch the host (process exec, JVM reflection, filesystem, network,
+     *  database, persistence). Removed by {@link #enableSafeMode()}. */
+    private static final String[] UNSAFE_BUILTIN_PACKAGES = {
+        ".builtin.os.", ".builtin.ffi.", ".builtin.filesystem.", ".builtin.network.",
+        ".builtin.http.", ".builtin.jdbc.", ".builtin.persistence."
+    };
+    private boolean safeMode = false;
+
+    /**
+     * Remove all host-touching built-ins (OS shell, Java FFI, filesystem, network, HTTP, JDBC,
+     * persistence) from THIS engine, so a subsequently consulted/queried (untrusted) program cannot
+     * execute processes, reflect into the JVM, or read/write files, sockets or databases. Irreversible
+     * for this instance. Returns the number of predicates removed. Use a fresh {@link Prolog} per
+     * security domain. NOTE: this is a deny-by-package sandbox, not a full resource sandbox — combine
+     * with an inference budget ({@link #setInferenceBudget(long)}) and a query timeout. (ISS-2025-0338)
+     */
+    public int enableSafeMode() {
+        int removed = 0;
+        for (String name : builtInRegistry.getBuiltInNames()) {
+            BuiltIn b = builtInRegistry.getBuiltIn(name);
+            if (b == null) continue;
+            String cls = b.getClass().getName();
+            for (String pkg : UNSAFE_BUILTIN_PACKAGES) {
+                if (cls.contains(pkg)) { builtInRegistry.unregisterBuiltIn(name); removed++; break; }
+            }
+        }
+        safeMode = true;
+        return removed;
+    }
+
+    public boolean isSafeMode() { return safeMode; }
+
+    // ISS-2025-0339: per-query inference (step) budget for the default v2 engine; 0 = unlimited.
+    private long inferenceBudget = 0;
+    /** Abort any subsequent query with error(resource_error(inference_limit_exceeded),_) after this many
+     *  resolution steps. Bounds CPU on untrusted/runaway queries (v2 engine only). 0 disables it. */
+    public void setInferenceBudget(long steps) { this.inferenceBudget = steps; }
+    public long getInferenceBudget() { return inferenceBudget; }
+    // END_CHANGE: ISS-2025-0338
 
     /**
      * Get the module manager.

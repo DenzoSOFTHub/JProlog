@@ -1,5 +1,32 @@
 # JProlog - Release Notes
 
+## Release 3.4.0 - 2026-06-09
+
+### Production hardening (sandbox, resource budget, robustness, correctness)
+
+From a multi-agent production-readiness audit
+(`docs/reports/report-production-readiness-audit-2026-06-09.md`). **705/705 JUnit, 20/20 examples.**
+
+- **Sandbox** `Prolog.enableSafeMode()` — removes host-touching built-ins (os/ffi/filesystem/network/
+  http/jdbc/persistence) so untrusted programs cannot exec/reflect/read/write/connect.
+- **Inference budget** `Prolog.setInferenceBudget(steps)` — uncatchable `InferenceLimitException`
+  bounds CPU on runaway queries.
+- **No crash on deep structures** — deep terms and deeply nested input raise a catchable
+  `resource_error` instead of a raw `StackOverflowError`.
+- **Correctness**: `sort`/`msort`/`sort_4` on variables; `freeze/2` binding propagation; ISO errors for
+  `call/1` and `=../2`.
+- First-arg indexing in v2 was attempted and **reverted** (KB index not reliably populated).
+
+New APIs: `Prolog.enableSafeMode()/isSafeMode()`, `Prolog.setInferenceBudget(long)`,
+`InferenceLimitException`.
+
+### Repository Information
+- **Tag**: v3.4.0
+- **Release Date**: 2026-06-09
+- **Compatibility**: Java 8+, Maven 3.6+
+
+---
+
 ## Release 3.3.0 - 2026-06-09
 
 ### Call tracing & full debugging on the v2 engine
