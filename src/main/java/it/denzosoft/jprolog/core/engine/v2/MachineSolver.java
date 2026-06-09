@@ -6,7 +6,9 @@ import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.KnowledgeBase;
 import it.denzosoft.jprolog.core.engine.QuerySolver;
 import it.denzosoft.jprolog.core.engine.Rule;
+import it.denzosoft.jprolog.core.module.Module;
 import it.denzosoft.jprolog.core.module.ModuleManager;
+import it.denzosoft.jprolog.core.module.PredicateSignature;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
@@ -69,15 +71,23 @@ public final class MachineSolver {
     }
 
     private List<Rule> clausesFor(Term lookup) {
-        // Module-qualified Module:Goal -> resolve via the module manager (the named module's clauses).
-        // Unqualified goals use the flat KB (routing ALL lookups through the module manager changes
-        // clause-set/assert semantics and destabilises non-module programs).
-        if (modules != null && lookup instanceof CompoundTerm
-                && ":".equals(((CompoundTerm) lookup).getName()) && ((CompoundTerm) lookup).getArguments().size() == 2) {
-            try {
-                return modules.getRulesForPredicate(lookup);
-            } catch (RuntimeException e) {
-                return null;                                   // unknown module -> no clauses (fail)
+        // Use the module manager for a Module:Goal qualified call (always), and for unqualified goals
+        // ONLY when user-defined modules exist (>1 module incl. "user") — so it enforces import/export
+        // visibility for module programs. Plain (no-module) programs use the flat KB, because routing
+        // every lookup through the module manager changes clause-set/assert semantics and destabilises
+        // them (ISS-2025-0314).
+        if (modules != null) {
+            boolean qualified = lookup instanceof CompoundTerm
+                && ":".equals(((CompoundTerm) lookup).getName()) && ((CompoundTerm) lookup).getArguments().size() == 2;
+            if (qualified) {
+                return qualifiedClauses((CompoundTerm) lookup);     // with export enforcement
+            }
+            if (modules.getAllModuleNames().size() > 1) {
+                try {
+                    return modules.getRulesForPredicate(lookup);    // unqualified: current module + imports
+                } catch (RuntimeException e) {
+                    return null;
+                }
             }
         }
         if (liveKb != null) {
@@ -87,6 +97,24 @@ public final class MachineSolver {
             return liveKb.getRulesForPredicate(f, ar);
         }
         return kb.get(key(lookup));
+    }
+
+    /** Clauses for a {@code Module:Goal} call, enforcing export visibility when the caller is a
+     *  different module (ISS-2025-0314): a non-exported predicate is invisible from outside. */
+    private List<Rule> qualifiedClauses(CompoundTerm qc) {
+        Term mt = deref(qc.getArguments().get(0));
+        Term g = deref(qc.getArguments().get(1));
+        if (!(mt instanceof Atom) || !(g instanceof Atom || g instanceof CompoundTerm)) return null;
+        Module mod = modules.getModule(((Atom) mt).getName());
+        if (mod == null) return null;                              // unknown module -> fail
+        String f = (g instanceof Atom) ? ((Atom) g).getName() : ((CompoundTerm) g).getName();
+        int ar = (g instanceof Atom) ? 0 : ((CompoundTerm) g).getArguments().size();
+        PredicateSignature sig = new PredicateSignature(f, ar);
+        // A qualified Module:Goal enforces export visibility: a non-exported predicate is invisible.
+        if (mod.resolvePredicateForExternalAccess(sig) == null) {
+            return new ArrayList<>();                              // not exported -> not visible
+        }
+        return mod.getRulesForPredicate(sig);
     }
 
     private static String key(Term head) {
@@ -169,14 +197,17 @@ public final class MachineSolver {
 
     private static final class CP {
         final List<Alt> alts; int idx; final int trailMark;
+        final int legacyMark;   // ISS-2025-0316: snapshot of the legacy backtrackable Trail (b_setval, op/3, setarg)
         // catch-frame payload (isCatch == true => no alternatives; used by throw/1 unwinding)
         final boolean isCatch; final Term catcher, recovery; final Goal cont; final int cutBarrier;
         CP(List<Alt> alts, int trailMark) {
             this.alts = alts; this.trailMark = trailMark;
+            this.legacyMark = it.denzosoft.jprolog.core.engine.Trail.mark();
             this.isCatch = false; this.catcher = null; this.recovery = null; this.cont = null; this.cutBarrier = 0;
         }
         CP(int trailMark, Term catcher, Term recovery, Goal cont, int cutBarrier) {
             this.alts = null; this.trailMark = trailMark;
+            this.legacyMark = it.denzosoft.jprolog.core.engine.Trail.mark();
             this.isCatch = true; this.catcher = catcher; this.recovery = recovery; this.cont = cont; this.cutBarrier = cutBarrier;
         }
     }
@@ -493,6 +524,7 @@ public final class MachineSolver {
             CP top = cps.remove(cps.size() - 1);
             if (top.isCatch) {
                 undo(top.trailMark);
+                it.denzosoft.jprolog.core.engine.Trail.rollbackTo(top.legacyMark);   // ISS-0316
                 int m = mark();
                 if (unify(top.catcher, ball)) {
                     goalStack = new Goal(top.recovery, top.cutBarrier, top.cont);
@@ -607,6 +639,13 @@ public final class MachineSolver {
      *  be a {@code Module:Goal} term); {@code unifyGoal} is the (unqualified) goal each clause head
      *  unifies with. For ordinary calls the two are identical. */
     private boolean callUser(Term unifyGoal, Term lookup) {
+        // ISS-2025-0315: feed the profiler (zero overhead when disabled), like the legacy QuerySolver
+        if (it.denzosoft.jprolog.core.engine.Profiler.isEnabled()) {
+            Term gg = deref(unifyGoal);
+            if (gg instanceof Atom) it.denzosoft.jprolog.core.engine.Profiler.recordCall(((Atom) gg).getName(), 0);
+            else if (gg instanceof CompoundTerm) it.denzosoft.jprolog.core.engine.Profiler.recordCall(
+                ((CompoundTerm) gg).getName(), ((CompoundTerm) gg).getArguments().size());
+        }
         List<Rule> rules = clausesFor(lookup);
         if (rules == null || rules.isEmpty()) return false;
         final Goal cont = goalStack;
@@ -632,6 +671,7 @@ public final class MachineSolver {
     private boolean advance(CP cp) {
         while (cp.idx < cp.alts.size()) {
             undo(cp.trailMark);
+            it.denzosoft.jprolog.core.engine.Trail.rollbackTo(cp.legacyMark);   // ISS-0316: undo b_setval etc.
             Goal gs = cp.alts.get(cp.idx++).apply();
             if (gs != FAILED) { goalStack = gs; return true; }
         }
@@ -699,12 +739,28 @@ public final class MachineSolver {
         return m;
     }
 
-    private Term resolve(Term t) {
-        t = deref(t);
+    private Term resolve(Term t) { return resolve(t, new java.util.HashSet<>()); }
+
+    /** Fully dereference {@code t}, detecting cyclic terms (e.g. X = f(X) with occurs_check off) so a
+     *  rational tree raises a controlled representation_error instead of a {@link StackOverflowError}
+     *  (ISS-2025-0313). {@code active} holds the variable names on the current resolution path. */
+    private Term resolve(Term t, java.util.Set<String> active) {
+        if (t instanceof Variable) {
+            String n = ((Variable) t).getName();
+            Term b = binding.get(n);
+            if (b == null) return t;                                  // unbound
+            if (!active.add(n)) {                                     // already on the path -> cycle
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.representationError("cyclic_term", "resolve"));
+            }
+            Term r = resolve(b, active);
+            active.remove(n);
+            return r;
+        }
         if (t instanceof CompoundTerm) {
             CompoundTerm c = (CompoundTerm) t;
             List<Term> args = new ArrayList<>(c.getArguments().size());
-            for (Term a : c.getArguments()) args.add(resolve(a));
+            for (Term a : c.getArguments()) args.add(resolve(a, active));
             return new CompoundTerm(new Atom(c.getName()), args);
         }
         return t;

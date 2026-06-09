@@ -4515,14 +4515,28 @@ fixes `testModuleQualifiedCall`. Routing **all** lookups through the module mana
 module manager — an inconsistency — plus clause-set differences). So unqualified lookup stays on the
 flat KB.
 
-**Remaining 6 — a dedicated increment:**
-- **full module subsystem** (3: `testModuleImport` unqualified-after-`use_module`, `test7` export
-  enforcement, `testCompleteISOFeatureSet`) — needs the v2 engine's clause lookup AND assert/retract
-  to go through the module manager *consistently* (the naive version regressed 13); a real subsystem.
-- **`profile/1`** internals; **cyclic-term-safe `resolve`** (no-occurs `X=f(X)` then snapshot
-  recurses); a **trail/global state-on-exception** detail (`test4`).
+**Gap-closing round 2 (ISS-2025-0313..0316) — closed the original 6 + more:**
+- **ISS-0313 cyclic-term-safe `resolve`** — detects rational trees (`X=f(X)` with occurs_check off)
+  via an active-variable set and raises `representation_error(cyclic_term)` instead of `StackOverflowError`.
+- **ISS-0314 module integration** — `clausesFor` is module-aware: `Module:Goal` resolves the named
+  module **with export enforcement** (`resolvePredicateForExternalAccess` — a non-exported predicate is
+  invisible), and unqualified goals use `moduleManager.getRulesForPredicate` **only when user modules
+  exist** (so plain programs keep the flat-KB semantics — avoids the 13-test regression from routing
+  everything through the module manager). Fixes module-qualified calls, import, and export enforcement.
+- **ISS-0315 profiler** — `callUser` feeds `Profiler.recordCall` (zero overhead when disabled), so
+  `profile`/`profile_data` work through the v2 engine.
+- **ISS-0316 backtrackable globals** — each choice point snapshots the legacy `Trail` mark and rolls it
+  back on backtrack, so `b_setval`/`op/3`/`setarg`-style undo actions are honored under v2.
 
-The legacy default remains 100% green; the v2 engine passes ~664/670 when enabled and is reviewed.
+**Remaining v2-engine gaps — fundamental advanced-feature subsystems (the engine stays OPT-IN):**
+- **Coroutining / attributed variables** (`freeze/2`, `when/2`, `dif/2`) — the v2 `unify` has no
+  attributed-variable hooks, so frozen goals do not fire.
+- **Tabling / SLG resolution** (`:- table`) — not implemented; tabled left-recursion loops (OOM).
+- **Destructive `setarg/3`** — incompatible with the v2 copy/rename term model (terms are not shared).
+
+These need major engine subsystems and are out of scope for the prototype. **The shipped legacy
+default remains 100% green (675/675);** the v2 engine (`-Djprolog.engine=v2`) now handles the bulk of
+the suite but not the three subsystems above.
 
 ---
 
