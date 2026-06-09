@@ -18,7 +18,7 @@ public class Write implements BuiltIn {
         Term termToWrite = query.getArguments().get(0);
         Term resolvedTerm = termToWrite.resolveBindings(bindings);
         // START_CHANGE: ISS-2025-0242 - operator-aware formatting
-        System.out.print(it.denzosoft.jprolog.core.util.TermFormatter.format(resolvedTerm, false, false, false, 1200));
+        StreamManager.out().print(it.denzosoft.jprolog.core.util.TermFormatter.format(resolvedTerm, false, false, false, 1200));
         // END_CHANGE: ISS-2025-0242
 
         // As it's a side-effect, it always succeeds if argument is valid.

@@ -63,7 +63,30 @@ public class StreamManager {
     
     private static String currentInputStream = "user_input";
     private static String currentOutputStream = "user_output";
-    
+
+    // START_CHANGE: ISS-2025-0327 - per-thread output override. Lets a caller (e.g. the IDE) capture
+    // write/1 output for ONE thread without a process-wide System.setOut (which garbles other threads).
+    private static final ThreadLocal<java.io.PrintStream> THREAD_OUTPUT = new ThreadLocal<>();
+
+    /** Redirect this thread's output to {@code ps} (null clears it). */
+    public static void setThreadLocalOutput(java.io.PrintStream ps) {
+        if (ps == null) THREAD_OUTPUT.remove(); else THREAD_OUTPUT.set(ps);
+    }
+
+    /**
+     * The effective output stream for the calling thread: a thread-local override if set, otherwise the
+     * current user output (read live from {@code System.out} so test/console redirections are honoured),
+     * otherwise the explicitly-selected stream. Output built-ins must write here instead of System.out.
+     */
+    public static java.io.PrintStream out() {
+        java.io.PrintStream tl = THREAD_OUTPUT.get();
+        if (tl != null) return tl;
+        if (currentOutputStream == null || "user_output".equals(currentOutputStream)) return System.out;
+        Object s = OUTPUT_STREAMS.get(currentOutputStream);
+        return (s instanceof java.io.PrintStream) ? (java.io.PrintStream) s : System.out;
+    }
+    // END_CHANGE: ISS-2025-0327
+
     static {
         // Initialize standard streams
         INPUT_STREAMS.put("user_input", System.in);

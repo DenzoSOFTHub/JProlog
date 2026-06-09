@@ -54,11 +54,11 @@ public class PutCode implements BuiltIn {
         // START_CHANGE: ISS-2025-0192 - Handle supplementary Unicode characters (codepoints > 0xFFFF)
         // Write the character to standard output
         if (Character.isSupplementaryCodePoint(charCode)) {
-            System.out.print(new String(Character.toChars(charCode)));
+            StreamManager.out().print(new String(Character.toChars(charCode)));
         } else {
-            System.out.print((char) charCode);
+            StreamManager.out().print((char) charCode);
         }
-        System.out.flush();
+        StreamManager.out().flush();
         // END_CHANGE: ISS-2025-0192
         
         solutions.add(bindings);

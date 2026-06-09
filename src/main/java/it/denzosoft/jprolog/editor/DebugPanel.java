@@ -6,7 +6,6 @@ import it.denzosoft.jprolog.core.engine.DebugStackEntry;
 import it.denzosoft.jprolog.core.engine.Prolog;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
-import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.editor.util.DialogUtils;
 
 import javax.swing.*;
@@ -16,6 +15,8 @@ import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreePath;
 import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.InputEvent;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.io.ByteArrayOutputStream;
@@ -48,6 +49,9 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
     private JButton stepOutButton;
     private JButton continueButton;
     private JToggleButton traceToggleButton;
+    // M11 CONTROL FLOW: extra flow controls
+    private JButton runToCursorButton;
+    private JButton restartButton;
 
     // UI Components - Query input
     private JTextField queryField;
@@ -56,8 +60,17 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
     // Debug information panels
     private JTree stackTraceTree;
     private DefaultTreeModel stackTraceModel;
-    private JTable variablesTable;
+    // M14 VARIABLES TREE: structure-aware variables view (replaces the flat JTable).
+    private JTree variablesTree;
+    private DefaultTreeModel variablesTreeModel;
+    // Retained model instance for backward compatibility (public API preserved).
     private VariablesTableModel variablesModel;
+    // M15 WATCH EXPRESSIONS: watch input + results list.
+    private JTextField watchField;
+    private DefaultListModel<String> watchesModel;
+    private JList<String> watchesList;
+    // Watch goals (expression text only, without results).
+    private final List<String> watchExpressions = new ArrayList<>();
     private JList<String> breakpointsList;
     private DefaultListModel<String> breakpointsModel;
     private JTextPane traceOutputArea;
@@ -76,6 +89,10 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
     // Query history
     private List<String> queryHistory = new ArrayList<>();
     private int historyIndex = -1;
+
+    // M11 CONTROL FLOW: last debug query (for Restart) and a one-shot run-to-cursor breakpoint.
+    private volatile String lastDebugQuery;
+    private volatile String runToCursorBreakpoint;
 
     // Last paused event (for stack frame click -> variable update)
     // START_CHANGE: ISS-2025-0190 - Thread safety: volatile for cross-thread access
@@ -128,6 +145,13 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         continueButton = createButton("Continue", "Continue to next breakpoint (F9)");
         continueButton.setEnabled(false);
 
+        // M11 CONTROL FLOW
+        runToCursorButton = createButton("Run to Cursor",
+            "Run until the predicate at the editor caret line is called (F4)");
+        runToCursorButton.setEnabled(false);
+        restartButton = createButton("Restart", "Re-run the last debug query with a fresh controller");
+        restartButton.setEnabled(false);
+
         traceToggleButton = new JToggleButton("Trace");
         traceToggleButton.setToolTipText("Toggle trace output for all events");
         traceToggleButton.setSelected(true);
@@ -148,12 +172,23 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         stackTraceTree.setShowsRootHandles(true);
         stackTraceTree.setFont(new Font("Consolas", Font.PLAIN, 12));
 
-        // Variables table
-        variablesModel = new VariablesTableModel();
-        variablesTable = new JTable(variablesModel);
-        variablesTable.setFillsViewportHeight(true);
-        variablesTable.setFont(new Font("Consolas", Font.PLAIN, 12));
-        variablesTable.getTableHeader().setFont(new Font("SansSerif", Font.BOLD, 12));
+        // M14 VARIABLES TREE: structure-aware variables view backed by the real Term.
+        variablesModel = new VariablesTableModel(); // retained for backward compatibility
+        DefaultMutableTreeNode varsRoot = new DefaultMutableTreeNode("Variables");
+        variablesTreeModel = new DefaultTreeModel(varsRoot);
+        variablesTree = new JTree(variablesTreeModel);
+        variablesTree.setRootVisible(false);
+        variablesTree.setShowsRootHandles(true);
+        variablesTree.setFont(new Font("Consolas", Font.PLAIN, 12));
+
+        // M15 WATCH EXPRESSIONS
+        watchField = new JTextField(20);
+        watchField.setFont(new Font("Consolas", Font.PLAIN, 12));
+        watchField.setToolTipText("Enter a goal to watch (evaluated against the paused bindings)");
+        watchesModel = new DefaultListModel<>();
+        watchesList = new JList<>(watchesModel);
+        watchesList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        watchesList.setFont(new Font("Consolas", Font.PLAIN, 12));
 
         // Breakpoints list
         breakpointsModel = new DefaultListModel<>();
@@ -230,6 +265,10 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         toolbarPanel.add(stepOutButton);
         toolbarPanel.add(continueButton);
         toolbarPanel.add(createSeparator());
+        // M11 CONTROL FLOW
+        toolbarPanel.add(runToCursorButton);
+        toolbarPanel.add(restartButton);
+        toolbarPanel.add(createSeparator());
         toolbarPanel.add(traceToggleButton);
 
         // Query input bar
@@ -250,7 +289,7 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         JSplitPane mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
         mainSplit.setDividerLocation(400);
 
-        // Left: stack trace above, variables below
+        // Left: stack trace above, variables tree in the middle, watches below
         JSplitPane leftSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
         leftSplit.setDividerLocation(180);
 
@@ -258,12 +297,37 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         stackPanel.setBorder(BorderFactory.createTitledBorder("Call Stack"));
         stackPanel.add(new JScrollPane(stackTraceTree), BorderLayout.CENTER);
 
+        // M14 VARIABLES TREE
         JPanel varsPanel = new JPanel(new BorderLayout());
         varsPanel.setBorder(BorderFactory.createTitledBorder("Variables"));
-        varsPanel.add(new JScrollPane(variablesTable), BorderLayout.CENTER);
+        varsPanel.add(new JScrollPane(variablesTree), BorderLayout.CENTER);
+
+        // M15 WATCH EXPRESSIONS
+        JPanel watchPanel = new JPanel(new BorderLayout());
+        watchPanel.setBorder(BorderFactory.createTitledBorder("Watches"));
+        watchPanel.add(new JScrollPane(watchesList), BorderLayout.CENTER);
+        JPanel watchInput = new JPanel(new BorderLayout(4, 0));
+        watchInput.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
+        JButton addWatch = createButton("+", "Add watch expression");
+        JButton removeWatch = createButton("-", "Remove selected watch");
+        JPanel watchInputButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+        watchInputButtons.add(addWatch);
+        watchInputButtons.add(removeWatch);
+        watchInput.add(watchField, BorderLayout.CENTER);
+        watchInput.add(watchInputButtons, BorderLayout.EAST);
+        watchPanel.add(watchInput, BorderLayout.SOUTH);
+        addWatch.addActionListener(e -> addWatch());
+        removeWatch.addActionListener(e -> removeSelectedWatch());
+        watchField.addActionListener(e -> addWatch());
+
+        // Variables tree above, watches below (nested split inside the left column).
+        JSplitPane varsWatchSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+        varsWatchSplit.setDividerLocation(180);
+        varsWatchSplit.setTopComponent(varsPanel);
+        varsWatchSplit.setBottomComponent(watchPanel);
 
         leftSplit.setTopComponent(stackPanel);
-        leftSplit.setBottomComponent(varsPanel);
+        leftSplit.setBottomComponent(varsWatchSplit);
 
         // Right: breakpoints above, trace output below
         JSplitPane rightSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
@@ -319,8 +383,16 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         stepOverButton.addActionListener(e -> stepOver());
         stepOutButton.addActionListener(e -> stepOut());
         continueButton.addActionListener(e -> continueExecution());
+        // M11 CONTROL FLOW
+        runToCursorButton.addActionListener(e -> runToCursor());
+        restartButton.addActionListener(e -> restartDebug());
+        // (stepping keyboard shortcuts are registered in setupSteppingShortcuts())
         runQueryButton.addActionListener(e -> debugQuery());
         queryField.addActionListener(e -> debugQuery());
+
+        // ISS-2025-0322: real stepping shortcuts (the buttons were tooltipped F7/F8/Shift+F8/F9 but
+        // only one key was wired). Bind them window-wide; each fires only when its button is enabled.
+        setupSteppingShortcuts();
 
         // Query field history navigation
         queryField.addKeyListener(new KeyAdapter() {
@@ -477,6 +549,8 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         }
 
         final String query = queryText;
+        // M11 CONTROL FLOW: remember the last query so Restart can re-issue it.
+        lastDebugQuery = query;
         appendInfo("\n--- Debug query: " + query + " ---\n");
         traceLineCount = 0;
 
@@ -492,8 +566,7 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
             }
 
             try {
-                // Capture System.out for side effects
-                PrintStream originalOut = System.out;
+                // Capture side-effect output for this debug thread (thread-local, not global)
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
                 PrintStream captureOut = new PrintStream(baos);
 
@@ -501,11 +574,14 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
                 String capturedOutput;
 
                 try {
-                    System.setOut(captureOut);
-                    solutions = engine.solve(query);
+                    // ISS-2025-0328: debugging MUST use the legacy engine — it carries the four-port
+                    // DebugController hooks the v2 engine lacks. Capture output via the thread-local.
+                    it.denzosoft.jprolog.builtin.io.StreamManager.setThreadLocalOutput(captureOut);
+                    solutions = engine.solveLegacy(query);
+                    captureOut.flush();
                     capturedOutput = baos.toString();
                 } finally {
-                    System.setOut(originalOut);
+                    it.denzosoft.jprolog.builtin.io.StreamManager.setThreadLocalOutput(null);
                 }
 
                 final String output = capturedOutput;
@@ -572,6 +648,34 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
 
     // ===================== STEP CONTROLS =====================
 
+    /** Bind F7 / F8 / Shift+F8 / F9 (and Esc) window-wide to the debug step actions (ISS-2025-0322).
+     *  Each action delegates to the button handler, which already no-ops unless paused. */
+    private void setupSteppingShortcuts() {
+        InputMap im = getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+        ActionMap am = getActionMap();
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_F7, 0), "dbg-step-into");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_F8, 0), "dbg-step-over");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_F8, InputEvent.SHIFT_DOWN_MASK), "dbg-step-out");
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_F9, 0), "dbg-continue");
+        // M11 CONTROL FLOW: F4 = run to cursor
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_F4, 0), "dbg-run-to-cursor");
+        am.put("dbg-run-to-cursor", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { if (runToCursorButton.isEnabled()) runToCursor(); }
+        });
+        am.put("dbg-step-into", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { if (stepIntoButton.isEnabled()) stepInto(); }
+        });
+        am.put("dbg-step-over", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { if (stepOverButton.isEnabled()) stepOver(); }
+        });
+        am.put("dbg-step-out", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { if (stepOutButton.isEnabled()) stepOut(); }
+        });
+        am.put("dbg-continue", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { if (continueButton.isEnabled()) continueExecution(); }
+        });
+    }
+
     private void stepInto() {
         if (debugController != null && debugController.isPaused()) {
             clearEditorDebugHighlight();
@@ -608,6 +712,277 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         }
     }
 
+    // ===================== M11 CONTROL FLOW =====================
+
+    /**
+     * Run to Cursor: set a one-shot breakpoint on the predicate at the editor caret
+     * line, then continue. When that breakpoint is next hit the one-shot is cleared
+     * again so it does not persist.
+     */
+    private void runToCursor() {
+        if (debugController == null || !debugController.isPaused()) {
+            return;
+        }
+        if (ide == null) {
+            appendInfo("Run to Cursor: no IDE context.\n");
+            return;
+        }
+        FileEditor editor = ide.getEditorTabs().getCurrentEditor();
+        Prolog engine = ide.getPrologEngine();
+        if (editor == null || engine == null) {
+            appendInfo("Run to Cursor: no active editor or engine.\n");
+            return;
+        }
+        int line = caretLine(editor);
+        String indicator = engine.getPredicateIndicatorAtLine(line);
+        if (indicator == null) {
+            appendInfo("Run to Cursor: no predicate found at line " + line + ".\n");
+            return;
+        }
+        // Install a one-shot breakpoint (remembered so we can remove it once hit).
+        runToCursorBreakpoint = indicator;
+        debugController.addBreakpoint(indicator);
+        appendInfo("Run to Cursor: " + indicator + " (line " + line + ")\n");
+        // Now continue execution until that breakpoint (or an existing one) is hit.
+        continueExecution();
+    }
+
+    /**
+     * Compute the 1-based caret line of the given editor from its text pane.
+     */
+    private int caretLine(FileEditor editor) {
+        JTextPane pane = editor.getTextPane();
+        if (pane == null) return 1;
+        int caret = pane.getCaretPosition();
+        javax.swing.text.Element root = pane.getDocument().getDefaultRootElement();
+        return root.getElementIndex(caret) + 1; // element index is 0-based
+    }
+
+    /**
+     * If a one-shot Run-to-Cursor breakpoint is set and this pause is at that
+     * predicate, remove the breakpoint so it does not persist beyond the single hit.
+     * Breakpoints the user added explicitly (also present in {@code breakpoints}) are
+     * left untouched.
+     */
+    private void clearRunToCursorIfHit(DebugEvent event) {
+        String oneShot = runToCursorBreakpoint;
+        if (oneShot == null || debugController == null) {
+            return;
+        }
+        Term goal = event.getGoal();
+        if (goal == null) {
+            return;
+        }
+        String name = goal.getName();
+        int arity = (goal.getArguments() != null) ? goal.getArguments().size() : 0;
+        String indicator = (name != null) ? (name + "/" + arity) : null;
+        if (oneShot.equals(indicator)) {
+            runToCursorBreakpoint = null;
+            // Only remove if it was not also a user breakpoint.
+            if (!breakpoints.contains(oneShot)) {
+                debugController.removeBreakpoint(oneShot);
+            }
+        }
+    }
+
+    /**
+     * Restart: re-issue the last debug query with a fresh controller. Stops the
+     * current run (if any), recreates the DebugController via startDebugging(),
+     * and replays the remembered query text.
+     */
+    private void restartDebug() {
+        final String query = lastDebugQuery;
+        if (query == null || query.isEmpty()) {
+            appendInfo("Restart: no previous query to re-run.\n");
+            return;
+        }
+        // Tear down the current session (also resumes any paused thread to let it exit).
+        if (debugController != null) {
+            debugController.stop();
+        }
+        if (debugThread != null && debugThread.isAlive()) {
+            debugThread.interrupt();
+            try {
+                debugThread.join(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        debugThread = null;
+        queryRunning = false;
+        runToCursorBreakpoint = null;
+
+        // Fresh controller wired by startDebugging(); clear residual UI state first.
+        debugMode = false;
+        debugController = null;
+        clearCallStack();
+        clearVariables();
+        clearEditorDebugHighlight();
+        appendInfo("\n--- Restarting debug query ---\n");
+
+        startDebugging();
+        queryField.setText(query);
+        debugQuery();
+    }
+
+    // ===================== M15 WATCH EXPRESSIONS =====================
+
+    /** Add the current watch-field expression to the watch list. */
+    private void addWatch() {
+        String expr = watchField.getText().trim();
+        if (expr.endsWith(".")) {
+            expr = expr.substring(0, expr.length() - 1).trim();
+        }
+        if (expr.isEmpty() || watchExpressions.contains(expr)) {
+            return;
+        }
+        watchExpressions.add(expr);
+        watchesModel.addElement(expr + "  =  ?");
+        watchField.setText("");
+        // Evaluate immediately if we are currently paused.
+        if (lastPausedEvent != null) {
+            evaluateWatches(lastPausedEvent.getBindings());
+        }
+    }
+
+    /** Remove the selected watch expression. */
+    private void removeSelectedWatch() {
+        int idx = watchesList.getSelectedIndex();
+        if (idx >= 0 && idx < watchExpressions.size()) {
+            watchExpressions.remove(idx);
+            watchesModel.removeElementAt(idx);
+        }
+    }
+
+    /**
+     * Evaluate each watch goal against the supplied paused bindings and display
+     * the result next to it. The goal is solved through the legacy engine
+     * (debug-safe); when the goal shares variables with the current bindings those
+     * bindings are substituted into the goal text before solving.
+     */
+    private void evaluateWatches(Map<String, Term> bindings) {
+        if (watchExpressions.isEmpty()) {
+            return;
+        }
+        Prolog engine = (ide != null) ? ide.getPrologEngine() : null;
+        for (int i = 0; i < watchExpressions.size(); i++) {
+            String expr = watchExpressions.get(i);
+            String result;
+            if (engine == null) {
+                result = "<no engine>";
+            } else {
+                result = evaluateWatch(engine, expr, bindings);
+            }
+            if (i < watchesModel.size()) {
+                watchesModel.set(i, expr + "  =  " + result);
+            } else {
+                watchesModel.addElement(expr + "  =  " + result);
+            }
+        }
+    }
+
+    /**
+     * Evaluate a single watch goal with the current paused bindings substituted in.
+     * Returns "true", "false", a binding string for the first solution's fresh
+     * variables, or an error marker.
+     */
+    private String evaluateWatch(Prolog engine, String expr, Map<String, Term> bindings) {
+        // Substitute known bindings as a prefix of (Var = Value, ...) conjunctions so
+        // the watch goal sees the paused frame's values.
+        String goal = buildWatchGoal(expr, bindings);
+        // Detach the debug controller for this nested solve: we are on the EDT while the
+        // solver thread is blocked at a pause; re-entering the debugger here would attempt
+        // to pause again and deadlock. Restore it afterwards.
+        DebugController saved = (engine.getQuerySolver() != null)
+            ? engine.getQuerySolver().getDebugController() : null;
+        try {
+            if (engine.getQuerySolver() != null) {
+                engine.getQuerySolver().setDebugController(null);
+            }
+            List<Map<String, Term>> sols = engine.solveLegacy(goal);
+            if (sols == null || sols.isEmpty()) {
+                return "false";
+            }
+            // Report bindings of variables that appear in the watch expression itself.
+            Map<String, Term> first = sols.get(0);
+            StringBuilder sb = new StringBuilder();
+            for (Map.Entry<String, Term> e : first.entrySet()) {
+                String key = e.getKey();
+                if (key.startsWith("_")) continue;
+                // Only show variables the user actually wrote in the watch expression.
+                if (!mentionsVariable(expr, key)) continue;
+                if (sb.length() > 0) sb.append(", ");
+                sb.append(key).append(" = ").append(e.getValue());
+            }
+            if (sb.length() == 0) {
+                return "true" + (sols.size() > 1 ? " (" + sols.size() + " solutions)" : "");
+            }
+            return sb.toString() + (sols.size() > 1 ? "  (+" + (sols.size() - 1) + " more)" : "");
+        } catch (Exception ex) {
+            return "<error: " + ex.getMessage() + ">";
+        } finally {
+            // Re-attach the debug controller so stepping/continue still work.
+            if (engine.getQuerySolver() != null) {
+                engine.getQuerySolver().setDebugController(saved);
+            }
+        }
+    }
+
+    /**
+     * Prefix the watch goal with the paused frame's user bindings so the goal is
+     * evaluated in that context, e.g. {@code X = 3, Y = foo, <expr>}.
+     */
+    private String buildWatchGoal(String expr, Map<String, Term> bindings) {
+        if (bindings == null || bindings.isEmpty()) {
+            return expr;
+        }
+        StringBuilder prefix = new StringBuilder();
+        for (Map.Entry<String, Term> b : bindings.entrySet()) {
+            String name = b.getKey();
+            if (name.startsWith("_")) continue;
+            // Only substitute bindings whose variable the watch expression references.
+            if (!mentionsVariable(expr, name)) continue;
+            Term resolved = deepResolve(b.getValue(), bindings);
+            // Skip still-unbound variables — leaving them free lets the goal bind them.
+            if (resolved instanceof Variable) continue;
+            if (prefix.length() > 0) prefix.append(", ");
+            prefix.append(name).append(" = ").append(termToSource(resolved));
+        }
+        if (prefix.length() == 0) {
+            return expr;
+        }
+        return prefix.toString() + ", " + expr;
+    }
+
+    /**
+     * Render a term as re-parseable Prolog source. The default toString of terms in
+     * this engine is ISO-compatible for the structures we care about (atoms, numbers,
+     * lists, compounds), so it round-trips through the parser.
+     */
+    private String termToSource(Term t) {
+        return (t == null) ? "_" : t.toString();
+    }
+
+    /**
+     * Heuristic check: does the watch expression mention variable {@code name} as a
+     * whole token (so we don't substitute on accidental substring matches)?
+     */
+    private boolean mentionsVariable(String expr, String name) {
+        int idx = expr.indexOf(name);
+        while (idx >= 0) {
+            boolean leftOk = (idx == 0) || !isIdentChar(expr.charAt(idx - 1));
+            int after = idx + name.length();
+            boolean rightOk = (after >= expr.length()) || !isIdentChar(expr.charAt(after));
+            if (leftOk && rightOk) return true;
+            idx = expr.indexOf(name, idx + 1);
+        }
+        return false;
+    }
+
+    private boolean isIdentChar(char c) {
+        return Character.isLetterOrDigit(c) || c == '_';
+    }
+
     // ===================== DebugController.DebugListener =====================
 
     @Override
@@ -617,11 +992,18 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
             lastPausedEvent = event;
             lastCallStack = event.getCallStack();
 
+            // M11 CONTROL FLOW: clear a one-shot Run-to-Cursor breakpoint once its
+            // predicate is reached (so it does not linger as a permanent breakpoint).
+            clearRunToCursorIfHit(event);
+
             // Update call stack display
             updateCallStackDisplay(event.getCallStack());
 
             // Update variables display with current frame bindings
             updateVariablesDisplay(event.getBindings());
+
+            // M15 WATCH EXPRESSIONS: re-evaluate each watch against the paused bindings.
+            evaluateWatches(event.getBindings());
 
             // Enable step buttons
             updateButtonStates(true, true);
@@ -803,8 +1185,11 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         }
     }
 
+    // M14 VARIABLES TREE: repopulate the structure-aware tree from a frame's bindings.
     private void updateVariablesDisplay(Map<String, Term> bindings) {
         variablesModel.clear();
+        DefaultMutableTreeNode root = new DefaultMutableTreeNode("Variables");
+
         if (bindings != null) {
             // Sort variable names for consistent display
             List<String> sortedNames = new ArrayList<>();
@@ -818,8 +1203,17 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
             for (String name : sortedNames) {
                 Term value = bindings.get(name);
                 Term resolved = deepResolve(value, bindings);
+                // Keep the flat model in sync (backward-compatible public API).
                 variablesModel.addVariable(name, resolved.toString());
+                // Build the expandable tree node backed by the real term.
+                root.add(VariablesTableModel.buildTreeNode(name, resolved));
             }
+        }
+
+        variablesTreeModel.setRoot(root);
+        // Expand the top-level bindings so they are visible at a glance.
+        for (int i = 0; i < variablesTree.getRowCount(); i++) {
+            variablesTree.expandRow(i);
         }
     }
 
@@ -845,6 +1239,10 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
 
     private void clearVariables() {
         variablesModel.clear();
+        // M14 VARIABLES TREE: clear the tree as well.
+        if (variablesTreeModel != null) {
+            variablesTreeModel.setRoot(new DefaultMutableTreeNode("Variables"));
+        }
     }
 
     private void appendTraceLine(DebugEvent event, boolean isPause) {
@@ -921,6 +1319,9 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         stepOverButton.setEnabled(paused);
         stepOutButton.setEnabled(paused);
         continueButton.setEnabled(paused);
+        // M11 CONTROL FLOW: run-to-cursor needs an active pause; restart needs a prior query.
+        runToCursorButton.setEnabled(paused);
+        restartButton.setEnabled(debugging && !queryRunning && lastDebugQuery != null);
         runQueryButton.setEnabled(debugging && !queryRunning);
         queryField.setEnabled(debugging && !queryRunning);
     }

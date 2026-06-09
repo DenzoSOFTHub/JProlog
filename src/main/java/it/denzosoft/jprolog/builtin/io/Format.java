@@ -554,8 +554,8 @@ public class Format extends AbstractBuiltInWithContext {
      * Get output stream.
      */
     private PrintWriter getOutputStream(Term streamTerm) {
-        // Simplified - in full implementation, use StreamManager
-        return new PrintWriter(System.out);
+        // ISS-2025-0327: honour the thread-local / current output stream instead of raw System.out.
+        return new PrintWriter(StreamManager.out());
     }
     
     /**

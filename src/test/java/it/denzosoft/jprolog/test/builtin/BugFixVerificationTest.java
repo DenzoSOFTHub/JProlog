@@ -2099,6 +2099,63 @@ public class BugFixVerificationTest {
     }
     // END_CHANGE: ISS-2025-0305
 
+    // START_CHANGE: ISS-2025-0328 - solveLegacy forces the legacy engine (carries the debugger hooks)
+    @Test
+    public void testISS0328_SolveLegacyWorks() {
+        Prolog p = new Prolog();
+        p.consult("color(red). color(green). color(blue).");
+        List<Map<String, Term>> sols = p.solveLegacy("color(X).");
+        assertEquals("legacy engine must enumerate all solutions", 3, sols.size());
+    }
+    // END_CHANGE: ISS-2025-0328
+
+    // START_CHANGE: ISS-2025-0322 - line -> predicate mapping for line-accurate IDE breakpoints
+    @Test
+    public void testISS0322_LineToPredicateMapping() {
+        Prolog p = new Prolog();
+        // line 1: foo(1).   line 2: bar(X) :-   line 3:     foo(X).
+        p.consultWithDiagnostics("foo(1).\nbar(X) :-\n    foo(X).\n", "test.pl");
+        assertEquals("foo/1", p.getPredicateIndicatorAtLine(1));
+        assertEquals("bar/1", p.getPredicateIndicatorAtLine(2));
+        assertEquals("body line maps to its owning clause", "bar/1", p.getPredicateIndicatorAtLine(3));
+        assertNull("no clause above line 0", p.getPredicateIndicatorAtLine(0));
+    }
+    // END_CHANGE: ISS-2025-0322
+
+    // START_CHANGE: ISS-2025-0321 - streaming solve delivers one solution at a time and stops on demand
+    @Test
+    public void testISS0321_SolveStreamCapsAndStops() {
+        Prolog p = new Prolog();
+        p.consult("n(1). n(2). n(3). n(4). n(5).");
+        final List<String> got = new java.util.ArrayList<>();
+        p.solveStream("n(X).", sol -> { got.add(sol.get("X").toString()); return got.size() < 3; });
+        assertEquals("streaming must stop after the sink returns false", 3, got.size());
+        assertEquals("1", got.get(0));
+    }
+    // END_CHANGE: ISS-2025-0321
+
+    // START_CHANGE: ISS-2025-0320 - interrupting the solver thread aborts a non-terminating query
+    @Test(timeout = 15000)
+    public void testISS0320_InterruptStopsInfiniteQuery() throws InterruptedException {
+        Prolog p = new Prolog();
+        p.consult("loop :- loop.");
+        final boolean[] cancelled = {false};
+        Thread t = new Thread(() -> {
+            try {
+                p.solve("loop.");
+            } catch (it.denzosoft.jprolog.core.engine.QueryCancelledException ce) {
+                cancelled[0] = true;
+            } catch (Throwable ignore) { /* other terminal outcomes are not what we test here */ }
+        });
+        t.start();
+        Thread.sleep(400);            // let it spin in the resolution loop
+        t.interrupt();                // == the IDE Stop button
+        t.join(8000);
+        assertFalse("the interrupted solver thread must terminate", t.isAlive());
+        assertTrue("the cancelled query must raise QueryCancelledException", cancelled[0]);
+    }
+    // END_CHANGE: ISS-2025-0320
+
     // ISS-2025-0306: with_output_to capture works (thread-safety of the System.out swap is tracked
     // under LIM-025 — it needs write/1 routed through a per-engine stream, the IO-layer rework).
     @Test

@@ -24,7 +24,7 @@ public class Tab implements BuiltIn {
         if (n < 0) return false;
         // END_CHANGE: ISS-2025-0192
         for (int i = 0; i < n; i++) {
-            System.out.print(' ');
+            StreamManager.out().print(' ');
         }
 
         solutions.add(new HashMap<>(bindings));

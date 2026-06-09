@@ -43,6 +43,7 @@ public class BottomTabbedPane extends JTabbedPane {
         
         // Tab Build (risultati compilazione)
         buildPanel = new BuildPanel();
+        buildPanel.setIde(ide);   // ISS-2025-0325: enable clickable problems -> jump-to-source
         addTab("Build", createTabIcon("🔨"), buildPanel, "Risultati di compilazione e build");
         
         // Tab Run (query interattive)

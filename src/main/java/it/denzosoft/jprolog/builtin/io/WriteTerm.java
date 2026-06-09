@@ -384,7 +384,7 @@ public class WriteTerm extends AbstractBuiltInWithContext {
     }
 
     private PrintWriter getCurrentOutputStream() {
-        return new PrintWriter(System.out);
+        return new PrintWriter(StreamManager.out());
     }
 
     private boolean needsQuoting(String atom) {

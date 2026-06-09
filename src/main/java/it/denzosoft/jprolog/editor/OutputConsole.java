@@ -1,10 +1,14 @@
 package it.denzosoft.jprolog.editor;
 
 import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.text.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
 import java.io.PrintWriter;
@@ -47,14 +51,35 @@ public class OutputConsole extends JTextPane {
     private boolean showTimestamps = true;
     private int maxLines = 1000;
     private SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm:ss");
-    
+
+    // START_CHANGE: ISS-2025-0260 - Console incremental find (Ctrl+F)
+    // Self-contained incremental search bar for the output console.
+    // Implemented as a lightweight undecorated JWindow anchored to the top of
+    // this text pane so that OutputConsole can remain a JTextPane (it is added
+    // directly as a tab component, so it cannot host sibling components itself).
+    private JWindow findBar;                 // floating find bar window
+    private JTextField findField;            // search text input
+    private JLabel findMatchLabel;           // "n/total" match counter
+    private final List<int[]> findMatches = new ArrayList<>(); // [start,end] offsets
+    private int findCurrentIndex = -1;       // index into findMatches of active match
+    private final List<Object> findHighlightTags = new ArrayList<>(); // highlighter tags
+    private final Highlighter.HighlightPainter findAllPainter =
+            new DefaultHighlighter.DefaultHighlightPainter(new Color(255, 235, 120)); // all matches
+    private final Highlighter.HighlightPainter findCurrentPainter =
+            new DefaultHighlighter.DefaultHighlightPainter(new Color(255, 160, 60));  // active match
+    private ComponentAdapter findReposListener; // keeps the bar aligned with the pane
+    // END_CHANGE: ISS-2025-0260
+
     public OutputConsole() {
         super();
-        
+
         initializeStyles();
         setupConsole();
         setupEventHandlers();
-        
+        // START_CHANGE: ISS-2025-0260 - install Ctrl+F / Esc key bindings
+        setupFindKeyBindings();
+        // END_CHANGE: ISS-2025-0260
+
         showWelcomeMessage();
     }
     
@@ -500,4 +525,366 @@ public class OutputConsole extends JTextPane {
         String content = new String(java.nio.file.Files.readAllBytes(file.toPath()));
         appendText(content, normalStyle);
     }
+
+    // START_CHANGE: ISS-2025-0260 - Console incremental find (Ctrl+F)
+    // ------------------------------------------------------------------
+    //  Output console search bar (Ctrl+F)
+    //  - Case-insensitive incremental search over the console text.
+    //  - Next / Prev navigation with wrap-around.
+    //  - Live match count "current/total".
+    //  - All matches highlighted via the Highlighter; the active match uses
+    //    a stronger colour.
+    //  - Esc closes the bar and clears highlights.
+    // ------------------------------------------------------------------
+
+    /**
+     * Installs the Ctrl+F (open search) and Escape (close search) key bindings
+     * on this text pane. These are registered on the WHEN_FOCUSED input map so
+     * they work whenever the console has focus.
+     */
+    private void setupFindKeyBindings() {
+        InputMap im = getInputMap(JComponent.WHEN_FOCUSED);
+        ActionMap am = getActionMap();
+
+        int menuMask = Toolkit.getDefaultToolkit().getMenuShortcutKeyMask();
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_F, menuMask), "console-find");
+        am.put("console-find", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                showFindBar();
+            }
+        });
+
+        im.put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "console-find-close");
+        am.put("console-find-close", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                hideFindBar();
+            }
+        });
+    }
+
+    /**
+     * Shows (creating it lazily) the floating find bar and gives it focus.
+     * If the console has a current selection, it is used as the initial query.
+     */
+    public void showFindBar() {
+        if (findBar == null) {
+            buildFindBar();
+        }
+
+        // Seed the field with any current selection for convenience.
+        String selection = getSelectedText();
+        if (selection != null && !selection.isEmpty() && selection.indexOf('\n') < 0) {
+            findField.setText(selection);
+        }
+
+        positionFindBar();
+        findBar.setVisible(true);
+
+        // Track parent window movement/resize to keep the bar aligned.
+        installFindRepositionListener();
+
+        SwingUtilities.invokeLater(() -> {
+            findField.requestFocusInWindow();
+            findField.selectAll();
+            updateSearch(true); // refresh highlights for any seeded text
+        });
+    }
+
+    /**
+     * Hides the find bar, removes all search highlights and returns focus to
+     * the console. Safe to call when the bar was never shown.
+     */
+    public void hideFindBar() {
+        clearFindHighlights();
+        findMatches.clear();
+        findCurrentIndex = -1;
+        if (findBar != null) {
+            findBar.setVisible(false);
+        }
+        uninstallFindRepositionListener();
+        requestFocusInWindow();
+    }
+
+    /**
+     * Builds the find bar UI (text field, prev/next buttons, match counter,
+     * close button) inside an undecorated JWindow owned by this pane's window.
+     */
+    private void buildFindBar() {
+        Window owner = SwingUtilities.getWindowAncestor(this);
+        findBar = (owner != null) ? new JWindow(owner) : new JWindow();
+
+        JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 3));
+        bar.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(120, 120, 120)),
+                BorderFactory.createEmptyBorder(2, 4, 2, 4)));
+        bar.setBackground(new Color(245, 245, 245));
+
+        JLabel title = new JLabel("Find:");
+
+        findField = new JTextField(20);
+        findField.setToolTipText("Search the console (case-insensitive)");
+
+        findMatchLabel = new JLabel("0 matches");
+        findMatchLabel.setForeground(new Color(90, 90, 90));
+
+        JButton prevBtn = new JButton("▲"); // up triangle
+        prevBtn.setToolTipText("Previous match (Shift+Enter)");
+        prevBtn.setMargin(new Insets(1, 6, 1, 6));
+        prevBtn.setFocusable(false);
+        prevBtn.addActionListener(e -> findNext(false));
+
+        JButton nextBtn = new JButton("▼"); // down triangle
+        nextBtn.setToolTipText("Next match (Enter)");
+        nextBtn.setMargin(new Insets(1, 6, 1, 6));
+        nextBtn.setFocusable(false);
+        nextBtn.addActionListener(e -> findNext(true));
+
+        JButton closeBtn = new JButton("✕"); // x
+        closeBtn.setToolTipText("Close (Esc)");
+        closeBtn.setMargin(new Insets(1, 6, 1, 6));
+        closeBtn.setFocusable(false);
+        closeBtn.addActionListener(e -> hideFindBar());
+
+        bar.add(title);
+        bar.add(findField);
+        bar.add(prevBtn);
+        bar.add(nextBtn);
+        bar.add(findMatchLabel);
+        bar.add(closeBtn);
+
+        findBar.setContentPane(bar);
+
+        // Incremental search: re-run on every text change.
+        findField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent e) { updateSearch(true); }
+            @Override public void removeUpdate(DocumentEvent e) { updateSearch(true); }
+            @Override public void changedUpdate(DocumentEvent e) { updateSearch(true); }
+        });
+
+        // Enter = next, Shift+Enter = previous, Esc = close.
+        InputMap fim = findField.getInputMap(JComponent.WHEN_FOCUSED);
+        ActionMap fam = findField.getActionMap();
+        fim.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "find-next");
+        fim.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, KeyEvent.SHIFT_DOWN_MASK), "find-prev");
+        fim.put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "find-close");
+        fam.put("find-next", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { findNext(true); }
+        });
+        fam.put("find-prev", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { findNext(false); }
+        });
+        fam.put("find-close", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { hideFindBar(); }
+        });
+    }
+
+    /**
+     * Positions the find bar at the top-right of the visible console area.
+     */
+    private void positionFindBar() {
+        if (findBar == null || !isShowing()) {
+            return;
+        }
+        findBar.pack();
+        Point paneLoc = getLocationOnScreen();
+        int paneWidth = getVisibleRect().width;
+        int barWidth = findBar.getWidth();
+        // Anchor near the top-right, but never off the left edge.
+        int x = paneLoc.x + Math.max(0, paneWidth - barWidth - 18);
+        int y = paneLoc.y + 2;
+        findBar.setLocation(x, y);
+    }
+
+    /**
+     * Adds a listener to the owning window so the find bar follows the IDE
+     * when it is moved or resized.
+     */
+    private void installFindRepositionListener() {
+        if (findReposListener != null) {
+            return;
+        }
+        final Window owner = SwingUtilities.getWindowAncestor(this);
+        if (owner == null) {
+            return;
+        }
+        findReposListener = new ComponentAdapter() {
+            @Override public void componentMoved(ComponentEvent e) { positionFindBar(); }
+            @Override public void componentResized(ComponentEvent e) { positionFindBar(); }
+        };
+        owner.addComponentListener(findReposListener);
+    }
+
+    /**
+     * Removes the reposition listener installed by
+     * {@link #installFindRepositionListener()}.
+     */
+    private void uninstallFindRepositionListener() {
+        if (findReposListener == null) {
+            return;
+        }
+        Window owner = SwingUtilities.getWindowAncestor(this);
+        if (owner != null) {
+            owner.removeComponentListener(findReposListener);
+        }
+        findReposListener = null;
+    }
+
+    /**
+     * Recomputes all matches for the current query and refreshes highlights.
+     *
+     * @param moveToFirst when true, selects the first match at/after the caret
+     *                    (used on incremental typing); when false, keeps the
+     *                    current active index if still valid.
+     */
+    private void updateSearch(boolean moveToFirst) {
+        if (findField == null) {
+            return;
+        }
+        clearFindHighlights();
+        findMatches.clear();
+
+        String query = findField.getText();
+        if (query == null || query.isEmpty()) {
+            findCurrentIndex = -1;
+            findField.setForeground(Color.BLACK);
+            updateMatchLabel();
+            return;
+        }
+
+        String content;
+        try {
+            content = document.getText(0, document.getLength());
+        } catch (BadLocationException e) {
+            content = "";
+        }
+
+        String lcContent = content.toLowerCase();
+        String lcQuery = query.toLowerCase();
+        int from = 0;
+        int idx;
+        while ((idx = lcContent.indexOf(lcQuery, from)) >= 0) {
+            findMatches.add(new int[]{idx, idx + lcQuery.length()});
+            from = idx + lcQuery.length();
+        }
+
+        if (findMatches.isEmpty()) {
+            findCurrentIndex = -1;
+            // Visual "not found" feedback on the field.
+            findField.setForeground(new Color(200, 0, 0));
+            updateMatchLabel();
+            return;
+        }
+
+        findField.setForeground(Color.BLACK);
+
+        if (moveToFirst || findCurrentIndex < 0 || findCurrentIndex >= findMatches.size()) {
+            // Pick the first match at/after the current caret position.
+            int caret = getCaretPosition();
+            findCurrentIndex = 0;
+            for (int i = 0; i < findMatches.size(); i++) {
+                if (findMatches.get(i)[0] >= caret) {
+                    findCurrentIndex = i;
+                    break;
+                }
+            }
+        }
+
+        applyFindHighlights();
+        scrollToCurrentMatch();
+        updateMatchLabel();
+    }
+
+    /**
+     * Advances to the next (forward=true) or previous (forward=false) match,
+     * wrapping around the ends of the list.
+     */
+    private void findNext(boolean forward) {
+        if (findMatches.isEmpty()) {
+            updateSearch(true);
+            return;
+        }
+        if (forward) {
+            findCurrentIndex = (findCurrentIndex + 1) % findMatches.size();
+        } else {
+            findCurrentIndex = (findCurrentIndex - 1 + findMatches.size()) % findMatches.size();
+        }
+        applyFindHighlights();
+        scrollToCurrentMatch();
+        updateMatchLabel();
+    }
+
+    /**
+     * Highlights every match, drawing the active one with a stronger colour.
+     */
+    private void applyFindHighlights() {
+        clearFindHighlights();
+        Highlighter hl = getHighlighter();
+        for (int i = 0; i < findMatches.size(); i++) {
+            int[] m = findMatches.get(i);
+            try {
+                Highlighter.HighlightPainter painter =
+                        (i == findCurrentIndex) ? findCurrentPainter : findAllPainter;
+                Object tag = hl.addHighlight(m[0], m[1], painter);
+                findHighlightTags.add(tag);
+            } catch (BadLocationException e) {
+                // Ignore stale offsets (content may have changed concurrently).
+            }
+        }
+    }
+
+    /**
+     * Removes all highlights previously added by the search.
+     */
+    private void clearFindHighlights() {
+        Highlighter hl = getHighlighter();
+        for (Object tag : findHighlightTags) {
+            hl.removeHighlight(tag);
+        }
+        findHighlightTags.clear();
+    }
+
+    /**
+     * Scrolls the console so the active match is visible and moves the caret to
+     * it (without stealing focus from the find field).
+     */
+    private void scrollToCurrentMatch() {
+        if (findCurrentIndex < 0 || findCurrentIndex >= findMatches.size()) {
+            return;
+        }
+        int[] m = findMatches.get(findCurrentIndex);
+        try {
+            // Move the caret so subsequent incremental searches anchor here,
+            // and ensure the match rectangle is scrolled into view.
+            setCaretPosition(m[0]);
+            Rectangle r = modelToView(m[0]);
+            Rectangle r2 = modelToView(m[1]);
+            if (r != null) {
+                if (r2 != null) {
+                    r = r.union(r2);
+                }
+                scrollRectToVisible(r);
+            }
+        } catch (BadLocationException e) {
+            // Ignore.
+        }
+    }
+
+    /**
+     * Updates the "current/total" match counter label.
+     */
+    private void updateMatchLabel() {
+        if (findMatchLabel == null) {
+            return;
+        }
+        int total = findMatches.size();
+        if (total == 0) {
+            String q = (findField != null) ? findField.getText() : "";
+            findMatchLabel.setText((q == null || q.isEmpty()) ? "0 matches" : "No matches");
+        } else {
+            findMatchLabel.setText((findCurrentIndex + 1) + "/" + total);
+        }
+    }
+    // END_CHANGE: ISS-2025-0260
 }

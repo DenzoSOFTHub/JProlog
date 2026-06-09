@@ -12,6 +12,10 @@ public class Rule {
     // START_CHANGE: ISS-2025-0092 - Cache ground status for ground fact optimization
     private final boolean groundFact;
     // END_CHANGE: ISS-2025-0092
+    // START_CHANGE: ISS-2025-0322 - source line of this clause's head (1-based; -1 if unknown).
+    // Powers line-accurate breakpoints in the IDE. Not part of equality (clause identity is head+body).
+    private int sourceLine = -1;
+    // END_CHANGE: ISS-2025-0322
 
     /**
      * Create a new rule.
@@ -52,6 +56,10 @@ public class Rule {
         return groundFact;
     }
     // END_CHANGE: ISS-2025-0092
+
+    /** Source line of this clause's head (1-based), or -1 if unknown. (ISS-2025-0322) */
+    public int getSourceLine() { return sourceLine; }
+    public void setSourceLine(int line) { this.sourceLine = line; }
 
     @Override
     public String toString() {

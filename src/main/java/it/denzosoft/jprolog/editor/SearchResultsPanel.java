@@ -190,14 +190,17 @@ public class SearchResultsPanel extends JPanel {
      * Highlights the match in the editor.
      */
     private void highlightMatch(FileEditor editor, SearchMatch match) {
-        JTextArea textArea = editor.getTextArea();
+        // ISS-2025-0323: getTextArea() always returns null (the editor is a JTextPane now), so the old
+        // code NPE'd and silently fell back to whole-line selection. Compute offsets from the document.
+        JTextPane textPane = editor.getTextPane();
         try {
-            int lineStart = textArea.getLineStartOffset(match.lineNumber - 1);
+            javax.swing.text.Element root = textPane.getDocument().getDefaultRootElement();
+            javax.swing.text.Element lineEl = root.getElement(match.lineNumber - 1);
+            int lineStart = lineEl.getStartOffset();
             int matchStart = lineStart + match.columnStart;
             int matchEnd = lineStart + match.columnEnd;
-            
-            textArea.select(matchStart, matchEnd);
-            textArea.requestFocus();
+            textPane.select(matchStart, matchEnd);
+            textPane.requestFocus();
         } catch (Exception e) {
             // Fallback: select the entire line
             editor.goToLine(match.lineNumber);

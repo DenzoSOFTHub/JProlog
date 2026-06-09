@@ -1,5 +1,33 @@
 # JProlog - Release Notes
 
+## Release 3.2.0 - 2026-06-09
+
+### Major IDE upgrade (editor / execution / compilation / debugging)
+
+Driven by a multi-agent IDE UX audit (`docs/reports/report-ide-ux-analysis-2026-06-09.md`): all 4
+critical issues, 14/14 HIGH and 15/21 MEDIUM resolved. **687/687 JUnit, 20/20 examples.**
+
+Highlights: undo/redo, source formatter (Ctrl+Alt+L), code completion (Ctrl+Space), debounced
+highlighting, bracket matching/auto-close, working Stop (cancellable queries), lazy streaming + result
+table, clickable Problems view, Compile to .jpc, **line-accurate breakpoints** with persistence, real
+stepping shortcuts, Variables tree, Watch expressions, Run-to-Cursor/Restart, settings/session
+persistence, Go-to-Line/Quick-Open.
+
+New engine APIs: `Prolog.solveStream`, `Prolog.solveLegacy`, `Prolog.getPredicateIndicatorAtLine`,
+`Rule.getSourceLine/setSourceLine`, `StreamManager.out()/setThreadLocalOutput`,
+`core.write.v2.PrologFormatter`, `QueryCancelledException`.
+
+Not done (with rationale): dark theme (needs the FlatLaf external dependency — barred by the no-deps
+policy); lexer-based highlighting and a new terminal-input model (large rewrites, low marginal value);
+conditional/hit-count breakpoints (cross-cutting DebugController change).
+
+### Repository Information
+- **Tag**: v3.2.0
+- **Release Date**: 2026-06-09
+- **Compatibility**: Java 8+, Maven 3.6+
+
+---
+
 ## Release 3.1.0 - 2026-06-09
 
 ### Clean-room v2 resolution engine is now the DEFAULT

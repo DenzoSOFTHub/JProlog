@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.2.0] - 2026-06-09
+
+### Major IDE upgrade — editor, execution, compilation & debugging
+
+A full UX pass on the Swing IDE (guided by a multi-agent audit — see
+`docs/reports/report-ide-ux-analysis-2026-06-09.md`). All 4 critical issues, 14/14 HIGH and 15/21
+MEDIUM resolved. Baseline: **687/687 JUnit tests, 20/20 example programs.**
+
+**Editor**
+- **Undo/redo** (`UndoManager`, Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z, Edit-menu items) — previously absent.
+- **Source formatter** `core.write.v2.PrologFormatter` (one goal per body line, blank line between
+  clauses, comments preserved) — Ctrl+Alt+L. (8 unit tests.)
+- **Code completion** (Ctrl+Space) over predicates / built-ins / clause variables.
+- **Responsive syntax highlighting** (debounced — no longer re-styles the whole document per keystroke).
+- **Bracket matching + auto-close**, **UTF-8 save**, **backward/highlight-all find**, and inline
+  **wavy-underline error squiggles + gutter markers + per-line tooltips** (cleared on edit).
+
+**Execution**
+- **Working Stop**: the v2 engine polls the interrupt flag and raises `QueryCancelledException`
+  (uncatchable by `catch/3`) — infinite queries now cancel.
+- **Lazy streaming + cap** via new `Prolog.solveStream(query, sink)`; a results **table view**
+  (column per variable, CSV export) and a live **status/progress** (elapsed + solution counter).
+- **Thread-local output capture** (`StreamManager.out()` + `setThreadLocalOutput`) — output built-ins
+  no longer require a process-wide `System.setOut`.
+
+**Compilation**
+- Clickable **Problems view** (jump-to-source), **Compile to .jpc** action (Shift+F9).
+
+**Debugging**
+- **Line-accurate breakpoints**: `Rule` carries its source line (set at consult);
+  `Prolog.getPredicateIndicatorAtLine(line)` maps a gutter click to the real clause (no more regex).
+  Breakpoints **persist** (sidecar `.bps`). Real **stepping shortcuts** (F7 / F8 / Shift+F8 / F9).
+- Fixed a v2-default **regression**: debugging now forces the legacy engine (which carries the
+  four-port hooks) via new `Prolog.solveLegacy(query)`.
+- **Run to Cursor**, **Restart**, an expandable **Variables tree** (structure-aware), and
+  **Watch expressions**.
+
+**Other UX**: settings/window/divider persistence, session restore + Recent Projects, Go to Line
+(Ctrl+G), Quick Open (Ctrl+P), context-sensitive toolbar.
+
+New issues: ISS-2025-0320 … 0328.
+
+---
+
 ## [3.1.0] - 2026-06-09
 
 ### Clean-room v2 resolution engine is now the DEFAULT (ISS-2025-0313 … 0319)

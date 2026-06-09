@@ -844,6 +844,61 @@ public class Prolog {
             Variable.setAttributeUnifyHook(prevHook);
         }
     }
+
+    // START_CHANGE: ISS-2025-0321 - streaming solve: deliver solutions one at a time to a sink that
+    // returns false to stop (lazy + bounded + cancellable). Lets the IDE cap result counts and avoid
+    // buffering every solution of a high-/infinite-solution query. Mirrors the solve(String) setup.
+    /**
+     * Solve a query through the LEGACY recursive engine regardless of the {@code -Djprolog.engine}
+     * default. The legacy {@code QuerySolver} carries the four-port {@code DebugController} hooks that
+     * the v2 engine does not, so the IDE debugger must use this entry point (ISS-2025-0328).
+     */
+    public List<Map<String, Term>> solveLegacy(String queryString) {
+        resetTransientQueryState();
+        if (queryString.endsWith(".")) queryString = queryString.substring(0, queryString.length() - 1);
+        Term query;
+        try {
+            query = USE_V2_PARSER
+                ? it.denzosoft.jprolog.core.parser.v2.TermReader.parseTerm(queryString, operatorTable)
+                : parser.parseTerm(queryString);
+        } catch (RuntimeException e) {
+            throw new PrologException("Error parsing query: " + e.getMessage(), e);
+        }
+        query = spliceAttributedSessionVars(query);
+        List<Map<String, Term>> solutions = querySolver.solve(query);
+        refreshAttributedSessionVars(query, solutions);
+        return solutions;
+    }
+
+    public void solveStream(String queryString, java.util.function.Predicate<Map<String, Term>> sink) {
+        resetTransientQueryState();
+        if (queryString.endsWith(".")) queryString = queryString.substring(0, queryString.length() - 1);
+        Term query;
+        try {
+            query = USE_V2_PARSER
+                ? it.denzosoft.jprolog.core.parser.v2.TermReader.parseTerm(queryString, operatorTable)
+                : parser.parseTerm(queryString);
+        } catch (RuntimeException e) {
+            throw new PrologException("Error parsing query: " + e.getMessage(), e);
+        }
+        query = spliceAttributedSessionVars(query);
+        if (USE_V2_ENGINE) {
+            Variable.AttributeUnifyHook prevHook = Variable.getAttributeUnifyHook();
+            Variable.setAttributeUnifyHook(querySolver::handleAttributeUnification);
+            try {
+                new it.denzosoft.jprolog.core.engine.v2.MachineSolver(
+                        knowledgeBase, builtInRegistry, querySolver, moduleManager, tableStore)
+                    .solve(query, sink::test);   // sink returns false to stop the search
+            } finally {
+                Variable.setAttributeUnifyHook(prevHook);
+            }
+        } else {
+            // legacy engine is eager: replay its (already-materialised) solutions through the sink
+            for (Map<String, Term> sol : querySolver.solve(query)) {
+                if (!sink.test(sol)) break;
+            }
+        }
+    }
     // END_CHANGE: ISS-2025-0311
 
     private Term spliceAttributedSessionVars(Term term) {
@@ -1411,10 +1466,12 @@ public class Prolog {
                 if (clauseTerm == null) break;
                 try {
                     Rule rule = clauseTermToRule(clauseTerm);
+                    rule.setSourceLine(line);                     // ISS-2025-0322: for line breakpoints
                     if (isDirective(rule)) {
                         processDirective(rule);
                     } else if (isDCGRule(rule)) {
                         Rule tr = transformDCGRule(rule);
+                        tr.setSourceLine(line);
                         checkBuiltInConflict(tr);
                         moduleManager.addRule(tr);
                         if ("user".equals(moduleManager.getCurrentModule().getName())) knowledgeBase.addRule(tr);
@@ -1436,6 +1493,33 @@ public class Prolog {
     }
     // END_CHANGE: ISS-2025-0302
     // END_CHANGE: ISS-2025-0090
+
+    // START_CHANGE: ISS-2025-0322 - line -> predicate indicator, for line-accurate IDE breakpoints.
+    /**
+     * Return the predicate indicator ("functor/arity") of the clause whose head is on, or immediately
+     * above, the given 1-based source line — i.e. the clause that "owns" that line. Returns null if no
+     * clause maps to the line. Used by the IDE to turn a gutter click into an accurate spy point
+     * instead of a fragile regex over the source text.
+     */
+    public String getPredicateIndicatorAtLine(int line) {
+        Rule best = null;
+        for (Rule r : knowledgeBase.getRules()) {
+            int sl = r.getSourceLine();
+            if (sl < 0 || sl > line) continue;
+            if (best == null || sl > best.getSourceLine()) best = r;
+        }
+        if (best == null) return null;
+        Term h = best.getHead();
+        if (h instanceof it.denzosoft.jprolog.core.terms.Atom) {
+            return ((it.denzosoft.jprolog.core.terms.Atom) h).getName() + "/0";
+        }
+        if (h instanceof it.denzosoft.jprolog.core.terms.CompoundTerm) {
+            it.denzosoft.jprolog.core.terms.CompoundTerm c = (it.denzosoft.jprolog.core.terms.CompoundTerm) h;
+            return c.getName() + "/" + c.getArguments().size();
+        }
+        return null;
+    }
+    // END_CHANGE: ISS-2025-0322
 
     // START_CHANGE: ISS-2025-0085 - Compiled binary format support
     /**

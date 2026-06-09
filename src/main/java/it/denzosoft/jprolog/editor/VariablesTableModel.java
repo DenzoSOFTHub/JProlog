@@ -1,11 +1,23 @@
 package it.denzosoft.jprolog.editor;
 
+import it.denzosoft.jprolog.core.terms.Atom;
+import it.denzosoft.jprolog.core.terms.CompoundTerm;
+import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.terms.Variable;
+
 import javax.swing.table.AbstractTableModel;
+import javax.swing.tree.DefaultMutableTreeNode;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Model for the variables table in the debug panel.
+ * Model for the variables view in the debug panel.
+ *
+ * <p>Originally a flat table model; it is retained (all public methods preserved)
+ * for backward compatibility, and additionally provides {@link #buildTreeNode}
+ * which constructs an expandable {@link DefaultMutableTreeNode} from a real
+ * {@link Term} so the debugger can show structure-aware variable trees
+ * (M14 VARIABLES TREE).</p>
  */
 public class VariablesTableModel extends AbstractTableModel {
     
@@ -149,7 +161,84 @@ public class VariablesTableModel extends AbstractTableModel {
     public List<VariableEntry> getVariables() {
         return new ArrayList<>(variables);
     }
-    
+
+    // ===================== M14 VARIABLES TREE (structure-aware) =====================
+
+    /**
+     * Build an expandable tree node for a single {@code Name = Value} binding,
+     * backed by the real {@link Term}. A CompoundTerm node shows its functor and
+     * expands to its argument children; a list expands to its elements; atoms,
+     * numbers and unbound variables are leaves rendered as {@code Name = Value}.
+     *
+     * @param name  the variable name (label prefix)
+     * @param value the (already resolved) term value
+     * @return a tree node whose children describe the structure of {@code value}
+     */
+    public static DefaultMutableTreeNode buildTreeNode(String name, Term value) {
+        DefaultMutableTreeNode node = new DefaultMutableTreeNode(name + " = " + safeToString(value));
+        addChildren(node, value);
+        return node;
+    }
+
+    /**
+     * Recursively append structural children of {@code term} to {@code parent}.
+     * Lists expand element-by-element; other compound terms expand argument-by-argument.
+     * Leaves (atoms, numbers, variables) get no children.
+     */
+    private static void addChildren(DefaultMutableTreeNode parent, Term term) {
+        if (!(term instanceof CompoundTerm)) {
+            return; // leaf: atom, number or variable
+        }
+        CompoundTerm c = (CompoundTerm) term;
+
+        // Prolog list ('.'/2): expand element by element down the spine.
+        if (".".equals(c.getName()) && c.getArguments() != null && c.getArguments().size() == 2) {
+            int index = 0;
+            Term current = term;
+            while (current instanceof CompoundTerm
+                    && ".".equals(((CompoundTerm) current).getName())
+                    && ((CompoundTerm) current).getArguments().size() == 2) {
+                CompoundTerm cell = (CompoundTerm) current;
+                Term head = cell.getArguments().get(0);
+                DefaultMutableTreeNode elem =
+                    new DefaultMutableTreeNode("[" + index + "] = " + safeToString(head));
+                addChildren(elem, head);
+                parent.add(elem);
+                current = cell.getArguments().get(1);
+                index++;
+            }
+            // Non-[] tail (improper list or unbound tail variable).
+            if (!(current instanceof Atom && "[]".equals(((Atom) current).getName()))) {
+                DefaultMutableTreeNode tail =
+                    new DefaultMutableTreeNode("|tail = " + safeToString(current));
+                addChildren(tail, current);
+                parent.add(tail);
+            }
+            return;
+        }
+
+        // Generic compound term: one child per argument, labelled arg(i).
+        List<Term> args = c.getArguments();
+        if (args != null) {
+            for (int i = 0; i < args.size(); i++) {
+                Term arg = args.get(i);
+                DefaultMutableTreeNode child =
+                    new DefaultMutableTreeNode("arg" + (i + 1) + " = " + safeToString(arg));
+                addChildren(child, arg);
+                parent.add(child);
+            }
+        }
+    }
+
+    private static String safeToString(Term t) {
+        if (t == null) return "_";
+        if (t instanceof Variable) {
+            String n = t.getName();
+            return (n != null) ? n : t.toString();
+        }
+        return t.toString();
+    }
+
     /**
      * Represents an entry in the variables table.
      */

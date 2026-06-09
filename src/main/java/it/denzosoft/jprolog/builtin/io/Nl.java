@@ -15,7 +15,7 @@ public class Nl implements BuiltIn {
              throw new PrologEvaluationException("nl/0 takes no arguments.");
         }
 
-        System.out.println(); // Writes a newline
+        StreamManager.out().println(); // Writes a newline
 
         solutions.add(bindings);
         return true;

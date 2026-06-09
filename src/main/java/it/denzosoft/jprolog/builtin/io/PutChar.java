@@ -51,8 +51,8 @@ public class PutChar implements BuiltIn {
         }
         
         // Write the character to standard output
-        System.out.print(charString);
-        System.out.flush();
+        StreamManager.out().print(charString);
+        StreamManager.out().flush();
         
         solutions.add(bindings);
         return true;

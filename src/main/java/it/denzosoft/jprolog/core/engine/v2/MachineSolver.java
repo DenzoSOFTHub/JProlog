@@ -252,6 +252,9 @@ public final class MachineSolver {
      *  run must not backtrack, so a nested run (findall/catch) leaves the caller's choice points. */
     private void drive(Driver onSol, int floor) {
         while (true) {
+          // Cancellation: the IDE Stop button interrupts the solver thread; abort the query promptly
+          // (a non-PrologException so user catch/3 cannot trap it). (ISS-2025-0320)
+          if (Thread.currentThread().isInterrupted()) throw new it.denzosoft.jprolog.core.engine.QueryCancelledException();
           try {
             if (goalStack == null) {                                   // all goals solved -> a solution
                 if (!onSol.onSolution() || !backtrack(floor)) return;

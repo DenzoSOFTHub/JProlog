@@ -459,14 +459,15 @@ public class SearchPanel extends JPanel {
         if (editor != null) {
             editor.goToLine(result.getLineNumber());
             
-            // Highlight found text
-            JTextArea textArea = editor.getTextArea();
+            // Highlight found text (ISS-2025-0323: use the JTextPane document, not the null getTextArea())
+            JTextPane textPane = editor.getTextPane();
             try {
-                int lineStart = textArea.getLineStartOffset(result.getLineNumber() - 1);
+                javax.swing.text.Element root = textPane.getDocument().getDefaultRootElement();
+                int lineStart = root.getElement(result.getLineNumber() - 1).getStartOffset();
                 int highlightStart = lineStart + result.getColumnStart();
                 int highlightEnd = lineStart + result.getColumnEnd();
-                
-                textArea.select(highlightStart, highlightEnd);
+                textPane.select(highlightStart, highlightEnd);
+                textPane.requestFocus();
             } catch (Exception e) {
                 // Ignore positioning errors
             }
