@@ -1,8 +1,8 @@
 # JProlog Built-in Predicates Reference
 
-**Version**: JProlog v2.5.0
-**Last Updated**: 2026-03-21
-**Total Predicates**: 265+ predicates organized by functional category
+**Version**: JProlog v3.0.0
+**Last Updated**: 2026-06-09
+**Total Predicates**: 270+ predicates organized by functional category
 **ISO 13211-1 Compliance**: 100% (111/111 core predicates)
 
 This reference guide organizes JProlog's built-in predicates by their logical function and use case. Each section includes explanations suitable for users new to Prolog, with detailed examples showing practical applications.
@@ -1071,7 +1071,7 @@ Prolog treats arithmetic expressions differently from other terms:
 
 #### Available evaluable functors
 
-**Arithmetic** (`+`, `-`, `*`, `/`, `//` integer div, `mod`, `rem`, `div`, `**` (always float on neg-exp), `^` integer power *(v2.8.1)*, unary `-`, `+`, `abs`, `sign`, `min`, `max`, `gcd` *(v2.8.0)*)
+**Arithmetic** (`+`, `-`, `*`, `/`, `//` integer div, `mod`, `rem`, `div`, `rdiv` *(rational)*, `**` (ISO float power — ALWAYS float, e.g. 2**3 =:= 8.0), `^` integer power *(v2.8.1)*, unary `-`, `+`, `abs`, `sign`, `min`, `max`, `gcd` *(v2.8.0)*)
 
 **Float-only** (`sqrt`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `exp`, `log`, `log/2` *(v2.8.1)*, `cot` *(v2.8.1)*, `acot` *(v2.8.1)*, `cbrt` *(v2.8.1)*, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh` *(all v2.8.1)*)
 
@@ -4791,7 +4791,7 @@ init_logging :-
 
 ## 24. CLP(FD) Predicates
 
-CLP(FD) (Constraint Logic Programming over Finite Domains) predicates allow you to declare constraints over integer variables and let the solver find valid assignments. JProlog's implementation uses AC-3 arc consistency propagation with snapshot/restore backtracking.
+CLP(FD) (Constraint Logic Programming over Finite Domains) predicates allow you to declare constraints over integer variables and let the solver find valid assignments. JProlog v3.0.0 uses a clean-room interval-domain solver (builtin.clpfd.v2) by default: bounded interval domains, a per-query trail-backtracked constraint store, bound-consistency propagation (e.g. real #= propagation, Cmp/Sum/Mul/Abs/AllDifferent/Linear/Reified/Mod), and sound first-fail labeling. The legacy AC-3 store remains available via -Djprolog.clpfd=legacy.
 
 ### in/2
 **Purpose**: Constrains a variable to a finite domain range.
@@ -6908,7 +6908,7 @@ true.
 
 ## Summary
 
-This comprehensive reference covers JProlog's 251+ built-in predicates organized by their functional purpose. Each predicate includes:
+This comprehensive reference covers JProlog's 270+ built-in predicates organized by their functional purpose. Each predicate includes:
 
 1. **Clear purpose statement** - What the predicate does
 2. **Usage guidance** - When and why to use it
@@ -6933,7 +6933,7 @@ These predicates form the foundation for Prolog programming, enabling:
 - **Pattern matching** with full regular expression support
 - **Concurrency** with threads and message-passing queues
 - **Diagnostics** with structured, level-based logging
-- **Constraint solving** with CLP(FD) finite domain constraints, AC-3 propagation, and labeling
+- **Constraint solving** with CLP(FD) finite domain constraints (v3.0.0 interval-domain solver), bound-consistency propagation, and first-fail labeling
 - **Tabling** for memoization with loop detection and selective cache invalidation
 - **HTTP** server and client for building web APIs and consuming external services
 - **Persistence** for saving, loading, and snapshotting the knowledge base with JSON interchange

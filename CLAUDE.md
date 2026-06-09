@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-JProlog is a Prolog interpreter written in Java (1.8). It includes a core engine, 200+ built-in predicates, a Swing-based IDE, and a CLI. No external dependencies beyond JUnit 4 for tests.
+JProlog is a Prolog interpreter written in Java (1.8). It includes a core engine, 200+ built-in predicates, a Swing-based IDE, and a CLI. No external dependencies beyond JUnit 4 for tests. As of v3.0.0, several subsystems have clean-room **v2** rewrites that are now the default (parser, CLP(FD), DCG) plus an opt-in v2 resolution engine — see "v2 Subsystems" below.
 
 **Repository**: https://github.com/DenzoSOFTHub/JProlog
 **Current version**: check `<version>` in pom.xml
@@ -44,12 +44,27 @@ java -cp target/classes it.denzosoft.jprolog.editor.PrologIDE
 
 ### Query Execution Flow
 
-1. **Parser** (`core.parser.Parser`) converts Prolog text to `Term` objects
+1. **Parser** — by default the clean-room single-pass v2 parser (`core.parser.v2.Lexer` + `core.parser.v2.TermReader`, operator-precedence/Pratt) converts Prolog text to `Term` objects. The legacy `core.parser.Parser` is the fallback (`-Djprolog.parser=legacy`).
 2. **KnowledgeBase** (`core.engine.KnowledgeBase`) stores facts/rules as `Rule` objects
 3. **QuerySolver** (`core.engine.QuerySolver`) implements SLD resolution with backtracking
 4. For each goal, the solver checks `BuiltInRegistry` first, then falls back to user-defined rules in the knowledge base
 5. **Unification** happens via `Term.unify(Term, Map<String, Term> substitution)` — Robinson algorithm
 6. **Cut** is managed through `CutStatus`/`MutableCutStatus` flags passed through recursion
+
+### v2 Subsystems (v3.0.0)
+
+v3.0.0 ships clean-room rewrites of several subsystems, selectable via system properties (and `Prolog.setUseV2*()` toggles):
+
+| Subsystem | v2 package | Default | Fallback |
+|---|---|---|---|
+| Parser | `core.parser.v2` (`Lexer` + `TermReader`) | **v2** | `-Djprolog.parser=legacy` |
+| CLP(FD) | `builtin.clpfd.v2` (`ClpStore`/`IntervalDomain`/`Constraint`/`Labeler`) | **v2** | `-Djprolog.clpfd=legacy` |
+| DCG | `core.dcg.v2.DCGTranslator` | **v2** | `-Djprolog.dcg=legacy` |
+| Term writer | `core.write.v2.TermWriter` | standalone | — |
+| Arithmetic | `core.arith.v2.ArithEvaluator` | standalone | — |
+| Resolution engine | `core.engine.v2.MachineSolver` | legacy | `-Djprolog.engine=v2` (opt-in) |
+
+Also new in v3.0.0: `div`/`rdiv` operators (400 yfx) in `core.operator.OperatorTable`; `setup_call_cleanup/3` and `call_cleanup/2` (`builtin.meta.SetupCallCleanup`). Baseline: 675/675 JUnit, 20/20 example programs; the default v2 parser parses 123/130 examples (legacy: 117); the opt-in v2 engine passes ~664/670.
 
 ### Term Hierarchy
 
@@ -78,17 +93,17 @@ Context-dependent built-ins are wrapped in `CollectionBuiltInAdapter` to bridge 
 
 ### Package Layout
 
-- `core.engine` — `Prolog`, `QuerySolver`, `KnowledgeBase`, `BuiltInRegistry`, `BuiltInFactory`, `ArithmeticEvaluator`
+- `core.engine` — `Prolog`, `QuerySolver`, `KnowledgeBase`, `BuiltInRegistry`, `BuiltInFactory`, `ArithmeticEvaluator`; `core.engine.v2.MachineSolver` — opt-in iterative SLD resolution engine (`-Djprolog.engine=v2`)
 - `core.terms` — `Term`, `Atom`, `Number`, `Variable`, `CompoundTerm`, `PrologString`
-- `core.parser` — `Parser`, `PrologParser`, `TermParser` (recursive descent, operator-precedence aware)
+- `core.parser` — legacy `Parser`, `PrologParser`, `TermParser` (recursive descent, fallback). `core.parser.v2` — `Lexer` + `TermReader` (single-pass, operator-precedence/Pratt) is the **default** parser in v3.0.0
 - `core.operator` — `Operator`, `OperatorTable` (precedence management)
 - `core.module` — `Module`, `ModuleManager`, `PredicateSignature`
-- `core.dcg` — `DCGTransformer` (transforms `-->` rules to standard Prolog)
+- `core.dcg` — `DCGTransformer` (legacy `-->` translator, fallback via `-Djprolog.dcg=legacy`); `core.dcg.v2.DCGTranslator` is the default single-pass ISO translator (head push-back, `|`, `\+`, `call//N`, `{}`, `!`, `->`)
 - `core.compiled` — `JpcReader`, `JpcWriter`, `JpcFormat` (`.jpc` binary format)
 - `core.exceptions` — `PrologException` and ISO error-term helpers
 - `core.system` — `PrologFlags` (ISO flag store)
 - `core.util` — `TermCopier`, `TermUtils` (variable renaming on rule copy); distinct from `core.utils` (`ListTerm`, `Substitution`, `CollectionUtils`)
-- `builtin/` — organized by category. ISO-core: `arithmetic/`, `atom/`, `character/`, `control/`, `conversion/`, `database/`, `dcg/`, `debug/`, `exception/`, `io/`, `list/`, `meta/`, `string/`, `system/`, `term/`, `type/`, `unification/`. Extended library: `clpfd/`, `crypto/`, `csv/`, `datetime/`, `ffi/`, `filesystem/`, `graph/`, `http/`, `jdbc/`, `json/`, `logging/`, `network/`, `os/`, `persistence/`, `regex/`, `threading/`, `xml/`, `extension/`
+- `builtin/` — organized by category. ISO-core: `arithmetic/`, `atom/`, `character/`, `control/`, `conversion/`, `database/`, `dcg/`, `debug/`, `exception/`, `io/`, `list/`, `meta/`, `string/`, `system/`, `term/`, `type/`, `unification/`. Extended library: `clpfd/` (with `clpfd/v2/` — interval-domain solver: `ClpStore`, `IntervalDomain`, `Labeler`, `Constraint` — the **default** CLP(FD) engine in v3.0.0; `-Djprolog.clpfd=legacy` to fall back), `crypto/`, `csv/`, `datetime/`, `ffi/`, `filesystem/`, `graph/`, `http/`, `jdbc/`, `json/`, `logging/`, `network/`, `os/`, `persistence/`, `regex/`, `threading/`, `xml/`, `extension/`
 - `extension/` (top-level) — pluggable extension examples (`example/`, `math/`)
 - `editor/` — Swing IDE: `PrologIDE`, `FileEditor`, `DebugPanel`, `ConsolePanel`
 - `PrologCLI` — CLI with `:consult`, `:trace`, `:help`, `:quit` commands

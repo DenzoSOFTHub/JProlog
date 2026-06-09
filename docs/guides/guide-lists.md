@@ -790,9 +790,9 @@ test_member :-
 
 ## Version Information
 
-This guide is current as of **JProlog v2.5.5**. All list operations and built-in predicates described are fully functional and tested.
+This guide is current as of **JProlog v3.0.0**. All list operations and built-in predicates described are fully functional and tested.
 
-### List Features in v2.5.5:
+### List Features in v3.0.0:
 - ✅ **ISO-Compliant List Formatting**: [a,b,c] instead of dot notation
 - ✅ **Complete Built-in Library**: append/3, member/2, length/2, reverse/2
 - ✅ **Sorting Predicates**: sort/2, msort/2 fully operational
@@ -820,6 +820,6 @@ This guide is current as of **JProlog v2.5.5**. All list operations and built-in
 
 **JProlog List Operations Guide** - Master list processing and manipulation in Prolog
 
-*Version 2.5.5 | DenzoSOFT | https://denzosoft.it*
+*Version 3.0.0 | DenzoSOFT | https://denzosoft.it*
 
-*This comprehensive guide covers all list operations available in JProlog v2.5.5. For additional examples and test cases, see the programs in the `examples/` directory.*
+*This comprehensive guide covers all list operations available in JProlog v3.0.0. For additional examples and test cases, see the programs in the `examples/` directory.*

@@ -88,14 +88,43 @@ Fixes from a multi-agent correctness/ISO audit of the engine and built-ins.
   queries. It fixes the whole class of parser bugs: canonical functor (`-(1,2)` is `-/2`),
   operator-as-atom (`X = -`, `foo(-, +)`), postfix operators, `0'c`/radix/negative
   literals, `''`/`""` doubled-quote escapes, and quote-aware clause splitting.
-- Validated: **594/594 JUnit + 20/20 examples** with v2 driving all parsing, and it parses
+- Validated: **675/675 JUnit + 20/20 examples** with v2 driving all parsing, and it parses
   **123/130 example programs vs the legacy parser's 117** (strictly better; the 2 it rejects
   use non-ISO constructs that even SWI rejects). Fall back with `-Djprolog.parser=legacy`.
 
-#### Clean-room v2 CLP(FD) core (ISS-2025-0291) — standalone
-- `builtin.clpfd.v2`: interval-set domains (no OOM), per-instance identity-keyed store with
+#### Clean-room v2 CLP(FD) — now the DEFAULT (ISS-2025-0291)
+- `builtin.clpfd.v2`: interval-set domains (no OOM), per-query identity-keyed store with
   a propagation queue + trail, constraints (`Cmp` with real `#\=`, `Sum`, `Mul`, `Abs`,
-  `AllDifferent`, N-ary `Linear`, `Reified`), and a sound first-fail labeler. 14 tests.
+  `AllDifferent`, N-ary `Linear`, `Reified`, `Mod`), and a sound first-fail labeler. Default
+  via `-Djprolog.clpfd` (legacy fallback `=legacy`).
+
+#### Clean-room v2 DCG translator — now the DEFAULT (ISS-2025-0304)
+- `core.dcg.v2.DCGTranslator`: a single recursive-pass `Head --> Body` ISO translator handling
+  head push-back, `|` alternatives, `\+`, `call//N`, `{}`, `!`, `->`, terminal lists/strings.
+  Default (legacy transformer via `-Djprolog.dcg=legacy`). Resolves the former ~85% DCG
+  limitation (LIM-021).
+
+#### New standalone clean-room modules
+- `core.write.v2.TermWriter` — operator-aware term output (`1..3`, `a+b*c`, `[a,b|T]`),
+  `writeq`/`write_canonical`.
+- `core.arith.v2.ArithEvaluator` — single-path arithmetic evaluator (BigInteger/double, ISO
+  error terms), IEEE-754 comparison semantics.
+
+#### New v2 resolution engine — OPT-IN via `-Djprolog.engine=v2` (ISS-2025-0307..0312)
+- `core.engine.v2.MachineSolver`: a clean-room iterative SLD machine (explicit goal/choice-point
+  stacks — 200,000-deep recursion returns with **no `StackOverflowError`**), mutable bindings +
+  trail (O(changes) backtracking), lazy enumeration, cut / if-then-else / soft-cut (`*->`) / `\+`
+  / `call/N`, native `findall`/`catch`/`throw`, `assert`/`retract`, a built-in bridge reusing the
+  existing 200+ built-ins, module-qualified calls, occurs-check. Passes ~664/670 of the suite
+  through the v2 path; the legacy-default suite is 675/675.
+
+#### New operators
+- **`div`, `rdiv` (400 yfx)** — added to the default `OperatorTable` (ISS-2025-0300).
+
+#### Limitations resolved
+- LIM-017 / LIM-019 (parser internals — v2 parser), LIM-018 (negative radix / char-code literals),
+  LIM-020 (int/float distinct terms), LIM-021 (DCG completeness — v2 translator), LIM-022 (CLP(FD)
+  soundness — v2 solver), LIM-025 (`open/4` dangling alias).
 
 #### ISO conformance & robustness (from a 2nd re-triage of the audit)
 - **`=:=` / `=\\=` (ISS-2025-0274)** — IEEE semantics: `-0.0 =:= 0.0` succeeds, `nan =:= nan` fails.
@@ -134,16 +163,17 @@ Fixes from a multi-agent correctness/ISO audit of the engine and built-ins.
   try-with-resources.
 
 ### Test Coverage
-- **550/550 JUnit tests pass, 0 skipped** (+32 in `BugFixVerificationTest`, +1 in `JpcFormatTest`)
+- **675/675 JUnit tests pass, 0 skipped**
 - **20/20 examples regression pass**
 - ISS-2025-0265 (JDBC ResultSet leak) is verified by inspection — the leak-on-exception
   path needs a live database to exercise.
 
 ### Notes
 - A full audit report (101 confirmed findings, prioritized) is in
-  `docs/reports/report-implementation-audit-2026-06-07.md`. Larger items (parser
-  hardening, DCG backtracking, deeper CLP(FD) soundness, last-call optimization,
-  threading isolation) are tracked for follow-up.
+  `docs/reports/report-implementation-audit-2026-06-07.md`. Parser hardening, DCG
+  completeness, and CLP(FD) soundness are addressed in this release by the clean-room
+  v2 rewrites (now default). Genuinely deferred items: last-call optimization, threading
+  isolation, and the 6 remaining gaps of the opt-in v2 resolution engine.
 - **Audit correction:** the report's "no first-argument indexing" finding is stale —
   first-argument indexing is implemented (`KnowledgeBase.getRulesWithFirstArgIndex`)
   and used by `QuerySolver`; verified ~1 ms lookup over 1000 facts.
@@ -1025,7 +1055,7 @@ Focused release that removes 31 toy/academic packages to streamline the codebase
 
 ---
 
-## [3.0.0] - 2026-03-21
+## [2.5.0-packages] - 2026-03-21
 
 ### 47 New Built-in Packages (555+ Predicates), AI/ML Engine, Concurrent Execution, Advanced Logic Programming & Classic Prolog Packages
 

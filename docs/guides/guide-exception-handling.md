@@ -1,6 +1,6 @@
 # JProlog Exception Handling Guide
 
-**Version**: JProlog v2.5.5
+**Version**: JProlog v3.0.0
 **Last Updated**: 2026-03-22
 **ISO Compliance**: Full ISO 13211-1 standard support
 

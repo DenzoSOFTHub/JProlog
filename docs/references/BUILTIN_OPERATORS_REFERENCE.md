@@ -1,6 +1,6 @@
 # JProlog Built-in Operators Reference
 
-**Version**: JProlog v2.5.5
+**Version**: JProlog v3.0.0
 **Last Updated**: 2026-03-22
 **Total Operators**: 25+ operators with comprehensive precedence rules, plus dynamic `op/3` support
 
@@ -792,6 +792,23 @@ simple_hash(Key, TableSize, Hash) :-
 H = 2.  % Sum of ASCII codes mod 10
 ```
 
+### div/2, rdiv/2 (Floored / Rational Division) — *new in v3.0.0*
+
+**Purpose**: `div` is ISO floored integer division (result floored toward negative infinity), distinct from `//` (truncation toward zero); `rdiv` is rational division.
+
+**Precedence**: 400 (yfx - left-associative) — both added to the default `OperatorTable` in v3.0.0 (ISS-2025-0300).
+
+```prolog
+?- X is 7 div 2.
+X = 3.
+
+?- X is -7 div 2.
+X = -4.        % floored (toward -inf); -7 // 2 truncates toward zero to -3
+
+?- X is 6 rdiv 4.
+X = 3/2.       % rational division
+```
+
 ### **/2 (Exponentiation)
 **Purpose**: Raise a number to a power.
 
@@ -1459,7 +1476,7 @@ Complete precedence table for JProlog operators:
 | 700 | xfx | @< @=< @> @>= | Term comparison |
 | 700 | xfx | =:= =\\= < =< > >= | Arithmetic comparison |
 | 500 | yfx | + - | Addition, subtraction |
-| 400 | yfx | * / // rem mod | Multiplication, division |
+| 400 | yfx | * / // rem mod div rdiv << >> | Multiplication, division (`div`/`rdiv` new in v3.0.0), bit shifts |
 | 200 | xfx | ** | Exponentiation |
 | 200 | xfy | ^ | Existential quantification |
 | 200 | fy | + - | Unary plus, minus |

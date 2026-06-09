@@ -237,4 +237,4 @@ sum_list([H|T], Sum) :-
 
 ---
 
-*JProlog Editor from DenzoSOFT - Version 2.5.5 | https://denzosoft.it*
+*JProlog Editor from DenzoSOFT - Version 3.0.0 | https://denzosoft.it*

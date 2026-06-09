@@ -2,9 +2,19 @@
 
 **A Full-Featured Prolog System with Engine, IDE, CLI, and Comprehensive Built-ins**
 
-[![Version](https://img.shields.io/badge/version-2.9.7-blue.svg)](https://github.com/DenzoSOFTHub/JProlog/releases/tag/v2.9.7) [![Java](https://img.shields.io/badge/java-1.8%2B-orange.svg)]() [![ISO](https://img.shields.io/badge/ISO%2013211--1-100%25%20core-green.svg)]()
+[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://github.com/DenzoSOFTHub/JProlog/releases/tag/v3.0.0) [![Java](https://img.shields.io/badge/java-1.8%2B-orange.svg)]() [![ISO](https://img.shields.io/badge/ISO%2013211--1-100%25%20core-green.svg)]()
 
-**Current version**: `2.9.7` — see [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/DenzoSOFTHub/JProlog/releases).
+**Current version**: `3.0.0` — see [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/DenzoSOFTHub/JProlog/releases).
+
+### 🆕 New in 3.0.0
+
+- **Clean-room rewrites, now default**: the parser (`core.parser.v2`), CLP(FD) solver (`builtin.clpfd.v2`), and DCG translator (`core.dcg.v2`) are new from-scratch implementations and are the defaults. Each legacy path remains available via a system property (see *Engine/Parser Toggles* below).
+- **Sound CLP(FD)**: interval-domain solver (no `OutOfMemoryError` on wide domains), per-query trail-backtracked store, sound first-fail labeling, real `#\=` propagation; constraints `Cmp`/`Sum`/`Mul`/`Abs`/`AllDifferent`/`Linear`/`Reified`/`Mod`.
+- **Complete DCG**: single-pass ISO translator covering head push-back, `|`, `\+`, `call//N`, `{}`, `!`, `->` (resolves the former ~85% DCG limitation).
+- **New standalone modules**: operator-aware term writer (`core.write.v2`) and a single-path arithmetic evaluator (`core.arith.v2`, BigInteger/double, ISO error terms).
+- **Opt-in v2 resolution engine** (`core.engine.v2.MachineSolver`, `-Djprolog.engine=v2`): iterative SLD — deep recursion with **no `StackOverflowError`** — reusing the existing built-ins via a bridge.
+- **New built-ins/operators**: `setup_call_cleanup/3`, `call_cleanup/2`; `div`, `rdiv` (400 yfx) operators.
+- **~50 ISO/correctness fixes** and two adversarial multi-agent code reviews. **675/675 JUnit tests, 20/20 example programs.**
 
 ## Overview
 
@@ -14,14 +24,14 @@ JProlog is a complete and robust Prolog implementation in Java that provides a c
 
 JProlog aims to provide ISO-compliant Prolog functionality with modern development tools, offering:
 - **Full ISO Compliance**: 100% ISO 13211-1 core predicate coverage (111/111 predicates)
-- **Robust Parser**: Unified operator-precedence Pratt parser with shared OperatorTable, dynamic operator support via `op/3`, full ISO §6.4.2.1 escape sequences (octal, hex, line continuation)
+- **Clean-room v2 Parser (default)**: single-pass `Lexer` + operator-precedence/Pratt `TermReader` (`core.parser.v2`) with shared OperatorTable and dynamic `op/3` support. Correctly handles canonical functor `-(1,2)`, operators-as-atoms (`X = -`, `foo(-,+)`), postfix operators, `0'c`/radix/negative numeric literals, `''`/`""` doubled-quote escapes, full ISO §6.4.2.1 escape sequences, and quote-aware clause splitting. Parses 123/130 example programs (legacy parser: 117). Fall back to the legacy parser with `-Djprolog.parser=legacy`.
 - **Operator-Aware Output**: `write/1`, `writeq/1`, `format ~w/~q` use operator notation (e.g. `1+2`, `[a,b,c]`, `{a,b}`) via shared OperatorTable
 - **Binary Compiled Format**: `.jpc` (JProlog Compiled) format with string interning for fast loading
 - **Professional Development Environment**: Full-featured IDE with debugging capabilities
 - **Command Line Interface**: Interactive Prolog console for quick testing and scripting
-- **Comprehensive Built-in Library**: 270+ built-in predicates including higher-order list operations, soft-cut `*->`, `maplist/2..5`, `sort/4`, `read/2`, `atom_to_term/3`, `atomic_list_concat/2,3`
+- **Comprehensive Built-in Library**: 280+ built-in predicates including higher-order list operations, soft-cut `*->`, `maplist/2..5`, `sort/4`, `read/2`, `atom_to_term/3`, `atomic_list_concat/2,3`, and `setup_call_cleanup/3`, `call_cleanup/2`
 - **Full ISO §9 arithmetic**: `gcd`, `^/2` integer power, `integer/1` evaluable, hyperbolic functions (sinh/cosh/tanh + arc/h), `log/2` base-N, `cot`/`acot`/`cbrt`, `epsilon` constant, rational numbers, BigInteger auto-promotion
-- **Advanced DCG Support**: 85% success rate on comprehensive DCG parsing scenarios
+- **Complete DCG Support (default)**: clean-room single-pass ISO translator (`core.dcg.v2`) handling head push-back, `|`, `\+`, `call//N`, `{}`, `!`, and `->`. Fall back to the legacy transformer with `-Djprolog.dcg=legacy`.
 - **Java Integration**: Easy embedding of Prolog logic in Java applications
 
 ## 🏗️ System Architecture
@@ -35,7 +45,7 @@ The heart of JProlog - a complete Prolog inference engine with:
 - **Knowledge base management**: Dynamic fact/rule storage and retrieval system
 - **Unified operator system**: Shared `OperatorTable` between parser, `op/3`, and query resolution
 - **Binary compiled format**: `.jpc` files with string interning, varint encoding, and source hash validation
-- **DCG (Definite Clause Grammar) support**: Automatic transformation of grammar rules
+- **DCG (Definite Clause Grammar) support**: clean-room single-pass ISO translator (`core.dcg.v2`, default) covering head push-back, `|`, `\+`, `call//N`, `{}`, `!`, `->`; legacy transformer available via `-Djprolog.dcg=legacy`
 - **Built-in predicate registry**: Extensible system for registering new predicates
 - **Exception handling**: Comprehensive error management with ISO-compliant error terms
 - **Module system**: Namespace management with module-qualified calls (`Module:Goal`)
@@ -109,9 +119,9 @@ Comprehensive library of standard Prolog predicates organized by category:
 #### 🧬 **DCG Support** (`builtin/dcg/`)
 - **Core DCG Functionality**: Standard `phrase/2` predicate for grammar parsing
 - **Automatic DCG Transformation**: `-->` rules converted to standard Prolog predicates
-- **85% Success Rate**: Comprehensive testing on 20 DCG programs with excellent coverage
+- **Complete DCG Translation**: clean-room single-pass ISO translator (`core.dcg.v2`) passes the comprehensive 20-program DCG suite
 - **Working Features**: Terminal/non-terminal symbols, variables, recursion, basic constraints
-- **Known Limitations**: 3 documented parser limitations with workarounds available
+- **Full Construct Coverage**: head push-back, `|`, `\+`, `call//N`, `{}`, `!`, `->`
 - **Systematic Testing**: Complete test suite with `test_dcg_01` through `test_dcg_20` programs
 
 ## 🚀 Quick Start
@@ -230,25 +240,25 @@ JProlog provides comprehensive documentation for all aspects of the system:
 - **[docs/reports/report-resolution-summary.md](docs/reports/report-resolution-summary.md)**: Summary of resolved issues and improvements
 
 ### 💡 **Examples & Tutorials**
-- **[examples/](examples/)**: 103 example Prolog programs covering all language features (74 test programs + 20 DCG programs + 9 additional examples)
+- **[examples/](examples/)**: 130 example Prolog programs covering all language features (the default v2 parser parses 123/130)
 - **[examples/example-bug-workflow.md](examples/example-bug-workflow.md)**: Step-by-step bug fixing examples  
 - **[examples/example-nqueens-compilation.md](examples/example-nqueens-compilation.md)**: N-Queens problem compilation guide
 
 ## 📊 **Quality Metrics & Compliance**
 
-### 🎯 **Current Status (Version 2.6.0)**
-- **Unit Tests**: 320 tests, 0 failures, 0 errors
+### 🎯 **Current Status (Version 3.0.0)**
+- **Unit Tests**: 675 tests, 0 failures, 0 errors
 - **Core Test Success Rate**: 100% (20/20 example programs pass)
-- **ISO Prolog Compliance**: ~85% of ISO 13211-1 core predicates (see [Limitations](#️-current-limitations) for gaps)
-- **Built-in Predicate Coverage**: 265+ predicates including I/O, CLP(FD), FFI, crypto, networking
-- **Parser**: Robust Pratt parser with unified operator table and dynamic `op/3` support
+- **ISO Prolog Compliance**: 100% ISO 13211-1 core predicate coverage (111/111); ~50 additional ISO/correctness fixes in v3.0.0
+- **Built-in Predicate Coverage**: 280+ predicates including I/O, CLP(FD), FFI, crypto, networking
+- **Parser**: Clean-room single-pass v2 parser (`core.parser.v2`, default) with unified operator table and dynamic `op/3` support; legacy parser via `-Djprolog.parser=legacy`
 - **Binary Format**: `.jpc` compiled format with string interning for fast loading
-- **DCG Support**: 85% success rate (17/20 comprehensive DCG programs working)
-- **Module Support**: Basic module framework (full qualification not yet wired into execution)
+- **DCG Support**: complete (clean-room v2 translator passes the comprehensive 20/20 DCG program suite)
+- **Module Support**: Module framework with module-qualified calls (`Module:Goal`) wired into execution
 
 ### 🧪 **Testing Framework**
-- **320 Unit Tests**: JUnit test suite covering all engine components
-- **103 Total Prolog Programs**: Comprehensive test suite in `examples/` directory
+- **675 Unit Tests**: JUnit test suite covering all engine components
+- **130 Total Prolog Programs**: Comprehensive test suite in `examples/` directory
 - **74 Systematic Test Programs**: `test_*.pl` programs covering all language features
 - **20 DCG Test Programs**: Complete DCG testing from `test_dcg_01` to `test_dcg_20`
 - **Automated Testing**: `./test_all_examples.sh` for continuous validation
@@ -260,7 +270,7 @@ JProlog provides comprehensive documentation for all aspects of the system:
 - ✅ **Arithmetic operations**: `=:=`, `=\=`, `rem`, `xor`, shift operators (confirmed v2.0.14)
 - ✅ **Control structures**: `;`, `->`, `\+`, `once/1`, `!` (cut) (confirmed v2.0.14)
 - ✅ **List processing**: ISO-compliant `[a,b,c]` representation
-- ✅ **DCG Core Functionality**: 85% success rate on comprehensive DCG test suite
+- ✅ **DCG Core Functionality**: complete (clean-room v2 ISO translator passes the comprehensive DCG suite)
 - ✅ **DCG Working Patterns**: Terminal/non-terminal symbols, variables, recursion, constraints
 - ✅ **Database operations**: Dynamic assert/retract predicates (confirmed v2.0.14)
 - ✅ **I/O operations**: File and stream handling
@@ -270,21 +280,21 @@ JProlog provides comprehensive documentation for all aspects of the system:
 
 The following features are not yet implemented or are partially supported compared to full ISO 13211-1 Prolog systems (e.g., SWI-Prolog).
 
-### Resolved in v2.6.0 (formerly Critical/High)
+### Resolved in v3.0.0
 
-All Critical and High priority limitations have been resolved:
+Clean-room rewrites (now default) and ~50 in-place ISO/correctness fixes resolved the remaining limitations:
+- **DCG completeness** (LIM-021) — clean-room v2 translator covers head push-back, `|`, `\+`, `call//N`, `{}`, `!`, `->`
+- **CLP(FD) soundness** — clean-room v2 interval-domain solver (no OOM), real `#=` propagation, sound first-fail labeling
+- Arithmetic/ISO fixes: ISO `(**)/2` float power vs `(^)/2` integer power, integer-only operators raising `type_error(integer,_)` on floats, ISO arithmetic error terms, BigInteger rounding-overflow promotion, `retract((H:-B))`, `occurs_check` flag wiring (LIM-017/018/019/020/022/025)
+
+### Resolved earlier (v2.x)
 - `freeze/2`, `when/2`, `dif/2` (coroutining), attributed variables, global variables (`nb_setval/2` etc.)
 - Module-qualified calls (`Module:Goal`), `predicate_property/2`, `code_type/2`
 - Stream repositioning, arbitrary precision integers (BigInteger), enhanced `write_term/2` options
-
-### Resolved in v2.6.1 (formerly Medium)
-
-All Medium priority limitations have been resolved:
-- CHR (basic simplification/propagation), DCG advanced features (pushback, `call//N`, if-then)
-- Rational numbers (`rdiv`), number literal notation (`0'a`, `0xFF`, `0o77`, `0b1010`)
+- CHR (basic simplification/propagation), rational numbers (`rdiv`), number literal notation (`0'a`, `0xFF`, `0o77`, `0b1010`)
 - Multi-argument indexing, compiled clause cache, atom garbage collection
 
-All 16 tracked limitations (LIM-001 through LIM-016) are now resolved. See [docs/tracking/track-limitations.md](docs/tracking/track-limitations.md).
+Tracked limitations LIM-001 through LIM-025 are recorded in [docs/tracking/track-limitations.md](docs/tracking/track-limitations.md) (LIM-017–022 and LIM-025 resolved in v3.0.0).
 
 ---
 
@@ -315,7 +325,8 @@ JProlog/
 │   │   ├── parser/                   # Prolog syntax parsing
 │   │   │   ├── Parser.java           # Main parser interface
 │   │   │   ├── PrologParser.java     # Core Prolog parser
-│   │   │   └── TermParser.java       # Pratt parser with shared OperatorTable
+│   │   │   ├── TermParser.java       # Legacy Pratt parser with shared OperatorTable
+│   │   │   └── v2/                    # Clean-room v2 parser (default): Lexer + TermReader
 │   │   ├── compiled/                 # Binary compiled format (.jpc)
 │   │   │   ├── JpcFormat.java        # Format constants and type tags
 │   │   │   ├── JpcWriter.java        # Serializer with string interning
@@ -361,7 +372,7 @@ JProlog/
 
 ### Comprehensive Testing Suite
 ```bash
-# JUnit tests (320 tests)
+# JUnit tests (675 tests)
 mvn test
 
 # Run all 20 example programs (comprehensive testing)
@@ -381,6 +392,19 @@ mvn test
 - **Performance**: Complex algorithms (N-Queens, sorting, recursion)
 
 ## 🔧 **Configuration & Customization**
+
+### Engine/Parser Toggles (system properties)
+
+v3.0.0 makes the clean-room rewrites the default. Revert to a legacy implementation per subsystem:
+
+```bash
+-Djprolog.parser=legacy   # legacy parser instead of core.parser.v2 (default: v2)
+-Djprolog.dcg=legacy      # legacy DCG transformer instead of core.dcg.v2 (default: v2)
+-Djprolog.clpfd=legacy    # legacy CLP(FD) store instead of builtin.clpfd.v2 (default: v2)
+-Djprolog.engine=v2       # opt-in iterative v2 resolution engine (default: legacy)
+```
+
+(Programmatic equivalents: `Prolog.setUseV2Parser(false)`, `setUseV2Dcg(false)`, `setUseV2Clpfd(false)`, `setUseV2Engine(true)`.)
 
 ### IDE Settings
 Settings stored in `~/.jprolog-ide.properties`:
@@ -446,29 +470,29 @@ mvn clean compile
 
 **JProlog - Complete Prolog Implementation**
 
-Copyright © 2024 DenzoSOFT. All rights reserved.
+Copyright © 2024-2026 DenzoSOFT. All rights reserved.
 
-Version 2.6.0 - Released March 2026
+Version 3.0.0 - Released June 2026
 
 ## 🌐 **Project Information**
 
 - **Repository**: https://github.com/DenzoSOFTHub/JProlog
 - **Website**: https://denzosoft.it
-- **Latest Release**: v2.6.0 with robust parser, binary compiled format, and 320 passing tests
+- **Latest Release**: v3.0.0 with clean-room v2 parser/CLP(FD)/DCG (default), binary compiled format, and 675 passing tests
 - **License**: Proprietary (DenzoSOFT)
 
 ---
 
 ## 🎯 **Why Choose JProlog?**
 
-✅ **Strong ISO Compliance**: ~85% ISO 13211-1 core support with 265+ built-in predicates
-✅ **Robust Parser**: Unified Pratt parser with dynamic operator support and incremental directive processing
+✅ **Strong ISO Compliance**: 100% ISO 13211-1 core support (111/111) with 280+ built-in predicates
+✅ **Clean-room v2 Parser**: single-pass Lexer + Pratt TermReader (default) with dynamic operator support; legacy fallback available
 ✅ **Fast Loading**: Binary `.jpc` compiled format with string interning and smart caching
-✅ **Complete Ecosystem**: Engine + IDE + CLI + 265+ Built-ins in one package
+✅ **Complete Ecosystem**: Engine + IDE + CLI + 280+ Built-ins in one package
 ✅ **Professional Tools**: Full-featured IDE with debugging capabilities
-✅ **Advanced Grammar Processing**: 85% DCG success rate with comprehensive parsing capabilities
+✅ **Complete Grammar Processing**: clean-room ISO DCG translator with full construct coverage
 ✅ **Easy Integration**: Simple Java API for embedding Prolog logic with `compile()` and `consultSmart()`
-✅ **320 Passing Tests**: Comprehensive JUnit test suite with 0 failures  
+✅ **675 Passing Tests**: Comprehensive JUnit test suite with 0 failures  
 
 **Start your Prolog journey with a robust, professional-grade implementation!**
 

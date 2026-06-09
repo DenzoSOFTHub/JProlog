@@ -2,18 +2,22 @@
 
 ## Package Overview
 
-JProlog's CLP(FD) library provides constraint logic programming over finite integer domains. It allows you to declare variables with integer domains, post arithmetic and relational constraints between them, and search for solutions that satisfy all constraints simultaneously. The solver uses **AC-3 arc consistency propagation** to prune domains before and during search, and supports **backtracking with snapshot/restore** for complete enumeration of solutions.
+JProlog's CLP(FD) library provides constraint logic programming over finite integer domains. It allows you to declare variables with integer domains, post arithmetic and relational constraints between them, and search for solutions that satisfy all constraints simultaneously. As of v3.0.0 the default solver is the clean-room `builtin.clpfd.v2` store, which uses **interval-set domains** (no per-value enumeration / OOM), a **propagation queue** that re-awakens constraints when a watched variable's domain narrows, and **trail-based backtracking** for complete enumeration of solutions. (The legacy AC-3 + snapshot/restore engine remains available via `-Djprolog.clpfd=legacy`.)
 
-The implementation consists of two main classes:
+The default v3.0.0 implementation lives in `it.denzosoft.jprolog.builtin.clpfd.v2`:
 
-- **`ClpfdPredicates`** (`it.denzosoft.jprolog.builtin.clpfd.ClpfdPredicates`) -- Implements all 13 CLP(FD) built-in predicates as a context-dependent built-in (`BuiltInWithContext`). Each predicate is dispatched through an `OperationType` enum.
-- **`ConstraintStore`** (`it.denzosoft.jprolog.builtin.clpfd.ConstraintStore`) -- Singleton store that manages variable domains (`TreeSet<Integer>`), maintains a list of constraints, and implements the AC-3 propagation loop. Supports three constraint types: `BinaryConstraint` (relational), `AllDifferentConstraint`, and `ArithmeticConstraint` (expressions with `+`, `-`, `*`).
+- **`ClpStore`** -- a per-instance, identity-keyed constraint store (variables are `FdVar` objects, not raw Prolog names, and the store is a normal object rather than a JVM-wide singleton, so domains never leak across queries or engines).
+- **`IntervalDomain`** -- interval-set domains, avoiding per-value enumeration and the out-of-memory failures of the legacy `TreeSet<Integer>` store.
+- **`Constraint`** -- supports Cmp, Sum, Mul, Abs, AllDifferent, Linear, Reified, and Mod constraints, with real `#=` propagation.
+- **`Labeler`** -- sound first-fail labeling.
 
 **Key architectural features**:
-- Domains are stored as `TreeSet<Integer>` for ordered access and efficient set operations.
-- Propagation is triggered automatically when constraints are added, and during labeling after each variable assignment.
-- Backtracking uses `ConstraintStoreSnapshot` objects that deep-copy all domains and the constraint list.
-- The labeling algorithm supports a **first-fail** heuristic (`ff`) that selects the variable with the smallest remaining domain.
+- Interval-set domains (no OOM on large ranges).
+- A propagation queue re-awakens constraints whenever a watched variable's domain narrows (e.g. `#\=` fires as soon as either side becomes a singleton).
+- Trail-based backtracking via `mark()` / `undo()` restores domains in O(changes) instead of full snapshot/restore.
+- First-fail (`ff`) labeling selects the variable with the smallest remaining domain.
+
+(The legacy `ClpfdPredicates` + singleton `ConstraintStore` AC-3 engine remains as the `-Djprolog.clpfd=legacy` fallback.)
 
 ---
 

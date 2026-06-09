@@ -561,11 +561,11 @@ verb(v(chases)) --> [chases].
 
 ---
 
-## DCG Status and Limitations in JProlog v2.5.5
+## DCG Status in JProlog v3.0.0
 
-### ✅ **Working DCG Features** (85% Success Rate)
+### Working DCG Features (complete)
 
-JProlog v2.5.5 provides **comprehensive DCG support** with 85% success rate on complex parsing tasks:
+JProlog v3.0.0 ships a clean-room single-pass ISO DCG translator (`core.dcg.v2.DCGTranslator`, the default; fall back with `-Djprolog.dcg=legacy`). It supports the full standard construct set, including head push-back, alternation `|`, `\+`, `call//N`, `{}` escapes, `!`, and `->`. The earlier 85% limitation (LIM-021) is resolved:
 
 #### **Core Features (100% Working)**
 - ✅ **Basic DCG rule translation**: `rule --> body.` syntax
@@ -578,7 +578,7 @@ JProlog v2.5.5 provides **comprehensive DCG support** with 85% success rate on c
 - ✅ **Alternative rules**: Semicolon and multiple clause support
 - ✅ **Empty productions**: `optional --> []; word.`
 
-#### **Advanced Features (85% Working)**
+#### **Advanced Features (supported)**
 - ✅ **Complex grammar constructions**: Nested rules, multiple variables
 - ✅ **List processing**: Head/tail patterns `[H|T]`
 - ✅ **Character code lists**: `[104,116,116,112]` for "http"
@@ -610,11 +610,9 @@ letter --> [C], { C >= 97, C =< 122 }.  % lowercase letters
 uppercase --> [C], { C >= 65, C =< 90 }.  % uppercase letters
 ```
 
-### ❌ **Current DCG Limitations** (15% Failure Rate)
+### Resolved Limitations
 
-Three specific parser limitations affect advanced DCG patterns:
-
-#### **ISS-2025-0040: Complex Operator Terms in DCG Heads**
+The three DCG limitations documented for v2.5.5 (ISS-2025-0040 operator terms in list heads, ISS-2025-0041 special-character terminals, ISS-2025-0042 complex arithmetic in `{}` constraints) are all resolved in v3.0.0 by the clean-room parser (`core.parser.v2`) and DCG translator (`core.dcg.v2`). The patterns that previously required workarounds now parse and run directly, e.g. `json_object([K-V|Pairs]) --> [123], json_pair(K-V), json_object_rest(Pairs), [125].`
 ```prolog
 % ❌ FAILS: Compound operator terms in list heads
 json_object([K-V|Pairs]) --> [123], ws, json_pair(K-V), json_object_rest(Pairs), ws, [125].
@@ -651,25 +649,15 @@ max_depth(D1, D2, D) :- D1 < D2, D is D2 + 1.
 
 ### **Impact Assessment**
 
-- **85% Success Rate**: Covers all standard DCG usage patterns
+- **Complete Coverage**: handles all standard DCG usage patterns
 - **Core Parsing**: Fully functional for practical language processing
 - **ISO DCG Compliance**: Excellent compliance with DCG standard
 - **Remaining Issues**: Affect only advanced/specialized parsing scenarios
 - **Workarounds Available**: All limitations can be circumvented
 
-### **Comprehensive Test Results**
+### Test Results
 
-**✅ WORKING (17/20 programs - 85%)**:
-- Basic parsing, variables, arithmetic expressions
-- List processing, calculator, XML parsing  
-- State machine simulation, recursive structures
-- Character validation (with character codes)
-- Complex nested grammars
-
-**❌ LIMITED (3/20 programs - 15%)**:
-- JSON parsing (operator terms in heads)
-- Grammar with punctuation (tokenizer conflicts)
-- Mathematical validation (complex constraints)
+Under v3.0.0 the DCG example programs pass in full, including the three categories that were limited in v2.5.5: JSON parsing with operator terms in heads, grammars using punctuation terminals, and rules with complex arithmetic in `{}` constraints.
 
 ### Testing Your DCG Rules
 
@@ -689,6 +677,6 @@ max_depth(D1, D2, D) :- D1 < D2, D is D2 + 1.
 
 **JProlog DCG Guide** - Master Definite Clause Grammars for parsing and language processing
 
-*Version 2.5.5 | DenzoSOFT | https://denzosoft.it*
+*Version 3.0.0 | DenzoSOFT | https://denzosoft.it*
 
-*This guide covers DCG implementation in JProlog v2.5.5. For additional parsing examples, see the comprehensive test programs in the `examples/` directory.*
+*This guide covers DCG implementation in JProlog v3.0.0. For additional parsing examples, see the comprehensive test programs in the `examples/` directory.*

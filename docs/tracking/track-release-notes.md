@@ -2,7 +2,33 @@
 
 ## Release 3.0.0 - 2026-06-08
 
-### Implementation Audit Fixes (ISS-2025-0245..0252)
+### Clean-room rewrites (the headline of v3.0.0)
+
+- **Parser — now the DEFAULT** (`core.parser.v2`, ISS-2025-0290..0293): single-pass `Lexer` +
+  operator-precedence/Pratt `TermReader`. Canonical functor, operator-as-atom, postfix, `0'c`/radix,
+  doubled-quote escapes, quote-aware splitting. Parses 123/130 examples (legacy: 117).
+  `-Djprolog.parser=legacy` to fall back.
+- **CLP(FD) — now the DEFAULT** (`builtin.clpfd.v2`, ISS-2025-0291): interval domains (no OOM),
+  per-query trail-backtracked store, sound first-fail labeling, real `#\=` propagation;
+  `Cmp`/`Sum`/`Mul`/`Abs`/`AllDifferent`/`Linear`/`Reified`/`Mod`. `-Djprolog.clpfd=legacy`.
+- **DCG — now the DEFAULT** (`core.dcg.v2.DCGTranslator`, ISS-2025-0304): single-pass ISO translator
+  (head push-back, `|`, `\+`, `call//N`, `{}`, `!`, `->`); resolves LIM-021. `-Djprolog.dcg=legacy`.
+- **New standalone modules**: term writer (`core.write.v2`) and arithmetic evaluator
+  (`core.arith.v2`, BigInteger/double, ISO errors, IEEE compare).
+- **v2 resolution engine — OPT-IN** (`core.engine.v2.MachineSolver`, `-Djprolog.engine=v2`,
+  ISS-2025-0307..0312): iterative SLD (deep recursion with no `StackOverflowError`), bindings + trail,
+  lazy enumeration, cut/ITE/soft-cut/`\+`/`call/N`, native `findall`/`catch`/`throw`, `assert`/`retract`,
+  built-in bridge, module-qualified calls, occurs-check. ~664/670 through v2; legacy default 675/675.
+- **New operators**: `div`, `rdiv` (400 yfx, ISS-2025-0300). **New built-ins**: `setup_call_cleanup/3`,
+  `call_cleanup/2`.
+- **Limitations resolved**: LIM-017/018/019/020/021/022/025.
+
+### Repository Information
+- **Tag**: v3.0.0 (released)
+- **Release Date**: 2026-06-08
+- **Compatibility**: Java 8+, Maven 3.6+
+
+### Implementation Audit Fixes (ISS-2025-0245..0312)
 
 Eight fixes from a multi-agent correctness/ISO audit (101 confirmed findings; full
 report in `docs/reports/report-implementation-audit-2026-06-07.md`).
@@ -372,7 +398,7 @@ Implemented LCO via trampoline in QuerySolver.java. Tail-recursive predicates wi
 
 ---
 
-## Release 3.0.0 - 2026-03-21
+## Release 2.5.0-packages - 2026-03-21
 
 ### 47 New Built-in Packages (555+ Predicates), AI/ML Engine, Concurrent Execution, Advanced Logic Programming & Classic Prolog Packages
 
