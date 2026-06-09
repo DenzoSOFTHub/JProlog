@@ -2,6 +2,8 @@ package it.denzosoft.jprolog.builtin.atom;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
+import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -24,13 +26,15 @@ public class AtomLength implements BuiltIn {
         Term lengthArg = query.getArguments().get(1);
         // END_CHANGE: ISS-2025-0080
 
-        if (!atomArg.isGround()) {
-            throw new PrologEvaluationException("atom_length/2: First argument (Atom) must be ground.");
+        // START_CHANGE: ISS-2025-0277 - ISO error terms: instantiation_error for an unbound atom
+        // argument, type_error(atom, Culprit) for a non-atom (was a bare PrologEvaluationException).
+        if (atomArg instanceof Variable || !atomArg.isGround()) {
+            throw new PrologException(ISOErrorTerms.instantiationError("atom_length/2"));
         }
-
         if (!(atomArg instanceof Atom)) {
-            throw new PrologEvaluationException("atom_length/2: First argument must be an atom.");
+            throw new PrologException(ISOErrorTerms.typeError("atom", atomArg, "atom_length/2"));
         }
+        // END_CHANGE: ISS-2025-0277
 
         String atomString = ((Atom) atomArg).getName();
         // START_CHANGE: ISS-2025-0193 - Use codePointCount for correct Unicode character counting

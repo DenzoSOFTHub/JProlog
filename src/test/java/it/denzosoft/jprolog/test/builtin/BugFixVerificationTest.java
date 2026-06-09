@@ -215,12 +215,18 @@ public class BugFixVerificationTest {
 
     @Test
     public void testISS0185_zeroPowerNegativeThrows() {
-        // 0 ** -1 should throw zero_divisor
+        // 0 ** -1 must throw. (**)/2 is the ISO float power (ISS-2025-0247), so 0.0 ** -1
+        // raises evaluation_error(undefined); 0 ^ -1 raises evaluation_error(zero_divisor).
         try {
             prolog.solve("X is 0 ** -1.");
-            fail("0^-1 should throw zero_divisor");
+            fail("0 ** -1 should throw an evaluation_error");
         } catch (Exception e) {
-            assertTrue(e.getMessage().contains("zero_divisor") || e.getMessage().contains("zero"));
+            assertTrue("expected evaluation_error, got: " + e.getMessage(),
+                e.getMessage() != null
+                    && (e.getMessage().contains("undefined")
+                        || e.getMessage().contains("zero_divisor")
+                        || e.getMessage().contains("zero")
+                        || e.getMessage().contains("evaluation_error")));
         }
     }
 
@@ -770,9 +776,14 @@ public class BugFixVerificationTest {
 
     @Test
     public void testCrossCutting_integerPower() {
-        List<Map<String, Term>> solutions = prolog.solve("X is 2 ** 10.");
+        // Integer power is (^)/2 in ISO; (**)/2 is the float power (ISS-2025-0247).
+        List<Map<String, Term>> solutions = prolog.solve("X is 2 ^ 10.");
         assertEquals(1, solutions.size());
         assertEquals("1024", solutions.get(0).get("X").toString());
+        // (**)/2 yields the float power.
+        solutions = prolog.solve("X is 2 ** 10.");
+        assertEquals(1, solutions.size());
+        assertEquals("1024.0", solutions.get(0).get("X").toString());
     }
 
     @Test
@@ -1611,4 +1622,489 @@ public class BugFixVerificationTest {
         org.junit.Assert.assertEquals("[a,b,c]", baos.toString().trim());
     }
     // END_CHANGE: ISS-2025-0242
+
+    // ============== ISS-2025-0245..0252: Audit fixes (2026-06-07) ==============
+
+    // START_CHANGE: ISS-2025-0245 - append/3 mode by proper-list structure, not deep groundness
+    @Test
+    public void testISS0245_appendWithUnboundElements() {
+        // Previously threw PrologEvaluationException("unsupported mode") whenever a list
+        // element was an unbound variable. Concatenate mode must work with variable elements.
+        List<Map<String, Term>> s = prolog.solve("append([a],[X],R).");
+        assertEquals("append([a],[X],R) must succeed, not throw", 1, s.size());
+
+        // split mode binding a variable element on the result side
+        s = prolog.solve("append([1],[X],[1,99]).");
+        assertEquals(1, s.size());
+        assertEquals("99", s.get(0).get("X").toString());
+
+        // build a partial list then constrain the embedded variable
+        s = prolog.solve("append([a],[Y],R), R = [a,b].");
+        assertEquals(1, s.size());
+        assertEquals("b", s.get(0).get("Y").toString());
+    }
+    // END_CHANGE: ISS-2025-0245
+
+    // START_CHANGE: ISS-2025-0246 - set_prolog_flag(occurs_check, true) actually affects unify
+    @Test
+    public void testISS0246_occursCheckFlagWired() {
+        // occursCheckEnabled is a process-wide flag; always reset it to avoid bleeding into
+        // other tests. (We do NOT exercise the occurs_check=false "X = f(X) succeeds" path
+        // here: building the cyclic term hits a separate, pre-existing StackOverflow when the
+        // solution is post-processed — unrelated to this flag-wiring fix.)
+        try {
+            prolog.solve("set_prolog_flag(occurs_check, true).");
+            List<Map<String, Term>> s = prolog.solve("X = f(X).");
+            assertTrue("X = f(X) must FAIL with occurs_check=true", s.isEmpty());
+            // an acyclic unification still succeeds with the flag enabled
+            s = prolog.solve("Y = f(a).");
+            assertFalse("acyclic unification must still succeed", s.isEmpty());
+        } finally {
+            prolog.solve("set_prolog_flag(occurs_check, false).");
+        }
+    }
+    // END_CHANGE: ISS-2025-0246
+
+    // START_CHANGE: ISS-2025-0247 - (**)/2 is the ISO float power
+    @Test
+    public void testISS0247_powerIsFloat() {
+        List<Map<String, Term>> s = prolog.solve("X is 2 ** 3.");
+        assertEquals(1, s.size());
+        assertEquals("8.0", s.get(0).get("X").toString());
+        // (^)/2 stays integer for integer operands
+        s = prolog.solve("X is 2 ^ 3.");
+        assertEquals(1, s.size());
+        assertEquals("8", s.get(0).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0247
+
+    // START_CHANGE: ISS-2025-0248 - ISO error terms from arithmetic (not bare atoms)
+    @Test
+    public void testISS0248_isoArithmeticErrorTerms() {
+        // unbound variable -> error(instantiation_error, _)
+        List<Map<String, Term>> s =
+            prolog.solve("catch(_ is _Y + 1, error(instantiation_error, _), true).");
+        assertEquals("instantiation_error must be catchable as an ISO error term", 1, s.size());
+
+        // unknown atom -> error(type_error(evaluable, _), _)
+        s = prolog.solve("catch(_ is foo, error(type_error(evaluable, _), _), true).");
+        assertEquals(1, s.size());
+
+        // unknown functor -> error(type_error(evaluable, _), _)
+        s = prolog.solve("catch(_ is bar(1,2), error(type_error(evaluable, _), _), true).");
+        assertEquals(1, s.size());
+
+        // comparison predicates also preserve the ISO error term
+        s = prolog.solve("catch((_X > 1), error(instantiation_error, _), true).");
+        assertEquals(1, s.size());
+    }
+    // END_CHANGE: ISS-2025-0248
+
+    // START_CHANGE: ISS-2025-0249 - integer-only ops reject float arguments (ISO)
+    @Test
+    public void testISS0249_integerOpsRejectFloat() {
+        List<Map<String, Term>> s =
+            prolog.solve("catch(_ is 7.5 mod 2, error(type_error(integer, _), _), true).");
+        assertEquals(1, s.size());
+        s = prolog.solve("catch(_ is 5 mod 2.5, error(type_error(integer, _), _), true).");
+        assertEquals(1, s.size());
+    }
+    // END_CHANGE: ISS-2025-0249
+
+    // START_CHANGE: ISS-2025-0250 - rounding does not saturate to Long.MAX_VALUE
+    @Test
+    public void testISS0250_roundingNoLongSaturation() {
+        // 1.0e20 (~1e20) is far beyond Long.MAX_VALUE (~9.22e18). truncate must keep the
+        // magnitude as a BigInteger, not clamp to 9223372036854775807.
+        List<Map<String, Term>> s = prolog.solve("X is truncate(1.0e20).");
+        assertEquals(1, s.size());
+        String x = s.get(0).get("X").toString();
+        assertNotEquals("must not saturate to Long.MAX_VALUE", "9223372036854775807", x);
+        assertTrue("should preserve ~1e20 magnitude, got " + x, x.startsWith("100000000000000"));
+    }
+    // END_CHANGE: ISS-2025-0250
+
+    // START_CHANGE: ISS-2025-0251 - retract((Head :- Body)) matches stored rules
+    @Test
+    public void testISS0251_retractClauseForm() {
+        prolog.solve("assertz(q0251).");
+        prolog.solve("assertz((p0251(2) :- q0251)).");
+        prolog.solve("assertz(p0251(1)).");
+
+        // retract the RULE via its clause form; Body must unify with q0251
+        List<Map<String, Term>> s = prolog.solve("retract((p0251(2) :- B)).");
+        assertEquals("retract of a rule clause must match", 1, s.size());
+        assertEquals("q0251", s.get(0).get("B").toString());
+
+        // rule is gone now
+        s = prolog.solve("retract((p0251(2) :- _B)).");
+        assertTrue("rule already retracted", s.isEmpty());
+
+        // bare-head retract of a fact still works
+        s = prolog.solve("retract(p0251(1)).");
+        assertEquals(1, s.size());
+    }
+    // END_CHANGE: ISS-2025-0251
+
+    // START_CHANGE: ISS-2025-0252 - CLP(FD) store does not leak across top-level queries
+    @Test
+    public void testISS0252_clpfdStoreResetBetweenQueries() {
+        // The same constrained query run twice must give the same number of solutions;
+        // a leaking singleton store made the second run differ (domains/constraints
+        // accumulated under the same variable names).
+        String q = "C0252 in 1..2, E0252 in 1..2, C0252 #\\= E0252, label([C0252,E0252]).";
+        int n1 = prolog.solve(q).size();
+        int n2 = prolog.solve(q).size();
+        assertEquals("identical CLP(FD) query must be deterministic across runs", n1, n2);
+        assertTrue("query should produce solutions", n1 > 0);
+    }
+    // END_CHANGE: ISS-2025-0252
+
+    // START_CHANGE: ISS-2025-0253 - phrase/2,3 enumerate all solutions
+    @Test
+    public void testISS0253_phraseIsMultiSolution() {
+        prolog.consult("ab0253 --> [a].\nab0253 --> [a,b].");
+        // phrase/3 must enumerate BOTH parses (R=[b] from the 1st rule, R=[] from the 2nd),
+        // not behave like once(phrase(...)).
+        List<Map<String, Term>> s = prolog.solve("phrase(ab0253, [a,b], R).");
+        assertEquals("phrase/3 must be multi-solution", 2, s.size());
+    }
+    // END_CHANGE: ISS-2025-0253
+
+    // START_CHANGE: ISS-2025-0254 - cut in a DCG body threads the difference list
+    @Test
+    public void testISS0254_dcgCutThreadsDifferenceList() {
+        prolog.consult("seq0254 --> [a], !, [b].");
+        // With the cut mistranslated to !/2 the S1=S2 threading was lost and X stayed unbound.
+        // Correct translation binds X to b.
+        List<Map<String, Term>> s = prolog.solve("phrase(seq0254, [a, X]).");
+        assertEquals(1, s.size());
+        assertEquals("b", s.get(0).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0254
+
+    // START_CHANGE: ISS-2025-0255 - call_dcg/3 actually runs the DCG body
+    @Test
+    public void testISS0255_callDcgRunsBody() {
+        prolog.consult("lit0255 --> [x].");
+        // The old stub unified Input with Output and returned R=[x]; the correct result is
+        // R=[] after consuming x via the lit0255 rule.
+        List<Map<String, Term>> s = prolog.solve("call_dcg(lit0255, [x], R).");
+        assertEquals(1, s.size());
+        assertEquals("[]", s.get(0).get("R").toString());
+    }
+    // END_CHANGE: ISS-2025-0255
+
+    // START_CHANGE: ISS-2025-0256 - negative sign applied to radix/char-code literals
+    @Test
+    public void testISS0256_negativeRadixLiterals() {
+        // Previously the leading '-' was dropped for hex/octal/binary/char-code literals.
+        List<Map<String, Term>> s = prolog.solve("X is -0xFF.");
+        assertEquals("-255", s.get(0).get("X").toString());
+
+        s = prolog.solve("X is -0o17.");
+        assertEquals("-15", s.get(0).get("X").toString());
+
+        s = prolog.solve("X is -0b1010.");
+        assertEquals("-10", s.get(0).get("X").toString());
+
+        s = prolog.solve("X is -0'a.");
+        assertEquals("-97", s.get(0).get("X").toString());
+
+        // sanity: positive forms still work
+        s = prolog.solve("X is 0xFF.");
+        assertEquals("255", s.get(0).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0256
+
+    // START_CHANGE: ISS-2025-0261 - integers and floats are distinct terms (ISO standard order)
+    @Test
+    public void testISS0261_intFloatAreDistinctTerms() {
+        // unification: 1 does NOT unify with 1.0
+        assertTrue("1 = 1.0 must fail", prolog.solve("1 = 1.0.").isEmpty());
+        assertFalse("1 = 1 must succeed", prolog.solve("1 = 1.").isEmpty());
+        assertFalse("1.0 = 1.0 must succeed", prolog.solve("1.0 = 1.0.").isEmpty());
+
+        // term equality: 1 \== 1.0
+        assertTrue("1 == 1.0 must fail", prolog.solve("1 == 1.0.").isEmpty());
+        assertFalse("1 == 1 must succeed", prolog.solve("1 == 1.").isEmpty());
+
+        // standard order: a float sorts before a numerically-equal integer, so 1 @> 1.0
+        List<Map<String, Term>> s = prolog.solve("compare(O, 1, 1.0).");
+        assertEquals(1, s.size());
+        assertEquals(">", s.get(0).get("O").toString());
+
+        // sort/2 must NOT dedup 1 and 1.0; the float comes first
+        s = prolog.solve("sort([1, 1.0], [A, B]).");
+        assertEquals(1, s.size());
+        assertEquals("1.0", s.get(0).get("A").toString());
+        assertEquals("1", s.get(0).get("B").toString());
+    }
+    // END_CHANGE: ISS-2025-0261
+
+    // START_CHANGE: ISS-2025-0263 - CLP(FD) huge domain raises resource_error, not OOM
+    @Test
+    public void testISS0263_clpfdHugeDomainRejected() {
+        // A ~2-billion-value range was materialized as boxed Integers (OOM) and the int loop
+        // counter would overflow at Integer.MAX_VALUE and never terminate. Now it raises a
+        // catchable resource_error.
+        List<Map<String, Term>> s = prolog.solve(
+            "catch((X in 1..2000000000, indomain(X)), error(resource_error(_), _), true).");
+        assertEquals(1, s.size());
+    }
+    // END_CHANGE: ISS-2025-0263
+
+    // START_CHANGE: ISS-2025-0264 - indomain/1 only emits constraint-consistent values
+    @Test
+    public void testISS0264_indomainRespectsConstraints() {
+        // Pigeonhole: three variables over {1,2} cannot be all-different, so indomain(X) must
+        // yield NO value. Previously every domain value was emitted blindly (unsound).
+        List<Map<String, Term>> s = prolog.solve(
+            "X in 1..2, Y in 1..2, Z in 1..2, all_different([X,Y,Z]), indomain(X).");
+        assertTrue("indomain must not emit values that violate posted constraints", s.isEmpty());
+
+        // Unconstrained: indomain enumerates the whole domain.
+        s = prolog.solve("X in 1..3, indomain(X).");
+        assertEquals(3, s.size());
+    }
+    // END_CHANGE: ISS-2025-0264
+
+    // START_CHANGE: ISS-2025-0266 - set operations distinguish atoms from numbers
+    @Test
+    public void testISS0266_setOpsDistinguishAtomNumber() {
+        // The atom '1' and the number 1 are different terms; toString() conflated them.
+        List<Map<String, Term>> s = prolog.solve("subtract([1,'1'], [1], R).");
+        assertEquals(1, s.size());
+        assertEquals("[1]", s.get(0).get("R").toString()); // the atom '1' remains (number 1 removed)
+
+        s = prolog.solve("intersection([1], ['1'], R).");
+        assertEquals(1, s.size());
+        assertEquals("[]", s.get(0).get("R").toString());
+
+        // normal case unaffected
+        s = prolog.solve("subtract([a,b,c], [b], R).");
+        assertEquals("[a, c]", s.get(0).get("R").toString());
+    }
+    // END_CHANGE: ISS-2025-0266
+
+    // START_CHANGE: ISS-2025-0267 - split_string keeps empty substrings (SWI semantics)
+    @Test
+    public void testISS0267_splitStringKeepsEmpties() {
+        // "a,,b" split on "," with no padding keeps the empty middle field: 3 elements.
+        assertEquals(1, prolog.solve("split_string(\"a,,b\", \",\", \"\", X), X = [_,_,_].").size());
+        // empty input yields a single (empty) field: [""].
+        assertEquals(1, prolog.solve("split_string(\"\", \",\", \"\", X), X = [_].").size());
+        // when a separator char is also a pad char, runs of separators collapse to 2 fields.
+        assertEquals(1, prolog.solve("split_string(\"a  b\", \" \", \" \", X), X = [_,_].").size());
+    }
+    // END_CHANGE: ISS-2025-0267
+
+    // START_CHANGE: ISS-2025-0268 - atomic_list_concat accepts numbers
+    @Test
+    public void testISS0268_atomicListConcatAcceptsNumbers() {
+        List<Map<String, Term>> s = prolog.solve("atomic_list_concat([a,1,b], R).");
+        assertEquals(1, s.size());
+        assertEquals("a1b", s.get(0).get("R").toString());
+
+        s = prolog.solve("atomic_list_concat([x,2,y], '-', R).");
+        assertEquals(1, s.size());
+        assertEquals("x-2-y", s.get(0).get("R").toString());
+    }
+    // END_CHANGE: ISS-2025-0268
+
+    // START_CHANGE: ISS-2025-0269 - type_error(evaluable, _) culprit is the compound Name/Arity
+    @Test
+    public void testISS0269_evaluableCulpritIsCompound() {
+        // The predicate indicator must be the compound '/'(Name, Arity), not an atom 'Name/Arity'.
+        List<Map<String, Term>> s = prolog.solve(
+            "catch(_ is foo, error(type_error(evaluable, C), _), (C = N/A, N == foo, A == 0)).");
+        assertEquals(1, s.size());
+        s = prolog.solve(
+            "catch(_ is bar(1,2), error(type_error(evaluable, C), _), (compound(C) -> true ; fail)).");
+        assertEquals(1, s.size());
+    }
+    // END_CHANGE: ISS-2025-0269
+
+    // START_CHANGE: ISS-2025-0270 - clause/2 ISO errors
+    @Test
+    public void testISS0270_clauseInstantiationError() {
+        // clause(Head, Body) with Head unbound must raise instantiation_error.
+        List<Map<String, Term>> s = prolog.solve(
+            "catch(clause(_, _), error(instantiation_error, _), true).");
+        assertEquals(1, s.size());
+
+        // clause/2 still works for an instantiated head; body shares the head variable.
+        prolog.solve("assertz((g0270(X) :- f0270(X))).");
+        s = prolog.solve("clause(g0270(Y), B), B = f0270(Y).");
+        assertEquals(1, s.size());
+    }
+    // END_CHANGE: ISS-2025-0270
+
+    // START_CHANGE: ISS-2025-0271 - min/max preserve the selected operand's type
+    @Test
+    public void testISS0271_minMaxPreserveType() {
+        // min picks the smaller value keeping its type: min(2, 3.0) = 2 (integer), not 2.0.
+        assertEquals("2", prolog.solve("X is min(2, 3.0).").get(0).get("X").toString());
+        assertEquals("3.0", prolog.solve("X is max(2, 3.0).").get(0).get("X").toString());
+        assertEquals("2.0", prolog.solve("X is min(2.0, 3).").get(0).get("X").toString());
+        assertEquals("5", prolog.solve("X is max(5, 2).").get(0).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0271
+
+    // START_CHANGE: ISS-2025-0272 - gcd requires integer arguments
+    @Test
+    public void testISS0272_gcdRequiresIntegers() {
+        List<Map<String, Term>> s = prolog.solve(
+            "catch(_ is gcd(4, 2.0), error(type_error(integer, C), _), C == 2.0).");
+        assertEquals(1, s.size());
+        // both-integer gcd still works
+        assertEquals("2", prolog.solve("X is gcd(4, 6).").get(0).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0272
+
+    // START_CHANGE: ISS-2025-0273 - setup_call_cleanup/3 and call_cleanup/2
+    @Test
+    public void testISS0273_setupCallCleanup() {
+        // Cleanup runs after the goal succeeds; goal remains multi-solution.
+        List<Map<String, Term>> s = prolog.solve(
+            "setup_call_cleanup(true, member(X,[1,2]), assertz(scc_ok)), scc_ok.");
+        assertEquals(2, s.size());
+
+        // Cleanup runs even when the goal fails.
+        s = prolog.solve("(setup_call_cleanup(true, fail, assertz(scc_f)) ; true), scc_f.");
+        assertEquals(1, s.size());
+
+        // Cleanup runs when the goal raises, before the exception propagates.
+        s = prolog.solve(
+            "catch(setup_call_cleanup(true, throw(boom), assertz(scc_e)), boom, true), scc_e.");
+        assertEquals(1, s.size());
+
+        // call_cleanup/2.
+        s = prolog.solve("call_cleanup(member(X,[a,b]), assertz(scc_cc)), scc_cc.");
+        assertEquals(2, s.size());
+    }
+    // END_CHANGE: ISS-2025-0273
+
+    // START_CHANGE: ISS-2025-0274 - =:= / =\= use IEEE semantics for signed zero and NaN
+    @Test
+    public void testISS0274_arithCompareIeee() {
+        assertFalse("-0.0 =:= 0.0 must succeed", prolog.solve("-0.0 =:= 0.0.").isEmpty());
+        assertTrue("-0.0 =\\= 0.0 must fail", prolog.solve("-0.0 =\\= 0.0.").isEmpty());
+        // nan =:= nan must FAIL (NaN is not equal to itself)
+        assertTrue("nan =:= nan must fail", prolog.solve("X is nan, X =:= X.").isEmpty());
+    }
+    // END_CHANGE: ISS-2025-0274
+
+    // START_CHANGE: ISS-2025-0275 - throw/1 throws a copy of the ball
+    @Test
+    public void testISS0275_throwCopiesBall() {
+        List<Map<String, Term>> s = prolog.solve("catch(throw(t(a)), t(Y), true).");
+        assertEquals(1, s.size());
+        assertEquals("a", s.get(0).get("Y").toString());
+    }
+    // END_CHANGE: ISS-2025-0275
+
+    // START_CHANGE: ISS-2025-0276 - up/downcase_atom are locale-independent
+    @Test
+    public void testISS0276_caseFoldLocaleIndependent() {
+        assertEquals("ABC", prolog.solve("upcase_atom(abc, X).").get(0).get("X").toString());
+        assertEquals("abc", prolog.solve("downcase_atom('ABC', X).").get(0).get("X").toString());
+        // ASCII 'i'/'I' must map predictably regardless of the JVM default locale
+        assertEquals("I", prolog.solve("upcase_atom(i, X).").get(0).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0276
+
+    // START_CHANGE: ISS-2025-0277 - atom_length/2 ISO error terms
+    @Test
+    public void testISS0277_atomLengthIsoErrors() {
+        assertEquals(1, prolog.solve(
+            "catch(atom_length(_, _), error(instantiation_error, _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(atom_length(123, _), error(type_error(atom, _), _), true).").size());
+        // normal case still works
+        assertEquals("5", prolog.solve("atom_length(hello, N).").get(0).get("N").toString());
+    }
+    // END_CHANGE: ISS-2025-0277
+
+    // START_CHANGE: ISS-2025-0278 - op/3 rejects a non-integer precedence
+    @Test
+    public void testISS0278_opNonIntegerPrecedence() {
+        assertEquals(1, prolog.solve(
+            "catch(op(700.5, xfx, myop0278), error(type_error(integer, _), _), true).").size());
+        // integer precedence still works
+        assertFalse(prolog.solve("op(700, xfx, myop0278b).").isEmpty());
+    }
+    // END_CHANGE: ISS-2025-0278
+
+    // START_CHANGE: ISS-2025-0279 - initialization/1 runs after the file is loaded
+    @Test
+    public void testISS0279_initializationRuns() {
+        prolog.consult(":- initialization(assertz(ran0279)).\nfoo0279(1).");
+        assertFalse("initialization goal must have run", prolog.solve("ran0279.").isEmpty());
+
+        // the goal may reference a predicate defined later in the same file
+        Prolog p2 = new Prolog();
+        p2.consult("main0279 :- assertz(done0279).\n:- initialization(main0279).");
+        assertFalse(p2.solve("done0279.").isEmpty());
+    }
+    // END_CHANGE: ISS-2025-0279
+
+    // START_CHANGE: ISS-2025-0282 - ','/2 still works after removing the dead Conjunction built-in
+    @Test
+    public void testISS0282_conjunctionStillWorks() {
+        // handleConjunction (QuerySolver) is authoritative; multi-solution conjunction must work.
+        List<Map<String, Term>> s = prolog.solve("member(X,[1,2]), member(Y,[a,b]).");
+        assertEquals(4, s.size());
+    }
+    // END_CHANGE: ISS-2025-0282
+
+    // START_CHANGE: ISS-2025-0283 - op/3 accepts a list of names
+    @Test
+    public void testISS0283_opListOfNames() {
+        List<Map<String, Term>> s = prolog.solve(
+            "op(700, xfx, [eqx0283, neqx0283]), current_op(P1, xfx, eqx0283), current_op(P2, xfx, neqx0283).");
+        assertEquals(1, s.size());
+        assertEquals("700", s.get(0).get("P1").toString());
+        assertEquals("700", s.get(0).get("P2").toString());
+        // single-atom form still works
+        assertFalse(prolog.solve("op(650, xfx, single0283), current_op(_, xfx, single0283).").isEmpty());
+    }
+    // END_CHANGE: ISS-2025-0283
+
+    // START_CHANGE: ISS-2025-0284 - number_string keeps integer precision
+    @Test
+    public void testISS0284_numberStringBigInteger() {
+        List<Map<String, Term>> s = prolog.solve("number_string(N, \"123456789012345678901234567890\").");
+        assertEquals(1, s.size());
+        assertEquals("123456789012345678901234567890", s.get(0).get("N").toString());
+        // float and small int still parse correctly
+        assertEquals("42", prolog.solve("number_string(N, \"42\").").get(0).get("N").toString());
+        assertEquals("3.14", prolog.solve("number_string(N, \"3.14\").").get(0).get("N").toString());
+    }
+    // END_CHANGE: ISS-2025-0284
+
+    // START_CHANGE: ISS-2025-0305 - closing a stream removes ALL of its aliases (no dangling)
+    @Test
+    public void testISS0305_CloseRemovesAllAliases() {
+        it.denzosoft.jprolog.builtin.io.StreamManager.registerInputStream(
+            "stream_test", new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}));
+        it.denzosoft.jprolog.builtin.io.StreamManager.aliasStream("stream_test", "my_alias");
+        assertTrue(it.denzosoft.jprolog.builtin.io.StreamManager.hasStream("stream_test"));
+        assertTrue(it.denzosoft.jprolog.builtin.io.StreamManager.hasStream("my_alias"));
+        // closing via either alias must drop BOTH (previously the other dangled)
+        it.denzosoft.jprolog.builtin.io.StreamManager.closeStream("my_alias");
+        assertFalse(it.denzosoft.jprolog.builtin.io.StreamManager.hasStream("my_alias"));
+        assertFalse("the sibling alias must not dangle after close",
+            it.denzosoft.jprolog.builtin.io.StreamManager.hasStream("stream_test"));
+    }
+    // END_CHANGE: ISS-2025-0305
+
+    // ISS-2025-0306: with_output_to capture works (thread-safety of the System.out swap is tracked
+    // under LIM-025 — it needs write/1 routed through a per-engine stream, the IO-layer rework).
+    @Test
+    public void testISS0306_WithOutputToCaptures() {
+        List<Map<String, Term>> s = prolog.solve("with_output_to(atom(X), write(hello)).");
+        assertEquals(1, s.size());
+        assertEquals("hello", s.get(0).get("X").toString());
+    }
 }

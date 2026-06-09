@@ -134,9 +134,18 @@ public class PrologFlags {
         }
         
         FLAGS.put(flagName, value);
+        // START_CHANGE: ISS-2025-0246 - Wire occurs_check flag into actual unification.
+        // Previously the flag was only stored; Variable.unify consults
+        // Variable.occursCheckEnabled, which was never updated from here, so
+        // set_prolog_flag(occurs_check, true) had no effect.
+        if ("occurs_check".equals(flagName) && value instanceof Atom) {
+            it.denzosoft.jprolog.core.terms.Variable.setOccursCheckEnabled(
+                "true".equals(((Atom) value).getName()));
+        }
+        // END_CHANGE: ISS-2025-0246
         return true;
     }
-    
+
     /**
      * Check if a flag exists.
      * @param flagName The name of the flag

@@ -35,7 +35,9 @@ public class WithOutputTo implements BuiltInWithContext {
         Term target = query.getArguments().get(0).resolveBindings(bindings);
         Term goal = query.getArguments().get(1).resolveBindings(bindings);
 
-        // Capture output
+        // Capture output. NOTE: write/1 emits to System.out directly, so capture requires swapping
+        // System.out. This is not thread-safe across concurrent captures — making it so needs write/1
+        // routed through a per-engine output stream (tracked under LIM-025 / the IO-layer rework).
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         PrintStream capture = new PrintStream(baos);
         PrintStream oldOut = System.out;

@@ -24,7 +24,11 @@ public final class JpcFormat {
     public static final byte[] MAGIC = { 0x4A, 0x50, 0x43 };
 
     /** Current format version */
-    public static final byte VERSION = 0x01;
+    // START_CHANGE: ISS-2025-0261 - bumped to 0x02: TERM_NUMBER now carries a subtype byte
+    // (long / float / bigint) so int/float type and BigInteger precision round-trip. Older 0x01
+    // .jpc files are rejected by the version check and transparently recompiled.
+    public static final byte VERSION = 0x02;
+    // END_CHANGE: ISS-2025-0261
 
     /** File extension */
     public static final String EXTENSION = ".jpc";
@@ -37,6 +41,12 @@ public final class JpcFormat {
     public static final byte TERM_PROLOG_STRING = 0x05;
     // START_CHANGE: ISS-2025-0185 - Rational number serialization
     public static final byte TERM_RATIONAL      = 0x06;
+
+    // START_CHANGE: ISS-2025-0261 - TERM_NUMBER subtype tags (preserve int/float + BigInteger)
+    public static final byte NUM_LONG   = 0x00;  // signed 64-bit integer
+    public static final byte NUM_FLOAT  = 0x01;  // IEEE-754 double
+    public static final byte NUM_BIGINT = 0x02;  // arbitrary-precision integer (two's-complement bytes)
+    // END_CHANGE: ISS-2025-0261
     // END_CHANGE: ISS-2025-0185
 
     // Operator type indices (matches Operator.Type ordinal)

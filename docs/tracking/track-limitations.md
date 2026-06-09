@@ -3,11 +3,32 @@
 This document describes current limitations in JProlog implementation.
 When an issue is resolved, the corresponding limitation should be removed from this file.
 
-**Last updated**: 2026-03-23 (v2.6.1)
+**Last updated**: 2026-06-07 (v3.0.0)
 
 ---
 
-*All known limitations (LIM-001 through LIM-016) have been resolved as of v2.6.1.*
+## Known Limitations from 2026-06-07 Implementation Audit
+
+The audit (`docs/reports/report-implementation-audit-2026-06-07.md`) confirmed 101
+findings. The eight highest-confidence, low-risk items were fixed in v3.0.0
+(ISS-2025-0245..0252). The following higher-effort items remain open:
+
+| ID | Area | Limitation |
+|----|------|------------|
+| ~~LIM-017~~ | Parser | **RESOLVED v3.0.0** — clean-room v2 parser (default): single-pass `Lexer` is quote/escape/char-code aware; clause splitting is token-based. |
+| ~~LIM-019~~ | Parser | **RESOLVED v3.0.0** — v2 parser (default): canonical functor `-(1,2)` and operator-as-atom (`X = -`, `foo(-,+)`) handled. `-Djprolog.parser=legacy` to fall back. |
+| ~~LIM-021~~ | DCG | **RESOLVED v3.0.0** — clean-room v2 DCG translator (`core.dcg.v2.DCGTranslator`, now default): single recursive pass handling ISO head push-back, `[]`/terminal lists, strings, `{}`, `!`, `\+`, `(A,B)`/`(A;B)`/`(A\|B)`/`(A->B)`, `call//N`, and variable bodies. `-Djprolog.dcg=legacy` to fall back. |
+| ~~LIM-022~~ | CLP(FD) | **RESOLVED v3.0.0** — clean-room v2 CLP(FD) (now default): interval domains (no OOM, no `TreeSet`), per-query identity store (no singleton leak), trail-backtracked **sound** labeling, real `#\=` propagation, `all_different` pigeonhole. Remaining = future *features* (`global_cardinality`, Hall-interval pruning, lazy labeling), not correctness gaps. `-Djprolog.clpfd=legacy` to fall back. |
+| LIM-023 | Engine | No last-call/tail-call optimization (deep recursion → Java `StackOverflowError`, and slow — `count(5000)` ≈ 2.8 s); cyclic terms (`X = f(X)` with `occurs_check=false`) overflow on solution post-processing. (First-argument indexing is NOT a limitation — it is implemented and used; see the audit verification note in track-issues.) |
+| LIM-024 | Concurrency | `threading/ConcurrentPredicates` run parallel goals on a single shared `QuerySolver` whose mutable fields race; no per-task solver isolation. |
+| LIM-025 | Resource | Narrowed: `with_output_to/2` still swaps JVM-wide `System.out` (not thread-safe across concurrent captures) — a true fix needs `write/1` routed through a per-engine output stream (the IO-layer rework tied to the resolution-engine effort). (RESOLVED in v3.0.0: the `open/4` dangling-alias handle — `closeStream` now drops every alias of a stream, ISS-0305; plus `StreamManager` map thread-safety, HTTP disconnect, JDBC statement leaks — ISS-0257..0260, 0265.) |
+
+> Resolved in v3.0.0: LIM-018 (negative radix/char-code literals — ISS-2025-0256);
+> LIM-020 (int/float distinguished as terms — ISS-2025-0261).
+
+---
+
+*Limitations LIM-001 through LIM-016 were all resolved as of v2.6.1.*
 
 ## Resolved Limitations
 

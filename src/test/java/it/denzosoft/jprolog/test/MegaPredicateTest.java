@@ -288,7 +288,7 @@ public class MegaPredicateTest {
         assertEquals("3", s.get(0).get("X").toString());
 
         s = prolog.solve("X is 2 ** 10.");
-        assertEquals("1024", s.get(0).get("X").toString());
+        assertEquals("1024.0", s.get(0).get("X").toString()); // (**)/2 is float power, ISO §9.3.1 (ISS-2025-0247)
     }
 
     @Test

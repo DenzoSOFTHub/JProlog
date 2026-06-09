@@ -71,34 +71,31 @@ public class StandardTermOrdering {
     
     /**
      * Compare two numbers by numeric value.
-     * Integers < floats for same value (per ISO standard).
+     * Per ISO standard order, when an integer and a float have the same value the float
+     * is the smaller term (float @< integer), e.g. compare(O, 1, 1.0) gives O = (>).
      */
+    // START_CHANGE: ISS-2025-0261 - use the authoritative Number.isInteger() flag (not a double
+    // re-derivation), compare integers exactly via BigInteger, and order float before integer
+    // on equal value (matching sort/2 and SWI/ISO).
     private static int compareNumbers(it.denzosoft.jprolog.core.terms.Number num1, it.denzosoft.jprolog.core.terms.Number num2) {
-        double val1 = num1.getValue();
-        double val2 = num2.getValue();
-        
-        // Compare numeric values first
-        int valueCompare = Double.compare(val1, val2);
+        boolean isInt1 = num1.isInteger();
+        boolean isInt2 = num2.isInteger();
+
+        int valueCompare;
+        if (isInt1 && isInt2) {
+            valueCompare = num1.bigIntegerValue().compareTo(num2.bigIntegerValue());
+        } else {
+            valueCompare = Double.compare(num1.getValue(), num2.getValue());
+        }
         if (valueCompare != 0) {
             return valueCompare;
         }
-        
-        // Same value - integers come before floats
-        boolean isInt1 = isInteger(num1);
-        boolean isInt2 = isInteger(num2);
-        
-        if (isInt1 && !isInt2) return -1; // integer < float
-        if (!isInt1 && isInt2) return 1;  // float > integer
-        return 0; // same type and value
+
+        // Same value, different type: the float is the smaller term.
+        if (isInt1 == isInt2) return 0;
+        return isInt1 ? 1 : -1;
     }
-    
-    /**
-     * Check if a Number represents an integer value.
-     */
-    private static boolean isInteger(it.denzosoft.jprolog.core.terms.Number num) {
-        double val = num.getValue();
-        return val == Math.floor(val) && !Double.isInfinite(val);
-    }
+    // END_CHANGE: ISS-2025-0261
     
     /**
      * Compare two atoms alphabetically by name.

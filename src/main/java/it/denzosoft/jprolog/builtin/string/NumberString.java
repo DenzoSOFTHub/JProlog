@@ -54,9 +54,17 @@ public class NumberString implements BuiltIn {
             
             java.lang.String stringValue = ((PrologString) stringTerm).getStringValue();
             try {
-                double numberValue = Double.parseDouble(stringValue.trim());
-                Number numberObj = new Number(numberValue);
-                
+                // START_CHANGE: ISS-2025-0284 - parse integer strings as exact BigInteger so large
+                // values keep full precision (Double.parseDouble loses precision past 2^53).
+                java.lang.String trimmed = stringValue.trim();
+                Number numberObj;
+                if (trimmed.matches("[+-]?\\d+")) {
+                    numberObj = new Number(new java.math.BigInteger(trimmed));
+                } else {
+                    numberObj = new Number(Double.parseDouble(trimmed));
+                }
+                // END_CHANGE: ISS-2025-0284
+
                 Map<java.lang.String, Term> newBindings = new HashMap<>(bindings);
                 if (numberTerm.unify(numberObj, newBindings)) {
                     solutions.add(newBindings);

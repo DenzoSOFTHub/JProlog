@@ -193,7 +193,23 @@ public class JpcWriter {
         } else if (term instanceof it.denzosoft.jprolog.core.terms.Number) {
             it.denzosoft.jprolog.core.terms.Number num = (it.denzosoft.jprolog.core.terms.Number) term;
             dos.writeByte(JpcFormat.TERM_NUMBER);
-            dos.writeDouble(num.getValue());
+            // START_CHANGE: ISS-2025-0261 - preserve int/float type and BigInteger precision
+            // instead of collapsing every number to a double.
+            if (num.isInteger()) {
+                if (num.isBigInteger()) {
+                    dos.writeByte(JpcFormat.NUM_BIGINT);
+                    byte[] b = num.bigIntegerValue().toByteArray();
+                    writeVarint(dos, b.length);
+                    dos.write(b);
+                } else {
+                    dos.writeByte(JpcFormat.NUM_LONG);
+                    dos.writeLong(num.longValue());
+                }
+            } else {
+                dos.writeByte(JpcFormat.NUM_FLOAT);
+                dos.writeDouble(num.doubleValue());
+            }
+            // END_CHANGE: ISS-2025-0261
         } else if (term instanceof Variable) {
             Variable var = (Variable) term;
             dos.writeByte(JpcFormat.TERM_VARIABLE);

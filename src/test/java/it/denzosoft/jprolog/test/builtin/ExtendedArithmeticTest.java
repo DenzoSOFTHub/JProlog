@@ -56,34 +56,34 @@ public class ExtendedArithmeticTest {
     
     @Test
     public void testPowerFunctionCall() {
-        // Test ** as function call
+        // ISS-2025-0247: (**)/2 is the ISO floating-point power and always yields a float.
         List<Map<String, Term>> solutions = prolog.solve("X is **(2, 3)");
         assertFalse("**(2, 3) should succeed", solutions.isEmpty());
-        assertEquals("8", solutions.get(0).get("X").toString());
-        
+        assertEquals("8.0", solutions.get(0).get("X").toString());
+
         solutions = prolog.solve("X is **(3, 2)");
         assertFalse("**(3, 2) should succeed", solutions.isEmpty());
-        assertEquals("9", solutions.get(0).get("X").toString());
-        
+        assertEquals("9.0", solutions.get(0).get("X").toString());
+
         solutions = prolog.solve("X is **(2, 4)");
         assertFalse("**(2, 4) should succeed", solutions.isEmpty());
-        assertEquals("16", solutions.get(0).get("X").toString());
+        assertEquals("16.0", solutions.get(0).get("X").toString());
     }
     
     @Test
     public void testPowerInfixOperator() {
-        // Test ** as infix operator
+        // ISS-2025-0247: (**)/2 always yields a float (ISO §9.3.1).
         List<Map<String, Term>> solutions = prolog.solve("X is 2 ** 3");
         assertFalse("2 ** 3 should succeed", solutions.isEmpty());
-        assertEquals("8", solutions.get(0).get("X").toString());
-        
+        assertEquals("8.0", solutions.get(0).get("X").toString());
+
         solutions = prolog.solve("X is 3 ** 2");
         assertFalse("3 ** 2 should succeed", solutions.isEmpty());
-        assertEquals("9", solutions.get(0).get("X").toString());
-        
+        assertEquals("9.0", solutions.get(0).get("X").toString());
+
         solutions = prolog.solve("X is 2 ** 4");
         assertFalse("2 ** 4 should succeed", solutions.isEmpty());
-        assertEquals("16", solutions.get(0).get("X").toString());
+        assertEquals("16.0", solutions.get(0).get("X").toString());
     }
     
     @Test
@@ -91,7 +91,7 @@ public class ExtendedArithmeticTest {
         // Test that ** has higher precedence than *
         List<Map<String, Term>> solutions = prolog.solve("X is 2 * 3 ** 2");
         assertFalse("2 * 3 ** 2 should succeed", solutions.isEmpty());
-        assertEquals("18", solutions.get(0).get("X").toString()); // Should be 2 * (3 ** 2) = 2 * 9 = 18
+        assertEquals("18.0", solutions.get(0).get("X").toString()); // 2 * (3 ** 2) = 2 * 9.0 = 18.0 (** is float, ISS-2025-0247)
         
         // Test that mod has same precedence as *
         solutions = prolog.solve("X is 10 * 3 mod 7");
@@ -104,7 +104,7 @@ public class ExtendedArithmeticTest {
         // Test complex expressions with new operators
         List<Map<String, Term>> solutions = prolog.solve("X is 2 ** 3 + 3 * 4 mod 5");
         assertFalse("Complex expression should succeed", solutions.isEmpty());
-        assertEquals("10", solutions.get(0).get("X").toString()); // 2**3 + 3*4 mod 5 = 8 + 12 mod 5 = 8 + 2 = 10
+        assertEquals("10.0", solutions.get(0).get("X").toString()); // 8.0 + (12 mod 5=2) = 10.0 (** is float, ISS-2025-0247)
         
         solutions = prolog.solve("X is (7 + 3) mod 4 * 2");
         assertFalse("Complex expression with parentheses should succeed", solutions.isEmpty());
@@ -118,23 +118,29 @@ public class ExtendedArithmeticTest {
         assertFalse("-7 mod 3 should succeed", solutions.isEmpty());
         assertEquals("2", solutions.get(0).get("X").toString());
         
-        // Test power with negative base
+        // Test power with negative base ((**)/2 is float, ISS-2025-0247)
         solutions = prolog.solve("X is -2 ** 2");
         assertFalse("-2 ** 2 should succeed", solutions.isEmpty());
-        assertEquals("4", solutions.get(0).get("X").toString());
+        assertEquals("4.0", solutions.get(0).get("X").toString());
     }
     
     @Test
     public void testFractionalNumbers() {
-        // Test modulo with fractional numbers
-        List<Map<String, Term>> solutions = prolog.solve("X is 7.5 mod 2.5");
-        assertFalse("7.5 mod 2.5 should succeed", solutions.isEmpty());
-        assertEquals("0", solutions.get(0).get("X").toString());
-        
-        // Test power with fractional exponent
-        solutions = prolog.solve("X is 4 ** 0.5");
+        // ISS-2025-0249: mod/2 requires integer arguments (ISO 13211-1); a float operand
+        // must raise type_error(integer, _) rather than silently computing a result.
+        try {
+            prolog.solve("X is 7.5 mod 2.5");
+            fail("7.5 mod 2.5 should raise type_error(integer, _) under ISO");
+        } catch (Exception e) {
+            assertTrue("expected type_error(integer,...), got: " + e.getMessage(),
+                e.getMessage() != null
+                    && (e.getMessage().contains("type_error") || e.getMessage().contains("integer")));
+        }
+
+        // Power with fractional exponent: (**)/2 is the float power (ISS-2025-0247).
+        List<Map<String, Term>> solutions = prolog.solve("X is 4 ** 0.5");
         assertFalse("4 ** 0.5 should succeed", solutions.isEmpty());
         String powResult = solutions.get(0).get("X").toString();
-        assertTrue("4 ** 0.5 should be 2 or 2.0", powResult.equals("2") || powResult.equals("2.0"));
+        assertTrue("4 ** 0.5 should be 2.0", powResult.equals("2.0") || powResult.equals("2"));
     }
 }

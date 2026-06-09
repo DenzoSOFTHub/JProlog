@@ -13,15 +13,19 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Handles standard streams and file-based streams.
  */
 public class StreamManager {
-    private static final Map<String, InputStream> INPUT_STREAMS = new HashMap<>();
-    private static final Map<String, OutputStream> OUTPUT_STREAMS = new HashMap<>();
+    // START_CHANGE: ISS-2025-0258 - These static maps are shared across the solver thread, the
+    // debug solver thread, and HTTP/TCP handler threads. Plain HashMap mutation from multiple
+    // threads can corrupt the table; use ConcurrentHashMap (matching the other resource managers).
+    private static final Map<String, InputStream> INPUT_STREAMS = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Map<String, OutputStream> OUTPUT_STREAMS = new java.util.concurrent.ConcurrentHashMap<>();
     private static final AtomicInteger STREAM_COUNTER = new AtomicInteger(1000);
     // START_CHANGE: R3 - per-stream properties (type/encoding/eof_action)
     public static final String PROP_TYPE = "type";          // "text" | "binary"
     public static final String PROP_ENCODING = "encoding";  // e.g. "utf8" / "iso_latin_1"
     public static final String PROP_EOF_ACTION = "eof_action"; // "error" | "eof_code" | "reset"
-    private static final Map<String, Map<String, String>> STREAM_PROPS = new HashMap<>();
-    private static final Map<String, java.io.Reader> READERS = new HashMap<>();
+    private static final Map<String, Map<String, String>> STREAM_PROPS = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Map<String, java.io.Reader> READERS = new java.util.concurrent.ConcurrentHashMap<>();
+    // END_CHANGE: ISS-2025-0258
 
     public static void setProperty(String alias, String prop, String value) {
         STREAM_PROPS.computeIfAbsent(alias, k -> new HashMap<>()).put(prop, value);
@@ -116,23 +120,40 @@ public class StreamManager {
      * Close a stream by alias.
      */
     public static boolean closeStream(String streamAlias) {
+        // START_CHANGE: ISS-2025-0305 - remove EVERY alias referencing the same underlying stream
+        // (open/4 with alias(A) registers both stream_N and A; closing one left the other dangling,
+        // pointing at a now-closed stream). Find all aliases for the target object and drop them all.
+        InputStream tis = INPUT_STREAMS.get(streamAlias);
+        OutputStream tos = OUTPUT_STREAMS.get(streamAlias);
+        java.util.List<String> aliases = new java.util.ArrayList<>();
+        aliases.add(streamAlias);
+        if (tis != null) {
+            for (Map.Entry<String, InputStream> e : INPUT_STREAMS.entrySet()) {
+                if (e.getValue() == tis && !aliases.contains(e.getKey())) aliases.add(e.getKey());
+            }
+        }
+        if (tos != null) {
+            for (Map.Entry<String, OutputStream> e : OUTPUT_STREAMS.entrySet()) {
+                if (e.getValue() == tos && !aliases.contains(e.getKey())) aliases.add(e.getKey());
+            }
+        }
+        // invalidate cached Reader + per-stream properties for every alias (ISS-2025-0287)
+        for (String a : aliases) {
+            java.io.Reader cachedReader = READERS.remove(a);
+            if (cachedReader != null) { try { cachedReader.close(); } catch (IOException ignore) {} }
+            STREAM_PROPS.remove(a);
+            INPUT_STREAMS.remove(a);
+            OUTPUT_STREAMS.remove(a);
+        }
+        boolean closed = false;
         try {
-            InputStream is = INPUT_STREAMS.remove(streamAlias);
-            if (is != null && is != System.in) {
-                is.close();
-                return true;
-            }
-            
-            OutputStream os = OUTPUT_STREAMS.remove(streamAlias);
-            if (os != null && os != System.out && os != System.err) {
-                os.close();
-                return true;
-            }
-            
-            return false;
+            if (tis != null && tis != System.in) { tis.close(); closed = true; }
+            if (tos != null && tos != System.out && tos != System.err) { tos.close(); closed = true; }
         } catch (IOException e) {
             return false;
         }
+        return closed;
+        // END_CHANGE: ISS-2025-0305
     }
     
     /**

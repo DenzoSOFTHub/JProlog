@@ -162,18 +162,17 @@ public class Number extends Term {
 			return term.unify(this, substitution);
 		} else if (term instanceof Number) {
             Number other = (Number) term;
-            // For BigInteger values, compare BigIntegers
-            if (this.isBigInteger() || other.isBigInteger()) {
-                if (this.isInteger && other.isInteger) {
-                    return this.bigIntegerValue().equals(other.bigIntegerValue());
-                }
-                // START_CHANGE: ISS-2025-0181 - Term system bug fixes
-            return Double.compare(this.doubleValue, other.doubleValue) == 0;
-            // END_CHANGE: ISS-2025-0181
+            // START_CHANGE: ISS-2025-0261 - ISO standard order of terms: integers and floats are
+            // DISTINCT terms, so 1 does not unify with 1.0 (and 1 \== 1.0). Require the same type
+            // AND the same value. Integers compare exactly via BigInteger (also fixes >2^53 longs).
+            if (this.isInteger != other.isInteger) {
+                return false;
             }
-            // START_CHANGE: ISS-2025-0181 - Term system bug fixes
+            if (this.isInteger) {
+                return this.bigIntegerValue().equals(other.bigIntegerValue());
+            }
             return Double.compare(this.doubleValue, other.doubleValue) == 0;
-            // END_CHANGE: ISS-2025-0181
+            // END_CHANGE: ISS-2025-0261
         } else {
         	return false;
         }
@@ -205,24 +204,31 @@ public class Number extends Term {
         if (this == obj) return true;
         if (obj == null || getClass() != obj.getClass()) return false;
         Number number = (Number) obj;
-        // For BigInteger values, compare BigIntegers
-        if (this.isBigInteger() || number.isBigInteger()) {
-            if (this.isInteger && number.isInteger) {
-                return this.bigIntegerValue().equals(number.bigIntegerValue());
-            }
+        // START_CHANGE: ISS-2025-0261 - consistent with unify: integers and floats are distinct.
+        if (this.isInteger != number.isInteger) {
+            return false;
+        }
+        if (this.isInteger) {
+            return this.bigIntegerValue().equals(number.bigIntegerValue());
         }
         return Double.compare(number.doubleValue, doubleValue) == 0;
+        // END_CHANGE: ISS-2025-0261
     }
 
     // START_CHANGE: ISS-2025-0191 - Fix NaN hashCode consistency
+    // START_CHANGE: ISS-2025-0261 - keep hashCode consistent with the type-aware equals: an
+    // integer and a numerically-equal float are now unequal, so they hash differently.
     @Override
     public int hashCode() {
-        if (isBigInteger()) return bigIntValue.hashCode();
+        if (isInteger) {
+            return bigIntegerValue().hashCode();
+        }
         // Normalize -0.0 to 0.0 and canonicalize NaN for hashCode consistency with equals
         double val = Double.isNaN(doubleValue) ? Double.NaN : (doubleValue == 0.0) ? 0.0 : doubleValue;
         long temp = Double.doubleToLongBits(val);
         return (int) (temp ^ (temp >>> 32));
     }
+    // END_CHANGE: ISS-2025-0261
     // END_CHANGE: ISS-2025-0191
 }
 // END_CHANGE: LIM-008

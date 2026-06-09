@@ -30,7 +30,10 @@ public class DownCase implements BuiltIn {
             }
             
             String inputAtom = ((Atom) inputTerm).getName();
-            String lowerCaseAtom = inputAtom.toLowerCase();
+            // START_CHANGE: ISS-2025-0276 - locale-independent case folding (Locale.ROOT) so
+            // results don't depend on the JVM default locale (e.g. Turkish dotless-i).
+            String lowerCaseAtom = inputAtom.toLowerCase(java.util.Locale.ROOT);
+            // END_CHANGE: ISS-2025-0276
             
             Atom resultAtom = new Atom(lowerCaseAtom);
             

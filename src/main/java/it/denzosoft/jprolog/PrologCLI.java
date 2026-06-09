@@ -289,7 +289,11 @@ public class PrologCLI {
                 return;
             }
             
-            String content = new String(java.nio.file.Files.readAllBytes(path));
+            // START_CHANGE: ISS-2025-0286 - read source as UTF-8 (matches the encoding=utf8 flag)
+            // instead of the platform default charset.
+            String content = new String(java.nio.file.Files.readAllBytes(path),
+                java.nio.charset.StandardCharsets.UTF_8);
+            // END_CHANGE: ISS-2025-0286
             
             // Use proper consult method for DCG transformation and complete parsing
             prolog.consult(content);

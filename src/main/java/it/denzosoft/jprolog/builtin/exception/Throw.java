@@ -3,6 +3,7 @@ package it.denzosoft.jprolog.builtin.exception;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.util.TermCopier;
 
 import java.util.List;
 import java.util.Map;
@@ -31,8 +32,10 @@ public class Throw implements BuiltIn {
             throw new PrologException(createInstantiationError("throw/1: argument must be instantiated"));
         }
         
-        // Throw the Prolog exception
-        throw new PrologException(ball);
+        // START_CHANGE: ISS-2025-0275 - ISO throw/1 throws a COPY of the ball (copy_term), so the
+        // thrown term is independent of the variable bindings in the throwing context.
+        throw new PrologException(TermCopier.copyWithFreshVariables(ball));
+        // END_CHANGE: ISS-2025-0275
     }
     
     private Term createInstantiationError(String context) {

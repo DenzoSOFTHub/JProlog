@@ -37,6 +37,42 @@ public class Prolog {
     private final java.util.concurrent.ConcurrentHashMap<String, it.denzosoft.jprolog.core.terms.Term> globalVariables =
         new java.util.concurrent.ConcurrentHashMap<>();
     // END_CHANGE: LIM-003
+    // START_CHANGE: ISS-2025-0279 - initialization/1 goals deferred until after the file is loaded
+    private final List<Term> pendingInitializationGoals = new ArrayList<>();
+    // END_CHANGE: ISS-2025-0279
+
+    // START_CHANGE: ISS-2025-0293 - make the clean-room v2 parser the default for consult+queries.
+    // Toggle off with -Djprolog.parser=legacy (or Prolog.setUseV2Parser(false)) to fall back.
+    private static volatile boolean USE_V2_PARSER =
+        !"legacy".equalsIgnoreCase(System.getProperty("jprolog.parser", "v2"));
+    public static void setUseV2Parser(boolean v2) { USE_V2_PARSER = v2; }
+    public static boolean isUsingV2Parser() { return USE_V2_PARSER; }
+    // END_CHANGE: ISS-2025-0293
+
+    // START_CHANGE: ISS-2025-0294 - flag to enable the v2 CLP(FD) solver at engine creation.
+    // Default on: the v2 solver is sound (interval domains, real #\= propagation, trail-backtracked
+    // labeling). Fall back to the legacy store with -Djprolog.clpfd=legacy / Prolog.setUseV2Clpfd(false).
+    private static volatile boolean USE_V2_CLPFD =
+        !"legacy".equalsIgnoreCase(System.getProperty("jprolog.clpfd", "v2"));
+    public static void setUseV2Clpfd(boolean v2) { USE_V2_CLPFD = v2; }
+    public static boolean isUsingV2Clpfd() { return USE_V2_CLPFD; }
+    // END_CHANGE: ISS-2025-0294
+
+    // START_CHANGE: ISS-2025-0304 - clean-room v2 DCG translator (default; -Djprolog.dcg=legacy to fall back)
+    private static volatile boolean USE_V2_DCG =
+        !"legacy".equalsIgnoreCase(System.getProperty("jprolog.dcg", "v2"));
+    public static void setUseV2Dcg(boolean v2) { USE_V2_DCG = v2; }
+    public static boolean isUsingV2Dcg() { return USE_V2_DCG; }
+    // END_CHANGE: ISS-2025-0304
+
+    // START_CHANGE: ISS-2025-0311 - opt-in: route queries through the clean-room v2 resolution engine
+    // (MachineSolver: iterative SLD, mutable bindings + trail, lazy, no StackOverflow). Default OFF —
+    // it is still growing toward full builtin parity. Enable with -Djprolog.engine=v2.
+    private static volatile boolean USE_V2_ENGINE =
+        "v2".equalsIgnoreCase(System.getProperty("jprolog.engine", "legacy"));
+    public static void setUseV2Engine(boolean v2) { USE_V2_ENGINE = v2; }
+    public static boolean isUsingV2Engine() { return USE_V2_ENGINE; }
+    // END_CHANGE: ISS-2025-0311
     private boolean traceEnabled = false;
 
     /**
@@ -58,6 +94,12 @@ public class Prolog {
         this.querySolver = new QuerySolver(knowledgeBase, builtInRegistry);
         this.querySolver.setPrologContext(this);
         registerBuiltInPredicates();
+        // START_CHANGE: ISS-2025-0294 - optionally make the clean-room v2 CLP(FD) the default
+        // (enable with -Djprolog.clpfd=v2 or Prolog.setUseV2Clpfd(true)).
+        if (USE_V2_CLPFD) {
+            enableV2Clpfd();
+        }
+        // END_CHANGE: ISS-2025-0294
     }
 
     private void registerBuiltInPredicates() {
@@ -141,6 +183,9 @@ public class Prolog {
      */
     // START_CHANGE: ISS-2025-0168 - Multi-error parser recovery: collect all errors instead of stopping at first
     public void consult(String program) {
+        // START_CHANGE: ISS-2025-0293 - default to the v2 parser
+        if (USE_V2_PARSER) { consultV2(program); return; }
+        // END_CHANGE: ISS-2025-0293
         List<java.lang.String> errors = new ArrayList<>();
         try {
             // START_CHANGE: ISS-2025-0085 - Parse clauses incrementally so op directives
@@ -185,6 +230,9 @@ public class Prolog {
                 }
             }
             // END_CHANGE: ISS-2025-0085
+            // START_CHANGE: ISS-2025-0279 - run deferred initialization/1 goals now that the file is loaded
+            runPendingInitializationGoals();
+            // END_CHANGE: ISS-2025-0279
         } catch (Exception e) {
             errors.add("Error extracting clauses: " + e.getMessage());
         }
@@ -202,6 +250,99 @@ public class Prolog {
         }
     }
     // END_CHANGE: ISS-2025-0168
+
+    // START_CHANGE: ISS-2025-0292 - opt-in consult driven by the clean-room v2 parser
+    // (core.parser.v2). Same clause handling as consult(String) — directives, DCG, facts, rules —
+    // but parsing goes through the new ISO tokenizer + operator-precedence parser. The legacy
+    // consult() path is unchanged; this lets the v2 parser be validated end-to-end through the
+    // engine (and adopted once it passes a full regression).
+    public void consultV2(String program) {
+        List<java.lang.String> errors = new ArrayList<>();
+        try {
+            it.denzosoft.jprolog.core.parser.v2.TermReader reader =
+                new it.denzosoft.jprolog.core.parser.v2.TermReader(
+                    it.denzosoft.jprolog.core.parser.v2.Lexer.tokenize(program), operatorTable);
+            // START_CHANGE: ISS-2025-0295 - per-clause error recovery: a parse error on one clause
+            // must NOT drop the rest of the file (matches the legacy consult). Resync to the next '.'.
+            for (;;) {
+                Term clauseTerm;
+                try {
+                    clauseTerm = reader.nextClause();
+                } catch (RuntimeException pe) {
+                    errors.add("Parse error (v2): " + pe.getMessage());
+                    reader.recover();
+                    if (reader.atEof()) break;
+                    continue;
+                }
+                if (clauseTerm == null) break;
+                // END_CHANGE: ISS-2025-0295
+                try {
+                    Rule rule = clauseTermToRule(clauseTerm);
+                    if (isDirective(rule)) {
+                        processDirective(rule);
+                    } else if (isDCGRule(rule)) {
+                        Rule transformed = transformDCGRule(rule);
+                        checkBuiltInConflict(transformed);
+                        moduleManager.addRule(transformed);
+                        if ("user".equals(moduleManager.getCurrentModule().getName())) {
+                            knowledgeBase.addRule(transformed);
+                        }
+                    } else {
+                        checkBuiltInConflict(rule);
+                        moduleManager.addRule(rule);
+                        if ("user".equals(moduleManager.getCurrentModule().getName())) {
+                            knowledgeBase.addRule(rule);
+                        }
+                    }
+                } catch (Exception e) {
+                    errors.add("Error processing clause '" + clauseTerm + "': " + e.getMessage());
+                }
+            }
+            runPendingInitializationGoals();
+        } catch (Exception e) {
+            errors.add("Parse error (v2): " + e.getMessage());
+        }
+        if (!errors.isEmpty()) {
+            StringBuilder sb = new StringBuilder("Errors during consultV2 (")
+                .append(errors.size()).append("):\n");
+            for (java.lang.String er : errors) sb.append("  ").append(er).append("\n");
+            throw new PrologException(sb.toString());
+        }
+    }
+
+    /** Convert a v2-parsed clause term into a {@link Rule} (directive / DCG / rule / fact). */
+    private Rule clauseTermToRule(Term clause) {
+        if (clause instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) clause;
+            String f = c.getName();
+            int ar = c.getArguments().size();
+            if (":-".equals(f) && ar == 2) {                 // Head :- Body
+                return new Rule(c.getArguments().get(0), flattenConjunction(c.getArguments().get(1)));
+            }
+            if (":-".equals(f) && ar == 1) {                 // :- Directive
+                return new Rule(clause, new ArrayList<>());
+            }
+            if ("-->".equals(f) && ar == 2) {                // DCG rule (head is the --> term)
+                return new Rule(clause, new ArrayList<>());
+            }
+        }
+        return new Rule(clause, new ArrayList<>());          // fact
+    }
+
+    /** Flatten a (right-nested) ','/2 conjunction into a list of goals. */
+    private List<Term> flattenConjunction(Term body) {
+        List<Term> goals = new ArrayList<>();
+        Term cur = body;
+        while (cur instanceof CompoundTerm
+                && ",".equals(((CompoundTerm) cur).getName())
+                && ((CompoundTerm) cur).getArguments().size() == 2) {
+            goals.add(((CompoundTerm) cur).getArguments().get(0));
+            cur = ((CompoundTerm) cur).getArguments().get(1);
+        }
+        goals.add(cur);
+        return goals;
+    }
+    // END_CHANGE: ISS-2025-0292
     
     /**
      * Check if a rule conflicts with a built-in predicate.
@@ -283,6 +424,14 @@ public class Prolog {
                         // These are declaration directives - acknowledge and continue
                         LOGGER.log(Level.FINE, "Declaration directive processed: " + directive);
                         break;
+                    // START_CHANGE: ISS-2025-0279 - initialization(Goal): run Goal AFTER the whole
+                    // file has been loaded (so it may reference predicates defined later in the file).
+                    case "initialization":
+                        if (TermUtils.getArity((CompoundTerm) directive) >= 1) {
+                            pendingInitializationGoals.add(TermUtils.getArgument((CompoundTerm) directive, 0));
+                        }
+                        break;
+                    // END_CHANGE: ISS-2025-0279
                     default:
                         // ISO Prolog: unknown directives are executed as goals
                         executeGoalDirective(directive);
@@ -295,6 +444,18 @@ public class Prolog {
             }
         }
     }
+
+    // START_CHANGE: ISS-2025-0279 - Run initialization/1 goals collected during consult, once the
+    // whole file is loaded. Snapshot + clear first so a goal that itself consults is isolated.
+    private void runPendingInitializationGoals() {
+        if (pendingInitializationGoals.isEmpty()) return;
+        List<Term> goals = new ArrayList<>(pendingInitializationGoals);
+        pendingInitializationGoals.clear();
+        for (Term g : goals) {
+            executeGoalDirective(g);
+        }
+    }
+    // END_CHANGE: ISS-2025-0279
     
     // START_CHANGE: ISS-2025-0122 - Execute goal directives during consult (ISO Prolog behavior)
     /**
@@ -306,11 +467,19 @@ public class Prolog {
         try {
             List<Map<String, Term>> solutions = querySolver.solve(goal);
             if (solutions.isEmpty()) {
+                // START_CHANGE: ISS-2025-0288 - surface a failed directive (was logged only at FINE)
+                System.err.println("Warning: goal directive failed: " + goal);
+                // END_CHANGE: ISS-2025-0288
                 LOGGER.log(Level.FINE, "Goal directive failed (no solutions): " + goal);
             }
+        // START_CHANGE: ISS-2025-0288 - do not swallow the debugger stop signal; surface errors
+        } catch (DebugController.DebugStopException e) {
+            throw e;
         } catch (Exception e) {
+            System.err.println("Warning: goal directive raised an error: " + goal + " - " + e.getMessage());
             LOGGER.log(Level.WARNING, "Goal directive error: " + goal + " - " + e.getMessage());
         }
+        // END_CHANGE: ISS-2025-0288
     }
     // END_CHANGE: ISS-2025-0122
 
@@ -538,6 +707,12 @@ public class Prolog {
     private Rule transformDCGRule(Rule rule) {
         Term head = rule.getHead();
         if (head instanceof CompoundTerm) {
+            // START_CHANGE: ISS-2025-0304 - default to the clean-room v2 DCG translator
+            if (USE_V2_DCG) {
+                Term clause = new it.denzosoft.jprolog.core.dcg.v2.DCGTranslator().translate((CompoundTerm) head);
+                return clauseTermToRule(clause);
+            }
+            // END_CHANGE: ISS-2025-0304
             return dcgTransformer.transformDCGRule((CompoundTerm) head);
         }
         throw new IllegalArgumentException("Invalid DCG rule: " + rule);
@@ -614,12 +789,31 @@ public class Prolog {
 
     public List<Map<String, Term>> solve(String queryString) {
         try {
+            // START_CHANGE: ISS-2025-0252 - reset transient per-query state (CLP(FD) store)
+            resetTransientQueryState();
+            // END_CHANGE: ISS-2025-0252
             if (queryString.endsWith(".")) {
                 queryString = queryString.substring(0, queryString.length() - 1);
             }
-            Term query = parser.parseTerm(queryString);
+            // START_CHANGE: ISS-2025-0293 - parse queries with the v2 parser by default
+            Term query;
+            if (USE_V2_PARSER) {
+                try {
+                    query = it.denzosoft.jprolog.core.parser.v2.TermReader.parseTerm(queryString, operatorTable);
+                } catch (RuntimeException e) {
+                    throw new PrologException("Error parsing query: " + e.getMessage(), e);
+                }
+            } else {
+                query = parser.parseTerm(queryString);
+            }
+            // END_CHANGE: ISS-2025-0293
             // Splice any previously-suspended attributed variables (by name)
             query = spliceAttributedSessionVars(query);
+            // START_CHANGE: ISS-2025-0311 - opt-in v2 engine (already returns query-var-keyed solutions)
+            if (USE_V2_ENGINE) {
+                return solveWithV2Engine(query);
+            }
+            // END_CHANGE: ISS-2025-0311
             List<Map<String, Term>> solutions = querySolver.solve(query);
             // After solve: refresh session map — keep only currently-attributed (unbound) named vars
             refreshAttributedSessionVars(query, solutions);
@@ -630,6 +824,16 @@ public class Prolog {
             throw new PrologException("Error parsing query: " + e.getMessage(), e);
         }
     }
+
+    // START_CHANGE: ISS-2025-0311 - run a query through the v2 MachineSolver over the live KB + registry
+    private List<Map<String, Term>> solveWithV2Engine(Term query) {
+        it.denzosoft.jprolog.core.engine.v2.MachineSolver m =
+            new it.denzosoft.jprolog.core.engine.v2.MachineSolver(knowledgeBase, builtInRegistry, querySolver, moduleManager);
+        List<Map<String, Term>> out = new ArrayList<>();
+        m.solve(query, sol -> { out.add(sol); return true; });
+        return out;
+    }
+    // END_CHANGE: ISS-2025-0311
 
     private Term spliceAttributedSessionVars(Term term) {
         if (attributedSessionVars.isEmpty()) return term;
@@ -753,8 +957,30 @@ public class Prolog {
      * @return List of all solutions
      */
     public List<Map<String, Term>> solve(Term query) {
+        // START_CHANGE: ISS-2025-0252 - reset transient per-query state (CLP(FD) store)
+        resetTransientQueryState();
+        // END_CHANGE: ISS-2025-0252
         return querySolver.solve(query);
     }
+
+    // START_CHANGE: ISS-2025-0252 - Reset process-wide transient state at the start of each
+    // top-level query so it does not leak across independent queries (and engines). The CLP(FD)
+    // ConstraintStore is currently a singleton keyed by variable name; a per-engine store keyed
+    // by variable identity is the proper long-term fix (tracked separately).
+    private void resetTransientQueryState() {
+        it.denzosoft.jprolog.builtin.clpfd.ConstraintStore.getInstance().clear();
+        // START_CHANGE: ISS-2025-0294 - reset the per-query v2 CLP(FD) store (no cross-query leak)
+        it.denzosoft.jprolog.builtin.clpfd.v2.ClpfdV2Bridge.reset();
+        // END_CHANGE: ISS-2025-0294
+    }
+
+    // START_CHANGE: ISS-2025-0294 - opt-in: route the CLP(FD) built-ins through the clean-room v2
+    // solver (interval domains, real #\= propagation, sound labeling, per-query identity store).
+    public void enableV2Clpfd() {
+        it.denzosoft.jprolog.builtin.clpfd.v2.ClpfdV2Builtins.register(this);
+    }
+    // END_CHANGE: ISS-2025-0294
+    // END_CHANGE: ISS-2025-0252
     
     /**
      * Register a built-in predicate.
@@ -1030,6 +1256,11 @@ public class Prolog {
         return querySolver;
     }
 
+    /** The built-in predicate registry (used by the v2 engine bridge). */
+    public BuiltInRegistry getBuiltInRegistry() {
+        return builtInRegistry;
+    }
+
     /**
      * Get the module manager.
      *
@@ -1090,6 +1321,9 @@ public class Prolog {
      * @return CompilationResult with success flag and error list
      */
     public CompilationResult consultWithDiagnostics(String program, String filename) {
+        // START_CHANGE: ISS-2025-0302 - honor the default v2 parser for IDE diagnostics too
+        if (USE_V2_PARSER) return consultWithDiagnosticsV2(program, filename);
+        // END_CHANGE: ISS-2025-0302
         List<CompilationError> errors = new ArrayList<>();
         int clauseCount = 0;
 
@@ -1142,6 +1376,54 @@ public class Prolog {
 
         return new CompilationResult(errors.isEmpty(), errors, clauseCount);
     }
+
+    // START_CHANGE: ISS-2025-0302 - per-clause diagnostics through the v2 parser (line-accurate,
+    // resync on parse error so every clause is reported, not just the first).
+    private CompilationResult consultWithDiagnosticsV2(String program, String filename) {
+        List<CompilationError> errors = new ArrayList<>();
+        int clauseCount = 0;
+        try {
+            it.denzosoft.jprolog.core.parser.v2.TermReader reader =
+                new it.denzosoft.jprolog.core.parser.v2.TermReader(
+                    it.denzosoft.jprolog.core.parser.v2.Lexer.tokenize(program), operatorTable);
+            for (;;) {
+                int line = reader.peekLine();
+                Term clauseTerm;
+                try {
+                    clauseTerm = reader.nextClause();
+                } catch (RuntimeException pe) {
+                    errors.add(new CompilationError(filename, line, pe.getMessage(), "error"));
+                    reader.recover();
+                    if (reader.atEof()) break;
+                    continue;
+                }
+                if (clauseTerm == null) break;
+                try {
+                    Rule rule = clauseTermToRule(clauseTerm);
+                    if (isDirective(rule)) {
+                        processDirective(rule);
+                    } else if (isDCGRule(rule)) {
+                        Rule tr = transformDCGRule(rule);
+                        checkBuiltInConflict(tr);
+                        moduleManager.addRule(tr);
+                        if ("user".equals(moduleManager.getCurrentModule().getName())) knowledgeBase.addRule(tr);
+                    } else {
+                        checkBuiltInConflict(rule);
+                        moduleManager.addRule(rule);
+                        if ("user".equals(moduleManager.getCurrentModule().getName())) knowledgeBase.addRule(rule);
+                    }
+                    clauseCount++;
+                } catch (Exception e) {
+                    errors.add(new CompilationError(filename, line, e.getMessage(), "error"));
+                }
+            }
+            runPendingInitializationGoals();
+        } catch (Exception e) {
+            errors.add(new CompilationError(filename, 1, e.getMessage(), "error"));
+        }
+        return new CompilationResult(errors.isEmpty(), errors, clauseCount);
+    }
+    // END_CHANGE: ISS-2025-0302
     // END_CHANGE: ISS-2025-0090
 
     // START_CHANGE: ISS-2025-0085 - Compiled binary format support

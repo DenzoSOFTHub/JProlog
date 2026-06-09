@@ -22,7 +22,7 @@ public class OperatorTable {
         "=", "\\=", "==", "\\==", "@<", "@=<", "@>", "@>=",
         "=..", "is", "=:=", "=\\=", "<", "=<", ">", ">=",
         ":", "+", "-", "/\\", "\\/", "xor",
-        "*", "/", "//", "rem", "mod", "<<", ">>",
+        "*", "/", "//", "rem", "mod", "div", "rdiv", "<<", ">>",
         "**", "^", "\\"
     ));
 
@@ -164,6 +164,8 @@ public class OperatorTable {
         defineOperator(400, Operator.Type.YFX, "//");
         defineOperator(400, Operator.Type.YFX, "rem");
         defineOperator(400, Operator.Type.YFX, "mod");
+        defineOperator(400, Operator.Type.YFX, "div");   // ISS-2025-0300: ISO 400 yfx (was missing)
+        defineOperator(400, Operator.Type.YFX, "rdiv");
         defineOperator(400, Operator.Type.YFX, "<<");
         defineOperator(400, Operator.Type.YFX, ">>");
         

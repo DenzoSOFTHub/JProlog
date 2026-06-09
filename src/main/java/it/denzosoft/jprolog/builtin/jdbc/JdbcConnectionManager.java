@@ -97,11 +97,20 @@ public final class JdbcConnectionManager {
     }
 
     public String executeQuery(String connHandle, String sql) throws SQLException {
+        // START_CHANGE: ISS-2025-0259 - close the ad-hoc Statement if executeQuery throws
+        // (e.g. invalid SQL); otherwise it (and its server-side cursor) leaks since it is never
+        // stored in any map.
         Statement stmt = getConnection(connHandle).createStatement();
-        ResultSet rs = stmt.executeQuery(sql);
-        String handle = "$jdbc_rs_" + rsCounter.incrementAndGet();
-        resultSets.put(handle, rs);
-        return handle;
+        try {
+            ResultSet rs = stmt.executeQuery(sql);
+            String handle = "$jdbc_rs_" + rsCounter.incrementAndGet();
+            resultSets.put(handle, rs);
+            return handle;
+        } catch (SQLException | RuntimeException e) {
+            try { stmt.close(); } catch (SQLException ignore) { /* preserve original error */ }
+            throw e;
+        }
+        // END_CHANGE: ISS-2025-0259
     }
 
     public int executeUpdate(String connHandle, String sql) throws SQLException {
@@ -165,9 +174,16 @@ public final class JdbcConnectionManager {
         if (rs != null && !rs.isClosed()) {
             Statement stmt = rs.getStatement();
             rs.close();
-            if (stmt != null && !stmt.isClosed()) {
+            // START_CHANGE: ISS-2025-0259 - Only close the parent statement when it is an ad-hoc
+            // (unmanaged) statement created for this result set by executeQuery(). A result set
+            // produced by a managed prepared/callable statement shares that statement; closing it
+            // here would corrupt the user's still-registered handle (and leak on its own close path).
+            if (stmt != null && !stmt.isClosed()
+                    && !statements.containsValue(stmt)
+                    && !callableStatements.containsValue(stmt)) {
                 stmt.close();
             }
+            // END_CHANGE: ISS-2025-0259
         }
     }
 

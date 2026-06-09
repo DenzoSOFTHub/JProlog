@@ -4,9 +4,12 @@ import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.QuerySolver;
 import it.denzosoft.jprolog.core.engine.Rule;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
+import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.terms.Variable;
 import it.denzosoft.jprolog.util.TermCopier;
 
 import java.util.Arrays;
@@ -41,10 +44,31 @@ public class Clause implements BuiltInWithContext {
         Term headPattern = query.getArguments().get(0);
         Term bodyPattern = query.getArguments().get(1);
 
+        // START_CHANGE: ISS-2025-0270 - ISO clause/2 errors + use the predicate index.
+        Term resolvedHead = headPattern.resolveBindings(bindings);
+        if (resolvedHead instanceof Variable) {
+            throw new PrologException(ISOErrorTerms.instantiationError("clause/2"));
+        }
+        if (!(resolvedHead instanceof Atom) && !(resolvedHead instanceof CompoundTerm)) {
+            throw new PrologException(ISOErrorTerms.typeError("callable", resolvedHead, "clause/2"));
+        }
+
         boolean foundSolution = false;
 
-        // Get all rules from the knowledge base
-        List<Rule> rules = solver.getKnowledgeBase().getRules();
+        // Look up only the clauses for this predicate (functor/arity index) instead of
+        // scanning the entire knowledge base.
+        String functor;
+        int arity;
+        if (resolvedHead instanceof Atom) {
+            functor = ((Atom) resolvedHead).getName();
+            arity = 0;
+        } else {
+            CompoundTerm ct = (CompoundTerm) resolvedHead;
+            functor = ct.getName();
+            arity = ct.getArguments().size();
+        }
+        List<Rule> rules = solver.getKnowledgeBase().getRulesForPredicate(functor, arity);
+        // END_CHANGE: ISS-2025-0270
 
         for (Rule rule : rules) {
             Term ruleHead = rule.getHead();

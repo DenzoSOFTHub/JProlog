@@ -1,5 +1,90 @@
 # JProlog - Release Notes
 
+## Release 3.0.0 - 2026-06-08
+
+### Implementation Audit Fixes (ISS-2025-0245..0252)
+
+Eight fixes from a multi-agent correctness/ISO audit (101 confirmed findings; full
+report in `docs/reports/report-implementation-audit-2026-06-07.md`).
+
+**Correctness**:
+- ISS-0245 `append/3` works with unbound list elements (`append([a],[X],R)` → `R=[a,X]`)
+- ISS-0251 `retract((Head :- Body))` matches stored rules
+- ISS-0246 `set_prolog_flag(occurs_check, …)` actually affects unification
+
+**ISO conformance**:
+- ISS-0247 `(**)/2` is the float power (`2 ** 3 =:= 8.0`); integer power is `(^)/2`
+- ISS-0249 `mod/rem///div`/bitwise/shift raise `type_error(integer,_)` on floats
+- ISS-0248 `is/2` + comparisons raise ISO error terms (instantiation_error, type_error(evaluable,_))
+- ISS-0250 rounding functions promote to `BigInteger` instead of saturating to `Long.MAX_VALUE`
+
+**CLP(FD)**:
+- ISS-0252 `ConstraintStore` reset per top-level query (no cross-query leak; per-engine store deferred)
+- ISS-0262 ADD/SUB bounds inference computed in `long` + clamped (no int overflow)
+- ISS-0263 huge `in` ranges raise `resource_error` instead of OOM / infinite loop
+- ISS-0264 `indomain/1` skips constraint-violating values (single-goal local consistency)
+
+**DCG**:
+- ISS-0253 `phrase/2,3` are multi-solution (enumerate all parses on backtracking)
+- ISS-0254 DCG `!` threads the difference list (was mistranslated to `!/2`)
+- ISS-0255 `call_dcg/3` runs the DCG body (was a stub)
+
+**Parser**:
+- ISS-0256 negative hex/octal/binary/char-code literals keep their sign (`-0xFF` → `-255`)
+
+**Lists / strings**:
+- ISS-0266 `subtract/3`/`intersection/3`/`union/3` distinguish atom `'1'` from number `1`
+- ISS-0267 `split_string/4` keeps empty substrings (SWI semantics)
+- ISS-0268 `atomic_list_concat` accepts numbers
+
+**Arithmetic / database**:
+- ISS-0269 `type_error(evaluable, _)` culprit is the compound `'/'(Name,Arity)`
+- ISS-0270 `clause/2` ISO errors + uses the predicate index (not full-KB scan)
+- ISS-0271 `min/2`/`max/2` preserve the selected operand's type (`min(2,3.0)=2`)
+- ISS-0272 `gcd/2` with a float operand raises `type_error(integer,_)`
+- ISS-0273 NEW `setup_call_cleanup/3` + `call_cleanup/2` (guaranteed cleanup)
+
+**ISO/robustness (2nd re-triage)**:
+- ISS-0274 `=:=`/`=\\=` IEEE semantics (`-0.0 =:= 0.0` true, `nan =:= nan` false)
+- ISS-0275 `throw/1` copies the ball (`copy_term`)
+- ISS-0276 `upcase_atom`/`downcase_atom` locale-independent
+- ISS-0277 `atom_length/2` ISO error terms
+- ISS-0278 `op/3` rejects non-integer precedence
+- ISS-0279 `initialization/1` directive runs (after the file loads)
+
+**Re-triage batch 2 (contained)**:
+- ISS-0280/0281 thread-safety: `getCurrentPredicates` sync, `DebugController` concurrent collections
+- ISS-0282 removed dead `,`/2 `Conjunction` built-in
+- ISS-0283 `op/3` accepts a list of names
+- ISS-0284 `number_string/2` integer BigInteger precision
+- ISS-0285/0286/0287 trailing-newline line count, CLI UTF-8, `StreamManager` cache eviction
+- ISS-0288 directive failures surfaced on stderr
+- ISS-0289 hoist loop-invariant `extractVariables` (perf)
+
+**Standard order of terms (ISO)**:
+- ISS-0261 integers and floats are distinct terms: `1 \= 1.0`, `1 \== 1.0`, float sorts
+  before equal integer (`compare(O,1,1.0)` → `>`), `sort/2` no longer dedups them; `.jpc`
+  format v0x02 preserves int/float type + BigInteger precision
+
+**Resource handling**:
+- ISS-0257 HTTP `disconnect()` in `finally`
+- ISS-0258 `StreamManager` uses `ConcurrentHashMap`
+- ISS-0259/0260/0265 JDBC: don't close managed statements via `closeResultSet`; close ad-hoc statement on error; metadata + `jdbc_call_get_resultset/2` try-with-resources
+
+**Audit correction**:
+- "No first-argument indexing" was stale — it is implemented (`KnowledgeBase.getRulesWithFirstArgIndex`) and used by `QuerySolver` (~1 ms lookup over 1000 facts). LIM-023 corrected.
+
+**Tests**: 550/550 JUnit pass (+33 new); 20/20 examples pass.
+
+**Deferred (tracked, LIM-019, 021..025)**: parser hardening (`0'c` char codes, quote-aware
+clause splitting, canonical functor notation, operator-as-atom, doubled-quote escapes),
+remaining CLP(FD) soundness (cross-goal `indomain`/`#\=` trail integration, interval domains,
+lazy labeling, Hall-interval `all_different`), last-call optimization, threading isolation,
+remaining DCG (head pushback, `\|` alternative), `with_output_to/2` thread-safety.
+(First-argument indexing is NOT deferred — it is implemented and used; audit finding was stale.)
+
+---
+
 ## Release 2.8.2 - 2026-05-20
 
 ### Twelfth-Round String/Term/Write Fixes (ISS-2025-0233..0243)

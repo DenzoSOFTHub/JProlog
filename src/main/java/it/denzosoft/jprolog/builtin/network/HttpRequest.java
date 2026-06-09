@@ -64,15 +64,20 @@ public class HttpRequest implements BuiltIn {
         String urlStr = ((Atom) urlTerm).getName();
 
         HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
-        conn.setRequestMethod(method);
-        conn.setConnectTimeout(30000);
-        conn.setReadTimeout(30000);
+        // START_CHANGE: ISS-2025-0257 - disconnect in finally so the connection/socket is not
+        // leaked when getResponseCode()/readResponseBody() throws (timeout, reset, bad response).
+        try {
+            conn.setRequestMethod(method);
+            conn.setConnectTimeout(30000);
+            conn.setReadTimeout(30000);
 
-        int statusCode = conn.getResponseCode();
-        String body = readResponseBody(conn);
-        conn.disconnect();
-
-        return unifyResult(args.get(2), args.get(3), statusCode, body, bindings, solutions);
+            int statusCode = conn.getResponseCode();
+            String body = readResponseBody(conn);
+            return unifyResult(args.get(2), args.get(3), statusCode, body, bindings, solutions);
+        } finally {
+            conn.disconnect();
+        }
+        // END_CHANGE: ISS-2025-0257
     }
 
     private boolean executePost(List<Term> args, Map<String, Term> bindings,
@@ -93,21 +98,25 @@ public class HttpRequest implements BuiltIn {
         String reqBody = ((Atom) reqBodyTerm).getName();
 
         HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
-        conn.setRequestMethod("POST");
-        conn.setDoOutput(true);
-        conn.setConnectTimeout(30000);
-        conn.setReadTimeout(30000);
-        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        // START_CHANGE: ISS-2025-0257 - disconnect in finally (see executeRequest).
+        try {
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(30000);
+            conn.setReadTimeout(30000);
+            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
 
-        try (OutputStream os = conn.getOutputStream()) {
-            os.write(reqBody.getBytes(StandardCharsets.UTF_8));
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(reqBody.getBytes(StandardCharsets.UTF_8));
+            }
+
+            int statusCode = conn.getResponseCode();
+            String body = readResponseBody(conn);
+            return unifyResult(args.get(2), args.get(3), statusCode, body, bindings, solutions);
+        } finally {
+            conn.disconnect();
         }
-
-        int statusCode = conn.getResponseCode();
-        String body = readResponseBody(conn);
-        conn.disconnect();
-
-        return unifyResult(args.get(2), args.get(3), statusCode, body, bindings, solutions);
+        // END_CHANGE: ISS-2025-0257
     }
 
     private boolean unifyResult(Term statusTerm, Term bodyTerm, int statusCode, String body,

@@ -3,6 +3,7 @@ package it.denzosoft.jprolog.builtin.arithmetic;
 import it.denzosoft.jprolog.core.engine.ArithmeticEvaluator;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
 
@@ -72,12 +73,16 @@ public class ArithmeticComparison implements BuiltIn {
                 // START_CHANGE: ISS-2025-0182 - Built-in predicate bug fixes
                 // ISO Prolog requires exact comparison, not epsilon-based
                 switch (type) {
+                    // START_CHANGE: ISS-2025-0274 - use IEEE-754 == / != (not Double.compare) so
+                    // -0.0 =:= 0.0 succeeds and nan =:= nan fails (Double.compare gives -0.0<0.0
+                    // and NaN==NaN).
                     case EQUAL:
-                        result = Double.compare(value1, value2) == 0;
+                        result = value1 == value2;
                         break;
                     case NOT_EQUAL:
-                        result = Double.compare(value1, value2) != 0;
+                        result = value1 != value2;
                         break;
+                    // END_CHANGE: ISS-2025-0274
                 // END_CHANGE: ISS-2025-0182
                     case LESS:
                         result = value1 < value2;
@@ -102,6 +107,12 @@ public class ArithmeticComparison implements BuiltIn {
                 return true;
             }
             return false;
+        // START_CHANGE: ISS-2025-0248 - Preserve ISO error terms (instantiation_error,
+        // type_error(evaluable,_), evaluation_error(zero_divisor)) raised by the evaluator;
+        // the generic catch below would otherwise re-wrap them in a bare-atom message.
+        } catch (PrologException e) {
+            throw e;
+        // END_CHANGE: ISS-2025-0248
         } catch (Exception e) {
             throw new PrologEvaluationException("Error in arithmetic comparison: " + e.getMessage(), e);
         }

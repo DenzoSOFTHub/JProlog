@@ -57,12 +57,15 @@ public class JdbcMetadata implements BuiltIn {
         if (args.size() != 2) {
             throw new PrologEvaluationException("jdbc_tables/2 requires 2 arguments.");
         }
-        ResultSet rs = meta.getTables(null, null, "%", new String[]{"TABLE"});
+        // START_CHANGE: ISS-2025-0260 - try-with-resources so the metadata ResultSet is closed
+        // even if rs.next()/getString throws mid-iteration.
         List<Term> tables = new ArrayList<>();
-        while (rs.next()) {
-            tables.add(new Atom(rs.getString("TABLE_NAME")));
+        try (ResultSet rs = meta.getTables(null, null, "%", new String[]{"TABLE"})) {
+            while (rs.next()) {
+                tables.add(new Atom(rs.getString("TABLE_NAME")));
+            }
         }
-        rs.close();
+        // END_CHANGE: ISS-2025-0260
 
         Term result = CollectionUtils.createListTerm(tables);
         Map<String, Term> newBindings = new HashMap<>(bindings);
@@ -84,17 +87,19 @@ public class JdbcMetadata implements BuiltIn {
         }
         String tableName = ((Atom) tableTerm).getName();
 
-        ResultSet rs = meta.getColumns(null, null, tableName, "%");
+        // START_CHANGE: ISS-2025-0260 - try-with-resources (see executeTables).
         List<Term> columns = new ArrayList<>();
-        while (rs.next()) {
-            Term colTerm = new CompoundTerm(new Atom("column"), Arrays.asList(
-                new Atom(rs.getString("COLUMN_NAME")),
-                new Atom(rs.getString("TYPE_NAME")),
-                new Number(rs.getInt("COLUMN_SIZE"))
-            ));
-            columns.add(colTerm);
+        try (ResultSet rs = meta.getColumns(null, null, tableName, "%")) {
+            while (rs.next()) {
+                Term colTerm = new CompoundTerm(new Atom("column"), Arrays.asList(
+                    new Atom(rs.getString("COLUMN_NAME")),
+                    new Atom(rs.getString("TYPE_NAME")),
+                    new Number(rs.getInt("COLUMN_SIZE"))
+                ));
+                columns.add(colTerm);
+            }
         }
-        rs.close();
+        // END_CHANGE: ISS-2025-0260
 
         Term result = CollectionUtils.createListTerm(columns);
         Map<String, Term> newBindings = new HashMap<>(bindings);

@@ -214,19 +214,29 @@ public class OperatorDefinition implements BuiltIn {
         if (!(precedenceTerm instanceof Number)) {
             throw new PrologEvaluationException("op/3: First argument must be an integer (precedence).");
         }
-        
+        // START_CHANGE: ISS-2025-0278 - op/3 precedence must be an integer; a float (e.g. op(700.5,...))
+        // must raise type_error(integer, Prec) rather than being silently rounded.
+        if (!((Number) precedenceTerm).isInteger()) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("integer", precedenceTerm, "op/3"));
+        }
+        // END_CHANGE: ISS-2025-0278
+
         if (!(typeTerm instanceof Atom)) {
             throw new PrologEvaluationException("op/3: Second argument must be an atom (type).");
         }
         
-        if (!(nameTerm instanceof Atom)) {
-            throw new PrologEvaluationException("op/3: Third argument must be an atom (name).");
+        // START_CHANGE: ISS-2025-0283 - op/3 accepts a single atom OR a proper list of atoms (ISO
+        // op(P, T, [n1,n2,...])); each name is defined/removed in turn.
+        java.util.List<String> names = extractOpNames(nameTerm);
+        if (names == null || names.isEmpty()) {
+            throw new PrologEvaluationException("op/3: Third argument must be an atom or a list of atoms (name).");
         }
-        
+        // END_CHANGE: ISS-2025-0283
+
         int precedence = (int) Math.round(((Number) precedenceTerm).getValue());
         String operatorType = ((Atom) typeTerm).getName();
-        String name = ((Atom) nameTerm).getName();
-        
+
         // START_CHANGE: ISS-2025-0085 - Support precedence 0 for operator removal
         // Validate precedence (0-1200, where 0 means remove)
         if (precedence < 0 || precedence > 1200) {
@@ -238,6 +248,8 @@ public class OperatorDefinition implements BuiltIn {
             throw new PrologEvaluationException("op/3: Invalid operator type: " + operatorType);
         }
 
+        // START_CHANGE: ISS-2025-0283 - define/remove each name
+        for (String name : names) {
         if (precedence == 0) {
             // START_CHANGE: ISS-2025-0177 - Remove using composite key
             // Remove operator by composite key (name:typeClass)
@@ -284,6 +296,7 @@ public class OperatorDefinition implements BuiltIn {
                 sharedOperatorTable.defineOperator(precedence, type, name);
             }
         }
+        } // END_CHANGE: ISS-2025-0283 - end for (String name : names)
         // END_CHANGE: ISS-2025-0085
 
         // Success - operator defined/removed
@@ -333,6 +346,27 @@ public class OperatorDefinition implements BuiltIn {
                type.equals("xfx") || type.equals("xfy") || type.equals("yfx") ||
                type.equals("yf") || type.equals("xf");
     }
+
+    // START_CHANGE: ISS-2025-0283 - extract op/3 name(s): a single atom, or a proper list of atoms.
+    private static java.util.List<String> extractOpNames(Term nameTerm) {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        if (nameTerm instanceof Atom && !"[]".equals(((Atom) nameTerm).getName())) {
+            names.add(((Atom) nameTerm).getName());
+            return names;
+        }
+        Term cur = nameTerm;
+        while (cur instanceof it.denzosoft.jprolog.core.terms.CompoundTerm) {
+            it.denzosoft.jprolog.core.terms.CompoundTerm c = (it.denzosoft.jprolog.core.terms.CompoundTerm) cur;
+            if (!".".equals(c.getName()) || c.getArguments().size() != 2) return null;
+            Term head = c.getArguments().get(0);
+            if (!(head instanceof Atom)) return null;
+            names.add(((Atom) head).getName());
+            cur = c.getArguments().get(1);
+        }
+        if (cur instanceof Atom && "[]".equals(((Atom) cur).getName())) return names;
+        return null;
+    }
+    // END_CHANGE: ISS-2025-0283
 
     // START_CHANGE: ISS-2025-0085 - Helper for operator removal
     /**

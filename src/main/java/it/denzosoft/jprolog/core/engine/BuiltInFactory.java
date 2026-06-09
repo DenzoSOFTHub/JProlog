@@ -10,7 +10,6 @@ import it.denzosoft.jprolog.builtin.control.Cut;
 import it.denzosoft.jprolog.builtin.control.Repeat;
 import it.denzosoft.jprolog.builtin.control.IfThen;
 import it.denzosoft.jprolog.builtin.control.IfThenElse;
-import it.denzosoft.jprolog.builtin.control.Conjunction;
 import it.denzosoft.jprolog.builtin.control.Findall;
 import it.denzosoft.jprolog.builtin.control.Bagof;
 import it.denzosoft.jprolog.builtin.control.Setof;
@@ -190,8 +189,11 @@ public class BuiltInFactory {
         // Logical operators (context-dependent, need QuerySolver injection)
         registerFactory("->", () -> new IfThen(null));
         registerFactory(";", () -> new IfThenElse(null));
-        registerFactory(",", () -> new Conjunction(null));
-        
+        // START_CHANGE: ISS-2025-0282 - ','/2 is handled authoritatively by QuerySolver.handleConjunction
+        // (intercepted before the built-in registry), so the Conjunction built-in was dead and
+        // shadowed (with its own broken cut semantics). Registration removed.
+        // END_CHANGE: ISS-2025-0282
+
         // I/O
         registerFactory("write", Write::new);
         registerFactory("writeln", Writeln::new);
@@ -278,6 +280,10 @@ public class BuiltInFactory {
         registerFactory("once", () -> new Once(null)); // QuerySolver will be injected
         registerFactory("ignore", () -> new Ignore(null)); // QuerySolver will be injected
         registerFactory("forall", () -> new ForAll(null)); // QuerySolver will be injected
+        // START_CHANGE: ISS-2025-0273 - setup_call_cleanup/3 and call_cleanup/2
+        registerFactory("setup_call_cleanup", () -> new it.denzosoft.jprolog.builtin.meta.SetupCallCleanup(null));
+        registerFactory("call_cleanup", () -> new it.denzosoft.jprolog.builtin.meta.SetupCallCleanup(null));
+        // END_CHANGE: ISS-2025-0273
         // START_CHANGE: LIM-005 - predicate_property/2 meta-predicate
         registerFactory("predicate_property", () -> new PredicateProperty(null)); // QuerySolver will be injected
         // END_CHANGE: LIM-005

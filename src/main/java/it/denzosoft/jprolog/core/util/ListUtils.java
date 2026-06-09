@@ -54,6 +54,30 @@ public final class ListUtils {
         return term instanceof Atom && ((Atom) term).getName().equals("[]");
     }
 
+    // START_CHANGE: ISS-2025-0245 - Proper-list (closed-spine) test for append/3 mode selection
+    /**
+     * Check if a term is a proper list: a (possibly empty) chain of '.'/2 cons
+     * cells whose final tail is the empty list []. This is a STRUCTURAL test on
+     * the spine only; list elements may be unbound variables. Unlike isGround(),
+     * a partial list such as [a|T] (T unbound) is NOT a proper list.
+     *
+     * @param term The (already binding-resolved) term to check
+     * @return true if term is a closed-spine proper list
+     */
+    public static boolean isProperList(Term term) {
+        Term current = term;
+        while (current instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) current;
+            if (c.getName().equals(".") && c.getArguments().size() == 2) {
+                current = c.getArguments().get(1);
+            } else {
+                return false;
+            }
+        }
+        return isEmptyList(current);
+    }
+    // END_CHANGE: ISS-2025-0245
+
     // START_CHANGE: ISS-2025-0076 - Optimize list construction
     /**
      * Create a Prolog list term from a list of elements.

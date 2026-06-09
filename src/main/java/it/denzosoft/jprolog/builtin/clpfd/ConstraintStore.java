@@ -392,12 +392,15 @@ public class ConstraintStore {
         int resMax = resDom.last();
 
         switch (ac.op) {
+            // START_CHANGE: ISS-2025-0262 - compute ADD/SUB bound combinations in long and clamp
+            // to int range (mirroring the MUL case). Previously these used int arithmetic and
+            // silently overflowed near Integer.MAX/MIN, producing bogus (unsound) bounds.
             case ADD:
                 // result = left + right
                 // result in [leftMin+rightMin .. leftMax+rightMax]
                 changed |= narrowDomain(ac.resultVar,
-                        Math.max(resMin, exprLeftMin + exprRightMin),
-                        Math.min(resMax, exprLeftMax + exprRightMax));
+                        Math.max(resMin, clampToInt((long) exprLeftMin + exprRightMin)),
+                        Math.min(resMax, clampToInt((long) exprLeftMax + exprRightMax)));
                 // Re-read result bounds
                 resDom = domains.get(ac.resultVar);
                 if (resDom != null && !resDom.isEmpty()) {
@@ -407,8 +410,8 @@ public class ConstraintStore {
                 // left in [resMin-rightMax .. resMax-rightMin]
                 if (ac.leftVar != null) {
                     changed |= narrowDomain(ac.leftVar,
-                            Math.max(exprLeftMin, resMin - exprRightMax),
-                            Math.min(exprLeftMax, resMax - exprRightMin));
+                            Math.max(exprLeftMin, clampToInt((long) resMin - exprRightMax)),
+                            Math.min(exprLeftMax, clampToInt((long) resMax - exprRightMin)));
                 }
                 // right in [resMin-leftMax .. resMax-leftMin]
                 if (ac.rightVar != null) {
@@ -421,8 +424,8 @@ public class ConstraintStore {
                         }
                     }
                     changed |= narrowDomain(ac.rightVar,
-                            Math.max(exprRightMin, resMin - exprLeftMax),
-                            Math.min(exprRightMax, resMax - exprLeftMin));
+                            Math.max(exprRightMin, clampToInt((long) resMin - exprLeftMax)),
+                            Math.min(exprRightMax, clampToInt((long) resMax - exprLeftMin)));
                 }
                 break;
 
@@ -430,8 +433,8 @@ public class ConstraintStore {
                 // result = left - right
                 // result in [leftMin-rightMax .. leftMax-rightMin]
                 changed |= narrowDomain(ac.resultVar,
-                        Math.max(resMin, exprLeftMin - exprRightMax),
-                        Math.min(resMax, exprLeftMax - exprRightMin));
+                        Math.max(resMin, clampToInt((long) exprLeftMin - exprRightMax)),
+                        Math.min(resMax, clampToInt((long) exprLeftMax - exprRightMin)));
                 resDom = domains.get(ac.resultVar);
                 if (resDom != null && !resDom.isEmpty()) {
                     resMin = resDom.first();
@@ -440,8 +443,8 @@ public class ConstraintStore {
                 // left in [resMin+rightMin .. resMax+rightMax]
                 if (ac.leftVar != null) {
                     changed |= narrowDomain(ac.leftVar,
-                            Math.max(exprLeftMin, resMin + exprRightMin),
-                            Math.min(exprLeftMax, resMax + exprRightMax));
+                            Math.max(exprLeftMin, clampToInt((long) resMin + exprRightMin)),
+                            Math.min(exprLeftMax, clampToInt((long) resMax + exprRightMax)));
                 }
                 // right in [leftMin-resMax .. leftMax-resMin]
                 if (ac.rightVar != null) {
@@ -453,10 +456,11 @@ public class ConstraintStore {
                         }
                     }
                     changed |= narrowDomain(ac.rightVar,
-                            Math.max(exprRightMin, exprLeftMin - resMax),
-                            Math.min(exprRightMax, exprLeftMax - resMin));
+                            Math.max(exprRightMin, clampToInt((long) exprLeftMin - resMax)),
+                            Math.min(exprRightMax, clampToInt((long) exprLeftMax - resMin)));
                 }
                 break;
+            // END_CHANGE: ISS-2025-0262
 
             case MUL:
                 // result = left * right — interval multiplication
@@ -548,6 +552,14 @@ public class ConstraintStore {
 
         return dom.size() != oldSize;
     }
+
+    // START_CHANGE: ISS-2025-0262 - saturating cast of a long bound to int range
+    private static int clampToInt(long v) {
+        if (v > Integer.MAX_VALUE) return Integer.MAX_VALUE;
+        if (v < Integer.MIN_VALUE) return Integer.MIN_VALUE;
+        return (int) v;
+    }
+    // END_CHANGE: ISS-2025-0262
 
     /**
      * Ceiling division for integers (rounds towards positive infinity).

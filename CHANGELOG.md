@@ -7,6 +7,149 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.0.0] - 2026-06-08
+
+### Implementation Audit Fixes (ISS-2025-0245 … 0252)
+
+Fixes from a multi-agent correctness/ISO audit of the engine and built-ins.
+
+#### Correctness
+- **`append/3` (ISS-2025-0245)** — concatenation mode now selected by proper-list
+  (closed-spine) structure instead of deep groundness. `append([a],[X],R)` now
+  succeeds with `R=[a,X]` instead of throwing `unsupported mode`. List elements
+  may be unbound variables.
+- **`retract/1` (ISS-2025-0251)** — `retract((Head :- Body))` now matches stored
+  rules (previously only the head was unified, so the clause form never matched).
+  Bare-head retract of facts is unchanged.
+- **`set_prolog_flag(occurs_check, …)` (ISS-2025-0246)** — the flag is now wired
+  into unification (previously stored but ignored).
+
+#### ISO conformance
+- **`(**)/2` (ISS-2025-0247)** — now the ISO floating-point power: always returns
+  a float (`2 ** 3 =:= 8.0`). Integer power remains `(^)/2` (`2 ^ 3 =:= 8`).
+- **Integer-only operators (ISS-2025-0249)** — `mod`, `rem`, `//`, `div`, bitwise
+  and shift operators now raise `type_error(integer, _)` on a float argument.
+- **Arithmetic error terms (ISS-2025-0248)** — `is/2` and the arithmetic comparison
+  predicates now raise proper ISO error terms — `error(instantiation_error, _)` for
+  an unbound variable and `error(type_error(evaluable, _), _)` for an unknown/
+  non-evaluable functor — instead of bare-atom messages.
+- **Rounding overflow (ISS-2025-0250)** — `truncate/round/floor/ceiling/integer`
+  promote to `BigInteger` beyond long range instead of saturating to `Long.MAX_VALUE`.
+
+#### CLP(FD)
+- **Constraint store leak (ISS-2025-0252)** — the global `ConstraintStore` is reset
+  at the start of each top-level query so domains/constraints no longer leak between
+  queries. (A per-engine store keyed by variable identity remains a tracked follow-up.)
+- **ADD/SUB bound overflow (ISS-2025-0262)** — arithmetic bounds inference computes
+  ADD/SUB combinations in `long` and clamps to int range (like MUL), avoiding silent
+  int overflow.
+- **Huge domains (ISS-2025-0263)** — `X in Lo..Hi` beyond 10M values raises
+  `resource_error(clpfd_domain_too_large)` instead of OOM / infinite loop.
+- **`indomain/1` (ISS-2025-0264)** — now propagates each candidate and skips values
+  that violate posted constraints (single-goal local consistency); previously it
+  emitted every domain value blindly.
+
+#### DCG
+- **`phrase/2,3` multi-solution (ISS-2025-0253)** — now enumerate all parses on
+  backtracking instead of behaving like `once(phrase(...))`.
+- **DCG cut (ISS-2025-0254)** — `!` in a DCG body now threads the difference list
+  (`(!, S0=S)`) instead of being emitted as the non-terminal `!/2`.
+- **`call_dcg/3` (ISS-2025-0255)** — now actually expands and runs the DCG body
+  (was a stub that unified Input with Output).
+
+#### Parser
+- **Negative radix/char-code literals (ISS-2025-0256)** — `-0xFF`, `-0o17`,
+  `-0b1010`, `-0'a` now keep the sign (previously parsed as the positive magnitude).
+
+#### Lists / strings
+- **Set operations (ISS-2025-0266)** — `subtract/3`, `intersection/3`, `union/3` now
+  distinguish the atom `'1'` from the number `1` (was a `toString()` comparison).
+- **`split_string/4` (ISS-2025-0267)** — keeps empty substrings and emits the final
+  (possibly empty) field, per SWI; `split_string("a,,b", ",", "", X)` → `["a","","b"]`.
+- **`atomic_list_concat` (ISS-2025-0268)** — accepts numbers in the list
+  (`atomic_list_concat([a,1,b], R)` → `R='a1b'`).
+
+#### Arithmetic / database
+- **type_error(evaluable, _) culprit (ISS-2025-0269)** — now the ISO compound
+  `'/'(Name, Arity)` instead of an atom.
+- **`clause/2` (ISS-2025-0270)** — raises `instantiation_error`/`type_error(callable,_)`
+  for a bad Head, and uses the predicate index instead of scanning the whole database.
+- **`min/2`, `max/2` (ISS-2025-0271)** — preserve the selected operand's type
+  (`min(2, 3.0) = 2`, not `2.0`).
+- **`gcd/2` (ISS-2025-0272)** — a float operand raises `type_error(integer, _)`.
+
+#### New built-ins
+- **`setup_call_cleanup/3`, `call_cleanup/2` (ISS-2025-0273)** — run a cleanup goal
+  exactly once when the main goal finishes (success / failure / exception).
+
+#### Clean-room v2 parser — now the DEFAULT (ISS-2025-0290..0293)
+- A new ISO parser (`core.parser.v2`: single-pass `Lexer` + operator-precedence
+  `TermReader`) replaces the legacy dual-path parser as the default for `consult` and
+  queries. It fixes the whole class of parser bugs: canonical functor (`-(1,2)` is `-/2`),
+  operator-as-atom (`X = -`, `foo(-, +)`), postfix operators, `0'c`/radix/negative
+  literals, `''`/`""` doubled-quote escapes, and quote-aware clause splitting.
+- Validated: **594/594 JUnit + 20/20 examples** with v2 driving all parsing, and it parses
+  **123/130 example programs vs the legacy parser's 117** (strictly better; the 2 it rejects
+  use non-ISO constructs that even SWI rejects). Fall back with `-Djprolog.parser=legacy`.
+
+#### Clean-room v2 CLP(FD) core (ISS-2025-0291) — standalone
+- `builtin.clpfd.v2`: interval-set domains (no OOM), per-instance identity-keyed store with
+  a propagation queue + trail, constraints (`Cmp` with real `#\=`, `Sum`, `Mul`, `Abs`,
+  `AllDifferent`, N-ary `Linear`, `Reified`), and a sound first-fail labeler. 14 tests.
+
+#### ISO conformance & robustness (from a 2nd re-triage of the audit)
+- **`=:=` / `=\\=` (ISS-2025-0274)** — IEEE semantics: `-0.0 =:= 0.0` succeeds, `nan =:= nan` fails.
+- **`throw/1` (ISS-2025-0275)** — throws a `copy_term` of the ball (independent of context).
+- **`upcase_atom`/`downcase_atom` (ISS-2025-0276)** — locale-independent (`Locale.ROOT`).
+- **`atom_length/2` (ISS-2025-0277)** — ISO `instantiation_error` / `type_error(atom,_)`.
+- **`op/3` (ISS-2025-0278)** — a non-integer precedence raises `type_error(integer,_)`.
+- **`initialization/1` (ISS-2025-0279)** — directive now runs (after the file is loaded).
+
+#### Concurrency, parsing & misc (re-triage batch 2)
+- **Thread-safety (ISS-2025-0280, 0281)** — `KnowledgeBase.getCurrentPredicates` synchronized;
+  `DebugController` breakpoint collections use concurrent collections.
+- **Dead code (ISS-2025-0282)** — removed the shadowed `,`/2 `Conjunction` built-in.
+- **`op/3` list of names (ISS-2025-0283)** — `op(700, xfx, [eq, neq])`.
+- **`number_string/2` (ISS-2025-0284)** — integer strings parsed as exact `BigInteger`.
+- **Parser/IO (ISS-2025-0285, 0286, 0287)** — trailing-newline line count; CLI reads UTF-8;
+  `StreamManager.closeStream` evicts cached readers/properties.
+- **Directives (ISS-2025-0288)** — failed/erroring directives surfaced on stderr.
+- **Perf (ISS-2025-0289)** — hoisted loop-invariant `extractVariables` out of the clause loop.
+
+#### Standard order of terms (ISO)
+- **Integers and floats are distinct terms (ISS-2025-0261)** — `1 \= 1.0`,
+  `1 \== 1.0`, and a float sorts before a numerically-equal integer
+  (`compare(O,1,1.0)` → `O = (>)`), so `sort/2` no longer dedups `1` and `1.0`.
+  Fixed `Number.unify/equals/hashCode`, `Sort.compareTerms`,
+  `StandardTermOrdering`, and the `.jpc` format (v0x02 now preserves int/float
+  type and BigInteger precision; older `.jpc` files are recompiled).
+
+#### Resource handling
+- **HTTP (ISS-2025-0257)** — `http_request/4`/`http_post/4` disconnect in `finally`.
+- **Streams (ISS-2025-0258)** — `StreamManager` uses `ConcurrentHashMap` for its
+  cross-thread stream bookkeeping.
+- **JDBC (ISS-2025-0259, 0260, 0265)** — `closeResultSet` no longer closes the user's
+  managed prepared/callable statement; `executeQuery` closes its ad-hoc statement on
+  error; `jdbc_tables/2`/`jdbc_columns/3` and `jdbc_call_get_resultset/2` use
+  try-with-resources.
+
+### Test Coverage
+- **550/550 JUnit tests pass, 0 skipped** (+32 in `BugFixVerificationTest`, +1 in `JpcFormatTest`)
+- **20/20 examples regression pass**
+- ISS-2025-0265 (JDBC ResultSet leak) is verified by inspection — the leak-on-exception
+  path needs a live database to exercise.
+
+### Notes
+- A full audit report (101 confirmed findings, prioritized) is in
+  `docs/reports/report-implementation-audit-2026-06-07.md`. Larger items (parser
+  hardening, DCG backtracking, deeper CLP(FD) soundness, last-call optimization,
+  threading isolation) are tracked for follow-up.
+- **Audit correction:** the report's "no first-argument indexing" finding is stale —
+  first-argument indexing is implemented (`KnowledgeBase.getRulesWithFirstArgIndex`)
+  and used by `QuerySolver`; verified ~1 ms lookup over 1000 facts.
+
+---
+
 ## [2.9.7] - 2026-05-21
 
 ### SWI Library Utilities

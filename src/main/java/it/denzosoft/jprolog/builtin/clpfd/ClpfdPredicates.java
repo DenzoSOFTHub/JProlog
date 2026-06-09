@@ -37,6 +37,10 @@ public class ClpfdPredicates implements BuiltInWithContext {
     private final QuerySolver solver;
     private final OperationType opType;
 
+    // START_CHANGE: ISS-2025-0263 - cap on an explicitly-enumerated finite domain range.
+    private static final long MAX_ENUMERATED_DOMAIN = 10_000_000L;
+    // END_CHANGE: ISS-2025-0263
+
     public ClpfdPredicates(QuerySolver solver, OperationType opType) {
         this.solver = solver;
         this.opType = opType;
@@ -133,6 +137,17 @@ public class ClpfdPredicates implements BuiltInWithContext {
                 if (minTerm instanceof Number && maxTerm instanceof Number) {
                     int min = (int) ((Number) minTerm).getValue().doubleValue();
                     int max = (int) ((Number) maxTerm).getValue().doubleValue();
+                    // START_CHANGE: ISS-2025-0263 - Domains are materialized as an explicit set of
+                    // boxed Integers, so a huge range (e.g. 1..2147483647) would exhaust the heap
+                    // (and the int loop counter would overflow at Integer.MAX_VALUE and never
+                    // terminate). Reject ranges beyond a sane cap with a resource_error.
+                    long span = (long) max - (long) min + 1L;
+                    if (span > MAX_ENUMERATED_DOMAIN) {
+                        throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                            it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError(
+                                "clpfd_domain_too_large", "in/2"));
+                    }
+                    // END_CHANGE: ISS-2025-0263
                     List<Integer> vals = new ArrayList<>();
                     for (int i = min; i <= max; i++) {
                         vals.add(i);
@@ -537,13 +552,28 @@ public class ClpfdPredicates implements BuiltInWithContext {
         TreeSet<Integer> domain = store.getDomain(varName);
         if (domain == null || domain.isEmpty()) return false;
 
-        // Generate one solution per domain value
-        for (int val : domain) {
-            Map<String, Term> sol = new HashMap<>(bindings);
-            sol.put(varName, new Number(val));
-            solutions.add(sol);
+        // START_CHANGE: ISS-2025-0264 - Only emit values that are locally consistent: for each
+        // candidate, assign it and propagate; skip any value that wipes out a linked variable's
+        // domain (propagate() returns false on wipeout). Previously every domain value was emitted
+        // blindly, yielding solutions that violate the posted constraints. The store is restored
+        // after each trial so indomain itself does not commit a value.
+        // NOTE: this enforces single-goal local consistency; full cross-goal soundness of
+        // `indomain(X), indomain(Y)` still needs store/solver trail integration (tracked, LIM-022).
+        boolean any = false;
+        for (int val : new ArrayList<>(domain)) {
+            ConstraintStoreSnapshot snap = store.snapshot();
+            store.setDomainValues(varName, Collections.singleton(val));
+            boolean consistent = store.propagate();
+            store.restore(snap);
+            if (consistent) {
+                Map<String, Term> sol = new HashMap<>(bindings);
+                sol.put(varName, new Number(val));
+                solutions.add(sol);
+                any = true;
+            }
         }
-        return true;
+        return any;
+        // END_CHANGE: ISS-2025-0264
     }
 
     // ================================================================

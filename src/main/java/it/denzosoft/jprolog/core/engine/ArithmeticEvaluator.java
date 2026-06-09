@@ -232,6 +232,10 @@ public class ArithmeticEvaluator {
         INTEGER_BINARY_OPS.add("xor");
         INTEGER_BINARY_OPS.add("<<");
         INTEGER_BINARY_OPS.add(">>");
+        // START_CHANGE: ISS-2025-0272 - gcd/2 requires integer arguments; a float operand must
+        // raise type_error(integer, Float) (was reported as type_error(evaluable, gcd/2)).
+        INTEGER_BINARY_OPS.add("gcd");
+        // END_CHANGE: ISS-2025-0272
 
         // Unary operations that always produce integer results
         INTEGER_UNARY_OPS.add("truncate");
@@ -350,7 +354,10 @@ public class ArithmeticEvaluator {
         } else if (term instanceof Variable) {
             Term value = resolveVariable((Variable) term, substitution);
             if (value == null) {
-                throw new PrologEvaluationException("Unbound variable in arithmetic expression: " + ((Variable) term).getName());
+                // START_CHANGE: ISS-2025-0248 - ISO requires error(instantiation_error,_) for
+                // an unbound variable evaluated arithmetically, not a bare-atom message.
+                throw new PrologException(ISOErrorTerms.instantiationError("is/2"));
+                // END_CHANGE: ISS-2025-0248
             }
             return evaluateTermToNumber(value, substitution);
         } else if (term instanceof Atom) {
@@ -376,7 +383,7 @@ public class ArithmeticEvaluator {
                 return new Number(Long.MIN_VALUE);
             }
             // END_CHANGE: ISS-2025-0227
-            throw new PrologException(ISOErrorTerms.typeError("evaluable", new Atom(atomName + "/0"), "is/2"));
+            throw new PrologException(ISOErrorTerms.typeError("evaluable", evaluableIndicator(atomName, 0), "is/2"));
         } else if (term instanceof CompoundTerm) {
             CompoundTerm compoundTerm = (CompoundTerm) term;
             List<Term> args = compoundTerm.getArguments();
@@ -396,9 +403,15 @@ public class ArithmeticEvaluator {
                 return applyBinaryToNumber(name, left, right);
             }
 
-            throw new PrologEvaluationException("Unknown arithmetic function or incorrect arity: " + name);
+            // START_CHANGE: ISS-2025-0248 - ISO type_error(evaluable, Name/Arity) for an
+            // unknown/incorrect-arity functor instead of a bare-atom message.
+            throw new PrologException(ISOErrorTerms.typeError("evaluable", evaluableIndicator(name, arity), "is/2"));
+            // END_CHANGE: ISS-2025-0248
         } else {
-            throw new PrologEvaluationException("Cannot evaluate term in arithmetic context: " + term);
+            // START_CHANGE: ISS-2025-0248 - ISO type_error(evaluable, Culprit) for a
+            // non-evaluable term (e.g. a string) in arithmetic context.
+            throw new PrologException(ISOErrorTerms.typeError("evaluable", term, "is/2"));
+            // END_CHANGE: ISS-2025-0248
         }
     }
 
@@ -458,8 +471,10 @@ public class ArithmeticEvaluator {
             Function<Double, Double> function = UNARY_FUNCTIONS.get(name);
             if (function != null) {
                 double result = function.apply(arg.doubleValue());
-                // Result should be integer
-                return new Number((long) result);
+                // START_CHANGE: ISS-2025-0250 - promote to BigInteger when the rounded value
+                // exceeds long range instead of saturating to Long.MAX/MIN_VALUE.
+                return doubleToIntegerNumber(result, name);
+                // END_CHANGE: ISS-2025-0250
             }
         }
 
@@ -485,8 +500,38 @@ public class ArithmeticEvaluator {
             return new Number(result, false);
         }
 
-        throw new PrologEvaluationException("Unknown unary arithmetic function: " + name);
+        // START_CHANGE: ISS-2025-0248 - ISO type_error(evaluable, Name/1) for unknown unary functor.
+        throw new PrologException(ISOErrorTerms.typeError("evaluable", evaluableIndicator(name, 1), "is/2"));
+        // END_CHANGE: ISS-2025-0248
     }
+
+    // START_CHANGE: ISS-2025-0250 - Exact double->integer conversion for rounding functions.
+    /** 2^63, the (exclusive) upper magnitude bound for values that fit in a signed long. */
+    private static final double LONG_RANGE = 9.223372036854776E18;
+
+    /**
+     * Convert an integer-valued double (already rounded by truncate/round/floor/ceiling)
+     * to a Number, promoting to BigInteger when it exceeds long range so the magnitude is
+     * preserved instead of saturating to Long.MAX_VALUE/Long.MIN_VALUE.
+     */
+    private static Number doubleToIntegerNumber(double result, String name) {
+        if (Double.isNaN(result) || Double.isInfinite(result)) {
+            throw new PrologException(ISOErrorTerms.evaluationError("undefined", "(" + name + ")/1"));
+        }
+        if (result >= -LONG_RANGE && result < LONG_RANGE) {
+            return new Number((long) result);
+        }
+        return new Number(new java.math.BigDecimal(result).toBigInteger());
+    }
+    // END_CHANGE: ISS-2025-0250
+
+    // START_CHANGE: ISS-2025-0269 - ISO type_error(evaluable, Name/Arity) requires the predicate
+    // indicator to be the compound '/'(Name, Arity), not an atom whose name is "Name/Arity".
+    private static Term evaluableIndicator(String name, int arity) {
+        return new CompoundTerm(new Atom("/"),
+            java.util.Arrays.asList(new Atom(name), new Number((long) arity)));
+    }
+    // END_CHANGE: ISS-2025-0269
 
     /**
      * Apply a binary operation preserving integer/float type.
@@ -521,8 +566,15 @@ public class ArithmeticEvaluator {
                     return shiftLeft(left, right);
                 case ">>":
                     return shiftRight(left, right);
+                // START_CHANGE: ISS-2025-0247 - (**)/2 is the floating-point power (ISO §9.3.1);
+                // it ALWAYS yields a float, even for integer operands (2**3 =:= 8.0).
+                // Only (^)/2 (§9.3.10) returns an integer for integer operands.
                 case "**":
-                    return integerPower(left, right);
+                    if (left.doubleValue() == 0.0 && right.doubleValue() < 0.0) {
+                        throw new PrologException(ISOErrorTerms.evaluationError("undefined", "(**)/2"));
+                    }
+                    return new Number(Math.pow(left.doubleValue(), right.doubleValue()), false);
+                // END_CHANGE: ISS-2025-0247
                 // START_CHANGE: ISS-2025-0224 - ^/2 ISO §9.3.10 integer power
                 case "^":
                     return integerPower(left, right);
@@ -556,6 +608,16 @@ public class ArithmeticEvaluator {
 
         // For integer-only operations with at least one integer operand
         if (INTEGER_BINARY_OPS.contains(name)) {
+            // START_CHANGE: ISS-2025-0249 - mod/rem/(//)/div/bitwise/shift require integer
+            // arguments per ISO 13211-1; a float operand must raise type_error(integer, Float).
+            // (We only reach here when NOT both-integer, so any float operand is an error.)
+            if (!left.isInteger()) {
+                throw new PrologException(ISOErrorTerms.typeError("integer", left, "is/2"));
+            }
+            if (!right.isInteger()) {
+                throw new PrologException(ISOErrorTerms.typeError("integer", right, "is/2"));
+            }
+            // END_CHANGE: ISS-2025-0249
             // These operations should produce integer results regardless
             BiFunction<Double, Double, Double> op = BINARY_OPERATIONS.get(name);
             if (op != null) {
@@ -568,6 +630,21 @@ public class ArithmeticEvaluator {
                 return new Number((long) result);
             }
         }
+
+        // START_CHANGE: ISS-2025-0271 - min/max return the selected operand, preserving its
+        // numeric type (min(2, 3.0) = 2, not 2.0). The both-integer case is handled in the
+        // switch above; this covers mixed int/float operands.
+        if ("min".equals(name) || "max".equals(name)) {
+            int cmp;
+            if (left.isInteger() && right.isInteger()) {
+                cmp = left.bigIntegerValue().compareTo(right.bigIntegerValue());
+            } else {
+                cmp = Double.compare(left.doubleValue(), right.doubleValue());
+            }
+            boolean pickLeft = "min".equals(name) ? cmp <= 0 : cmp >= 0;
+            return pickLeft ? left : right;
+        }
+        // END_CHANGE: ISS-2025-0271
 
         // START_CHANGE: LIM-012 - Rational number support via rdiv
         if ("rdiv".equals(name)) {
@@ -602,7 +679,9 @@ public class ArithmeticEvaluator {
             return new Number(result, false);
         }
 
-        throw new PrologEvaluationException("Unknown arithmetic function or incorrect arity: " + name);
+        // START_CHANGE: ISS-2025-0248 - ISO type_error(evaluable, Name/2) for unknown binary functor.
+        throw new PrologException(ISOErrorTerms.typeError("evaluable", evaluableIndicator(name, 2), "is/2"));
+        // END_CHANGE: ISS-2025-0248
     }
 
     // --- Integer arithmetic helpers with overflow detection ---
@@ -861,7 +940,10 @@ public class ArithmeticEvaluator {
         } else if (term instanceof Variable) {
             Term value = resolveVariable((Variable) term, substitution);
             if (value == null) {
-                throw new PrologEvaluationException("Unbound variable in arithmetic expression: " + ((Variable) term).getName());
+                // START_CHANGE: ISS-2025-0248 - ISO requires error(instantiation_error,_) for
+                // an unbound variable evaluated arithmetically, not a bare-atom message.
+                throw new PrologException(ISOErrorTerms.instantiationError("is/2"));
+                // END_CHANGE: ISS-2025-0248
             }
             return evaluateTerm(value, substitution);
         } else if (term instanceof Atom) {
@@ -879,7 +961,7 @@ public class ArithmeticEvaluator {
                 return Double.NaN;
             }
             // ISO Prolog: unknown atom in arithmetic context is a type_error
-            throw new PrologException(ISOErrorTerms.typeError("evaluable", new Atom(atomName + "/0"), "is/2"));
+            throw new PrologException(ISOErrorTerms.typeError("evaluable", evaluableIndicator(atomName, 0), "is/2"));
         // START_CHANGE: ISS-2025-0104 - Cache getArguments()/getName() to avoid repeated calls
         } else if (term instanceof CompoundTerm) {
             CompoundTerm compoundTerm = (CompoundTerm) term;
@@ -915,10 +997,14 @@ public class ArithmeticEvaluator {
                 }
             }
 
-            throw new PrologEvaluationException("Unknown arithmetic function or incorrect arity: " + name);
+            // START_CHANGE: ISS-2025-0248 - ISO type_error(evaluable, Name/Arity) (legacy double path).
+            throw new PrologException(ISOErrorTerms.typeError("evaluable", evaluableIndicator(name, args.size()), "is/2"));
+            // END_CHANGE: ISS-2025-0248
         // END_CHANGE: ISS-2025-0104
         } else {
-            throw new PrologEvaluationException("Cannot evaluate term in arithmetic context: " + term);
+            // START_CHANGE: ISS-2025-0248 - ISO type_error(evaluable, Culprit) (legacy double path).
+            throw new PrologException(ISOErrorTerms.typeError("evaluable", term, "is/2"));
+            // END_CHANGE: ISS-2025-0248
         }
     }
 

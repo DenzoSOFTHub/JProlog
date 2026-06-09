@@ -24,7 +24,7 @@ java -cp target/classes it.denzosoft.jprolog.PrologCLI
 # Run IDE
 java -cp target/classes it.denzosoft.jprolog.editor.PrologIDE
 
-# Test all 74 example programs (REQUIRED after any code change)
+# Test core example programs test_01..test_20 (REQUIRED after any code change)
 ./test_all_examples.sh
 # Success rate >= 75% for maintenance, >= 85% for new features
 
@@ -84,8 +84,12 @@ Context-dependent built-ins are wrapped in `CollectionBuiltInAdapter` to bridge 
 - `core.operator` — `Operator`, `OperatorTable` (precedence management)
 - `core.module` — `Module`, `ModuleManager`, `PredicateSignature`
 - `core.dcg` — `DCGTransformer` (transforms `-->` rules to standard Prolog)
-- `core.utils` — `ListTerm`, `Substitution`, `CollectionUtils`
-- `builtin/` — organized by category: `arithmetic/`, `atom/`, `character/`, `control/`, `conversion/`, `database/`, `dcg/`, `debug/`, `exception/`, `io/`, `list/`, `meta/`, `string/`, `system/`, `term/`, `type/`, `unification/`
+- `core.compiled` — `JpcReader`, `JpcWriter`, `JpcFormat` (`.jpc` binary format)
+- `core.exceptions` — `PrologException` and ISO error-term helpers
+- `core.system` — `PrologFlags` (ISO flag store)
+- `core.util` — `TermCopier`, `TermUtils` (variable renaming on rule copy); distinct from `core.utils` (`ListTerm`, `Substitution`, `CollectionUtils`)
+- `builtin/` — organized by category. ISO-core: `arithmetic/`, `atom/`, `character/`, `control/`, `conversion/`, `database/`, `dcg/`, `debug/`, `exception/`, `io/`, `list/`, `meta/`, `string/`, `system/`, `term/`, `type/`, `unification/`. Extended library: `clpfd/`, `crypto/`, `csv/`, `datetime/`, `ffi/`, `filesystem/`, `graph/`, `http/`, `jdbc/`, `json/`, `logging/`, `network/`, `os/`, `persistence/`, `regex/`, `threading/`, `xml/`, `extension/`
+- `extension/` (top-level) — pluggable extension examples (`example/`, `math/`)
 - `editor/` — Swing IDE: `PrologIDE`, `FileEditor`, `DebugPanel`, `ConsolePanel`
 - `PrologCLI` — CLI with `:consult`, `:trace`, `:help`, `:quit` commands
 
@@ -111,7 +115,7 @@ QuerySolver hooks are guarded by `if (debugController != null)` — zero overhea
 
 ### Binary Compiled Format (.jpc)
 
-JProlog compiles `.pl` source to `.jpc` (JProlog Compiled) for fast loading. Implemented by `JpcWriter` / `JpcReader` in `core.engine` — uses string interning, varint encoding, and source-hash validation to detect stale compilations. The unified `OperatorTable` is shared between parser, `op/3`, and query resolution so dynamic operators round-trip through `.jpc`.
+JProlog compiles `.pl` source to `.jpc` (JProlog Compiled) for fast loading. Implemented by `JpcWriter` / `JpcReader` in `core.compiled` — uses string interning, varint encoding, and source-hash validation to detect stale compilations. The unified `OperatorTable` is shared between parser, `op/3`, and query resolution so dynamic operators round-trip through `.jpc`.
 
 ### Key Design Decisions
 

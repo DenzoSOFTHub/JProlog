@@ -1,6 +1,9 @@
 package it.denzosoft.jprolog.builtin.dcg;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
+import it.denzosoft.jprolog.core.engine.CutStatus;
+import it.denzosoft.jprolog.core.engine.QuerySolver;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.*;
 
@@ -15,28 +18,48 @@ public class DCGUtils {
      * call_dcg/3 - Call DCG rule with non-list terms
      * call_dcg(DCGBody, InputTerm, OutputTerm)
      */
-    public static class CallDCG implements BuiltIn {
+    // START_CHANGE: ISS-2025-0255 - call_dcg/3 was a stub that ignored the body and merely
+    // unified Input with Output. Now it expands the DCG body into a goal that threads the
+    // difference list Input -> Output, solves it via the engine, and propagates all solutions.
+    public static class CallDCG implements BuiltInWithContext {
         @Override
-        public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        public boolean executeWithContext(QuerySolver solver, Term query,
+                                          Map<String, Term> bindings,
+                                          List<Map<String, Term>> solutions) {
             if (query.getArguments().size() != 3) {
                 throw new PrologEvaluationException("call_dcg/3 requires exactly 3 arguments");
             }
-            
+
             Term dcgBody = query.getArguments().get(0).resolveBindings(bindings);
-            Term inputTerm = query.getArguments().get(1).resolveBindings(bindings);
-            Term outputTerm = query.getArguments().get(2).resolveBindings(bindings);
-            
-            // This would transform the DCG body to work with arbitrary terms
-            // For now, we'll provide a basic implementation
-            Map<String, Term> newBindings = new HashMap<>(bindings);
-            if (inputTerm.unify(outputTerm, newBindings)) {
-                solutions.add(newBindings);
+            Term inputTerm = query.getArguments().get(1);
+            Term outputTerm = query.getArguments().get(2);
+
+            // Expand the DCG body threading fresh S0 -> S, then bind S0=Input and S=Output.
+            Variable s0 = new Variable("_CallDCG_S0");
+            Variable s = new Variable("_CallDCG_S");
+            Term bodyGoal = DCGTranslateRule.transformDCGBody(dcgBody, s0, s);
+
+            Term goal = new CompoundTerm(new Atom(","), Arrays.asList(
+                new CompoundTerm(new Atom("="), Arrays.asList(s0, inputTerm)),
+                new CompoundTerm(new Atom(","), Arrays.asList(
+                    bodyGoal,
+                    new CompoundTerm(new Atom("="), Arrays.asList(s, outputTerm))))));
+
+            List<Map<String, Term>> goalSolutions = new ArrayList<>();
+            boolean ok = solver.solve(goal, new HashMap<>(bindings), goalSolutions, CutStatus.notOccurred());
+            if (ok) {
+                solutions.addAll(goalSolutions);
                 return true;
             }
-            
             return false;
         }
+
+        @Override
+        public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+            throw new UnsupportedOperationException("call_dcg/3 requires context");
+        }
     }
+    // END_CHANGE: ISS-2025-0255
     
     /**
      * dcg_translate_rule/2 - Translate DCG rule to standard Prolog
@@ -118,7 +141,8 @@ public class DCGUtils {
             throw new IllegalArgumentException("Invalid DCG head: " + head);
         }
         
-        private Term transformDCGBody(Term body, Variable input, Variable output) {
+        // START_CHANGE: ISS-2025-0255 - made static so call_dcg/3 can reuse body expansion
+        static Term transformDCGBody(Term body, Variable input, Variable output) {
             if (body instanceof Atom) {
                 if ("[]".equals(((Atom) body).getName())) {
                     // Empty production: [] --> S0 = S
@@ -188,14 +212,14 @@ public class DCGUtils {
             throw new IllegalArgumentException("Invalid DCG body: " + body);
         }
         
-        private Term transformTerminalList(Term listTerm, Variable input, Variable output) {
+        static Term transformTerminalList(Term listTerm, Variable input, Variable output) {
             // Transform [a, b, c] to S0 = [a, b, c | S]
             List<Term> elements = extractListElements(listTerm);
             Term expectedInput = buildListWithTail(elements, output);
             return new CompoundTerm(new Atom("="), Arrays.asList(input, expectedInput));
         }
         
-        private List<Term> extractListElements(Term listTerm) {
+        static List<Term> extractListElements(Term listTerm) {
             List<Term> elements = new ArrayList<>();
             Term current = listTerm;
             
@@ -212,7 +236,7 @@ public class DCGUtils {
             return elements;
         }
         
-        private Term buildListWithTail(List<Term> elements, Term tail) {
+        static Term buildListWithTail(List<Term> elements, Term tail) {
             Term result = tail;
             
             for (int i = elements.size() - 1; i >= 0; i--) {

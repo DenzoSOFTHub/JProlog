@@ -3936,4 +3936,606 @@ Line 380 in `applyUnaryToNumber` excludes float sign from INTEGER path: `!("sign
 
 ---
 
-**Last Updated**: 2026-05-20
+## ISS-2025-0245: append/3 throws on lists with unbound elements
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`Append.execute` selected its mode with `isGround()` (a deep element check), so `append([a],[X],R)` threw `unsupported mode`. Replaced the guard with `ListUtils.isProperList` (closed-spine structural test); concatenation/split now work with variable elements. Found by implementation audit.
+
+---
+
+## ISS-2025-0246: set_prolog_flag(occurs_check, …) had no effect
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`PrologFlags.setFlag` stored the flag but never called `Variable.setOccursCheckEnabled`, which `Variable.unify` actually consults. Wired the flag through on set. `X = f(X)` now fails under `occurs_check=true`.
+
+---
+
+## ISS-2025-0247: (**)/2 returned integer for integer operands (ISO)
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+ISO §9.3.1: `(**)/2` is the floating-point power and always yields a float; only `(^)/2` (§9.3.10) returns an integer for integer operands. `2 ** 3` now gives `8.0`. Existing SWI-style tests updated to ISO expectations on user request ("apply iso").
+
+---
+
+## ISS-2025-0248: arithmetic raised bare atoms instead of ISO error terms
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`ArithmeticEvaluator` threw `PrologEvaluationException(String)` (whose error term is a bare atom) for unbound variables and unknown/non-evaluable functors, and `ArithmeticComparison` re-wrapped already-correct ISO errors. Now raises `error(instantiation_error,_)` and `error(type_error(evaluable, _),_)`; comparison predicates re-throw `PrologException` unchanged.
+
+---
+
+## ISS-2025-0249: integer-only operators accepted float arguments (ISO)
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`mod`, `rem`, `//`, `div`, bitwise (`/\`, `\/`, `xor`) and shift (`<<`, `>>`) now raise `type_error(integer, Float)` on a float operand per ISO 13211-1. (The prior lenient float-`mod` behaviour was removed on user request — "apply iso".)
+
+---
+
+## ISS-2025-0250: rounding functions saturated to Long.MAX_VALUE
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`truncate/round/floor/ceiling/integer` used a raw `(long)` cast, clamping magnitudes above 2^63 to `Long.MAX_VALUE`. Added `doubleToIntegerNumber` which promotes out-of-range results to `BigInteger` (and raises `evaluation_error(undefined)` for NaN/Inf).
+
+---
+
+## ISS-2025-0251: retract((Head :- Body)) never matched a stored rule
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`KnowledgeBase.retract*WithBindings` only unified the query term against the rule head, so the clause form `(H:-B)` never matched. Now splits the query into a head pattern and optional body pattern and unifies both against a single fresh copy of the clause (head and body share renamed variables). Bare-head retract unchanged.
+
+---
+
+## ISS-2025-0252: CLP(FD) ConstraintStore leaked across queries
+
+**Status**: PARTIALLY RESOLVED v3.0.0  **Date**: 2026-06-07
+
+The process-wide singleton `ConstraintStore` (keyed by variable name) was never reset, so domains/constraints leaked between top-level queries and across independent `Prolog` instances. `Prolog.solve` now clears the store at the start of each top-level query. Full fix (per-engine store keyed by variable identity, thread isolation) remains a tracked follow-up.
+
+---
+
+## ISS-2025-0253: phrase/2,3 returned only the first solution
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`Phrase.executeWithContext` committed to `solutionList.get(0)`, making phrase behave like `once(phrase(...))`. Rewrote it to mirror `call/N`: expand the DCG goal and `solver.solve(...)` propagating every solution. Now `phrase/2,3` enumerate all parses/`Rest` splittings on backtracking.
+
+---
+
+## ISS-2025-0254: cut in a DCG body mistranslated to !/2, losing difference-list threading
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+A bare `!` parses as an Atom, so the `case "!"` in `DCGTransformer.transformBody`'s compound switch was dead code; `!` was emitted as the non-terminal `!(In,Out)`, which the solver treats as a plain cut (ignoring the args), dropping the required `In=Out` threading. Now handled in the atom branch as `(!, In=Out)`.
+
+---
+
+## ISS-2025-0255: call_dcg/3 was a stub that ignored the body
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`DCGUtils.CallDCG` merely unified Input with Output. Reimplemented as a `BuiltInWithContext` that expands the DCG body (reusing `DCGTranslateRule.transformDCGBody`, now static), threads fresh `S0->S`, binds `S0=Input`/`S=Output`, solves, and propagates all solutions.
+
+---
+
+## ISS-2025-0256: negative sign dropped for hex/octal/binary/char-code literals
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`TermParser.parseNumber` consumed a leading `-` but the radix/char-code branches built the result from their own digit buffers only, so `-0xFF` parsed as `255`, `-0'a` as `97`, etc. Added a `negative` flag and negate each radix/char-code return.
+
+---
+
+## ISS-2025-0257: HttpRequest leaked HttpURLConnection on exception
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`http_request/4` and `http_post/4` called `conn.disconnect()` only on the success path. Wrapped each request in try/finally so the connection/socket is released on any exit (timeout, reset, malformed response).
+
+---
+
+## ISS-2025-0258: StreamManager used unsynchronized static HashMaps
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+The static stream bookkeeping maps (`INPUT_STREAMS`, `OUTPUT_STREAMS`, `STREAM_PROPS`, `READERS`) were plain `HashMap`s mutated from the solver thread, the debug solver thread, and HTTP/TCP handler threads. Switched to `ConcurrentHashMap` (matching the other resource managers).
+
+---
+
+## ISS-2025-0259: closeResultSet closed managed prepared/callable statements; executeQuery leaked Statement on error
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`JdbcConnectionManager.closeResultSet` closed the parent `Statement` of every result set — including the user's still-registered prepared/callable statement. It now closes the parent only when it is an ad-hoc (unmanaged) statement. Also `executeQuery` now closes its ad-hoc `Statement` if `executeQuery(sql)` throws (e.g. invalid SQL), instead of leaking it.
+
+---
+
+## ISS-2025-0260: JdbcMetadata leaked ResultSet on exception
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`executeTables`/`executeColumns` closed the metadata `ResultSet` only after the read loop completed normally. Switched to try-with-resources so it closes on any exit path.
+
+---
+
+## ISS-2025-0261: integers and floats not distinguished as terms (ISO standard order)
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+Per ISO 13211-1, an integer and a float are distinct terms even when numerically equal:
+`1 \= 1.0`, `1 \== 1.0`, and in standard order the float is the smaller term (`compare(O,1,1.0)` gives `O = (>)`), so `sort/2` must not dedup them. Fixed five sites, all keyed to the authoritative `Number.isInteger()` flag:
+
+- `Number.unify` / `Number.equals` / `Number.hashCode` — require same type and value (integers compared exactly via `BigInteger`, which also fixes `>2^53` longs).
+- `Sort.compareTerms` (`sort/2`, `msort/2`, …) — compare by value, float before integer on a tie; no dedup of `1` vs `1.0`.
+- `StandardTermOrdering.compareNumbers` (`compare/3`, `@<` …) — use `Number.isInteger()` instead of a `value==floor(value)` re-derivation; order float before integer (was reversed).
+- `.jpc` format (v0x02) — `TERM_NUMBER` now carries a subtype byte (long / float / BigInteger) so int/float type and BigInteger precision round-trip (previously every number was written as a `double`, collapsing `2.0` to an integer and losing big-integer precision). The `VERSION` bump transparently recompiles older `.jpc` files.
+
+Verified by `BugFixVerificationTest#testISS0261_intFloatAreDistinctTerms` and `JpcFormatTest#testRoundTripNumberTypePreservation`. Full suite (531) and 20/20 examples pass with zero regressions.
+
+---
+
+## ISS-2025-0262: CLP(FD) ADD/SUB bounds inference overflowed int
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`propagateArithmeticBounds` computed ADD/SUB bound combinations in `int` (e.g. `exprLeftMax + exprRightMax`), which silently overflowed near `Integer.MAX/MIN` and produced bogus bounds; the MUL case already used `long`. Now all ADD/SUB combinations are computed in `long` and clamped to int range via a `clampToInt` helper. Verified by inspection (mirrors MUL) and full-suite no-regression; not separately unit-tested because the domain-size cap (ISS-0263) keeps domain bounds well within int range.
+
+---
+
+## ISS-2025-0263: CLP(FD) huge finite domain caused OutOfMemoryError / infinite loop
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`parseDomain` materialized `X in Lo..Hi` as an explicit `ArrayList<Integer>`, so a range like `1..2147483647` exhausted the heap, and the `for (int i = min; i <= max; i++)` counter would overflow at `Integer.MAX_VALUE` and never terminate. Now a range wider than `MAX_ENUMERATED_DOMAIN` (10,000,000) raises `error(resource_error(clpfd_domain_too_large), in/2)`. A proper interval-set domain representation remains a tracked follow-up (LIM-022).
+
+---
+
+## ISS-2025-0264: CLP(FD) indomain/1 ignored posted constraints
+
+**Status**: PARTIALLY RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`executeIndomain` emitted every value of a variable's domain without propagation, producing solutions that violate the posted constraints (e.g. an unsatisfiable `all_different` still yielded values). It now snapshots the store, assigns each candidate value, propagates, and only emits the value if no domain is wiped out (restoring the store after each trial). This enforces single-goal local consistency. Full cross-goal soundness of `indomain(X), indomain(Y)` (and the related non-singleton `#\=` propagation) still requires store/solver trail integration — tracked under LIM-022.
+
+---
+
+## ISS-2025-0265: JdbcCallProcedure leaked ResultSet on exception
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`jdbc_call_get_resultset/2` closed the CallableStatement's `ResultSet` only after the read loop completed; a `SQLException` during iteration leaked it. Switched to try-with-resources. (Verified by inspection + full-suite no-regression; the leak-on-exception path needs a live DB to unit-test.)
+
+---
+
+## Audit verification note: first-argument indexing already present (2026-06-07)
+
+The 2026-06-07 implementation-audit report listed "no first-argument/clause indexing (linear clause scan)" as a perf finding. This is **stale/incorrect** for the current code: `KnowledgeBase.getRulesWithFirstArgIndex` (ISS-2025-0093) implements first-argument indexing (plus second-argument, LIM-014), and `QuerySolver` uses it as the primary clause-selection path (QuerySolver.java:485, :825). Verified empirically: a lookup over 1000 facts returns in ~1 ms (no linear scan). LIM-023 has been corrected accordingly. (Memory note: audit findings are point-in-time and must be verified against current code — this one was.)
+
+---
+
+## ISS-2025-0266: set operations conflated atoms and numbers with equal printed form
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`Subtract.structurallyEqual` compared ground elements with `a.toString().equals(b.toString())`, so the atom `'1'` and the number `1` (both print `1`) were treated as equal: `subtract([1,'1'],[1],R)` gave `R=[]` and `intersection([1],['1'],R)` gave `R=[1]`. Switched to type-aware `a.equals(b)` (the term `equals` methods distinguish class and, post-ISS-0261, int/float). Now `subtract([1,'1'],[1],R)` → `R=['1']`, `intersection([1],['1'],R)` → `R=[]`. Affects `subtract/3`, `intersection/3`, `union/3` (all via `memberOf`).
+
+---
+
+## ISS-2025-0267: split_string/4 dropped empty substrings
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`split_string` discarded empty fields and returned `[]` for empty input. Per SWI, empty fields are kept (`split_string("a,,b", ",", "", X)` → `["a","","b"]`), the final field is always emitted (`split_string("", ",", "", X)` → `[""]`), and runs of separators collapse only when a separator char is also a pad char (`split_string("a  b", " ", " ", X)` → `["a","b"]`). Reimplemented to match.
+
+---
+
+## ISS-2025-0268: atomic_list_concat rejected numbers
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`JoinString.parseList` accepted only atoms and strings, so `atomic_list_concat([a,1,b], R)` failed. Added a `Number` case so any atomic element is accepted: `atomic_list_concat([a,1,b], R)` → `R='a1b'`, `atomic_list_concat([x,2,y], '-', R)` → `R='x-2-y'`.
+
+---
+
+## ISS-2025-0269: type_error(evaluable, _) culprit was an atom, not the compound Name/Arity
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+ISO 13211-1 requires the evaluable predicate indicator to be the compound `'/'(Name, Arity)`. The ISS-0248 fix used `new Atom(Name + "/" + Arity)` (an atom whose name happens to contain a slash). Added an `evaluableIndicator(name, arity)` helper that builds `'/'(Name, Arity)` and routed all six `is/2` evaluable type-errors through it. Now `catch(_ is foo, error(type_error(evaluable, N/A), _), true)` unifies `N=foo, A=0`.
+
+---
+
+## ISS-2025-0270: clause/2 missing ISO errors and scanned the whole KB
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`clause/2` neither raised `instantiation_error` for an unbound Head nor `type_error(callable, _)` for a non-callable Head (it silently failed), and it iterated `getRules()` (the entire knowledge base). Added the ISO error checks and switched to `getRulesForPredicate(functor, arity)` (the predicate index).
+
+---
+
+## ISS-2025-0271: min/2 and max/2 coerced the result to float for mixed operands
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`min(2, 3.0)` returned `2.0` instead of the integer `2`. Added explicit min/max handling in `applyBinaryToNumber` that returns the selected operand preserving its numeric type (the both-integer case was already correct). Now `min(2, 3.0) = 2`, `max(2, 3.0) = 3.0`, `min(2.0, 3) = 2.0`.
+
+---
+
+## ISS-2025-0272: gcd/2 with a float operand raised type_error(evaluable) instead of type_error(integer)
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`gcd` was handled only in the both-integer path; a float operand fell through to the unknown-functor branch and raised `type_error(evaluable, gcd/2)`. Added `gcd` to `INTEGER_BINARY_OPS` so the ISS-0249 integer-argument check fires: `_ is gcd(4, 2.0)` now raises `type_error(integer, 2.0)`.
+
+---
+
+## ISS-2025-0273: setup_call_cleanup/3 and call_cleanup/2 not implemented
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+Added `it.denzosoft.jprolog.builtin.meta.SetupCallCleanup` (registered for `setup_call_cleanup/3` and `call_cleanup/2`). Runs `Setup` once, then `Goal`, and runs `Cleanup` exactly once when `Goal` finishes — on success (after the solutions are produced), failure, or an exception (cleanup runs before the exception propagates). If `Setup` fails/raises, `Cleanup` is not run. Documented in `BUILTIN_PREDICATES_REFERENCE.md`.
+
+> These 35 fixes were guided by a **second multi-agent re-triage** (2026-06-07) that
+> re-classified all 101 audit findings against the post-fix code: 35 already fixed,
+> 40 contained (still open), 21 architectural, 6 not-unit-testable. The items below
+> address the highest-confidence contained ones.
+
+---
+
+## ISS-2025-0274: =:= / =\= mishandled signed zero and NaN
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+The float branch of arithmetic comparison used `Double.compare`, so `-0.0 =:= 0.0` failed (`Double.compare(-0.0,0.0) = -1`) and `nan =:= nan` wrongly succeeded (`Double.compare(NaN,NaN) = 0`). Switched `EQUAL`/`NOT_EQUAL` to IEEE-754 `==`/`!=`.
+
+---
+
+## ISS-2025-0275: throw/1 did not copy the ball
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`Throw.execute` threw the resolved ball directly; ISO requires a `copy_term` so the thrown term is independent of the throwing context. Now throws `TermCopier.copyWithFreshVariables(ball)`.
+
+---
+
+## ISS-2025-0276: upcase_atom/2, downcase_atom/2 used locale-dependent case folding
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`toUpperCase()/toLowerCase()` use the JVM default locale (e.g. Turkish dotless-i). Now use `Locale.ROOT`.
+
+---
+
+## ISS-2025-0277: atom_length/2 threw generic exceptions instead of ISO error terms
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+Now raises `error(instantiation_error, _)` for an unbound first argument and `error(type_error(atom, Culprit), _)` for a non-atom, instead of bare `PrologEvaluationException`s.
+
+---
+
+## ISS-2025-0278: op/3 silently rounded a non-integer precedence
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`OperatorDefinition` checked `instanceof Number` but not `isInteger()`, then `Math.round`ed the precedence. Now `op(700.5, ...)` raises `type_error(integer, 700.5)`.
+
+---
+
+## ISS-2025-0279: initialization/1 directive was never run
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+`processDirective` had no `initialization` case, so `:- initialization(Goal)` was (mis)handled as a goal call of `initialization(Goal)` and silently failed. Now `Goal` is collected during consult and run after the whole file is loaded (so it may reference predicates defined later in the file).
+
+---
+
+## ISS-2025-0280..0289: further contained re-triage fixes
+
+**Status**: RESOLVED v3.0.0  **Date**: 2026-06-07
+
+- **0280** `KnowledgeBase.getCurrentPredicates()` now `synchronized` (matched sibling mutators; was an unguarded `ruleIndex.keySet()` read).
+- **0281** `DebugController` breakpoint collections (`breakpoints`, `breakpointPorts`, `leashedPorts`) switched to concurrent collections (mutated on the EDT, read on the solver thread).
+- **0282** removed the dead `,`/2 `Conjunction` built-in registration (`QuerySolver.handleConjunction` is authoritative and intercepts `,` before the registry).
+- **0283** `op/3` accepts a list of names: `op(700, xfx, [eq, neq])`.
+- **0284** `number_string/2` parses integer strings as exact `BigInteger` (no precision loss past 2^53).
+- **0285** `TermParser.nextChar` line counter now advances for a trailing newline (guarded on `position-1`).
+- **0286** `PrologCLI` reads source files as UTF-8 (matches the `encoding=utf8` flag).
+- **0287** `StreamManager.closeStream` evicts the cached `Reader` and per-stream properties on close.
+- **0288** failed/erroring goal directives are surfaced on `System.err` (were logged at `FINE`); the debugger stop signal is no longer swallowed.
+- **0289** `QuerySolver` hoists the loop-invariant `extractVariables(goal)` out of the clause loop (perf).
+
+---
+
+## ISS-2025-0290: clean-room v2 parser (resolves the whole parser-internals class)
+
+**Status**: RESOLVED v3.0.0 (standalone module)  **Date**: 2026-06-08
+
+Added a new, self-contained ISO parser under `core.parser.v2` (`Lexer` + `TermReader`),
+**without touching the legacy `Parser`/`TermParser`**. A single-pass tokenizer plus a proper
+operator-precedence (Pratt) parser fix the entire class of parsing bugs the legacy dual-path
+parser gets wrong, verified by `NewParserTest` (21 tests):
+
+- canonical functor for operator symbols — `-(1,2)` is `-/2` (not `-(','(1,2))`);
+- operator-as-atom — `X = -`, `foo(-, +)`, `p(a, -, b)`, `(-)`;
+- postfix operators (xf/yf);
+- `0'c` character codes, `0x/0o/0b` radix, negative literals (`-42`, `-0xFF`);
+- `''` / `""` doubled-quote escapes; full backslash escapes;
+- quote-aware clause splitting (`p('a. b'). q(0'.). r(1).` → 3 clauses);
+- precedence/associativity, lists with tails, `{}`/1, shared variables, comments;
+- `nextClause()` incremental API so a consult driver can execute `:- op(...)` between clauses.
+
+This supersedes the deferred legacy-parser findings (#8, #9, #35, #36, #66, #99 / LIM-019).
+
+**ISS-2025-0292 — opt-in engine integration.** `Prolog.consultV2(String)` drives the live engine
+through the v2 parser (same directive/DCG/fact/rule handling as `consult`, via a clause-term→`Rule`
+adapter), **leaving the default `consult` untouched**. Validated end-to-end by
+`ConsultV2IntegrationTest` (8 tests): facts/rules (`grandparent`), arithmetic recursion (factorial),
+lists (`len`), nested-operator arithmetic, canonical functor `-(5,2)` + operator atoms `sym(-)`,
+quoted atoms / doubled quotes, `:- op(...)` + `:- initialization(...)`, a DCG rule (`phrase`), and
+multi-solution backtracking. (Notably, the test surfaced that the v2 parser correctly reads `-.` as
+one graphic atom per ISO maximal-munch, and that the legacy *query* parser still can't read `(-)` —
+further motivation to route queries through v2 too.) Making v2 the default parser is the remaining
+swap, which needs a full regression pass of the existing 593 tests through `consultV2`.
+
+**Compatibility validated on real programs.** `V2ParserCompatibilityTest` loads all 130
+`examples/*.pl` through both parsers: **v2 parses 123/130 vs the legacy parser's 117** — a strict
+improvement (it parses 8 files the legacy parser cannot, and the only 2 files where v2 is *stricter*
+use non-ISO constructs the legacy parser accepts leniently and that even SWI rejects: a variable
+used as a functor `Var(Args)`, and a `1200 xfx` term as the head of a `1200 xfx` `:-` rule —
+both correct rejections). This confirms the v2 parser is a faithful, more-correct drop-in.
+
+**ISS-2025-0293 — v2 parser is now the DEFAULT.** `Prolog.consult` and the `solve(String)` query
+path route through the v2 parser by default (`USE_V2_PARSER`, toggle off with
+`-Djprolog.parser=legacy` or `Prolog.setUseV2Parser(false)`). The entire existing test suite —
+**594/594 JUnit and 20/20 example programs (via the CLI)** — passes with the v2 parser driving all
+consult and query parsing. The legacy `Parser`/`TermParser` remain in place as the fallback. This
+fully resolves the parser-internals class of audit findings (LIM-019 / #8, #9, #35, #36, #66, #99).
+
+---
+
+## ISS-2025-0291: clean-room CLP(FD) core (resolves the CLP store findings)
+
+**Status**: CORE DONE v3.0.0 (standalone module)  **Date**: 2026-06-08
+
+Added a self-contained CLP(FD) solver under `builtin/clpfd/v2`, **without touching the legacy
+`ConstraintStore`/`ClpfdPredicates`**, verified by `ClpfdV2Test` (8 tests). It fixes the legacy
+store's architectural findings by construction:
+
+- **`IntervalDomain`** — domains are O(#intervals) ranges, not O(#values) boxed ints, so
+  `X in 1..2147483647` is one interval (no OOM, no billion-element TreeSet).
+- **`ClpStore`** — per-instance and identity-keyed (`FdVar`), not a JVM-wide singleton keyed by
+  variable name, so domains/constraints never leak across queries or engines. Includes a
+  propagation queue (constraints re-awaken on watched-variable narrowing) and a **trail**
+  (`mark()`/`undo()`) for O(changes) backtracking.
+- **`Constraint`** — a full set: `Cmp` (`<,=<,>,>=,=,\=` with real `#\=` propagation, plus
+  entailment + negation), overflow-safe `Sum` and `Mul` (long bounds, four-corner interval
+  multiplication), `Abs`, `AllDifferent` (singleton elimination + pigeonhole infeasibility),
+  N-ary `Linear` (`sum(ci*xi) {=,=<,>=} k` with bounds consistency), and `Reified` (`B #<==> C`).
+- **`Labeler`** — first-fail DFS that **propagates after every assignment** (so every emitted
+  solution is consistent — the soundness the legacy `indomain`/`labeling` lacked), trail-backtracked,
+  and streams solutions (stop after the first).
+
+Tests (`ClpfdV2Test`, 14) prove: huge-domain narrowing is cheap (no OOM); `#\=` removes a fixed
+value; `all_different` over {1,2}^3 fails; `X #< Y` labeling yields exactly the 3 sound solutions;
+`all_different` over 3 vars yields the 6 permutations; `Z=X*Y` and `Y=|X|` bounds; `2X+3Y=12` →
+3 solutions; `X+Y+Z=6 ∧ all_different` over 1..3 → the 6 permutations; `B #<==> (X<Y)` determines B
+for all 9 combos (and forcing B=1 constrains to the 3 sound solutions); `Sum` bounds don't overflow
+(`1 + 2147483646 = 2147483647`); two stores are independent; trail undo restores domains exactly.
+
+**ISS-2025-0294 — engine integration.** `ClpfdV2Bridge` maps engine `Variable`s ↔ `FdVar`s in a
+**per-query** `ThreadLocal` `ClpStore` (reset by `Prolog.solve`, so no cross-query leak), compiles
+linear arithmetic into `Constraint.Linear`, and `ClpfdV2Builtins` exposes `in/2`, `#=`/`#\=`/`#<`/
+`#>`/`#=<`/`#>=`, `all_different/1`, `label/1` — enabled per engine via `Prolog.enableV2Clpfd()`.
+`ClpfdV2EngineTest` (9 tests) drives the v2 solver through the engine's standard syntax and proves
+the legacy findings are fixed end-to-end: `X in 1..3, Y in 1..3, X #< Y, label([X,Y])` → the 3
+**sound** solutions (no `(2,2)`); `all_different` permutations + pigeonhole; `2*X + 3*Y #= 12` linear;
+`#\=` propagation; `X in 1..2000000000` (no OOM); `indomain/1` respects constraints; `fd_dom`/`fd_size`;
+and no leak between queries. Registered v2 built-ins: `in/2`, `#=`/`#\=`/`#<`/`#>`/`#=<`/`#>=`,
+`all_different/1`, `all_distinct/1`, `label/1`, `labeling/2`, `indomain/1`, `fd_dom/2`, `fd_size/2`.
+
+**Default-readiness measured.** With v2 CLP forced on as the default for the whole suite, only **2 of
+601** tests failed — both encode legacy-specific behaviour v2 intentionally improves (a huge-domain
+`resource_error` cap, and `indomain` against the legacy store). v2 CLP is kept **opt-in** (the
+`Var(Args)`-style default-swap risk does not apply, but the legacy-behaviour tests would need
+updating); enable via `Prolog.enableV2Clpfd()` / `-Djprolog.clpfd=v2`.
+
+**Remaining for full parity (follow-up):** `mod`/`rem`/`div`, `global_cardinality`/`scalar_product`;
+update the 2 legacy-behaviour tests and flip v2 CLP to default; retire the legacy module.
+
+---
+
+## ISS-2025-0295..0299: v2 code adversarial-review fixes (2026-06-08)
+
+A multi-agent adversarial review of the new v2 parser + v2 CLP(FD) + integration confirmed **19
+findings** (1 critical, 4 high, 6 medium, 8 low). **16 fixed** in v3.0.0; 3 deferred (all MED/LOW).
+
+- **ISS-0296 (CRITICAL, CLP `Linear`)** — saturating-long bounds rejected satisfiable constraints
+  (unsound pruning). Rewrote `Linear.propagate` bounds in exact **BigInteger**, clamping to long only
+  at the final `narrow()`. Regression test `linearNoOverflowUnsoundness`.
+- **ISS-0295 (HIGH, parser/consult default path)** — (a) `consultV2` aborted the whole file on one
+  clause's parse error: added per-clause **resync** (`TermReader.recover/atEof`) so the rest loads,
+  matching legacy consult; (b) out-of-range/overflowing `\x`/octal escapes threw a raw
+  `IllegalArgumentException` aborting tokenization → now bounded + validated → `LexException`; float
+  literal overflow → `LexException`; (c) unary `+1` now parses as `+(1)` not the integer `1`; (d)
+  quoted atoms allowed as operators consistently. Tests `parseErrorResyncKeepsOtherClauses` + writer round-trip.
+- **ISS-0298 (HIGH, CLP labeler/domain)** — `values()` eager materialization + labeling a var on the
+  wide default domain → OOM. Labeler now iterates ranges **lazily** and refuses domains >
+  `MAX_LABEL_DOMAIN` (10M) with a catchable **`resource_error`**. Test `labelHugeDomainRaisesResourceError`.
+- **ISS-0299 (MEDIUM, CLP bridge)** — float operands to `#=`/`#<`/… were silently truncated → now
+  `type_error(integer,_)`. Test `floatOperandRaisesTypeError`.
+- **ISS-0297 (LOW, CLP overflow edges)** — `mul(-1, MIN)`, `IntervalDomain.size()` full-range,
+  `AllDifferent` pigeonhole span, and `Abs(MIN)` overflow corner cases hardened.
+
+**Follow-ups now done:**
+- **ISS-0301** — `#\=` over a linear expression (`X+1 #\= 5` → `X #\= 4`): compile both sides, handle
+  0/1-variable cases exactly, fall back to a direct `Cmp NE` for the general case. Test
+  `disequalityOverExpression`.
+- **ISS-0299 (extended)** — a BigInteger operand outside long range now raises `representation_error`
+  instead of silently truncating.
+- **ISS-0300** — the ISO operators **`div`** (400 yfx) and `rdiv` were missing from the default
+  `OperatorTable`; added. `-7 div 2` now parses and evaluates to `-4`.
+
+**ISS-0302 — done:** `consultWithDiagnostics` (IDE inline diagnostics) now drives the v2 parser
+when it is the default, clause-by-clause with line-accurate errors and resync (every bad clause is
+reported, not just the first).
+
+**ISS-0303 — done:** added the CLP(FD) `mod` constraint (`Constraint.Mod`, `Z = X mod M` for a
+positive constant `M`) and wired `X mod M #= R` through the bridge. Tests `modConstraint` (unit) and
+`modConstraintThroughEngine` (`X mod 3 #= 1, X in 0..10` → {1,4,7,10}).
+
+**v2 CLP(FD) is now the DEFAULT** (`-Djprolog.clpfd=legacy` to fall back). After adding `indomain`,
+`fd_dom`/`fd_size` and the labeler cap, the previously-failing legacy tests (huge-domain, indomain)
+pass under v2, so the swap is a **zero-regression** drop-in: **629/629 JUnit, 20/20 examples**.
+
+Remaining CLP parity (genuine future features, not deferred bugs): `global_cardinality`,
+`scalar_product`, full non-constant `mod`/`rem`/`div` inside arbitrary expressions.
+
+## ISS-2025-0304: clean-room v2 DCG translator (now default)
+
+`core.dcg.v2.DCGTranslator` — a single recursive-pass `Head --> Body` → clause translator (ISO
+§7.14): terminal lists/`[]`/strings, `{}`, `!`, `\+`, `(A,B)`/`(A;B)`/`(A|B)`/`(A->B)`, `call//N`,
+variable bodies (→ `phrase`), and **ISO head push-back** (`Head, PushBack --> Body`). Default for
+`transformDCGRule` (`-Djprolog.dcg=legacy` to fall back). `DCGTranslatorTest` (7 tests): structural
+output via the v2 writer + end-to-end `phrase/2` (terminals, recursion, alternatives, generation).
+**Zero regressions: 636/636 JUnit, 20/20 examples, DCG example scripts green.** Resolves LIM-021.
+
+## ISS-2025-0305: StreamManager — no dangling aliases on close
+
+`StreamManager` is intentionally NOT rewritten: it is process-static but its maps are already
+`ConcurrentHashMap` (thread-safe) and 25 IO built-ins depend on the static API, so an instance-based
+rewrite would be a large, risky change for no functional gain. The one real defect — `open/4` with
+`alias(A)` registered both `stream_N` and `A`, and closing one left the other pointing at a closed
+stream — is fixed: `closeStream` now finds **all** aliases referencing the same underlying stream and
+removes them together. Test `testISS0305_CloseRemovesAllAliases`.
+
+The remaining `with_output_to/2` thread-safety issue (JVM-wide `System.out` swap) is left as LIM-025:
+a per-thread dispatching `System.out` was prototyped but conflicts with tests/code that legitimately
+swap `System.out` themselves; the correct fix is to route `write/1` through a per-engine output
+stream, which belongs with the IO-layer / resolution-engine rework. 638/638 JUnit, 20/20 examples.
+
+## ISS-2025-0307: resolution-engine prototype (v3 direction validated)
+
+`core.engine.v2.MachineSolver` is a clean-room **prototype** of a new resolution core that addresses
+the eager-`QuerySolver` debt (LIM-023/024). It demonstrates the three architectural changes end-to-end
+(`MachineSolverTest`, 6 tests):
+
+1. **Mutable bindings + trail** — one binding store, unification records each binding on a trail,
+   backtracking undoes to a mark in O(changes) (vs copying a `Map<String,Term>` per step).
+2. **Lazy enumeration** — solutions stream through a sink; stopping after the first works, so `nat/1`
+   (infinitely many solutions) returns its first without looping, and cut prunes correctly.
+3. **Iterative SLD machine** — explicit goal-stack + choice-point-stack on the heap; **200,000-deep
+   predicate recursion returns without `StackOverflowError`** (the legacy recursive solver dies in
+   the low thousands). This is the by-construction fix for LIM-023's deep-recursion overflow.
+
+**Build progress (full engine, the decided path):** the core now handles control (`,`/`;`/`->`/
+if-then-else/`!`/`\+`/`not`/`call/N`), unification (`=`/`\=`), term comparison (`==`/`\==`), full
+**arithmetic** via the v2 `ArithEvaluator` (`is/2` + `<`/`>`/`=<`/`>=`/`=:=`/`=\=`), and type checks
+(`var`/`nonvar`/`atom`/`atomic`/`number`/`integer`/`float`/`compound`/`callable`). `MachineSolverTest`
+(10 tests) now includes factorial (arithmetic + recursion), if-then-else `max`, negation-as-failure,
+and type-check dispatch with cut. 648/648 JUnit.
+
+**Builtin bridge (step 2, done):** `MachineSolver(rules, BuiltInRegistry)` delegates any non-native
+goal to the existing registry — reusing the 200+ builtin implementations instead of reimplementing
+them. Deterministic builtins unify their result back onto the trail; nondeterministic ones (e.g.
+`between/3`) become a choice point. Context-only builtins (findall/catch) throw without a solver and
+fall through for now (handled natively next). Tests: `atom_length` standalone + inside a rule,
+`between(1,4,X)` → 4 solutions. 651/651 JUnit.
+
+**Native meta (step 3, done):** the `drive` loop is now reentrant (a choice-point `floor` bounds each
+nested run). `findall/3` runs Goal at a fresh floor and collects a renamed-apart copy of Template per
+solution; `catch/3` installs a catch frame (a no-alternative choice point) on the CP stack and runs
+Goal opaque to cut; `throw/1` unwinds the CP stack to the nearest catcher-matching frame (else a Java
+`PrologException`). Tests: findall over a user `member`, catch-catches-throw, recovery rebinds,
+pass-through enumeration, nested non-matching rethrow. 656/656 JUnit.
+
+**Database (step 4, done):** `assertz`/`assert`/`asserta`/`retract` operate natively on the machine's
+mutable KB (before the bridge, so they hit the right store). Assert copies the clause (rename-apart);
+retract is first-match against a renamed stored clause. Tests: assert-then-query, asserta ordering,
+retract removal, assert-a-rule-and-call. 660/660 JUnit.
+
+**Engine adversarial review + fixes (ISS-2025-0308..0310):** a 6-dimension multi-agent review of
+`MachineSolver` confirmed 7 findings (4 medium, 3 low). Fixed:
+- **ISS-0308 (throw across findall)** — `throw/1` and builtin ISO-errors are now raised as Java
+  `PrologException`s caught by `drive`, which routes the ball to the nearest catch frame within its
+  floor and re-throws otherwise, so an enclosing `catch/3` around `findall/3` (or any nested run)
+  handles it. `findAll` restores state in a `finally`. Test `throwInsideFindallReachesOuterCatch`.
+- **ISS-0309 (bridge swallowed ISO errors)** — the bridge now rethrows `PrologException` (only a
+  context-needed `RuntimeException` falls through), so a builtin's `type_error`/etc. reaches `catch/3`.
+  Test `nativeErrorReachesCatch`.
+- **ISS-0310 (retract of a fact in clause form)** — query and stored clause are normalised to
+  `(Head:-Body)`, so `retract((Head:-true))` matches a stored fact. Test `retractFactViaClauseForm`.
+
+Deferred (documented prototype limitations): recursive `unify`/`resolve`/`structuralEqual`/`rename`
+recurse on term *depth* (~3k) — distinct from the goal-depth recursion the iterative loop fixes;
+`retract/1` is first-match (not backtrackable for the `retract,fail` clear-all idiom); the `_R<id>_`
+rename prefix is theoretically forgeable by a user variable. 663/663 JUnit.
+
+**Integration (ISS-2025-0311, opt-in):** `MachineSolver(KnowledgeBase, BuiltInRegistry)` runs over the
+**live** KB (clause lookup + `assert`/`retract` delegate to it) and the shared registry. `Prolog.solve`
+routes through it under `-Djprolog.engine=v2` (`solveWithV2Engine`). `V2EngineIntegrationTest` (7) drives
+real programs end-to-end via the standard API: facts/rules/backtracking, arithmetic recursion, lists,
+`findall`, `catch`/`throw`, cut, and `assert` persisting across queries.
+
+**Measured gap (whole suite through v2):** with the engine forced on for every query, **~646 of 670
+tests pass**; **24 fail**, concentrated in:
+- **module-qualified calls** (`M:Goal`) — the v2 engine has no module-system integration (≈5 tests);
+- **soft-cut** (`*->`) — not yet handled (1 test);
+- **context built-ins** that call goals (`setup_call_cleanup`, `call_dcg`, `predsort`, `statistics`,
+  `profile`) — the bridge can't run a `BuiltInWithContext` without a solver adapter (≈8 tests);
+- **`ArithEvaluator` v2 parity** — negative-shift / `msb` error terms, IEEE compare, some `format`
+  directives differ from the legacy evaluator (≈10 tests).
+
+So the engine is **functionally ~96% complete through the suite** but **not yet a drop-in**; it stays
+**opt-in (default legacy)**. The legacy default remains 100% green.
+
+**Gap-closing (ISS-2025-0312, 17 of 24 closed):**
+- **ArithEvaluator parity** — negative-shift → `evaluation_error(negative_shift)`, `msb(0)` →
+  `evaluation_error(undefined)`; and the engine's comparisons use IEEE semantics (`-0.0 =:= 0.0` true,
+  `NaN =\= NaN`) via `numRel`.
+- **soft-cut** `(*->)/2` — added (`Goal.action` flag mechanism); enumerates all Cond solutions, else-branch only when Cond fails.
+- **context-builtin solver bridge** — `BuiltInWithContext` built-ins (`setup_call_cleanup`, `predsort`,
+  `call_dcg`, `format`, `statistics`, …) are handed the engine's `QuerySolver` via `executeWithContext`,
+  instead of falling through. This closed ~10 tests.
+- **occurs-check** — `unify` consults `Variable.isOccursCheckEnabled()` (iterative `occurs`), so
+  `set_prolog_flag(occurs_check, true)` makes `X = f(X)` fail.
+- **module-qualified `M:Goal`** — stripped + called (basic qualification).
+
+Locked in by 5 new `MachineSolverTest` cases. **Whole suite through v2: ~663/670 (7 remaining).**
+
+**Module-qualified calls (18 of 24 closed):** `clausesFor` resolves `Module:Goal` via
+`moduleManager.getRulesForPredicate` (the named module's clauses), unifying against the inner goal —
+fixes `testModuleQualifiedCall`. Routing **all** lookups through the module manager was tried and
+**reverted**: it regressed 13 tests (assert/retract write to the flat KB while lookup read from the
+module manager — an inconsistency — plus clause-set differences). So unqualified lookup stays on the
+flat KB.
+
+**Remaining 6 — a dedicated increment:**
+- **full module subsystem** (3: `testModuleImport` unqualified-after-`use_module`, `test7` export
+  enforcement, `testCompleteISOFeatureSet`) — needs the v2 engine's clause lookup AND assert/retract
+  to go through the module manager *consistently* (the naive version regressed 13); a real subsystem.
+- **`profile/1`** internals; **cyclic-term-safe `resolve`** (no-occurs `X=f(X)` then snapshot
+  recurses); a **trail/global state-on-exception** detail (`test4`).
+
+The legacy default remains 100% green; the v2 engine passes ~664/670 when enabled and is reviewed.
+
+---
+
+## Audit findings: remaining dispositions (2026-06-07)
+
+After this session (ISS-2025-0245..0289 — ~50 of the 101 findings fixed, all criticals + most highs), the remaining findings are tracked with an explicit disposition rather than silently dropped:
+
+- **Parser-internals (LIM-019)** — canonical functor `-(1,2)`, operator-as-atom (`X = -`), `0'c`/`''` clause splitting, postfix operators, `parseRule` double-parse, per-token operator scan. The parser uses a fragile dual-path tokenizer (a fix attempt caused a hang on `'plain'`, ISS-0265 reverted); these need a **unified tokenizer/parser rewrite** as a dedicated effort, not a batched patch.
+- **Architectural (LIM-022/023/024)** — last-call optimization, eager→lazy solving (cut pruning, `length/2` generative mode), CLP(FD) trail integration (cross-goal `indomain`/`#\=`), threading isolation, `retract` variable-capture/duplicate-index symmetry, copy-on-write unification bindings. Each is a substantial design change.
+- **Deliberate / risky behavior** — `bounded=true` flag (a test asserts it; changing ripples through `max_integer`/`min_integer`), `set_prolog_flag` accepting unknown flags (rejecting them would break user-defined flags).
+- **Very-low-value edges** — `char_type` of the NUL character; locale already covered for the common predicates by ISS-0276.
+- **Not unit-testable without external resources** — `with_output_to/2` thread-safety, `JdbcCallProcedure` (fixed, ISS-0265), residual stream-alias reverse-mapping.
+
+---
+
+**Last Updated**: 2026-06-07 (v3.0.0)

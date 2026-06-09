@@ -185,8 +185,13 @@ public class JoinString implements BuiltIn {
                 result.add(((Atom) head).getName());
             } else if (head instanceof PrologString) {
                 result.add(((PrologString) head).getStringValue());
+            // START_CHANGE: ISS-2025-0268 - atomic_list_concat accepts any atomic element,
+            // including numbers (atomic_list_concat([a,1,b], R) -> R = 'a1b').
+            } else if (head instanceof it.denzosoft.jprolog.core.terms.Number) {
+                result.add(head.toString());
+            // END_CHANGE: ISS-2025-0268
             } else {
-                return null; // Invalid list element
+                return null; // Invalid list element (compound/var)
             }
             
             current = compound.getArguments().get(1);

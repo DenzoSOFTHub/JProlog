@@ -110,8 +110,24 @@ public class JpcReader {
                 return new Atom(strings[idx]);
             }
             case JpcFormat.TERM_NUMBER: {
-                double value = dis.readDouble();
-                return new it.denzosoft.jprolog.core.terms.Number(value);
+                // START_CHANGE: ISS-2025-0261 - read the subtype byte so int/float type and
+                // BigInteger precision are restored (v0x02 format).
+                byte subtype = dis.readByte();
+                switch (subtype) {
+                    case JpcFormat.NUM_LONG:
+                        return new it.denzosoft.jprolog.core.terms.Number(dis.readLong());
+                    case JpcFormat.NUM_FLOAT:
+                        return new it.denzosoft.jprolog.core.terms.Number(dis.readDouble(), false);
+                    case JpcFormat.NUM_BIGINT: {
+                        int len = readVarint(dis);
+                        byte[] b = new byte[len];
+                        dis.readFully(b);
+                        return new it.denzosoft.jprolog.core.terms.Number(new java.math.BigInteger(b));
+                    }
+                    default:
+                        throw new IOException("Unknown JPC number subtype: " + subtype);
+                }
+                // END_CHANGE: ISS-2025-0261
             }
             case JpcFormat.TERM_VARIABLE: {
                 int idx = readVarint(dis);

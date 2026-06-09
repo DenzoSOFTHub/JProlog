@@ -53,7 +53,11 @@ public class Subtract implements BuiltIn {
      */
     static boolean structurallyEqual(Term a, Term b) {
         if (a.isGround() && b.isGround()) {
-            return a.toString().equals(b.toString());
+            // START_CHANGE: ISS-2025-0266 - use type-aware term equality, not toString().
+            // toString() conflated the atom '1' and the number 1 (both print "1"), so e.g.
+            // subtract([1,'1'],[1]) wrongly returned [] instead of ['1'].
+            return a.equals(b);
+            // END_CHANGE: ISS-2025-0266
         }
         // For non-ground terms, use unification with empty bindings as approximation
         Map<String, Term> test = new HashMap<>();

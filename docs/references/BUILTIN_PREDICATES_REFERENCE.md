@@ -1621,6 +1621,39 @@ initialize :-
 
 ---
 
+### setup_call_cleanup/3
+**Purpose**: `setup_call_cleanup(:Setup, :Goal, :Cleanup)` — runs `Setup` once, then `Goal`, and runs `Cleanup` exactly once when `Goal` finishes (all solutions exhausted, failure, or an exception). If `Setup` fails or raises, `Cleanup` is not run.
+
+**When to use**: Guaranteed resource cleanup (closing files/streams/connections) regardless of how the goal terminates.
+
+```prolog
+% Cleanup runs whether the goal succeeds, fails, or raises:
+read_first_line(File, Line) :-
+    setup_call_cleanup(
+        open(File, read, S),     % Setup: acquire the stream
+        read_line_to_string(S, Line),  % Goal
+        close(S)).               % Cleanup: always closes S
+
+?- setup_call_cleanup(true, member(X,[1,2]), writeln(done)).
+done
+X = 1 ;
+X = 2.
+```
+
+Note: in this engine's eager-solution model, `Cleanup` runs after all of `Goal`'s solutions have been produced (or as soon as `Goal` fails/raises).
+
+### call_cleanup/2
+**Purpose**: `call_cleanup(:Goal, :Cleanup)` — equivalent to `setup_call_cleanup(true, Goal, Cleanup)`.
+
+```prolog
+?- call_cleanup(member(X,[a,b]), writeln(cleaned)).
+cleaned
+X = a ;
+X = b.
+```
+
+---
+
 ## 6. Meta-Predicates
 
 Meta-predicates operate on other predicates, enabling powerful programming techniques like finding all solutions, applying predicates to collections, and dynamic execution.

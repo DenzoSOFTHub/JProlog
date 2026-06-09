@@ -30,7 +30,9 @@ public class UpCase implements BuiltIn {
             }
             
             String inputAtom = ((Atom) inputTerm).getName();
-            String upperCaseAtom = inputAtom.toUpperCase();
+            // START_CHANGE: ISS-2025-0276 - locale-independent case folding (Locale.ROOT).
+            String upperCaseAtom = inputAtom.toUpperCase(java.util.Locale.ROOT);
+            // END_CHANGE: ISS-2025-0276
             
             Atom resultAtom = new Atom(upperCaseAtom);
             

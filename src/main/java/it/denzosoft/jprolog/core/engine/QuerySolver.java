@@ -520,6 +520,11 @@ public class QuerySolver {
         boolean isFirstAttempt = true;
         // END_CHANGE: ISS-2025-0090
 
+        // START_CHANGE: ISS-2025-0289 - extractVariables(goal) is loop-invariant; compute it once
+        // here instead of once per matching clause inside the loop.
+        Map<String, Variable> queryVars = extractVariables(goal);
+        // END_CHANGE: ISS-2025-0289
+
         for (Rule rule : iterationRules) {
             if(traceEnabled) {
                 LOGGER.info("Trying rule: " + rule);
@@ -576,7 +581,7 @@ public class QuerySolver {
                     CutStatus newCutStatus = CutStatus.notOccurred();
                     List<Map<String, Term>> bodySolutions = new ArrayList<>();
                     if (solveBodyGoals(body, attemptBindings, bodySolutions, newCutStatus)) {
-                        Map<String, Variable> queryVars = extractVariables(goal);
+                        // ISS-2025-0289: queryVars hoisted above the clause loop
                         for (Map<String, Term> bodySolution : bodySolutions) {
                             Map<String, Term> mappedSolution = new HashMap<>(bodySolution);
                             mappedSolution.putAll(mapRuleVariablesToQueryVariablesCached(

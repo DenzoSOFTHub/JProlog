@@ -6,7 +6,7 @@
 
     <groupId>it.denzosoft</groupId>
     <artifactId>jprolog</artifactId>
-    <version>2.9.7</version>
+    <version>3.0.0</version>
 
     <properties>
         <maven.compiler.source>1.8</maven.compiler.source>

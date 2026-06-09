@@ -85,6 +85,35 @@ public class JpcFormatTest {
         assertEquals(42.0, ((it.denzosoft.jprolog.core.terms.Number) numTerm).getValue(), 0.001);
     }
 
+    // START_CHANGE: ISS-2025-0261 - int/float type and BigInteger precision must round-trip
+    @Test
+    public void testRoundTripNumberTypePreservation() throws Exception {
+        java.math.BigInteger big = new java.math.BigInteger("123456789012345678901234567890");
+        List<Rule> rules = Collections.singletonList(new Rule(
+            new CompoundTerm(new Atom("nums"), Arrays.asList(
+                new it.denzosoft.jprolog.core.terms.Number(42L),        // integer
+                new it.denzosoft.jprolog.core.terms.Number(2.0, false), // float 2.0
+                new it.denzosoft.jprolog.core.terms.Number(big))),      // BigInteger
+            Collections.emptyList()));
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        new JpcWriter().write(rules, null, 0L, baos);
+        JpcReader.CompiledProgram program = new JpcReader().read(new ByteArrayInputStream(baos.toByteArray()));
+
+        List<Term> args = program.rules.get(0).getHead().getArguments();
+        it.denzosoft.jprolog.core.terms.Number n0 = (it.denzosoft.jprolog.core.terms.Number) args.get(0);
+        it.denzosoft.jprolog.core.terms.Number n1 = (it.denzosoft.jprolog.core.terms.Number) args.get(1);
+        it.denzosoft.jprolog.core.terms.Number n2 = (it.denzosoft.jprolog.core.terms.Number) args.get(2);
+
+        assertTrue("42 must round-trip as integer", n0.isInteger());
+        assertEquals(42L, n0.longValue());
+        assertTrue("2.0 must round-trip as float (not collapse to integer)", n1.isFloat());
+        assertEquals("2.0", n1.toString());
+        assertTrue("BigInteger must round-trip as integer", n2.isInteger());
+        assertEquals("BigInteger precision must be preserved", big, n2.bigIntegerValue());
+    }
+    // END_CHANGE: ISS-2025-0261
+
     @Test
     public void testRoundTripPrologString() throws Exception {
         // greeting("hello world").

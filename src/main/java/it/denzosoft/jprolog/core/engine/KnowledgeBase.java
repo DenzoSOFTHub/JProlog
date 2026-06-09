@@ -474,13 +474,19 @@ public class KnowledgeBase {
     public java.util.Map<String, it.denzosoft.jprolog.core.terms.Term> retractClauseWithBindings(
             Term term, java.util.Map<String, it.denzosoft.jprolog.core.terms.Term> bindings) {
         synchronized (this) {
+            // START_CHANGE: ISS-2025-0251 - Support retract((Head :- Body)) (see notes above).
+            Term[] pat = splitClausePattern(term.resolveBindings(bindings));
+            Term headPattern = pat[0];
+            Term bodyPattern = pat[1];
             for (int i = 0; i < rules.size(); i++) {
                 Rule rule = rules.get(i);
-                // Copy the rule head to get fresh variables
-                Term freshHead = rule.getHead().copy();
+                Term freshClause = makeClauseTerm(rule).copy();
+                Term freshHead = ((CompoundTerm) freshClause).getArguments().get(0);
+                Term freshBody = ((CompoundTerm) freshClause).getArguments().get(1);
                 java.util.Map<String, it.denzosoft.jprolog.core.terms.Term> newBindings =
                     new java.util.HashMap<>(bindings);
-                if (term.resolveBindings(bindings).unify(freshHead, newBindings)) {
+                if (headPattern.unify(freshHead, newBindings)
+                        && (bodyPattern == null || bodyPattern.unify(freshBody, newBindings))) {
                     rules.remove(i);
                     removeFromIndex(rule);
                     LOGGER.fine("Retracted clause with bindings: " + rule);
@@ -488,6 +494,7 @@ public class KnowledgeBase {
                 }
             }
             return null;
+            // END_CHANGE: ISS-2025-0251
         }
     }
     // END_CHANGE: ISS-2025-0164
@@ -508,12 +515,24 @@ public class KnowledgeBase {
         synchronized (this) {
             java.util.List<java.util.Map<String, it.denzosoft.jprolog.core.terms.Term>> results =
                 new java.util.ArrayList<>();
+            // START_CHANGE: ISS-2025-0251 - Support retract((Head :- Body)). Previously only the
+            // rule HEAD was unified against the whole query term, so the clause form (H:-B) never
+            // matched a stored rule. Now we split the query into a head pattern and an optional
+            // body pattern and unify both against a single fresh copy of the clause (head+body
+            // share renamed variables).
+            Term[] pat = splitClausePattern(term.resolveBindings(bindings));
+            Term headPattern = pat[0];
+            Term bodyPattern = pat[1];
             for (int i = 0; i < rules.size(); ) {
                 Rule rule = rules.get(i);
-                Term freshHead = rule.getHead().copy();
+                Term freshClause = makeClauseTerm(rule).copy();
+                Term freshHead = ((CompoundTerm) freshClause).getArguments().get(0);
+                Term freshBody = ((CompoundTerm) freshClause).getArguments().get(1);
                 java.util.Map<String, it.denzosoft.jprolog.core.terms.Term> newBindings =
                     new java.util.HashMap<>(bindings);
-                if (term.resolveBindings(bindings).unify(freshHead, newBindings)) {
+                boolean matched = headPattern.unify(freshHead, newBindings)
+                    && (bodyPattern == null || bodyPattern.unify(freshBody, newBindings));
+                if (matched) {
                     rules.remove(i);
                     removeFromIndex(rule);
                     LOGGER.fine("Retracted clause with bindings: " + rule);
@@ -523,9 +542,49 @@ public class KnowledgeBase {
                 }
             }
             return results;
+            // END_CHANGE: ISS-2025-0251
         }
     }
     // END_CHANGE: ISS-2025-0164
+
+    // START_CHANGE: ISS-2025-0251 - Helpers for clause-form retract.
+    /**
+     * Build a single clause term (Head :- BodyGoal) from a Rule, where BodyGoal is
+     * 'true' for a fact, the single goal for a one-goal body, or a right-nested
+     * conjunction (G1, (G2, ...)) otherwise. Used so the head and body share renamed
+     * variables when the clause is copied.
+     */
+    private Term makeClauseTerm(Rule rule) {
+        java.util.List<Term> body = rule.getBody();
+        Term bodyGoal;
+        if (body.isEmpty()) {
+            bodyGoal = new Atom("true");
+        } else {
+            bodyGoal = body.get(body.size() - 1);
+            for (int j = body.size() - 2; j >= 0; j--) {
+                bodyGoal = new CompoundTerm(new Atom(","),
+                    java.util.Arrays.asList(body.get(j), bodyGoal));
+            }
+        }
+        return new CompoundTerm(new Atom(":-"), java.util.Arrays.asList(rule.getHead(), bodyGoal));
+    }
+
+    /**
+     * Split a retract/clause query term into [headPattern, bodyPattern]. For a
+     * clause term (Head :- Body) returns {Head, Body}; for a bare head returns
+     * {term, null}, where a null body pattern means "match the head only" (legacy
+     * behaviour, retracts facts and rules by head).
+     */
+    private Term[] splitClausePattern(Term term) {
+        if (term instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) term;
+            if (c.getName().equals(":-") && c.getArguments().size() == 2) {
+                return new Term[] { c.getArguments().get(0), c.getArguments().get(1) };
+            }
+        }
+        return new Term[] { term, null };
+    }
+    // END_CHANGE: ISS-2025-0251
 
     /**
      * Remove all clauses that match the given term.
@@ -598,7 +657,12 @@ public class KnowledgeBase {
      */
     // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
     public Set<String> getCurrentPredicates() {
-        return new HashSet<>(ruleIndex.keySet());
+        // START_CHANGE: ISS-2025-0280 - synchronize like the sibling mutators; iterating the
+        // ruleIndex keySet while another thread asserts/retracts can corrupt or throw.
+        synchronized (this) {
+            return new HashSet<>(ruleIndex.keySet());
+        }
+        // END_CHANGE: ISS-2025-0280
     }
     // END_CHANGE: ISS-2025-0075
 

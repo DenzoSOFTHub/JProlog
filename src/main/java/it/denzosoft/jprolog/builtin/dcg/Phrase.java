@@ -38,24 +38,39 @@ public class Phrase extends AbstractBuiltInWithContext {
     @Override
     public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         this.solver = solver;
-        
+
         // Extract arguments from query
-        if (query instanceof it.denzosoft.jprolog.core.terms.CompoundTerm) {
-            it.denzosoft.jprolog.core.terms.CompoundTerm compound = (it.denzosoft.jprolog.core.terms.CompoundTerm) query;
-            this.arguments = new Term[compound.getArguments().size()];
-            for (int i = 0; i < compound.getArguments().size(); i++) {
-                this.arguments[i] = compound.getArguments().get(i);
-            }
+        List<Term> qargs = (query instanceof CompoundTerm)
+            ? ((CompoundTerm) query).getArguments()
+            : java.util.Collections.<Term>emptyList();
+
+        Term ruleSet, list, rest;
+        if (qargs.size() == 2) {
+            ruleSet = qargs.get(0); list = qargs.get(1); rest = new Atom("[]");
+        } else if (qargs.size() == 3) {
+            ruleSet = qargs.get(0); list = qargs.get(1); rest = qargs.get(2);
         } else {
-            this.arguments = new Term[0];
+            return false;
         }
-        
-        boolean result = solve(solver, bindings);
-        if (result) {
-            // Add the successful binding to solutions
-            solutions.add(new HashMap<>(bindings));
+
+        // START_CHANGE: ISS-2025-0253 - phrase/2,3 must be MULTI-solution. Previously it
+        // committed to solutionList.get(0), so phrase behaved like once(phrase(...)) and could
+        // not enumerate alternative parses / Rest splittings on backtracking. Mirror call/N:
+        // solve the expanded DCG goal and propagate every solution to the caller.
+        Term goal;
+        try {
+            goal = createDCGGoal(ruleSet.resolveBindings(bindings), list, rest);
+        } catch (IllegalArgumentException e) {
+            return false;
         }
-        return result;
+        List<Map<String, Term>> goalSolutions = new ArrayList<>();
+        boolean success = solver.solve(goal, new HashMap<>(bindings), goalSolutions, CutStatus.notOccurred());
+        if (success) {
+            solutions.addAll(goalSolutions);
+            return true;
+        }
+        return false;
+        // END_CHANGE: ISS-2025-0253
     }
     
     @Override

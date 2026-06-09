@@ -25,13 +25,18 @@ public class Append extends ListPredicate {
         Term result = query.getArguments().get(2).resolveBindings(bindings);
         // END_CHANGE: ISS-2025-0070
 
-        if (list1.isGround() && list2.isGround()) {
+        // START_CHANGE: ISS-2025-0245 - Select mode by proper-list (closed spine) structure,
+        // not deep groundness. This makes the common mode append([a],[X],R) succeed with
+        // R=[a,X] instead of throwing; list elements may be unbound variables.
+        if (it.denzosoft.jprolog.core.util.ListUtils.isProperList(list1)
+                && it.denzosoft.jprolog.core.util.ListUtils.isProperList(list2)) {
             return handleConcatenate(list1, list2, result, bindings, solutions);
-        } else if (result.isGround()) {
+        } else if (it.denzosoft.jprolog.core.util.ListUtils.isProperList(result)) {
             return handleSplit(result, list1, list2, bindings, solutions);
         } else {
-            throw new PrologEvaluationException("append/3: unsupported mode. At least List1 and List2, or List1AndList2 must be ground.");
+            throw new PrologEvaluationException("append/3: unsupported mode. At least List1 and List2, or List1AndList2 must be proper lists.");
         }
+        // END_CHANGE: ISS-2025-0245
     }
 
     private boolean handleConcatenate(Term list1, Term list2, Term result, 

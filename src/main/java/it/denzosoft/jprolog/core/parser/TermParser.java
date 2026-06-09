@@ -77,7 +77,9 @@ public class TermParser {
 
     private char nextChar() {
         position++;
-        if (position < input.length() && input.charAt(position-1) == '\n') {
+        // START_CHANGE: ISS-2025-0285 - guard on (position-1) so a trailing newline (the final
+        // char) still advances the line counter; (position < length) skipped it at EOF.
+        if (position - 1 < input.length() && input.charAt(position - 1) == '\n') {
             line++;
             column = 1;
         } else {
@@ -712,10 +714,15 @@ public class TermParser {
         skipWhitespace();
         StringBuilder number = new StringBuilder();
 
+        // START_CHANGE: ISS-2025-0256 - track a leading minus so the radix/char-code literal
+        // branches below apply it (previously -0xFF parsed as 255, -0'a as 97, etc.).
+        boolean negative = false;
         if (currentChar() == '-') {
             number.append(currentChar());
             nextChar();
+            negative = true;
         }
+        // END_CHANGE: ISS-2025-0256
 
         // START_CHANGE: ISS-2025-0058 - Add hex, octal, binary literals and fix character codes
         if (currentChar() == '0' && position + 1 < input.length()) {
@@ -744,9 +751,13 @@ public class TermParser {
                     literalCode = input.codePointAt(position);
                     int charCount = Character.charCount(literalCode);
                     for (int i = 0; i < charCount; i++) nextChar();
-                    return new Number((long) literalCode);
+                    // START_CHANGE: ISS-2025-0256 - apply leading sign
+                    return new Number(negative ? -(long) literalCode : (long) literalCode);
+                    // END_CHANGE: ISS-2025-0256
                 }
-                return new Number((long) literalCode);
+                // START_CHANGE: ISS-2025-0256 - apply leading sign
+                return new Number(negative ? -(long) literalCode : (long) literalCode);
+                // END_CHANGE: ISS-2025-0256
                 // END_CHANGE: ISS-2025-0198
             }
 
@@ -763,7 +774,9 @@ public class TermParser {
                     throw new PrologParserException("Expected hex digits after 0x at line " + line + ", column " + column);
                 }
                 // START_CHANGE: ISS-2025-0193 - Use BigInteger for hex/octal/binary to preserve precision
-                return new Number(new java.math.BigInteger(hex.toString(), 16));
+                // ISS-2025-0256 - apply leading sign
+                java.math.BigInteger hexVal = new java.math.BigInteger(hex.toString(), 16);
+                return new Number(negative ? hexVal.negate() : hexVal);
                 // END_CHANGE: ISS-2025-0193
             }
 
@@ -780,7 +793,9 @@ public class TermParser {
                     throw new PrologParserException("Expected octal digits after 0o at line " + line + ", column " + column);
                 }
                 // START_CHANGE: ISS-2025-0193 - Use BigInteger for hex/octal/binary to preserve precision
-                return new Number(new java.math.BigInteger(oct.toString(), 8));
+                // ISS-2025-0256 - apply leading sign
+                java.math.BigInteger octVal = new java.math.BigInteger(oct.toString(), 8);
+                return new Number(negative ? octVal.negate() : octVal);
                 // END_CHANGE: ISS-2025-0193
             }
 
@@ -797,7 +812,9 @@ public class TermParser {
                     throw new PrologParserException("Expected binary digits after 0b at line " + line + ", column " + column);
                 }
                 // START_CHANGE: ISS-2025-0193 - Use BigInteger for hex/octal/binary to preserve precision
-                return new Number(new java.math.BigInteger(bin.toString(), 2));
+                // ISS-2025-0256 - apply leading sign
+                java.math.BigInteger binVal = new java.math.BigInteger(bin.toString(), 2);
+                return new Number(negative ? binVal.negate() : binVal);
                 // END_CHANGE: ISS-2025-0193
             }
         }

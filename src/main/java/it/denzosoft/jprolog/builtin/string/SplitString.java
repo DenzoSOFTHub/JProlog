@@ -63,43 +63,47 @@ public class SplitString implements BuiltIn {
      * Split string using separators and remove padding characters.
      */
     private List<String> splitString(String input, String separators, String padChars) {
-        List<String> result = new ArrayList<>();
-
-        if (input.isEmpty()) {
-            return result;
-        }
-
         // START_CHANGE: ISS-2025-0233 - codepoint-aware separators + pad
         Set<Integer> sepSet = new HashSet<>();
         separators.codePoints().forEach(sepSet::add);
         Set<Integer> padSet = new HashSet<>();
         padChars.codePoints().forEach(padSet::add);
+        // END_CHANGE: ISS-2025-0233
 
+        // START_CHANGE: ISS-2025-0267 - SWI semantics: empty substrings are KEPT (split_string(
+        // "a,,b", ",", "", X) -> ["a","","b"]) and the (possibly empty) final field is always
+        // emitted (split_string("", ",", "", X) -> [""]). Only when a separator char is ALSO a
+        // pad char do runs of separators collapse (empty fields dropped), per SWI.
+        boolean collapse = false;
+        for (int s : sepSet) {
+            if (padSet.contains(s)) { collapse = true; break; }
+        }
+
+        List<String> fields = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         int i = 0;
         while (i < input.length()) {
             int cp = input.codePointAt(i);
             if (sepSet.contains(cp)) {
-                String trimmed = trimPadding(current.toString(), padSet);
-                if (!trimmed.isEmpty()) {
-                    result.add(trimmed);
-                }
+                fields.add(trimPadding(current.toString(), padSet));
                 current.setLength(0);
             } else {
                 current.appendCodePoint(cp);
             }
             i += Character.charCount(cp);
         }
+        fields.add(trimPadding(current.toString(), padSet)); // always emit the final field
 
-        if (current.length() > 0) {
-            String trimmed = trimPadding(current.toString(), padSet);
-            if (!trimmed.isEmpty()) {
-                result.add(trimmed);
-            }
+        if (!collapse) {
+            return fields;
         }
-
+        List<String> result = new ArrayList<>();
+        for (String f : fields) {
+            if (!f.isEmpty()) result.add(f);
+        }
+        if (result.isEmpty()) result.add(""); // SWI: returns [""] when everything collapses
         return result;
-        // END_CHANGE: ISS-2025-0233
+        // END_CHANGE: ISS-2025-0267
     }
 
     /**

@@ -191,25 +191,29 @@ public class JdbcCallProcedure implements BuiltIn {
             throw new PrologEvaluationException("jdbc_call_get_resultset: No ResultSet available.");
         }
 
-        ResultSetMetaData meta = rs.getMetaData();
-        int colCount = meta.getColumnCount();
-
+        // START_CHANGE: ISS-2025-0265 - try-with-resources so the ResultSet is closed even if
+        // rs.next()/getObject throws mid-iteration (rs.close() was only reached on normal exit).
         List<Term> rowTerms = new ArrayList<>();
-        while (rs.next()) {
-            List<Term> colValues = new ArrayList<>(colCount);
-            for (int i = 1; i <= colCount; i++) {
-                Object val = rs.getObject(i);
-                if (val == null) {
-                    colValues.add(new Atom("null"));
-                } else if (val instanceof java.lang.Number) {
-                    colValues.add(new Number(((java.lang.Number) val).doubleValue()));
-                } else {
-                    colValues.add(new Atom(val.toString()));
+        try (ResultSet r = rs) {
+            ResultSetMetaData meta = r.getMetaData();
+            int colCount = meta.getColumnCount();
+
+            while (r.next()) {
+                List<Term> colValues = new ArrayList<>(colCount);
+                for (int i = 1; i <= colCount; i++) {
+                    Object val = r.getObject(i);
+                    if (val == null) {
+                        colValues.add(new Atom("null"));
+                    } else if (val instanceof java.lang.Number) {
+                        colValues.add(new Number(((java.lang.Number) val).doubleValue()));
+                    } else {
+                        colValues.add(new Atom(val.toString()));
+                    }
                 }
+                rowTerms.add(new CompoundTerm(new Atom("row"), colValues));
             }
-            rowTerms.add(new CompoundTerm(new Atom("row"), colValues));
         }
-        rs.close();
+        // END_CHANGE: ISS-2025-0265
 
         Term resultList = CollectionUtils.createListTerm(rowTerms);
         Map<String, Term> newBindings = new HashMap<>(bindings);

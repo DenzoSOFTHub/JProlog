@@ -126,9 +126,21 @@ public class Sort implements BuiltIn {
             return ((Variable) t1).getName().compareTo(((Variable) t2).getName());
         }
         if (t1 instanceof it.denzosoft.jprolog.core.terms.Number) {
-            double d1 = ((it.denzosoft.jprolog.core.terms.Number) t1).doubleValue();
-            double d2 = ((it.denzosoft.jprolog.core.terms.Number) t2).doubleValue();
-            return Double.compare(d1, d2);
+            // START_CHANGE: ISS-2025-0261 - ISO standard order: compare by value, and on a tie a
+            // float sorts before an integer (they are distinct terms, so sort/2 must NOT dedup
+            // 1 and 1.0). Integers compare exactly via BigInteger.
+            it.denzosoft.jprolog.core.terms.Number n1 = (it.denzosoft.jprolog.core.terms.Number) t1;
+            it.denzosoft.jprolog.core.terms.Number n2 = (it.denzosoft.jprolog.core.terms.Number) t2;
+            int c;
+            if (n1.isInteger() && n2.isInteger()) {
+                c = n1.bigIntegerValue().compareTo(n2.bigIntegerValue());
+            } else {
+                c = Double.compare(n1.doubleValue(), n2.doubleValue());
+            }
+            if (c != 0) return c;
+            if (n1.isInteger() == n2.isInteger()) return 0;
+            return n1.isInteger() ? 1 : -1; // float (smaller) before int
+            // END_CHANGE: ISS-2025-0261
         }
         if (t1 instanceof Atom) {
             return ((Atom) t1).getName().compareTo(((Atom) t2).getName());
