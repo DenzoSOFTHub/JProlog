@@ -65,11 +65,12 @@ public class Prolog {
     public static boolean isUsingV2Dcg() { return USE_V2_DCG; }
     // END_CHANGE: ISS-2025-0304
 
-    // START_CHANGE: ISS-2025-0311 - opt-in: route queries through the clean-room v2 resolution engine
-    // (MachineSolver: iterative SLD, mutable bindings + trail, lazy, no StackOverflow). Default OFF —
-    // it is still growing toward full builtin parity. Enable with -Djprolog.engine=v2.
+    // START_CHANGE: ISS-2025-0311 - route queries through the clean-room v2 resolution engine by default
+    // (MachineSolver: iterative SLD — no StackOverflow on deep recursion — mutable bindings + trail,
+    // lazy enumeration). Passes the full suite (675/675 + 20/20 examples). Fall back to the legacy
+    // recursive solver with -Djprolog.engine=legacy.
     private static volatile boolean USE_V2_ENGINE =
-        "v2".equalsIgnoreCase(System.getProperty("jprolog.engine", "legacy"));
+        !"legacy".equalsIgnoreCase(System.getProperty("jprolog.engine", "v2"));
     public static void setUseV2Engine(boolean v2) { USE_V2_ENGINE = v2; }
     public static boolean isUsingV2Engine() { return USE_V2_ENGINE; }
     // END_CHANGE: ISS-2025-0311
@@ -827,11 +828,21 @@ public class Prolog {
 
     // START_CHANGE: ISS-2025-0311 - run a query through the v2 MachineSolver over the live KB + registry
     private List<Map<String, Term>> solveWithV2Engine(Term query) {
-        it.denzosoft.jprolog.core.engine.v2.MachineSolver m =
-            new it.denzosoft.jprolog.core.engine.v2.MachineSolver(knowledgeBase, builtInRegistry, querySolver, moduleManager);
-        List<Map<String, Term>> out = new ArrayList<>();
-        m.solve(query, sol -> { out.add(sol); return true; });
-        return out;
+        // ISS-2025-0318: install the attribute-unify hook so the v2 engine fires freeze/when/dif
+        // goals when an attributed variable is bound; refresh the attributed-session vars afterwards
+        // so coroutines suspended in one query survive into the next.
+        Variable.AttributeUnifyHook prevHook = Variable.getAttributeUnifyHook();
+        Variable.setAttributeUnifyHook(querySolver::handleAttributeUnification);
+        try {
+            it.denzosoft.jprolog.core.engine.v2.MachineSolver m =
+                new it.denzosoft.jprolog.core.engine.v2.MachineSolver(knowledgeBase, builtInRegistry, querySolver, moduleManager, tableStore);
+            List<Map<String, Term>> out = new ArrayList<>();
+            m.solve(query, sol -> { out.add(sol); return true; });
+            refreshAttributedSessionVars(query, out);
+            return out;
+        } finally {
+            Variable.setAttributeUnifyHook(prevHook);
+        }
     }
     // END_CHANGE: ISS-2025-0311
 

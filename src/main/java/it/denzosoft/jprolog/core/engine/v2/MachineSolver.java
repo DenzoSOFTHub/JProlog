@@ -3,9 +3,11 @@ package it.denzosoft.jprolog.core.engine.v2;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.BuiltInRegistry;
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
+import it.denzosoft.jprolog.core.engine.CutStatus;
 import it.denzosoft.jprolog.core.engine.KnowledgeBase;
 import it.denzosoft.jprolog.core.engine.QuerySolver;
 import it.denzosoft.jprolog.core.engine.Rule;
+import it.denzosoft.jprolog.core.engine.TableStore;
 import it.denzosoft.jprolog.core.module.Module;
 import it.denzosoft.jprolog.core.module.ModuleManager;
 import it.denzosoft.jprolog.core.module.PredicateSignature;
@@ -49,6 +51,7 @@ public final class MachineSolver {
     private final BuiltInRegistry registry;    // nullable: when set, non-native goals delegate here
     private final QuerySolver contextSolver;   // nullable: solver handed to BuiltInWithContext builtins
     private final ModuleManager modules;       // nullable: when set, clause lookup is module-aware
+    private final TableStore tableStore;       // nullable: when set, tabled predicates delegate to the legacy solver
     private int renameCounter = 0;
 
     public MachineSolver(List<Rule> rules) { this(rules, null); }
@@ -59,15 +62,18 @@ public final class MachineSolver {
         this.liveKb = null;
         this.contextSolver = null;
         this.modules = null;
+        this.tableStore = null;
     }
 
     /** Engine-integrated mode: read clauses from and assert/retract to the live {@link KnowledgeBase}
      *  (module-aware via {@code modules}); delegate {@link BuiltInWithContext} built-ins to {@code contextSolver}. */
-    public MachineSolver(KnowledgeBase liveKb, BuiltInRegistry registry, QuerySolver contextSolver, ModuleManager modules) {
+    public MachineSolver(KnowledgeBase liveKb, BuiltInRegistry registry, QuerySolver contextSolver,
+                         ModuleManager modules, TableStore tableStore) {
         this.liveKb = liveKb;
         this.registry = registry;
         this.contextSolver = contextSolver;
         this.modules = modules;
+        this.tableStore = tableStore;
     }
 
     private List<Rule> clausesFor(Term lookup) {
@@ -158,16 +164,30 @@ public final class MachineSolver {
         return false;
     }
 
+    /** Coroutining wake-up under v2 (ISS-2025-0318): when an attributed variable {@code v} is bound to
+     *  {@code value}, invoke the engine's attribute-unify hook (set by {@code Prolog.solveWithV2Engine})
+     *  so freeze/when/dif goals fire (or re-suspend). Returns false if the hook fails the unification. */
+    private boolean wakeAttrs(Variable v, Term value) {
+        if (!v.hasAttributes()) return true;
+        Variable.AttributeUnifyHook hook = Variable.getAttributeUnifyHook();
+        if (hook == null) return true;
+        return hook.onAttributeUnify(v, value, binding);
+    }
+
     private boolean unify(Term a, Term b) {
         a = deref(a); b = deref(b);
         if (a instanceof Variable) {
             if (b instanceof Variable && ((Variable) a).getName().equals(((Variable) b).getName())) return true;
             if (Variable.isOccursCheckEnabled() && occurs(((Variable) a).getName(), b)) return false;
-            bind(((Variable) a).getName(), b); return true;
+            bind(((Variable) a).getName(), b);
+            if (!(b instanceof Variable) && ((Variable) a).hasAttributes()) return wakeAttrs((Variable) a, b);
+            return true;
         }
         if (b instanceof Variable) {
             if (Variable.isOccursCheckEnabled() && occurs(((Variable) b).getName(), a)) return false;
-            bind(((Variable) b).getName(), a); return true;
+            bind(((Variable) b).getName(), a);
+            if (((Variable) b).hasAttributes()) return wakeAttrs((Variable) b, a);
+            return true;
         }
         if (a instanceof Atom && b instanceof Atom) return ((Atom) a).getName().equals(((Atom) b).getName());
         if (a instanceof Number && b instanceof Number) return a.equals(b);
@@ -466,7 +486,9 @@ public final class MachineSolver {
         if (registry == null || !registry.isBuiltIn(functor, arity)) return -1;
         BuiltIn b = registry.getBuiltIn(functor);
         if (b == null) return -1;
-        Term resolved = resolve(goal);
+        // Pass the goal UNRESOLVED (with the bindings map) rather than a deep copy: built-ins resolve
+        // their own arguments via resolveBindings, which preserves shared term objects — so destructive
+        // built-ins (setarg/3, nb_setarg) mutate the actual bound term, not a copy (ISS-2025-0317).
         Map<String, Term> inMap = new HashMap<>(binding);
         List<Map<String, Term>> sols = new ArrayList<>();
         boolean ok;
@@ -474,9 +496,9 @@ public final class MachineSolver {
             // BuiltInWithContext builtins (findall-adapter, setup_call_cleanup, predsort, format, ...)
             // need a solver to run their sub-goals; hand them the engine's solver (ISS-2025-0312).
             if (b instanceof BuiltInWithContext && contextSolver != null) {
-                ok = ((BuiltInWithContext) b).executeWithContext(contextSolver, resolved, inMap, sols);
+                ok = ((BuiltInWithContext) b).executeWithContext(contextSolver, goal, inMap, sols);
             } else {
-                ok = b.execute(resolved, inMap, sols);
+                ok = b.execute(goal, inMap, sols);
             }
         } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
             throw pe;    // ISS-2025-0309: a real ISO error must reach catch/3, not be swallowed
@@ -639,6 +661,12 @@ public final class MachineSolver {
      *  be a {@code Module:Goal} term); {@code unifyGoal} is the (unqualified) goal each clause head
      *  unifies with. For ordinary calls the two are identical. */
     private boolean callUser(Term unifyGoal, Term lookup) {
+        // ISS-2025-0319: tabled predicates (:- table p/n) need SLG resolution (memoization + loop
+        // detection). Delegate the whole call to the legacy solver, which implements tabling, and
+        // surface its solutions as a choice point — the v2 iterative SLD has no tabling.
+        if (tableStore != null && contextSolver != null && isTabled(deref(unifyGoal))) {
+            return tabledDelegate(deref(unifyGoal));
+        }
         // ISS-2025-0315: feed the profiler (zero overhead when disabled), like the legacy QuerySolver
         if (it.denzosoft.jprolog.core.engine.Profiler.isEnabled()) {
             Term gg = deref(unifyGoal);
@@ -659,6 +687,36 @@ public final class MachineSolver {
                 if (!unify(r.getHead(), g)) return FAILED;
                 return pushBody(r.getBody(), barrier, cont);
             });
+        }
+        CP cp = new CP(alts, mark());
+        cps.add(cp);
+        if (advance(cp)) return true;
+        cps.remove(cps.size() - 1);
+        return false;
+    }
+
+    private boolean isTabled(Term goal) {
+        if (goal instanceof Atom) return tableStore.isTabled(((Atom) goal).getName(), 0);
+        if (goal instanceof CompoundTerm) return tableStore.isTabled(((CompoundTerm) goal).getName(), ((CompoundTerm) goal).getArguments().size());
+        return false;
+    }
+
+    /** Run a tabled call through the legacy solver (SLG) and expose its solutions as a choice point.
+     *  Uses the top-level {@code solve(Term)}, which establishes the tabling context (loop detection +
+     *  memoization) the recursive solve does not. */
+    private boolean tabledDelegate(Term goal) {
+        List<Map<String, Term>> sols;
+        try {
+            sols = contextSolver.solve(resolve(goal));   // ground the known args; sets up tabling
+        } catch (RuntimeException e) {
+            return false;
+        }
+        if (sols.isEmpty()) return false;
+        final Goal cont = goalStack;
+        List<Alt> alts = new ArrayList<>(sols.size());
+        for (Map<String, Term> sol : sols) {
+            final Map<String, Term> fsol = sol;
+            alts.add(() -> { applySolution(fsol); return cont; });
         }
         CP cp = new CP(alts, mark());
         cps.add(cp);

@@ -62,7 +62,7 @@ v3.0.0 ships clean-room rewrites of several subsystems, selectable via system pr
 | DCG | `core.dcg.v2.DCGTranslator` | **v2** | `-Djprolog.dcg=legacy` |
 | Term writer | `core.write.v2.TermWriter` | standalone | — |
 | Arithmetic | `core.arith.v2.ArithEvaluator` | standalone | — |
-| Resolution engine | `core.engine.v2.MachineSolver` | legacy | `-Djprolog.engine=v2` (opt-in) |
+| Resolution engine | `core.engine.v2.MachineSolver` | **v2** (since 3.1.0) | `-Djprolog.engine=legacy` |
 
 Also new in v3.0.0: `div`/`rdiv` operators (400 yfx) in `core.operator.OperatorTable`; `setup_call_cleanup/3` and `call_cleanup/2` (`builtin.meta.SetupCallCleanup`). Baseline: 675/675 JUnit, 20/20 example programs; the default v2 parser parses 123/130 examples (legacy: 117); the opt-in v2 engine passes ~664/670.
 

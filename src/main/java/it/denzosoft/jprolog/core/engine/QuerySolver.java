@@ -1049,7 +1049,8 @@ public class QuerySolver {
      * @param substitution the current substitution map
      * @return true if all hooks succeed, false if any hook fails (which fails unification)
      */
-    private boolean handleAttributeUnification(Variable variable, Term value,
+    // Package-private so the v2 engine (core.engine) can install it as the attribute-unify hook.
+    boolean handleAttributeUnification(Variable variable, Term value,
                                                 java.util.Map<String, Term> substitution) {
         // Copy the attribute map since handlers may modify it
         java.util.Map<String, Term> attrs = new HashMap<>(variable.getAttributes());

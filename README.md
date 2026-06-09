@@ -2,17 +2,17 @@
 
 **A Full-Featured Prolog System with Engine, IDE, CLI, and Comprehensive Built-ins**
 
-[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://github.com/DenzoSOFTHub/JProlog/releases/tag/v3.0.0) [![Java](https://img.shields.io/badge/java-1.8%2B-orange.svg)]() [![ISO](https://img.shields.io/badge/ISO%2013211--1-100%25%20core-green.svg)]()
+[![Version](https://img.shields.io/badge/version-3.1.0-blue.svg)](https://github.com/DenzoSOFTHub/JProlog/releases/tag/v3.1.0) [![Java](https://img.shields.io/badge/java-1.8%2B-orange.svg)]() [![ISO](https://img.shields.io/badge/ISO%2013211--1-100%25%20core-green.svg)]()
 
-**Current version**: `3.0.0` — see [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/DenzoSOFTHub/JProlog/releases).
+**Current version**: `3.1.0` — see [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/DenzoSOFTHub/JProlog/releases).
 
-### 🆕 New in 3.0.0
+### 🆕 New in 3.0.0 – 3.1.0
 
-- **Clean-room rewrites, now default**: the parser (`core.parser.v2`), CLP(FD) solver (`builtin.clpfd.v2`), and DCG translator (`core.dcg.v2`) are new from-scratch implementations and are the defaults. Each legacy path remains available via a system property (see *Engine/Parser Toggles* below).
+- **Clean-room rewrites, now default**: the parser (`core.parser.v2`), CLP(FD) solver (`builtin.clpfd.v2`), DCG translator (`core.dcg.v2`) and — as of **3.1.0** — the **resolution engine** (`core.engine.v2.MachineSolver`) are new from-scratch implementations and are the defaults. Each legacy path remains available via a system property (see *Engine/Parser Toggles* below).
 - **Sound CLP(FD)**: interval-domain solver (no `OutOfMemoryError` on wide domains), per-query trail-backtracked store, sound first-fail labeling, real `#\=` propagation; constraints `Cmp`/`Sum`/`Mul`/`Abs`/`AllDifferent`/`Linear`/`Reified`/`Mod`.
 - **Complete DCG**: single-pass ISO translator covering head push-back, `|`, `\+`, `call//N`, `{}`, `!`, `->` (resolves the former ~85% DCG limitation).
 - **New standalone modules**: operator-aware term writer (`core.write.v2`) and a single-path arithmetic evaluator (`core.arith.v2`, BigInteger/double, ISO error terms).
-- **Opt-in v2 resolution engine** (`core.engine.v2.MachineSolver`, `-Djprolog.engine=v2`): iterative SLD — deep recursion with **no `StackOverflowError`** — reusing the existing built-ins via a bridge.
+- **Clean-room v2 resolution engine, now default** (`core.engine.v2.MachineSolver`): iterative SLD — deep recursion with **no `StackOverflowError`** — mutable bindings + trail, lazy enumeration, coroutining (`freeze`/`when`/`dif`), tabling, `setarg/3`. Passes the full suite (675/675 + 20/20 examples). Fall back to the legacy recursive solver with `-Djprolog.engine=legacy`.
 - **New built-ins/operators**: `setup_call_cleanup/3`, `call_cleanup/2`; `div`, `rdiv` (400 yfx) operators.
 - **~50 ISO/correctness fixes** and two adversarial multi-agent code reviews. **675/675 JUnit tests, 20/20 example programs.**
 
@@ -401,7 +401,7 @@ v3.0.0 makes the clean-room rewrites the default. Revert to a legacy implementat
 -Djprolog.parser=legacy   # legacy parser instead of core.parser.v2 (default: v2)
 -Djprolog.dcg=legacy      # legacy DCG transformer instead of core.dcg.v2 (default: v2)
 -Djprolog.clpfd=legacy    # legacy CLP(FD) store instead of builtin.clpfd.v2 (default: v2)
--Djprolog.engine=v2       # opt-in iterative v2 resolution engine (default: legacy)
+-Djprolog.engine=legacy   # legacy recursive solver instead of core.engine.v2 (default: v2)
 ```
 
 (Programmatic equivalents: `Prolog.setUseV2Parser(false)`, `setUseV2Dcg(false)`, `setUseV2Clpfd(false)`, `setUseV2Engine(true)`.)

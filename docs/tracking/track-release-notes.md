@@ -1,5 +1,30 @@
 # JProlog - Release Notes
 
+## Release 3.1.0 - 2026-06-09
+
+### Clean-room v2 resolution engine is now the DEFAULT
+
+`core.engine.v2.MachineSolver` is now the default query-resolution engine (iterative SLD — no
+`StackOverflowError` on deep recursion — mutable bindings + trail, lazy enumeration). The last
+engine gaps were closed (ISS-2025-0313..0319), bringing it to **full parity: 675/675 JUnit tests +
+20/20 example programs**:
+
+- ISS-0313 cyclic-term-safe resolve (`representation_error(cyclic_term)` not StackOverflow)
+- ISS-0314 module integration with **export enforcement** for `Module:Goal`
+- ISS-0315 profiler hook · ISS-0316 backtrackable globals (`b_setval` via legacy `Trail` rollback)
+- ISS-0317 destructive `setarg/3` (built-ins receive shared term objects)
+- ISS-0318 coroutining (`freeze`/`when`/`dif` via the attribute-unify hook; cross-query persistence)
+- ISS-0319 tabling (`:- table` delegated to the legacy SLG solver)
+
+Fall back to the legacy recursive solver with `-Djprolog.engine=legacy` (also 675/675).
+
+### Repository Information
+- **Tag**: v3.1.0
+- **Release Date**: 2026-06-09
+- **Compatibility**: Java 8+, Maven 3.6+
+
+---
+
 ## Release 3.0.0 - 2026-06-08
 
 ### Clean-room rewrites (the headline of v3.0.0)

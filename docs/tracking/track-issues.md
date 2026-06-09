@@ -4528,15 +4528,18 @@ flat KB.
 - **ISS-0316 backtrackable globals** — each choice point snapshots the legacy `Trail` mark and rolls it
   back on backtrack, so `b_setval`/`op/3`/`setarg`-style undo actions are honored under v2.
 
-**Remaining v2-engine gaps — fundamental advanced-feature subsystems (the engine stays OPT-IN):**
-- **Coroutining / attributed variables** (`freeze/2`, `when/2`, `dif/2`) — the v2 `unify` has no
-  attributed-variable hooks, so frozen goals do not fire.
-- **Tabling / SLG resolution** (`:- table`) — not implemented; tabled left-recursion loops (OOM).
-- **Destructive `setarg/3`** — incompatible with the v2 copy/rename term model (terms are not shared).
+**ALL remaining v2-engine gaps resolved (ISS-2025-0317..0319) — v2 is now the DEFAULT engine (v3.1.0):**
+- **ISS-0317 destructive `setarg/3`** — the bridge passes the goal UNRESOLVED with the bindings map, so
+  built-ins resolve via `resolveBindings` (preserving shared term objects) and mutate the actual bound
+  term, not a copy.
+- **ISS-0318 coroutining** (`freeze`/`when`/`dif`) — binding an attributed variable invokes the
+  attribute-unify hook (installed by `solveWithV2Engine` from the legacy `QuerySolver`), firing/​re-suspending
+  the delayed goals; attributed-session variables persist across queries via `refreshAttributedSessionVars`.
+- **ISS-0319 tabling** (`:- table`) — tabled predicates delegate to the legacy SLG solver (loop detection +
+  memoization), surfacing solutions as a choice point.
 
-These need major engine subsystems and are out of scope for the prototype. **The shipped legacy
-default remains 100% green (675/675);** the v2 engine (`-Djprolog.engine=v2`) now handles the bulk of
-the suite but not the three subsystems above.
+**The v2 resolution engine now passes the FULL suite (675/675 JUnit + 20/20 examples) and is the default.**
+The legacy recursive solver remains available (`-Djprolog.engine=legacy`) and also passes 675/675.
 
 ---
 

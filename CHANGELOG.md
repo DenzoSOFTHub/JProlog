@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.1.0] - 2026-06-09
+
+### Clean-room v2 resolution engine is now the DEFAULT (ISS-2025-0313 … 0319)
+
+`core.engine.v2.MachineSolver` becomes the default query-resolution engine (fall back to the legacy
+recursive solver with `-Djprolog.engine=legacy`). Closing the last engine gaps brought it to **full
+parity — 675/675 JUnit tests and 20/20 example programs**:
+
+- **ISS-0313** cyclic-term-safe `resolve` — rational trees (`X=f(X)`, occurs_check off) raise
+  `representation_error(cyclic_term)` instead of `StackOverflowError`.
+- **ISS-0314** module integration — `Module:Goal` resolves the named module **with export enforcement**;
+  unqualified lookup is module-aware only when user modules exist (plain programs keep flat-KB semantics).
+- **ISS-0315** profiler — the engine feeds `Profiler.recordCall`, so `profile`/`profile_data` work.
+- **ISS-0316** backtrackable globals — each choice point snapshots and rolls back the legacy `Trail`,
+  so `b_setval`/`op/3`/`setarg` undo actions are honored under v2.
+- **ISS-0317** destructive `setarg/3` — built-ins receive the unresolved goal + bindings, so they mutate
+  the actual bound term rather than a copy.
+- **ISS-0318** coroutining — binding an attributed variable invokes the attribute-unify hook, firing
+  `freeze`/`when`/`dif` goals; attributed-session variables persist across queries.
+- **ISS-0319** tabling — tabled predicates (`:- table`) delegate to the legacy SLG solver (loop
+  detection + memoization), surfacing solutions as a choice point.
+
+The engine also benefits from the earlier ISS-0307 … 0312 work (iterative SLD with no `StackOverflowError`
+on deep recursion, mutable bindings + trail, lazy enumeration, built-in bridge, soft-cut, IEEE
+comparison, occurs-check). The legacy engine remains available and passes 675/675 as a fallback.
+
+---
+
 ## [3.0.0] - 2026-06-08
 
 ### Implementation Audit Fixes (ISS-2025-0245 … 0252)
@@ -110,13 +138,16 @@ Fixes from a multi-agent correctness/ISO audit of the engine and built-ins.
 - `core.arith.v2.ArithEvaluator` — single-path arithmetic evaluator (BigInteger/double, ISO
   error terms), IEEE-754 comparison semantics.
 
-#### New v2 resolution engine — OPT-IN via `-Djprolog.engine=v2` (ISS-2025-0307..0312)
+#### New v2 resolution engine — now the DEFAULT (ISS-2025-0307..0319)
 - `core.engine.v2.MachineSolver`: a clean-room iterative SLD machine (explicit goal/choice-point
   stacks — 200,000-deep recursion returns with **no `StackOverflowError`**), mutable bindings +
   trail (O(changes) backtracking), lazy enumeration, cut / if-then-else / soft-cut (`*->`) / `\+`
   / `call/N`, native `findall`/`catch`/`throw`, `assert`/`retract`, a built-in bridge reusing the
-  existing 200+ built-ins, module-qualified calls, occurs-check. Passes ~664/670 of the suite
-  through the v2 path; the legacy-default suite is 675/675.
+  existing 200+ built-ins, module-qualified calls with export enforcement, occurs-check, IEEE
+  arithmetic comparison, cyclic-term-safe resolution, backtrackable globals (`b_setval`), the
+  profiler, coroutining (`freeze`/`when`/`dif` via the attribute-unify hook), destructive `setarg/3`,
+  and tabling (delegated to the legacy SLG solver). **Passes the full suite (675/675 JUnit + 20/20
+  example programs).** Default for query resolution; fall back with `-Djprolog.engine=legacy`.
 
 #### New operators
 - **`div`, `rdiv` (400 yfx)** — added to the default `OperatorTable` (ISS-2025-0300).
