@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.3.0] - 2026-06-09
+
+### Call tracing & full debugging on the v2 engine
+
+- **`trace/0` / `notrace/0` now actually trace** (ISS-2025-0329): the default v2 engine emits a
+  four-port trace (Call / Exit / Fail / Redo, depth-indented) to the shared output, so it shows up in
+  **both** the CLI and the IDE Run console. CLI gains a `:trace [on|off]` command; the IDE Run panel
+  gains a **Trace** toggle. Output built-ins now write through a thread-local stream (no global
+  `System.setOut`).
+- **The IDE debugger runs on the default v2 engine** (ISS-2025-0331): `core.engine.v2.MachineSolver`
+  fires the four-port `DebugController` events (it picks up the debugger from the shared `QuerySolver`),
+  so breakpoints / stepping / Stop work on the same engine as normal execution. Zero overhead when not
+  debugging.
+- **Built-ins are debuggable** (ISS-2025-0332): while debugging, the engine routes `=`, `is`,
+  comparisons, type-checks and the 200+ registry built-ins through the instrumented bridge, so they
+  fire Call/Exit/Fail/Redo and can be stepped/paused.
+- **Conditional & hit-count breakpoints** (ISS-2025-0333): a breakpoint can carry a Prolog **condition
+  goal** (pauses only when it succeeds) and an **ignore count** (skip the first N hits). The IDE
+  Add-Breakpoint dialog exposes both; conditions are evaluated by a clean, detached sub-solve.
+- **Legacy debugger fix** (ISS-2025-0330): the last-call-optimisation trampoline bypassed the debug
+  ports, so the final (often recursive) body goal was never traced — disabled while debugging.
+- **Repository fix** (ISS-2025-0334): the `.gitignore` patterns `Debug*.java` / `Test*.java` / `*.sh`
+  were unanchored and had been **excluding core source files** (`DebugController`, `DebugEvent`,
+  `DebugStackEntry`, `Debugging`) from the published repository. Anchored to the project root and the
+  missing sources committed.
+
+Baseline: **690/690 JUnit tests, 20/20 example programs.**
+
+---
+
 ## [3.2.0] - 2026-06-09
 
 ### Major IDE upgrade — editor, execution, compilation & debugging

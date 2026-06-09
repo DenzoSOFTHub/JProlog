@@ -4,6 +4,8 @@ import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.BuiltInRegistry;
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.CutStatus;
+import it.denzosoft.jprolog.core.engine.DebugController;
+import it.denzosoft.jprolog.core.engine.DebugEvent;
 import it.denzosoft.jprolog.core.engine.KnowledgeBase;
 import it.denzosoft.jprolog.core.engine.QuerySolver;
 import it.denzosoft.jprolog.core.engine.Rule;
@@ -52,6 +54,7 @@ public final class MachineSolver {
     private final QuerySolver contextSolver;   // nullable: solver handed to BuiltInWithContext builtins
     private final ModuleManager modules;       // nullable: when set, clause lookup is module-aware
     private final TableStore tableStore;       // nullable: when set, tabled predicates delegate to the legacy solver
+    private DebugController debugController;    // ISS-2025-0331: nullable; when set, fire four-port debug events
     private int renameCounter = 0;
 
     public MachineSolver(List<Rule> rules) { this(rules, null); }
@@ -220,6 +223,8 @@ public final class MachineSolver {
         final int legacyMark;   // ISS-2025-0316: snapshot of the legacy backtrackable Trail (b_setval, op/3, setarg)
         // catch-frame payload (isCatch == true => no alternatives; used by throw/1 unwinding)
         final boolean isCatch; final Term catcher, recovery; final Goal cont; final int cutBarrier;
+        Term traceGoal = null; int traceDepth = 0;   // ISS-2025-0329: 4-port trace (Redo/Fail) for this goal
+        boolean traceDebug = false;                   // ISS-2025-0331: also notify the DebugController
         CP(List<Alt> alts, int trailMark) {
             this.alts = alts; this.trailMark = trailMark;
             this.legacyMark = it.denzosoft.jprolog.core.engine.Trail.mark();
@@ -240,6 +245,9 @@ public final class MachineSolver {
     /** Solve {@code query}, streaming each solution; the sink returns false to stop. */
     public void solve(Term query, SolutionSink sink) {
         binding.clear(); trail.clear(); cps.clear();
+        // ISS-2025-0331: pick up the IDE debugger (set on the shared QuerySolver) so the v2 engine
+        // fires four-port CALL/EXIT/FAIL/REDO events and honours breakpoints/stepping.
+        debugController = (contextSolver != null) ? contextSolver.getDebugController() : null;
         List<String> queryVars = new ArrayList<>();
         collectVars(query, queryVars);
         goalStack = new Goal(query, 0, null);
@@ -302,10 +310,10 @@ public final class MachineSolver {
                     ite(a.get(0), a.get(1), new Atom("fail"), g.cutBarrier);
                     continue;
                 }
-                if ("=".equals(f) && a.size() == 2) {
+                if ("=".equals(f) && a.size() == 2 && debugController == null) {
                     if (!unify(a.get(0), a.get(1))) { if (!backtrack(floor)) return; }
                     continue;
-                }
+                }   // when debugging, =/2 is routed through the bridge so it is traced (ISS-2025-0332)
                 if (("\\+".equals(f) || "not".equals(f)) && a.size() == 1) {     // negation as failure
                     ite(a.get(0), new Atom("fail"), new Atom("true"), g.cutBarrier);
                     continue;
@@ -346,9 +354,11 @@ public final class MachineSolver {
                     if (!retractClause(a.get(0))) { if (!backtrack(floor)) return; }
                     continue;
                 }
-                int r = solveBuiltin(t, f, a);
-                if (r == 1) continue;
-                if (r == 0) { if (!backtrack(floor)) return; continue; }
+                if (debugController == null) {                    // fast-path native builtins (skipped
+                    int r = solveBuiltin(t, f, a);               // while debugging so they trace via the bridge)
+                    if (r == 1) continue;
+                    if (r == 0) { if (!backtrack(floor)) return; continue; }
+                }
                 int rb = bridgeBuiltin(t, f, a.size());
                 if (rb == 1) continue;
                 if (rb == 0) { if (!backtrack(floor)) return; continue; }
@@ -489,6 +499,11 @@ public final class MachineSolver {
         if (registry == null || !registry.isBuiltIn(functor, arity)) return -1;
         BuiltIn b = registry.getBuiltIn(functor);
         if (b == null) return -1;
+        // ISS-2025-0332: trace/debug builtins too. CALL before executing; EXIT (via a continuation
+        // marker, for correct Redo/Exit ordering) per solution; FAIL when it yields nothing; the choice
+        // point carries the goal so backtrack emits Redo/Fail for nondeterministic builtins.
+        final int dd = debugTraceActive() ? cps.size() : -1;
+        if (dd >= 0) portCall(goal, dd);
         // Pass the goal UNRESOLVED (with the bindings map) rather than a deep copy: built-ins resolve
         // their own arguments via resolveBindings, which preserves shared term objects — so destructive
         // built-ins (setarg/3, nb_setarg) mutate the actual bound term, not a copy (ISS-2025-0317).
@@ -508,17 +523,24 @@ public final class MachineSolver {
         } catch (RuntimeException e) {
             return -1;   // needs solver context / not bridgeable yet -> let the caller try user clauses
         }
-        if (!ok || sols.isEmpty()) return 0;
+        if (!ok || sols.isEmpty()) { if (dd >= 0) portFail(goal, dd); return 0; }
         final Goal cont = goalStack;
+        final int fdd = dd;
         List<Alt> alts = new ArrayList<>(sols.size());
         for (Map<String, Term> sol : sols) {
             final Map<String, Term> fsol = sol;
-            alts.add(() -> { applySolution(fsol); return cont; });
+            alts.add(() -> {
+                applySolution(fsol);
+                // EXIT fires when the continuation runs (after any backtrack Redo) -> correct ordering.
+                return (fdd >= 0) ? new Goal(() -> portExit(goal, fdd), cont) : cont;
+            });
         }
         CP cp = new CP(alts, mark());
+        if (dd >= 0) { cp.traceGoal = goal; cp.traceDepth = dd; cp.traceDebug = (debugController != null); }
         cps.add(cp);
         if (advance(cp)) return 1;
         cps.remove(cps.size() - 1);
+        if (dd >= 0) portFail(goal, dd);
         return 0;
     }
 
@@ -677,25 +699,79 @@ public final class MachineSolver {
             else if (gg instanceof CompoundTerm) it.denzosoft.jprolog.core.engine.Profiler.recordCall(
                 ((CompoundTerm) gg).getName(), ((CompoundTerm) gg).getArguments().size());
         }
+        // ISS-2025-0329: four-port call tracing (trace/0 .. notrace/0). Emitted to the shared output so
+        // it appears on the CLI stdout AND in the IDE Run console. User predicates only.
+        final boolean tracing = it.denzosoft.jprolog.builtin.debug.Trace.isTracingEnabled();
+        final boolean debugging = debugController != null;
+        final int tdepth = cps.size();
+        if (tracing) tracePort("Call", unifyGoal, tdepth);
+        if (debugging) debugPort(DebugEvent.Port.CALL, unifyGoal, tdepth);
         List<Rule> rules = clausesFor(lookup);
-        if (rules == null || rules.isEmpty()) return false;
+        if (rules == null || rules.isEmpty()) {
+            if (tracing) tracePort("Fail", unifyGoal, tdepth);
+            if (debugging) debugPort(DebugEvent.Port.FAIL, unifyGoal, tdepth);
+            return false;
+        }
         final Goal cont = goalStack;
         final int barrier = cps.size();                               // this CP's index = cut target for the body
         final Term g = unifyGoal;
+        final boolean ftrace = tracing, fdebug = debugging;
         List<Alt> alts = new ArrayList<>(rules.size());
         for (Rule rule : rules) {
             final Rule fr = rule;
             alts.add(() -> {
                 Rule r = renameRule(fr);
                 if (!unify(r.getHead(), g)) return FAILED;
-                return pushBody(r.getBody(), barrier, cont);
+                Goal after = cont;
+                if (ftrace || fdebug) {
+                    after = new Goal(() -> {
+                        if (ftrace) tracePort("Exit", g, tdepth);
+                        if (fdebug) debugPort(DebugEvent.Port.EXIT, g, tdepth);
+                    }, cont);
+                }
+                return pushBody(r.getBody(), barrier, after);
             });
         }
         CP cp = new CP(alts, mark());
+        if (tracing || debugging) {                                   // for Redo/Fail on backtracking
+            cp.traceGoal = g; cp.traceDepth = tdepth; cp.traceDebug = debugging;
+        }
         cps.add(cp);
         if (advance(cp)) return true;
         cps.remove(cps.size() - 1);
+        if (tracing) tracePort("Fail", g, tdepth);
+        if (debugging) debugPort(DebugEvent.Port.FAIL, g, tdepth);
         return false;
+    }
+
+    /** Fire a four-port event to the IDE debugger (ISS-2025-0331). {@code notifyPort} handles call-stack
+     *  bookkeeping, breakpoint/step decisions and the two-thread pause; a {@code DebugStopException}
+     *  (Stop pressed) propagates out of the drive loop to abort. Variables are snapshotted at this point. */
+    private void debugPort(DebugEvent.Port port, Term goal, int depth) {
+        if (debugController == null) return;
+        Term g;
+        try { g = resolve(goal); } catch (RuntimeException e) { g = goal; }
+        debugController.notifyPort(port, g, new HashMap<>(binding), depth);
+    }
+
+    /** True when either the trace flag or the IDE debugger wants four-port notifications. */
+    private boolean debugTraceActive() {
+        return debugController != null || it.denzosoft.jprolog.builtin.debug.Trace.isTracingEnabled();
+    }
+    // Combined trace+debug port emitters (each underlying call self-guards). (ISS-2025-0332)
+    private void portCall(Term g, int d) { tracePort("Call", g, d); debugPort(DebugEvent.Port.CALL, g, d); }
+    private void portExit(Term g, int d) { tracePort("Exit", g, d); debugPort(DebugEvent.Port.EXIT, g, d); }
+    private void portFail(Term g, int d) { tracePort("Fail", g, d); debugPort(DebugEvent.Port.FAIL, g, d); }
+
+    /** Emit one four-port trace line to the shared output stream (when trace/0 is active). */
+    private void tracePort(String port, Term goal, int depth) {
+        if (!it.denzosoft.jprolog.builtin.debug.Trace.isTracingEnabled()) return;
+        try {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < depth; i++) sb.append("  ");
+            String g = it.denzosoft.jprolog.core.util.TermFormatter.format(resolve(goal), false, false, false, 1200);
+            it.denzosoft.jprolog.builtin.io.StreamManager.out().println(sb + port + ": (" + depth + ") " + g);
+        } catch (RuntimeException ignored) { /* tracing must never break resolution */ }
     }
 
     private boolean isTabled(Term goal) {
@@ -743,7 +819,18 @@ public final class MachineSolver {
         while (cps.size() > floor) {
             CP cp = cps.get(cps.size() - 1);
             if (cp.isCatch) { cps.remove(cps.size() - 1); continue; }  // a catch frame has no alternatives
-            if (advance(cp)) return true;
+            if (advance(cp)) {
+                // re-entering a traced goal to try another clause -> Redo (ISS-2025-0329/0331)
+                if (cp.traceGoal != null) {
+                    tracePort("Redo", cp.traceGoal, cp.traceDepth);
+                    if (cp.traceDebug) debugPort(DebugEvent.Port.REDO, cp.traceGoal, cp.traceDepth);
+                }
+                return true;
+            }
+            if (cp.traceGoal != null) {                                // alternatives exhausted -> Fail
+                tracePort("Fail", cp.traceGoal, cp.traceDepth);
+                if (cp.traceDebug) debugPort(DebugEvent.Port.FAIL, cp.traceGoal, cp.traceDepth);
+            }
             cps.remove(cps.size() - 1);
         }
         return false;

@@ -28,7 +28,7 @@ public class NoTrace implements BuiltIn {
         }
         
         Trace.setTracingEnabled(false);
-        System.out.println("% Tracing disabled");
+        it.denzosoft.jprolog.builtin.io.StreamManager.out().println("% Tracing disabled");
         
         solutions.add(bindings);
         return true;

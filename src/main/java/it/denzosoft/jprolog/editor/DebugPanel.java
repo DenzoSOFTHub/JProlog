@@ -85,6 +85,8 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
 
     // Breakpoints
     private List<String> breakpoints;
+    /** Breakpoint list label ("p/2 [if ..]") -> the bare predicate indicator (ISS-2025-0333). */
+    private final Map<String, String> breakpointSpecOf = new HashMap<>();
 
     // Query history
     private List<String> queryHistory = new ArrayList<>();
@@ -447,6 +449,23 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         debugController = new DebugController();
         debugController.setListener(this);
         debugController.setTraceEnabled(traceToggleButton.isSelected());
+        // ISS-2025-0333: evaluate breakpoint conditions via a clean sub-solve (debugger detached, so no
+        // re-entrant pausing). Runs on the solver thread during the pause decision.
+        debugController.setConditionEvaluator((cond, bindings) -> {
+            Prolog engine = ide.getPrologEngine();
+            if (engine == null || engine.getQuerySolver() == null) return false;
+            String goal = buildWatchGoal(cond, bindings);
+            DebugController saved = engine.getQuerySolver().getDebugController();
+            try {
+                engine.getQuerySolver().setDebugController(null);
+                List<Map<String, Term>> sols = engine.solveLegacy(goal);
+                return sols != null && !sols.isEmpty();
+            } catch (RuntimeException e) {
+                return false;
+            } finally {
+                engine.getQuerySolver().setDebugController(saved);
+            }
+        });
 
         // Sync breakpoints
         for (String bp : breakpoints) {
@@ -574,10 +593,10 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
                 String capturedOutput;
 
                 try {
-                    // ISS-2025-0328: debugging MUST use the legacy engine — it carries the four-port
-                    // DebugController hooks the v2 engine lacks. Capture output via the thread-local.
+                    // ISS-2025-0331: the default v2 engine now carries the four-port DebugController
+                    // hooks, so debug on it (consistent with normal execution). Capture output per-thread.
                     it.denzosoft.jprolog.builtin.io.StreamManager.setThreadLocalOutput(captureOut);
-                    solutions = engine.solveLegacy(query);
+                    solutions = engine.solve(query);   // String -> v2 engine (with debug hooks)
                     captureOut.flush();
                     capturedOutput = baos.toString();
                 } finally {
@@ -1116,28 +1135,46 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
     // ===================== BREAKPOINT MANAGEMENT =====================
 
     private void addBreakpoint() {
-        String input = DialogUtils.showCenteredInput(this,
-            "Enter breakpoint (predicate/arity, e.g., parent/2):",
-            "Add Breakpoint", JOptionPane.PLAIN_MESSAGE);
+        // ISS-2025-0333: predicate + optional condition goal + optional ignore (hit) count.
+        JTextField predField = new JTextField();
+        JTextField condField = new JTextField();
+        JTextField ignoreField = new JTextField("0");
+        JPanel panel = new JPanel(new GridLayout(0, 1, 2, 2));
+        panel.add(new JLabel("Predicate (name/arity, e.g. parent/2):"));
+        panel.add(predField);
+        panel.add(new JLabel("Condition goal (optional; pauses only if it succeeds):"));
+        panel.add(condField);
+        panel.add(new JLabel("Ignore count (skip the first N hits):"));
+        panel.add(ignoreField);
+        int res = JOptionPane.showConfirmDialog(this, panel, "Add Breakpoint",
+            JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (res != JOptionPane.OK_OPTION) return;
 
-        if (input != null && !input.trim().isEmpty()) {
-            String bp = input.trim();
-            if (!breakpoints.contains(bp)) {
-                breakpoints.add(bp);
-                breakpointsModel.addElement(bp);
-                if (debugController != null) {
-                    debugController.addBreakpoint(bp);
-                }
-                appendInfo("Breakpoint added: " + bp + "\n");
-            }
+        String bp = predField.getText().trim();
+        if (bp.isEmpty() || breakpoints.contains(bp)) return;
+        String cond = condField.getText().trim();
+        int ignore = 0;
+        try { ignore = Integer.parseInt(ignoreField.getText().trim()); } catch (NumberFormatException ignored) {}
+
+        breakpoints.add(bp);
+        String label = bp
+            + (cond.isEmpty() ? "" : "  [if " + cond + "]")
+            + (ignore > 0 ? "  [skip " + ignore + "]" : "");
+        breakpointsModel.addElement(label);
+        breakpointSpecOf.put(label, bp);
+        if (debugController != null) {
+            debugController.addBreakpoint(bp, null, cond.isEmpty() ? null : cond, ignore);
         }
+        appendInfo("Breakpoint added: " + label + "\n");
     }
 
     private void removeSelectedBreakpoint() {
         int idx = breakpointsList.getSelectedIndex();
         if (idx != -1) {
-            String bp = breakpointsModel.getElementAt(idx);
+            String label = breakpointsModel.getElementAt(idx);
+            String bp = breakpointSpecOf.getOrDefault(label, label);   // label may carry [if ..]/[skip ..]
             breakpoints.remove(bp);
+            breakpointSpecOf.remove(label);
             breakpointsModel.removeElementAt(idx);
             if (debugController != null) {
                 debugController.removeBreakpoint(bp);

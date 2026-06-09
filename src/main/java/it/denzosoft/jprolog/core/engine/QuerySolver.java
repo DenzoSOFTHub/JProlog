@@ -797,7 +797,10 @@ public class QuerySolver {
             // For the last body goal with a single input solution, use trampoline
             // to avoid stack growth on tail-recursive predicates
             boolean isLastGoal = (i == bodySize - 1);
-            if (isLastGoal && bodySolutions.size() == 1) {
+            // ISS-2025-0330: the LCO trampoline resolves the last body goal iteratively, bypassing the
+            // four-port debug notifications — so while debugging we skip it and use the normal solve
+            // path, ensuring every sub-goal (including the tail/recursive call) is traced and pausable.
+            if (isLastGoal && bodySolutions.size() == 1 && debugController == null) {
                 Map<String, Term> currentBindings = bodySolutions.get(0);
                 // Trampoline loop: resolve the last goal iteratively when possible
                 Term trampolineGoal = bodyTerm;

@@ -97,8 +97,10 @@ desktop.ini
 
 # Application specific
 openrouterclient.properties
-*.sh
-Test*.java
-Debug*.java
-temp_*.txt
+# Root-only temp artifacts from session cleanup (anchored with '/' so they do NOT match real
+# source files like core/engine/DebugController.java or test scripts in subfolders). ISS-2025-0334
+/*.sh
+/Test*.java
+/Debug*.java
+/temp_*.txt
 *.class

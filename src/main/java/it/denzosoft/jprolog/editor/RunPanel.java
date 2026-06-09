@@ -105,6 +105,8 @@ public class RunPanel extends JPanel {
     private DefaultTableModel resultsModel;
     /** Toggle button (in the top control panel) that shows/hides the results table. */
     private JToggleButton tableToggle;
+    /** Trace on/off toggle — four-port call tracing in the console output (ISS-2025-0329). */
+    private JToggleButton traceToggle;
     /** Caption above the table summarising the last query and its solution count. */
     private JLabel tableCaption;
     // END_CHANGE: M05
@@ -189,6 +191,18 @@ public class RunPanel extends JPanel {
         tableToggle.addActionListener(e -> setTableVisible(tableToggle.isSelected()));
         controlPanel.add(tableToggle);
         // END_CHANGE: M05
+
+        // START_CHANGE: ISS-2025-0329 - Trace on/off toggle (four-port call tracing in the console output)
+        traceToggle = new JToggleButton("Trace");
+        traceToggle.setToolTipText("Enable/disable four-port call tracing (trace/0 .. notrace/0)");
+        traceToggle.setSelected(it.denzosoft.jprolog.builtin.debug.Trace.isTracingEnabled());
+        traceToggle.addActionListener(e -> {
+            boolean on = traceToggle.isSelected();
+            it.denzosoft.jprolog.builtin.debug.Trace.setTracingEnabled(on);
+            appendText("% Tracing " + (on ? "enabled" : "disabled") + "\n", commentStyle);
+        });
+        controlPanel.add(traceToggle);
+        // END_CHANGE: ISS-2025-0329
 
         // START_CHANGE: M06 - Promote the status label to a field so the running timer/counter can
         // update it live (Running… + elapsed + solution count) and reset it to a done summary.

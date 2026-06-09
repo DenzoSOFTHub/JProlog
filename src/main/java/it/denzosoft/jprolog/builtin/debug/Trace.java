@@ -32,7 +32,7 @@ public class Trace implements BuiltIn {
         }
         
         tracingEnabled = true;
-        System.out.println("% Tracing enabled");
+        it.denzosoft.jprolog.builtin.io.StreamManager.out().println("% Tracing enabled");
         
         solutions.add(bindings);
         return true;

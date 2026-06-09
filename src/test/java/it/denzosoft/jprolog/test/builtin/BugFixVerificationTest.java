@@ -2099,6 +2099,104 @@ public class BugFixVerificationTest {
     }
     // END_CHANGE: ISS-2025-0305
 
+    // START_CHANGE: ISS-2025-0333 - conditional & hit-count breakpoints
+    @Test(timeout = 20000)
+    public void testISS0333_ConditionalAndHitCountBreakpoints() throws Exception {
+        assertEquals("ignore=0 pauses on both parent calls", 2, countParentCallPauses(0, null));
+        assertEquals("ignore=1 skips the first hit", 1, countParentCallPauses(1, null));
+        assertEquals("ignore=2 skips both", 0, countParentCallPauses(2, null));
+        assertEquals("false condition never pauses", 0, countParentCallPauses(0, "1 > 2"));
+        assertEquals("true condition pauses on both", 2, countParentCallPauses(0, "1 < 2"));
+    }
+
+    private int countParentCallPauses(int ignore, String condition) throws Exception {
+        Prolog p = new Prolog();
+        p.consult("parent(tom, bob).\nparent(bob, ann).\ngrandparent(X, Z) :- parent(X, Y), parent(Y, Z).");
+        it.denzosoft.jprolog.core.engine.DebugController dc = new it.denzosoft.jprolog.core.engine.DebugController();
+        dc.reset();
+        dc.addBreakpoint("parent/2", new java.util.HashSet<>(java.util.Arrays.asList("CALL")), condition, ignore);
+        dc.setConditionEvaluator((c, b) -> {
+            it.denzosoft.jprolog.core.engine.DebugController saved = p.getQuerySolver().getDebugController();
+            try { p.getQuerySolver().setDebugController(null); return !p.solve(c).isEmpty(); }
+            catch (RuntimeException e) { return false; }
+            finally { p.getQuerySolver().setDebugController(saved); }
+        });
+        final int[] hits = {0};
+        dc.setListener(new it.denzosoft.jprolog.core.engine.DebugController.DebugListener() {
+            public void onDebugPaused(it.denzosoft.jprolog.core.engine.DebugEvent e) {
+                if (e.getPort() == it.denzosoft.jprolog.core.engine.DebugEvent.Port.CALL
+                        && "parent".equals(e.getGoal().getName())) hits[0]++;
+                new Thread(() -> dc.resumeWithAction(
+                    it.denzosoft.jprolog.core.engine.DebugEvent.Action.CONTINUE)).start();
+            }
+            public void onTraceEvent(it.denzosoft.jprolog.core.engine.DebugEvent e) {}
+            public void onDebugFinished() {}
+        });
+        p.getQuerySolver().setDebugController(dc);
+        Thread t = new Thread(() -> p.solve("grandparent(tom, R)."));
+        t.start(); t.join(8000);
+        if (t.isAlive()) { dc.stop(); t.join(2000); }
+        p.getQuerySolver().setDebugController(null);
+        return hits[0];
+    }
+    // END_CHANGE: ISS-2025-0333
+
+    // START_CHANGE: ISS-2025-0331 - the v2 engine fires four-port DebugController events (IDE debugging)
+    @Test(timeout = 15000)
+    public void testISS0331_V2EngineDebugPorts() throws Exception {
+        Prolog p = new Prolog();
+        p.consult("parent(tom, bob).\nparent(bob, ann).\ngrandparent(X, Z) :- parent(X, Y), parent(Y, Z).");
+        it.denzosoft.jprolog.core.engine.DebugController dc = new it.denzosoft.jprolog.core.engine.DebugController();
+        dc.reset();
+        final List<String> ports = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        dc.setListener(new it.denzosoft.jprolog.core.engine.DebugController.DebugListener() {
+            public void onDebugPaused(it.denzosoft.jprolog.core.engine.DebugEvent e) {
+                ports.add(e.getPort().name());
+                new Thread(() -> dc.resumeWithAction(
+                    it.denzosoft.jprolog.core.engine.DebugEvent.Action.STEP_INTO)).start();
+            }
+            public void onTraceEvent(it.denzosoft.jprolog.core.engine.DebugEvent e) {}
+            public void onDebugFinished() {}
+        });
+        p.getQuerySolver().setDebugController(dc);
+        final List<Map<String, Term>>[] sols = new List[1];
+        Thread t = new Thread(() -> sols[0] = p.solve("grandparent(tom, R)."));
+        try {
+            t.start();
+            t.join(10000);
+        } finally {
+            p.getQuerySolver().setDebugController(null);
+        }
+        assertFalse("the v2 debug session must finish", t.isAlive());
+        assertTrue("v2 engine must fire CALL ports", ports.contains("CALL"));
+        assertTrue("v2 engine must fire EXIT ports", ports.contains("EXIT"));
+        assertTrue("the debugged query must reach a solution", sols[0] != null && !sols[0].isEmpty());
+    }
+    // END_CHANGE: ISS-2025-0331
+
+    // START_CHANGE: ISS-2025-0329 - trace/0 .. notrace/0 emit four-port trace through the v2 engine
+    @Test
+    public void testISS0329_TraceFourPorts() {
+        Prolog p = new Prolog();
+        p.consult("parent(tom, bob).\nparent(bob, ann).\ngrandparent(X, Z) :- parent(X, Y), parent(Y, Z).");
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        java.io.PrintStream ps = new java.io.PrintStream(baos);
+        it.denzosoft.jprolog.builtin.io.StreamManager.setThreadLocalOutput(ps);
+        try {
+            p.solve("trace.");
+            p.solve("grandparent(tom, X).");
+        } finally {
+            it.denzosoft.jprolog.builtin.debug.Trace.setTracingEnabled(false);   // never leak the static flag
+            it.denzosoft.jprolog.builtin.io.StreamManager.setThreadLocalOutput(null);
+        }
+        ps.flush();
+        String out = baos.toString();
+        assertTrue("trace must show a Call port: " + out, out.contains("Call:"));
+        assertTrue("trace must show an Exit port: " + out, out.contains("Exit:"));
+        assertTrue("trace must name the traced predicate", out.contains("grandparent"));
+    }
+    // END_CHANGE: ISS-2025-0329
+
     // START_CHANGE: ISS-2025-0328 - solveLegacy forces the legacy engine (carries the debugger hooks)
     @Test
     public void testISS0328_SolveLegacyWorks() {

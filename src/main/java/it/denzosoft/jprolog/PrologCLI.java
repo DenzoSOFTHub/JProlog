@@ -41,8 +41,9 @@ public class PrologCLI {
         System.out.println("  :clear             - Clear all rules");
         System.out.println("  :consult <file>    - Load facts/rules from file");
         System.out.println("  :save <file>       - Save knowledge base to file");
+        System.out.println("  :trace [on|off]    - Toggle four-port call tracing (or use trace. / notrace.)");
         System.out.println();
-        
+
         // Load some example facts
         loadExampleFacts();
         
@@ -86,11 +87,9 @@ public class PrologCLI {
             // Remove the final period for the query
             String queryString = input.substring(0, input.length() - 1);
             
-            // Parse the query using the parser
-            Term queryTerm = parser.parseTerm(queryString);
-            
-            // Use the Prolog engine which internally uses QuerySolver with context
-            List<Map<String, Term>> solutions = prolog.solve(queryTerm);
+            // Solve through the default (v2) engine via the String entry point, so the CLI matches the
+            // IDE: query-variable-keyed solutions, and four-port output from trace/0 (ISS-2025-0329).
+            List<Map<String, Term>> solutions = prolog.solve(queryString);
             
             if (solutions.isEmpty()) {
                 System.out.println("false.");
@@ -137,6 +136,17 @@ public class PrologCLI {
                 
             case ":clear":
                 clearKnowledgeBase();
+                break;
+
+            // ISS-2025-0329: toggle four-port call tracing (also available as the trace/0 .. notrace/0 goals)
+            case ":trace":
+                if (parts.length > 1 && parts[1].trim().equalsIgnoreCase("off")) {
+                    it.denzosoft.jprolog.builtin.debug.Trace.setTracingEnabled(false);
+                    System.out.println("% Tracing disabled");
+                } else {
+                    it.denzosoft.jprolog.builtin.debug.Trace.setTracingEnabled(true);
+                    System.out.println("% Tracing enabled (use ':trace off' or notrace. to disable)");
+                }
                 break;
                 
             case ":consult":

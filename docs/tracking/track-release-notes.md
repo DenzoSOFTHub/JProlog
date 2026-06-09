@@ -1,5 +1,30 @@
 # JProlog - Release Notes
 
+## Release 3.3.0 - 2026-06-09
+
+### Call tracing & full debugging on the v2 engine
+
+- **`trace/0`/`notrace/0`** now emit a real four-port trace (Call/Exit/Fail/Redo) through the default
+  v2 engine — visible in the CLI (`:trace [on|off]`) and the IDE (Trace toggle).
+- The **IDE debugger runs on the v2 engine** (four-port `DebugController` events fired by
+  `MachineSolver`); breakpoints/stepping/Stop work on the default engine.
+- **Built-ins are debuggable** (`is`, `=`, comparisons, type-checks and the 200+ registry built-ins).
+- **Conditional & hit-count breakpoints** (condition goal + ignore count) — in the engine and the IDE
+  Add-Breakpoint dialog.
+- Fixed the legacy LCO trampoline bypassing debug ports for the last body goal.
+- **Repository fix**: core `Debug*.java` source files were git-ignored (unanchored `Debug*.java`
+  pattern) and missing from the published repo; anchored the temp patterns and committed the sources.
+
+New APIs: `MachineSolver` debug hooks, `DebugController.addBreakpoint(indicator, ports, condition,
+ignoreCount)` + `setConditionEvaluator`. Baseline: **690/690 JUnit, 20/20 examples.**
+
+### Repository Information
+- **Tag**: v3.3.0
+- **Release Date**: 2026-06-09
+- **Compatibility**: Java 8+, Maven 3.6+
+
+---
+
 ## Release 3.2.0 - 2026-06-09
 
 ### Major IDE upgrade (editor / execution / compilation / debugging)
