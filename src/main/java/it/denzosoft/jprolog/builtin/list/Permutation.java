@@ -29,9 +29,12 @@ public class Permutation implements BuiltIn {
         Term inputList = query.getArguments().get(0).resolveBindings(bindings);
         Term permList = query.getArguments().get(1);
 
-        if (!inputList.isGround()) {
+        // START_CHANGE: ISS-2025-0349 - a list need only be PROPER (closed spine), not ground;
+        // unbound elements are valid: permutation([X,b],P) must give two solutions
+        if (!ListUtils.isProperList(inputList)) {
             return false;
         }
+        // END_CHANGE: ISS-2025-0349
 
         List<Term> elements = ListUtils.extractElements(inputList);
         List<List<Term>> allPermutations = new ArrayList<>();

@@ -101,7 +101,16 @@ public class PrologCLI {
                     displaySolutionsInteractively(solutions);
                 }
             }
-            
+
+        // START_CHANGE: ISS-2025-0346 - halt/0 and halt/1 exit the processor with the given status
+        // (ISO 8.17.3/8.17.4); the CLI is the processor here, so terminate the JVM immediately.
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
+            if (pe.isHalt()) {
+                System.out.flush();
+                System.exit(pe.getExitCode());
+            }
+            System.err.println("Error: " + pe.getMessage());
+        // END_CHANGE: ISS-2025-0346
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
         }
@@ -316,6 +325,14 @@ public class PrologCLI {
             
         } catch (java.io.IOException e) {
             System.err.println("File reading error: " + e.getMessage());
+        // START_CHANGE: ISS-2025-0346 - a ':- halt.' directive in a consulted file exits the processor
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
+            if (pe.isHalt()) {
+                System.out.flush();
+                System.exit(pe.getExitCode());
+            }
+            System.err.println("Error during loading: " + pe.getMessage());
+        // END_CHANGE: ISS-2025-0346
         } catch (Exception e) {
             System.err.println("Error during loading: " + e.getMessage());
         }

@@ -26,7 +26,10 @@ public class Select implements BuiltIn {
         Term remainderList = query.getArguments().get(2);
         // END_CHANGE: ISS-2025-0066
 
-        if (inputList.isGround()) {
+        // START_CHANGE: ISS-2025-0349 - a list need only be PROPER (closed spine), not ground;
+        // unbound elements are valid: select(E,[X,b],R) must give two solutions
+        if (ListUtils.isProperList(inputList)) {
+        // END_CHANGE: ISS-2025-0349
             // START_CHANGE: ISS-2025-0076 - Use centralized ListUtils
             // Extract elements from the input list
             List<Term> elements = ListUtils.extractElements(inputList);

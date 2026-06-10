@@ -7,11 +7,12 @@ import java.util.List;
 /**
  * Implementation of ISO 13211-1 standard term ordering.
  * 
- * Standard term order: Variables < Numbers < Atoms < Compound Terms
- * 
+ * Standard term order: Variables < Numbers < Atoms < Strings < Compound Terms
+ *
  * - Variables: alphabetically by name
- * - Numbers: by numeric value (integers < floats for same value)  
+ * - Numbers: by numeric value (integers < floats for same value)
  * - Atoms: alphabetically by name
+ * - Strings: lexicographically by content
  * - Compound Terms: by arity, then functor name, then arguments left-to-right
  */
 public class StandardTermOrdering {
@@ -39,26 +40,33 @@ public class StandardTermOrdering {
         }
         
         // Same type - compare within type
+        // START_CHANGE: ISS-2025-0348 - give PrologString its own slot (between Atom and Compound,
+        // matching Sort.termRank and SWI) and compare strings by content so the order is total.
         switch (type1) {
             case 1: return compareVariables((Variable) term1, (Variable) term2);
             case 2: return compareNumbers((it.denzosoft.jprolog.core.terms.Number) term1, (it.denzosoft.jprolog.core.terms.Number) term2);
             case 3: return compareAtoms((Atom) term1, (Atom) term2);
-            case 4: return compareCompoundTerms((CompoundTerm) term1, (CompoundTerm) term2);
+            case 4: return compareStrings((PrologString) term1, (PrologString) term2);
+            case 5: return compareCompoundTerms((CompoundTerm) term1, (CompoundTerm) term2);
             default: return 0;
         }
+        // END_CHANGE: ISS-2025-0348
     }
-    
+
     /**
      * Get the ordering value for a term type.
-     * Variables=1, Numbers=2, Atoms=3, CompoundTerms=4
+     * Variables=1, Numbers=2, Atoms=3, Strings=4, CompoundTerms=5
      */
+    // START_CHANGE: ISS-2025-0348 - rank PrologString between Atom and CompoundTerm
     private static int getTermTypeOrder(Term term) {
         if (term instanceof Variable) return 1;
         if (term instanceof it.denzosoft.jprolog.core.terms.Number) return 2;
         if (term instanceof Atom) return 3;
-        if (term instanceof CompoundTerm) return 4;
-        return 5; // Unknown types go last
+        if (term instanceof PrologString) return 4;
+        if (term instanceof CompoundTerm) return 5;
+        return 6; // Unknown types go last
     }
+    // END_CHANGE: ISS-2025-0348
     
     /**
      * Compare two variables alphabetically by name.
@@ -106,6 +114,15 @@ public class StandardTermOrdering {
         return name1.compareTo(name2);
     }
     
+    // START_CHANGE: ISS-2025-0348 - compare strings by their content
+    /**
+     * Compare two strings lexicographically by content.
+     */
+    private static int compareStrings(PrologString str1, PrologString str2) {
+        return str1.getStringValue().compareTo(str2.getStringValue());
+    }
+    // END_CHANGE: ISS-2025-0348
+
     /**
      * Compare two compound terms:
      * 1. By arity (number of arguments)

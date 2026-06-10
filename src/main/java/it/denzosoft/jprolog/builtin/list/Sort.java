@@ -49,9 +49,33 @@ public class Sort implements BuiltIn {
             }
             return false;
         } else {
-            return false;
+            // START_CHANGE: ISS-2025-0351 - ISO 8.4.3.3: instantiation_error on a partial list,
+            // type_error(list, Culprit) on a non-list, instead of silent failure
+            throw notAProperList(inputList, "sort/2");
+            // END_CHANGE: ISS-2025-0351
         }
     }
+
+    // START_CHANGE: ISS-2025-0351 - shared ISO error for sort/2, sort/4, msort/2, keysort/2:
+    // a partial list (var tail, including a plain variable) raises instantiation_error, any
+    // other non-proper-list raises type_error(list, Culprit). Cycle-safe spine walk.
+    static it.denzosoft.jprolog.core.exceptions.PrologException notAProperList(Term list, String context) {
+        java.util.IdentityHashMap<Term, Boolean> visited = new java.util.IdentityHashMap<>();
+        Term tail = list;
+        while (tail instanceof CompoundTerm
+                && ((CompoundTerm) tail).getName().equals(".")
+                && ((CompoundTerm) tail).getArguments().size() == 2) {
+            if (visited.put(tail, Boolean.TRUE) != null) break; // cyclic spine: not a partial list
+            tail = ((CompoundTerm) tail).getArguments().get(1);
+        }
+        if (tail instanceof Variable) {
+            return new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError(context));
+        }
+        return new it.denzosoft.jprolog.core.exceptions.PrologException(
+            it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("list", list, context));
+    }
+    // END_CHANGE: ISS-2025-0351
 
     // START_CHANGE: ISS-2025-0220 - sort(+Key, +Order, +List, -Sorted)
     private boolean executeSort4(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
@@ -77,7 +101,11 @@ public class Sort implements BuiltIn {
             case "@>=": ascending = false; dedup = false; break;
             default: throw new PrologEvaluationException("sort/4: Order must be @<, @=<, @>, or @>=");
         }
-        if (!it.denzosoft.jprolog.core.util.ListUtils.isProperList(inputList)) return false;   // ISS-2025-0335
+        // START_CHANGE: ISS-2025-0351 - ISO errors instead of silent failure (was ISS-2025-0335 return false)
+        if (!it.denzosoft.jprolog.core.util.ListUtils.isProperList(inputList)) {
+            throw notAProperList(inputList, "sort/4");
+        }
+        // END_CHANGE: ISS-2025-0351
         List<Term> elements = ListUtils.extractElements(inputList);
         java.util.Comparator<Term> cmp = (a, b) -> {
             Term ka = key == 0 ? a : extractKey(a, key);
@@ -148,7 +176,10 @@ public class Sort implements BuiltIn {
             return ((Atom) t1).getName().compareTo(((Atom) t2).getName());
         }
         if (t1 instanceof PrologString) {
-            return t1.toString().compareTo(t2.toString());
+            // START_CHANGE: ISS-2025-0348 - compare string CONTENT, not the escaped quoted form,
+            // so sort/2 and compare/3 (StandardTermOrdering) agree on one total order.
+            return ((PrologString) t1).getStringValue().compareTo(((PrologString) t2).getStringValue());
+            // END_CHANGE: ISS-2025-0348
         }
         if (t1 instanceof CompoundTerm && t2 instanceof CompoundTerm) {
             CompoundTerm c1 = (CompoundTerm) t1;

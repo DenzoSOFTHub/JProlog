@@ -240,6 +240,10 @@ public class RefactorIssuesTest {
     // v2.9.4: session-scoped attributed variables enable cross-solve identity
     @Test
     public void testCoroutining_whenReSuspends() {
+        // START_CHANGE: ISS-2025-0347 - declare probe/1 dynamic: querying an UNDECLARED unknown
+        // procedure now raises existence_error per ISO 7.7.7 (unknown=error), as in SWI.
+        prolog.consult(":- dynamic(probe/1).");
+        // END_CHANGE: ISS-2025-0347
         prolog.solve("when(ground(f(X, Y)), assertz(probe(fired))), X = 1.");
         List<Map<String, Term>> r1 = prolog.solve("probe(fired).");
         assertEquals("when must not fire while Y unbound", 0, r1.size());

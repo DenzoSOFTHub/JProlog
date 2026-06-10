@@ -454,6 +454,37 @@ public class QuerySolver {
         return result;
     }
 
+    // START_CHANGE: ISS-2025-0347 - existence_error(procedure, Name/Arity) for unknown procedures,
+    // mirroring the v2 engine: 'error' (default) throws, 'warning' warns and fails, 'fail' fails.
+    /** Control constructs (ISO 7.8) are never unknown procedures, even when the legacy solver
+     *  resolves some of them (e.g. {@code fail}) by simply finding no clauses. */
+    private static boolean isControlConstruct(String functor) {
+        switch (functor) {
+            case "fail": case "false": case "true": case "otherwise": case "!":
+            case ",": case ";": case "->": case "*->": case "\\+": case "not":
+            case "call": case ":":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void raiseUnknownIfRequired(String functor, int arity) {
+        Term mode = it.denzosoft.jprolog.core.system.PrologFlags.getFlag("unknown");
+        String m = (mode instanceof Atom) ? ((Atom) mode).getName() : "error";
+        if ("fail".equals(m)) return;
+        if ("warning".equals(m)) {
+            System.err.println("Warning: unknown procedure " + functor + "/" + arity);
+            return;
+        }
+        Term pi = new CompoundTerm(new Atom("/"), java.util.Arrays.asList(
+            (Term) new Atom(functor), new it.denzosoft.jprolog.core.terms.Number((double) arity)));
+        throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+            it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.existenceError(
+                "procedure", pi, functor + "/" + arity));
+    }
+    // END_CHANGE: ISS-2025-0347
+
     // START_CHANGE: ISS-2025-0067 - Preserve input bindings in knowledge base solutions
     private boolean solveAgainstKnowledgeBase(Term goal, Map<String, Term> bindings,
                                               List<Map<String, Term>> solutions, CutStatus cutStatus) {
@@ -505,6 +536,18 @@ public class QuerySolver {
                 }
             }
             // END_CHANGE: ISS-2025-0165
+            // START_CHANGE: ISS-2025-0347 - unknown procedure: honour the 'unknown' flag (ISO 7.7.7).
+            // Only when the predicate has NO clauses at all (not merely none for this first-arg
+            // index key), is not declared/implied dynamic, is not a built-in, and is not a control
+            // construct the legacy solver resolves through a KB miss (e.g. fail/0).
+            if (candidateRules.isEmpty()
+                    && !isControlConstruct(functor)
+                    && !knowledgeBase.isDynamic(functor, arity)
+                    && knowledgeBase.getRulesForPredicate(functor, arity).isEmpty()
+                    && !builtInRegistry.isBuiltIn(functor, arity)) {
+                raiseUnknownIfRequired(functor, arity);
+            }
+            // END_CHANGE: ISS-2025-0347
         } else {
             candidateRules = knowledgeBase.getRules();
         }
@@ -1086,6 +1129,15 @@ public class QuerySolver {
                         return false;
                     }
                     break;
+
+                // START_CHANGE: ISS-2025-0355 - unification must respect CLP(FD) domains: narrow the
+                // FD variable's domain to the bound value (fail outside it / on a non-integer).
+                case it.denzosoft.jprolog.builtin.clpfd.v2.ClpfdV2Bridge.CLPFD_ATTR:
+                    if (!it.denzosoft.jprolog.builtin.clpfd.v2.ClpfdV2Bridge.onBind(variable, value)) {
+                        return false;
+                    }
+                    break;
+                // END_CHANGE: ISS-2025-0355
 
                 default:
                     // Unknown module — try to find attr_unify_hook/2 in knowledge base

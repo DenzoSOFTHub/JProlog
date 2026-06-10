@@ -27,7 +27,9 @@ public class Format extends AbstractBuiltInWithContext {
     
     @Override
     public boolean execute(Term term, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        return solve(solver, bindings);
+        // START_CHANGE: ISS-2025-0352 - extract arguments from the query and report success via solutions
+        return executeWithContext(solver, term, bindings, solutions);
+        // END_CHANGE: ISS-2025-0352
     }
     
     @Override
@@ -59,15 +61,17 @@ public class Format extends AbstractBuiltInWithContext {
         try {
             // Get output writer
             PrintWriter writer = getOutputStream(streamTerm);
-            
+
             // Get format string
-            String formatString = getFormatString(formatTerm);
+            // START_CHANGE: ISS-2025-0353 - resolve through bindings so variable-bound format strings/arguments work
+            String formatString = getFormatString(formatTerm.resolveBindings(bindings));
             if (formatString == null) {
                 return false;
             }
-            
+
             // Get arguments
-            List<Term> arguments = getArgumentList(argumentsTerm);
+            List<Term> arguments = getArgumentList(argumentsTerm.resolveBindings(bindings));
+            // END_CHANGE: ISS-2025-0353
             
             // Process format string
             String output = processFormat(formatString, arguments, bindings);
@@ -430,6 +434,10 @@ public class Format extends AbstractBuiltInWithContext {
     private String formatString(Term term) {
         if (term instanceof Atom) {
             return ((Atom) term).getName();
+        // START_CHANGE: ISS-2025-0353 - ~s accepts a PrologString argument
+        } else if (term instanceof PrologString) {
+            return ((PrologString) term).getStringValue();
+        // END_CHANGE: ISS-2025-0353
         } else if (term instanceof CompoundTerm && ".".equals(TermUtils.getFunctorName(term))) {
             // Character list
             return formatCharacterList((CompoundTerm) term);
@@ -531,6 +539,10 @@ public class Format extends AbstractBuiltInWithContext {
     private String getFormatString(Term formatTerm) {
         if (formatTerm instanceof Atom) {
             return ((Atom) formatTerm).getName();
+        // START_CHANGE: ISS-2025-0353 - accept double-quoted format strings (PrologString, the default double_quotes=string)
+        } else if (formatTerm instanceof PrologString) {
+            return ((PrologString) formatTerm).getStringValue();
+        // END_CHANGE: ISS-2025-0353
         } else if (formatTerm instanceof CompoundTerm && ".".equals(TermUtils.getFunctorName(formatTerm))) {
             // Character list
             return formatCharacterList((CompoundTerm) formatTerm);

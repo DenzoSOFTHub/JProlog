@@ -680,6 +680,10 @@ public class MegaPredicateTest {
         assertTrue(result.contains("cherry"));
 
         // findall with no solutions returns empty list
+        // START_CHANGE: ISS-2025-0347 - declare vegetable/1 dynamic: an UNDECLARED unknown
+        // procedure now raises existence_error per ISO 7.7.7 (unknown=error), as in SWI.
+        prolog.consult(":- dynamic(vegetable/1).");
+        // END_CHANGE: ISS-2025-0347
         s = prolog.solve("findall(X, vegetable(X), Xs).");
         assertFalse(s.isEmpty());
         assertEquals("[]", s.get(0).get("Xs").toString());

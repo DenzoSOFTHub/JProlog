@@ -29,6 +29,26 @@ public class KnowledgeBase {
     /** Three-level index: predicate indicator -> arg1 key -> arg2 key -> rules */
     private final Map<String, Map<String, Map<String, List<Rule>>>> multiArgIndex = new HashMap<>();
     // END_CHANGE: LIM-014
+    // START_CHANGE: ISS-2025-0347 - track dynamic procedures: declared via ':- dynamic' or implied
+    // by assert/retractall (ISO 8.9.1: asserting an unknown procedure makes it dynamic). The mark
+    // survives retracting every clause, so a retracted-to-empty dynamic predicate FAILS instead of
+    // raising existence_error under the 'unknown' flag.
+    private final Set<String> dynamicPredicates = new HashSet<>();
+
+    /** Mark {@code functor/arity} as a dynamic procedure. */
+    public void markDynamic(String functor, int arity) {
+        synchronized (this) {
+            dynamicPredicates.add(functor + "/" + arity);
+        }
+    }
+
+    /** True when {@code functor/arity} was declared dynamic or created by assert/retractall. */
+    public boolean isDynamic(String functor, int arity) {
+        synchronized (this) {
+            return dynamicPredicates.contains(functor + "/" + arity);
+        }
+    }
+    // END_CHANGE: ISS-2025-0347
 
     /**
      * Add a rule to the knowledge base.
@@ -122,7 +142,10 @@ public class KnowledgeBase {
             String predKey = functor + "/" + arity;
             Map<String, List<Rule>> argIndex = firstArgIndex.get(predKey);
             if (argIndex == null) {
-                return Collections.emptyList();
+                // START_CHANGE: ISS-2025-0344 - an index miss must degrade to the full predicate
+                // list, never silently drop clauses that exist in ruleIndex (ISS-2025-0340 hazard)
+                return getRulesForPredicate(functor, arity);
+                // END_CHANGE: ISS-2025-0344
             }
 
             // If first arg is null, variable, or non-indexable, return all rules for this predicate
@@ -317,7 +340,9 @@ public class KnowledgeBase {
             String argKey = (firstArg != null) ? getFirstArgKey(firstArg) : VAR_KEY;
             List<Rule> list = argIndex.get(argKey);
             if (list != null) {
-                list.remove(rule);
+                // START_CHANGE: ISS-2025-0344 - identity-preferring removal
+                removeOneOccurrence(list, rule);
+                // END_CHANGE: ISS-2025-0344
                 if (list.isEmpty()) {
                     argIndex.remove(argKey);
                 }
@@ -337,7 +362,9 @@ public class KnowledgeBase {
                 String arg2Key = (secondArg != null) ? getFirstArgKey(secondArg) : VAR_KEY;
                 List<Rule> list = arg2Index.get(arg2Key);
                 if (list != null) {
-                    list.remove(rule);
+                    // START_CHANGE: ISS-2025-0344 - identity-preferring removal
+                    removeOneOccurrence(list, rule);
+                    // END_CHANGE: ISS-2025-0344
                     if (list.isEmpty()) {
                         arg2Index.remove(arg2Key);
                     }
@@ -379,15 +406,29 @@ public class KnowledgeBase {
     // START_CHANGE: ISS-2025-0164 - Thread safety for KnowledgeBase
     public void retract(Rule rule) {
         synchronized (this) {
-            boolean removed = rules.removeIf(r -> r.equals(rule));
-            if (removed) {
-                // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
-                removeFromIndex(rule);
-                // END_CHANGE: ISS-2025-0075
-                LOGGER.fine("Rule retracted: " + rule);
+            // START_CHANGE: ISS-2025-0344 - remove exactly ONE clause (ISO 8.9.3) and keep the
+            // rules list and ruleIndex/firstArgIndex in sync. The old removeIf(equals) dropped
+            // EVERY duplicate clause from `rules` while removeFromIndex removed only one index
+            // entry, leaving immortal phantom clauses visible to the engine but not to listing.
+            // Prefer an identity match (the engine passes the stored Rule object); fall back to
+            // the first equals match (Prolog.retract(String) passes a freshly parsed Rule).
+            int idx = -1;
+            for (int i = 0; i < rules.size(); i++) {
+                if (rules.get(i) == rule) { idx = i; break; }
+            }
+            if (idx < 0) {
+                for (int i = 0; i < rules.size(); i++) {
+                    if (rules.get(i).equals(rule)) { idx = i; break; }
+                }
+            }
+            if (idx >= 0) {
+                Rule removed = rules.remove(idx);
+                removeFromIndex(removed);
+                LOGGER.fine("Rule retracted: " + removed);
             } else {
                 LOGGER.fine("Attempted to retract rule but it was not found: " + rule);
             }
+            // END_CHANGE: ISS-2025-0344
         }
     }
     // END_CHANGE: ISS-2025-0164
@@ -408,6 +449,9 @@ public class KnowledgeBase {
             // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
             addToIndexFirst(rule);
             // END_CHANGE: ISS-2025-0075
+            // START_CHANGE: ISS-2025-0347 - asserta implies the procedure is dynamic (ISO 8.9.1)
+            dynamicPredicates.add(getPredicateIndicator(rule.getHead()));
+            // END_CHANGE: ISS-2025-0347
             LOGGER.fine("Clause added at beginning: " + clause);
         }
     }
@@ -429,6 +473,9 @@ public class KnowledgeBase {
             // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
             addToIndex(rule);
             // END_CHANGE: ISS-2025-0075
+            // START_CHANGE: ISS-2025-0347 - assertz implies the procedure is dynamic (ISO 8.9.1)
+            dynamicPredicates.add(getPredicateIndicator(rule.getHead()));
+            // END_CHANGE: ISS-2025-0347
             LOGGER.fine("Clause added at end: " + clause);
         }
     }
@@ -595,6 +642,11 @@ public class KnowledgeBase {
     // START_CHANGE: ISS-2025-0164 - Thread safety for KnowledgeBase
     public int retractAllClauses(Term term) {
         synchronized (this) {
+            // START_CHANGE: ISS-2025-0347 - retractall creates the procedure as dynamic when it
+            // does not exist (SWI semantics), so a later call fails instead of raising
+            // existence_error under unknown=error.
+            dynamicPredicates.add(getPredicateIndicator(term));
+            // END_CHANGE: ISS-2025-0347
             int count = 0;
             for (int i = rules.size() - 1; i >= 0; i--) {
                 Rule rule = rules.get(i);
@@ -727,7 +779,9 @@ public class KnowledgeBase {
         String key = getPredicateIndicator(rule.getHead());
         List<Rule> indexed = ruleIndex.get(key);
         if (indexed != null) {
-            indexed.remove(rule);
+            // START_CHANGE: ISS-2025-0344 - identity-preferring removal (see removeOneOccurrence)
+            removeOneOccurrence(indexed, rule);
+            // END_CHANGE: ISS-2025-0344
             if (indexed.isEmpty()) {
                 ruleIndex.remove(key);
             }
@@ -737,6 +791,24 @@ public class KnowledgeBase {
         // END_CHANGE: ISS-2025-0093
     }
     // END_CHANGE: ISS-2025-0075
+
+    // START_CHANGE: ISS-2025-0344 - remove exactly one occurrence, preferring object identity
+    /**
+     * Remove exactly one occurrence of {@code rule} from {@code list}. The add paths store the
+     * same Rule object in {@code rules} and every index, so an identity match removes precisely
+     * the retracted clause even when duplicate clauses compare equal; the equals fallback keeps
+     * externally constructed (parsed) rules working.
+     */
+    private static boolean removeOneOccurrence(List<Rule> list, Rule rule) {
+        for (int i = 0; i < list.size(); i++) {
+            if (list.get(i) == rule) {
+                list.remove(i);
+                return true;
+            }
+        }
+        return list.remove(rule);
+    }
+    // END_CHANGE: ISS-2025-0344
 
     @Override
     public String toString() {

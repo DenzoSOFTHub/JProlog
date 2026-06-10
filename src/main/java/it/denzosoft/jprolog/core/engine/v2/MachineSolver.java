@@ -16,6 +16,7 @@ import it.denzosoft.jprolog.core.module.PredicateSignature;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
+import it.denzosoft.jprolog.core.terms.PrologString;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
 
@@ -142,13 +143,21 @@ public final class MachineSolver {
 
     // ----------------------------------------------------------------- bindings + trail
     private final Map<String, Term> binding = new HashMap<>();
-    private final ArrayList<String> trail = new ArrayList<>();
+    // START_CHANGE: ISS-2025-0343 - the trail holds variable names (String -> remove the binding)
+    // OR undo actions (Runnable -> run on backtracking), so non-binding effects like disarming a
+    // catch frame are undone when execution backtracks into the frame's goal extent.
+    private final ArrayList<Object> trail = new ArrayList<>();
 
     private int mark() { return trail.size(); }
     private void undo(int m) {
-        for (int i = trail.size() - 1; i >= m; i--) binding.remove(trail.get(i));
+        for (int i = trail.size() - 1; i >= m; i--) {
+            Object e = trail.get(i);
+            if (e instanceof Runnable) ((Runnable) e).run();
+            else binding.remove((String) e);
+        }
         if (m < trail.size()) trail.subList(m, trail.size()).clear();
     }
+    // END_CHANGE: ISS-2025-0343
     private void bind(String var, Term val) { binding.put(var, val); trail.add(var); }
 
     private Term deref(Term t) {
@@ -206,7 +215,16 @@ public final class MachineSolver {
             if (b instanceof Variable && ((Variable) a).getName().equals(((Variable) b).getName())) return true;
             if (Variable.isOccursCheckEnabled() && occurs(((Variable) a).getName(), b)) return false;
             bind(((Variable) a).getName(), b);
-            if (!(b instanceof Variable) && ((Variable) a).hasAttributes()) return wakeAttrs((Variable) a, b);
+            // START_CHANGE: ISS-2025-0355 - var-var aliasing must respect CLP(FD) domains: when the
+            // bound variable is FD-constrained, the alias target inherits its FdVar (or, when both
+            // are FD-constrained, an equality constraint intersects the domains — disjoint -> fail).
+            // Other attribute kinds (freeze/when/dif) keep the established skip-on-var-var behavior.
+            if (b instanceof Variable) {
+                return !((Variable) a).hasAttributes()
+                    || it.denzosoft.jprolog.builtin.clpfd.v2.ClpfdV2Bridge.onAlias((Variable) a, (Variable) b);
+            }
+            // END_CHANGE: ISS-2025-0355
+            if (((Variable) a).hasAttributes()) return wakeAttrs((Variable) a, b);
             return true;
         }
         if (b instanceof Variable) {
@@ -246,6 +264,10 @@ public final class MachineSolver {
         final int legacyMark;   // ISS-2025-0316: snapshot of the legacy backtrackable Trail (b_setval, op/3, setarg)
         // catch-frame payload (isCatch == true => no alternatives; used by throw/1 unwinding)
         final boolean isCatch; final Term catcher, recovery; final Goal cont; final int cutBarrier;
+        // START_CHANGE: ISS-2025-0343 - a catch frame is armed only while its Goal's extent runs:
+        // disarmed when the Goal exits (trailed, so backtracking into the Goal re-arms it).
+        boolean active = true;
+        // END_CHANGE: ISS-2025-0343
         Term traceGoal = null; int traceDepth = 0;   // ISS-2025-0329: 4-port trace (Redo/Fail) for this goal
         boolean traceDebug = false;                   // ISS-2025-0331: also notify the DebugController
         CP(List<Alt> alts, int trailMark) {
@@ -373,8 +395,17 @@ public final class MachineSolver {
                     continue;
                 }
                 if ("catch".equals(f) && a.size() == 3) {            // install a catch frame, then run Goal
-                    cps.add(new CP(mark(), a.get(1), a.get(2), goalStack, g.cutBarrier));
-                    goalStack = new Goal(a.get(0), cps.size(), goalStack);   // opaque to cut
+                    // START_CHANGE: ISS-2025-0343 - disarm the frame when Goal's extent exits (ISO
+                    // 7.8.9: the catcher applies only DURING the execution of Goal). The disarm runs
+                    // as an action goal between Goal and the continuation; its undo is trailed, so
+                    // backtracking into a choice point inside Goal re-arms the frame for re-execution.
+                    final CP frame = new CP(mark(), a.get(1), a.get(2), goalStack, g.cutBarrier);
+                    cps.add(frame);
+                    goalStack = new Goal(a.get(0), cps.size(), new Goal(() -> {   // opaque to cut
+                        frame.active = false;
+                        trail.add((Runnable) () -> frame.active = true);
+                    }, goalStack));
+                    // END_CHANGE: ISS-2025-0343
                     continue;
                 }
                 if ("throw".equals(f) && a.size() == 1) {            // raised as a Java exception,
@@ -438,7 +469,11 @@ public final class MachineSolver {
     private void ite(Term cond, Term then, Term els, int cutBarrier) {
         final Goal cont = goalStack;
         final int barrier = cps.size();                               // cut target = this ITE choice point
-        final Goal alt1 = new Goal(cond, barrier, new Goal(CUT, barrier, new Goal(then, cutBarrier, cont)));
+        // START_CHANGE: ISS-2025-0342 - Cond runs as call(Cond): a user '!' inside it is local
+        // (barrier ABOVE the ITE CP), so it cannot cut away the pending Else alternative; only the
+        // internal commit CUT (fired when Cond succeeds) cuts back to the ITE CP itself.
+        final Goal alt1 = new Goal(cond, barrier + 1, new Goal(CUT, barrier, new Goal(then, cutBarrier, cont)));
+        // END_CHANGE: ISS-2025-0342
         final Goal alt2 = new Goal(els, cutBarrier, cont);
         List<Alt> alts = Arrays.asList(() -> alt1, () -> alt2);
         CP cp = new CP(alts, mark());
@@ -450,7 +485,9 @@ public final class MachineSolver {
     private void softCut(Term cond, Term then, Term els, int cutBarrier) {
         final Goal cont = goalStack;
         final boolean[] found = {false};
-        final Goal alt1 = new Goal(cond, cps.size(), new Goal(() -> found[0] = true, new Goal(then, cutBarrier, cont)));
+        // START_CHANGE: ISS-2025-0342 - a user '!' inside Cond is local (barrier above this CP)
+        final Goal alt1 = new Goal(cond, cps.size() + 1, new Goal(() -> found[0] = true, new Goal(then, cutBarrier, cont)));
+        // END_CHANGE: ISS-2025-0342
         List<Alt> alts = Arrays.asList(
             () -> alt1,
             () -> found[0] ? FAILED : new Goal(els, cutBarrier, cont));
@@ -479,7 +516,9 @@ public final class MachineSolver {
                 case "var":      return x instanceof Variable ? 1 : 0;
                 case "nonvar":   return x instanceof Variable ? 0 : 1;
                 case "atom":     return x instanceof Atom ? 1 : 0;
-                case "atomic":   return (x instanceof Atom || x instanceof Number) ? 1 : 0;
+                // START_CHANGE: ISS-2025-0348 - strings are atomic
+                case "atomic":   return (x instanceof Atom || x instanceof Number || x instanceof PrologString) ? 1 : 0;
+                // END_CHANGE: ISS-2025-0348
                 case "number":   return x instanceof Number ? 1 : 0;
                 case "integer":  return (x instanceof Number && ((Number) x).isInteger()) ? 1 : 0;
                 case "float":    return (x instanceof Number && !((Number) x).isInteger()) ? 1 : 0;
@@ -517,6 +556,11 @@ public final class MachineSolver {
         if (a instanceof Variable && b instanceof Variable) return ((Variable) a).getName().equals(((Variable) b).getName());
         if (a instanceof Atom && b instanceof Atom) return ((Atom) a).getName().equals(((Atom) b).getName());
         if (a instanceof Number && b instanceof Number) return a.equals(b);
+        // START_CHANGE: ISS-2025-0348 - strings are identical iff their content matches
+        if (a instanceof PrologString && b instanceof PrologString) {
+            return ((PrologString) a).getStringValue().equals(((PrologString) b).getStringValue());
+        }
+        // END_CHANGE: ISS-2025-0348
         if (a instanceof CompoundTerm && b instanceof CompoundTerm) {
             CompoundTerm ca = (CompoundTerm) a, cb = (CompoundTerm) b;
             if (!ca.getName().equals(cb.getName()) || ca.getArguments().size() != cb.getArguments().size()) return false;
@@ -610,6 +654,10 @@ public final class MachineSolver {
         while (cps.size() > floor) {
             CP top = cps.remove(cps.size() - 1);
             if (top.isCatch) {
+                // START_CHANGE: ISS-2025-0343 - a disarmed frame (its Goal already exited) is no
+                // catcher candidate: pop it like a plain choice point and keep unwinding.
+                if (!top.active) continue;
+                // END_CHANGE: ISS-2025-0343
                 undo(top.trailMark);
                 it.denzosoft.jprolog.core.engine.Trail.rollbackTo(top.legacyMark);   // ISS-0316
                 int m = mark();
@@ -636,6 +684,13 @@ public final class MachineSolver {
     private void assertClause(Term clause, boolean front) {
         Rule r = toRule(rename(resolve(clause), renameCounter++, new HashMap<>()));   // copy_term
         if (liveKb != null) {
+            // START_CHANGE: ISS-2025-0347 - assert implies the procedure is dynamic (ISO 8.9.1),
+            // so it keeps failing (not existence_error) after being retracted to empty.
+            Term h = r.getHead();
+            if (h instanceof Atom) liveKb.markDynamic(((Atom) h).getName(), 0);
+            else if (h instanceof CompoundTerm) liveKb.markDynamic(((CompoundTerm) h).getName(),
+                ((CompoundTerm) h).getArguments().size());
+            // END_CHANGE: ISS-2025-0347
             if (front) liveKb.asserta(r); else liveKb.addRule(r);
         } else {
             List<Rule> list = kb.computeIfAbsent(key(r.getHead()), k -> new ArrayList<>());
@@ -748,6 +803,11 @@ public final class MachineSolver {
         if (debugging) debugPort(DebugEvent.Port.CALL, unifyGoal, tdepth);
         List<Rule> rules = clausesFor(lookup);
         if (rules == null || rules.isEmpty()) {
+            // START_CHANGE: ISS-2025-0347 - unknown procedure: honour the 'unknown' flag (ISO 7.7.7
+            // + 7.11.2.4): error -> existence_error(procedure, Name/Arity); warning -> warn + fail;
+            // fail -> silent failure. Dynamic procedures (declared or implied by assert) just fail.
+            raiseUnknownIfRequired(lookup);
+            // END_CHANGE: ISS-2025-0347
             if (tracing) tracePort("Fail", unifyGoal, tdepth);
             if (debugging) debugPort(DebugEvent.Port.FAIL, unifyGoal, tdepth);
             return false;
@@ -783,6 +843,38 @@ public final class MachineSolver {
         if (debugging) debugPort(DebugEvent.Port.FAIL, g, tdepth);
         return false;
     }
+
+    // START_CHANGE: ISS-2025-0347 - existence_error(procedure, Name/Arity) for unknown procedures
+    /** Apply the ISO {@code unknown} flag (7.7.7/7.11.2.4) to a call with no clauses: throw an
+     *  existence_error (error), warn and fail (warning), or fail silently (fail). Procedures marked
+     *  dynamic fail silently; module-qualified calls and module programs keep the established
+     *  visibility-based failure semantics (ISS-2025-0314). */
+    private void raiseUnknownIfRequired(Term lookup) {
+        if (liveKb == null) return;                                   // prototype mode: flat local KB
+        Term g = deref(lookup);
+        String f; int ar;
+        if (g instanceof Atom) { f = ((Atom) g).getName(); ar = 0; }
+        else if (g instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) g;
+            if (":".equals(c.getName()) && c.getArguments().size() == 2) return;   // Module:Goal
+            f = c.getName(); ar = c.getArguments().size();
+        } else {
+            return;
+        }
+        if (modules != null && modules.getAllModuleNames().size() > 1) return;     // module program
+        if (liveKb.isDynamic(f, ar)) return;
+        Term mode = it.denzosoft.jprolog.core.system.PrologFlags.getFlag("unknown");
+        String m = (mode instanceof Atom) ? ((Atom) mode).getName() : "error";
+        if ("fail".equals(m)) return;
+        Term pi = new CompoundTerm(new Atom("/"), Arrays.asList(new Atom(f), new Number((double) ar)));
+        if ("warning".equals(m)) {
+            System.err.println("Warning: unknown procedure " + f + "/" + ar);
+            return;
+        }
+        throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+            it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.existenceError("procedure", pi, f + "/" + ar));
+    }
+    // END_CHANGE: ISS-2025-0347
 
     /** Fire a four-port event to the IDE debugger (ISS-2025-0331). {@code notifyPort} handles call-stack
      *  bookkeeping, breakpoint/step decisions and the two-thread pause; a {@code DebugStopException}

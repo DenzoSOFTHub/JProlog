@@ -4,6 +4,9 @@ import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.QuerySolver;
 import it.denzosoft.jprolog.core.terms.Term;
 
+// START_CHANGE: ISS-2025-0352 - report success through the solutions list
+import java.util.HashMap;
+// END_CHANGE: ISS-2025-0352
 import java.util.List;
 import java.util.Map;
 
@@ -57,7 +60,14 @@ public abstract class AbstractBuiltInWithContext implements BuiltInWithContext {
             this.arguments = new Term[0];
         }
         
-        return solve(solver, bindings);
+        // START_CHANGE: ISS-2025-0352 - a successful deterministic builtin must add its bindings
+        // to the solutions list: both engines treat an empty solutions list as failure.
+        boolean result = solve(solver, bindings);
+        if (result) {
+            solutions.add(new HashMap<>(bindings));
+        }
+        return result;
+        // END_CHANGE: ISS-2025-0352
     }
     
     /**

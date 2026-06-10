@@ -4,6 +4,9 @@ import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Number;
+// START_CHANGE: ISS-2025-0348 - strings are atomic
+import it.denzosoft.jprolog.core.terms.PrologString;
+// END_CHANGE: ISS-2025-0348
 import it.denzosoft.jprolog.core.terms.Term;
 
 import java.util.List;
@@ -23,7 +26,11 @@ public class AtomicCheck implements BuiltIn {
         // END_CHANGE: ISS-2025-0080
 
         if (termArg.isGround()) {
-            boolean isAtomic = (termArg instanceof Atom) || (termArg instanceof Number);
+            // START_CHANGE: ISS-2025-0348 - strings are atomic terms (SWI semantics for the
+            // default double_quotes=string flag)
+            boolean isAtomic = (termArg instanceof Atom) || (termArg instanceof Number)
+                || (termArg instanceof PrologString);
+            // END_CHANGE: ISS-2025-0348
 
             if (isAtomic) {
                 solutions.add(bindings);

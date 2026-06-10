@@ -1279,8 +1279,11 @@ public class BugFixVerificationTest {
         prolog.solve("assert((neg_cut(a) :- \\+((!,fail)))).");
         prolog.solve("assert((neg_cut(b))).");
         List<Map<String, Term>> solutions = prolog.solve("neg_cut(X).");
-        // \\+ isolates cut, both clauses should be tried
-        assertTrue(solutions.size() >= 1);
+        // START_CHANGE: ISS-2025-0342 - \+ isolates cut: \+((!,fail)) succeeds, so BOTH clauses solve
+        assertEquals(2, solutions.size());
+        assertEquals("a", solutions.get(0).get("X").toString());
+        assertEquals("b", solutions.get(1).get("X").toString());
+        // END_CHANGE: ISS-2025-0342
     }
 
     // #8 Basic cut in multi-clause predicate
@@ -2261,5 +2264,763 @@ public class BugFixVerificationTest {
         List<Map<String, Term>> s = prolog.solve("with_output_to(atom(X), write(hello)).");
         assertEquals(1, s.size());
         assertEquals("hello", s.get(0).get("X").toString());
+    }
+
+    // START_CHANGE: ISS-2025-0342 - cut inside \+/1, not/1, (->)/2 and (*->)/2 condition is local
+    @Test
+    public void testISS0342_CutInNegationConditionIsLocal() {
+        // \+((!,fail)): the cut is local to the negated goal, so the condition just fails
+        // and the negation succeeds (ISO 8.15.1 executes the argument as call(Goal)).
+        assertEquals(1, prolog.solve("\\+ ((!, fail)).").size());
+        // sanity: a succeeding cut condition still makes the negation fail
+        assertTrue(prolog.solve("\\+ ((!, true)).").isEmpty());
+    }
+
+    @Test
+    public void testISS0342_CutInIfThenElseConditionRunsElse() {
+        // ((!,fail) -> T ; E): the cut is local to the condition (ISO 7.8.8), so the
+        // condition fails and the Else branch runs.
+        List<Map<String, Term>> s = prolog.solve("((!, fail) -> X = then ; X = else).");
+        assertEquals(1, s.size());
+        assertEquals("else", s.get(0).get("X").toString());
+        // arrow without else: a failing cut condition simply fails the construct
+        assertTrue(prolog.solve("((!, fail) -> X = then).").isEmpty());
+    }
+
+    @Test
+    public void testISS0342_CutInSoftCutConditionRunsElse() {
+        List<Map<String, Term>> s = prolog.solve("((!, fail) *-> X = 1 ; X = 2).");
+        assertEquals(1, s.size());
+        assertEquals("2", s.get(0).get("X").toString());
+    }
+
+    @Test
+    public void testISS0342_CutInConditionInsideClauseBody() {
+        prolog.consult("t11(X) :- ((!, fail) -> X = then ; X = else).\nt11(99).");
+        List<Map<String, Term>> s = prolog.solve("t11(X).");
+        assertEquals(2, s.size());
+        assertEquals("else", s.get(0).get("X").toString());
+        assertEquals("99", s.get(1).get("X").toString());
+    }
+
+    @Test
+    public void testISS0342_CommitSemanticsStillHold() {
+        // the internal commit must still cut the condition's OWN choice points:
+        // (member(X,[a,b]) -> Y = X ; Y = none) commits to X = a only.
+        List<Map<String, Term>> s = prolog.solve("(member(X, [a,b]) -> Y = X ; Y = none).");
+        assertEquals(1, s.size());
+        assertEquals("a", s.get(0).get("Y").toString());
+        // and a top-level cut in a plain disjunction still cuts the whole goal
+        assertTrue(prolog.solve("((!, fail) ; X = ok).").isEmpty());
+    }
+    // END_CHANGE: ISS-2025-0342
+
+    // START_CHANGE: ISS-2025-0343 - catch/3 frame is disarmed once its Goal exits (ISO 7.8.9)
+    @Test
+    public void testISS0343_ExitedCatchDoesNotRunRecovery() {
+        // the recovery of an ALREADY-EXITED catch must not run when a later goal throws
+        prolog.solve("retractall(s0343(_)).");     // creates s0343/1 as (empty) dynamic
+        try {
+            prolog.solve("catch(true, _, assertz(s0343(ran))), throw(err).");
+            fail("throw(err) after the catch goal exited must escape");
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException e) {
+            assertNotNull(e.getErrorTerm());
+            assertEquals("err", e.getErrorTerm().toString());
+        }
+        assertTrue("spurious recovery side effect committed", prolog.solve("s0343(X).").isEmpty());
+    }
+
+    @Test
+    public void testISS0343_ExitedCatchDoesNotSwallowLaterThrow() {
+        // the stale frame must not convert the error into failure via its recovery
+        try {
+            prolog.solve("catch(member(X, [1,2]), _, X = caught), X == 1, throw(err).");
+            fail("throw(err) raised after catch/3 exited must escape");
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException e) {
+            assertNotNull(e.getErrorTerm());
+            assertEquals("err", e.getErrorTerm().toString());
+        }
+    }
+
+    @Test
+    public void testISS0343_ReExecutionIsStillProtected() {
+        // backtracking INTO the goal re-arms the frame: a throw during the redo IS caught
+        List<Map<String, Term>> s = prolog.solve(
+            "catch((member(X, [1,2]), (X == 2 -> throw(e) ; true)), e, R = c), (var(R) -> fail ; true).");
+        assertEquals(1, s.size());
+        assertEquals("c", s.get(0).get("R").toString());
+    }
+
+    @Test
+    public void testISS0343_NestedExitedCatchFramesAreInert() {
+        try {
+            prolog.solve("catch(catch(true, _, true), _, true), throw(err).");
+            fail("throw(err) after nested catches exited must escape");
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException e) {
+            assertNotNull(e.getErrorTerm());
+            assertEquals("err", e.getErrorTerm().toString());
+        }
+    }
+
+    @Test
+    public void testISS0343_CatchStillWorksNormally() {
+        // armed-frame behaviour is unchanged: catch during Goal, nested rethrow, recovery solutions
+        List<Map<String, Term>> s = prolog.solve("catch(throw(my_err), E, true).");
+        assertEquals(1, s.size());
+        assertEquals("my_err", s.get(0).get("E").toString());
+        s = prolog.solve("catch(catch(throw(a), a, throw(b)), b, R = caught_b).");
+        assertEquals(1, s.size());
+        assertEquals("caught_b", s.get(0).get("R").toString());
+        s = prolog.solve("findall(X, catch(throw(t), t, member(X, [1,2])), L).");
+        assertEquals(1, s.size());
+        assertEquals("[1, 2]", s.get(0).get("L").toString());
+    }
+    // END_CHANGE: ISS-2025-0343
+
+    // START_CHANGE: ISS-2025-0344 - retract removes exactly ONE clause; rules list stays in sync with the indexes
+    @Test
+    public void testISS0344_RetractRemovesExactlyOneDuplicateClause() {
+        // ISO 8.9.3: each retract removes exactly one clause, even with duplicates
+        assertEquals(1, prolog.solve("assertz(q0344(a)), assertz(q0344(a)).").size());
+        assertEquals(1, prolog.solve("retract(q0344(a)).").size());
+        assertEquals("one duplicate must survive the first retract", 1, prolog.solve("q0344(a).").size());
+        assertEquals(1, prolog.solve("retract(q0344(a)).").size());
+        assertTrue("both clauses retracted -> call must fail", prolog.solve("q0344(a).").isEmpty());
+        assertTrue("third retract must fail (no immortal phantom)", prolog.solve("retract(q0344(a)).").isEmpty());
+        assertTrue(prolog.solve("q0344(a).").isEmpty());
+    }
+
+    @Test
+    public void testISS0344_RulesListAndRuleIndexStayInSync() throws Exception {
+        prolog.solve("assertz(q0344s(a)), assertz(q0344s(a)).");
+        java.lang.reflect.Field kbField =
+            it.denzosoft.jprolog.core.engine.Prolog.class.getDeclaredField("knowledgeBase");
+        kbField.setAccessible(true);
+        it.denzosoft.jprolog.core.engine.KnowledgeBase kb =
+            (it.denzosoft.jprolog.core.engine.KnowledgeBase) kbField.get(prolog);
+        assertEquals(2, kb.getRulesForPredicate("q0344s", 1).size());
+        assertEquals(2, countRules(kb, "q0344s"));
+        prolog.solve("retract(q0344s(a)).");
+        assertEquals(1, kb.getRulesForPredicate("q0344s", 1).size());
+        assertEquals("rules list desynced from ruleIndex", 1, countRules(kb, "q0344s"));
+        prolog.solve("retract(q0344s(a)).");
+        assertEquals(0, kb.getRulesForPredicate("q0344s", 1).size());
+        assertEquals(0, countRules(kb, "q0344s"));
+    }
+
+    private static int countRules(it.denzosoft.jprolog.core.engine.KnowledgeBase kb, String functor) {
+        int n = 0;
+        for (it.denzosoft.jprolog.core.engine.Rule r : kb.getRules()) {
+            Term h = r.getHead();
+            String f = (h instanceof Atom) ? ((Atom) h).getName()
+                : (h instanceof CompoundTerm) ? ((CompoundTerm) h).getName() : "";
+            if (functor.equals(f)) n++;
+        }
+        return n;
+    }
+
+    @Test
+    public void testISS0344_KnowledgeBaseRetractRemovesOneByEquality() {
+        // direct API path (Prolog.retract(String) parses a fresh Rule -> equals fallback)
+        it.denzosoft.jprolog.core.engine.KnowledgeBase kb = new it.denzosoft.jprolog.core.engine.KnowledgeBase();
+        it.denzosoft.jprolog.core.engine.Rule r1 =
+            new it.denzosoft.jprolog.core.engine.Rule(new CompoundTerm(new Atom("d0344"),
+                java.util.Arrays.asList((Term) new Atom("x"))), new java.util.ArrayList<Term>());
+        it.denzosoft.jprolog.core.engine.Rule r2 =
+            new it.denzosoft.jprolog.core.engine.Rule(new CompoundTerm(new Atom("d0344"),
+                java.util.Arrays.asList((Term) new Atom("x"))), new java.util.ArrayList<Term>());
+        kb.addRule(r1);
+        kb.addRule(r2);
+        it.denzosoft.jprolog.core.engine.Rule parsed =
+            new it.denzosoft.jprolog.core.engine.Rule(new CompoundTerm(new Atom("d0344"),
+                java.util.Arrays.asList((Term) new Atom("x"))), new java.util.ArrayList<Term>());
+        kb.retract(parsed);
+        assertEquals(1, kb.getRules().size());
+        assertEquals(1, kb.getRulesForPredicate("d0344", 1).size());
+        kb.retract(parsed);
+        assertEquals(0, kb.getRules().size());
+        assertEquals(0, kb.getRulesForPredicate("d0344", 1).size());
+    }
+    // END_CHANGE: ISS-2025-0344
+
+    // START_CHANGE: ISS-2025-0345 - solve(Term) runs the same engine and budget as solve(String)
+    @Test
+    public void testISS0345_SolveTermHonorsInferenceBudget() {
+        prolog.consult("app0345([],L,L).\napp0345([H|T],L,[H|R]) :- app0345(T,L,R).\n"
+            + "nrev0345([],[]).\nnrev0345([H|T],R) :- nrev0345(T,RT), app0345(RT,[H],R).");
+        StringBuilder l = new StringBuilder("[1");
+        for (int i = 2; i <= 120; i++) l.append(",").append(i);
+        l.append("]");
+        Term query = it.denzosoft.jprolog.core.parser.v2.TermReader.parseTerm(
+            "nrev0345(" + l + ", R)", new it.denzosoft.jprolog.core.operator.OperatorTable());
+        prolog.setInferenceBudget(2000);
+        try {
+            prolog.solve(query);
+            fail("solve(Term) must enforce the inference budget like solve(String)");
+        } catch (it.denzosoft.jprolog.core.engine.InferenceLimitException expected) {
+            // the Term overload is budget-bounded too
+        } finally {
+            prolog.setInferenceBudget(0);
+        }
+    }
+
+    @Test
+    public void testISS0345_SolveTermReturnsQueryVarSolutions() {
+        prolog.consult("f0345(a). f0345(b).");
+        Term query = it.denzosoft.jprolog.core.parser.v2.TermReader.parseTerm(
+            "f0345(X)", new it.denzosoft.jprolog.core.operator.OperatorTable());
+        List<Map<String, Term>> s = prolog.solve(query);
+        assertEquals(2, s.size());
+        assertEquals("a", s.get(0).get("X").toString());
+        assertEquals("b", s.get(1).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0345
+
+    // START_CHANGE: ISS-2025-0346 - halt/0, halt/1 terminate the processor (consumer handling)
+    @Test
+    public void testISS0346_HaltEscapesCatchWithExitCode() {
+        // the engine contract: halt is a PrologException(isHalt) that catch/3 cannot trap,
+        // so the embedding consumer (CLI/IDE) can act on the exit code
+        try {
+            prolog.solve("catch(halt(3), _, true).");
+            fail("halt/1 must not be trappable by catch/3; it must reach the embedder");
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
+            assertTrue("halt must carry the isHalt flag", pe.isHalt());
+            assertEquals(3, pe.getExitCode());
+        }
+        try {
+            prolog.solve("halt.");
+            fail("halt/0 must reach the embedder");
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
+            assertTrue(pe.isHalt());
+            assertEquals(0, pe.getExitCode());
+        }
+    }
+
+    @Test
+    public void testISS0346_HaltDirectivePropagatesFromConsult() {
+        // ':- halt(N).' in a consulted program must abort the load and reach the embedder
+        // (previously executeGoalDirective swallowed it as a directive warning)
+        try {
+            prolog.consult("p0346(1).\n:- halt(7).\np0346(2).");
+            fail("':- halt(7).' during consult must propagate to the embedder");
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
+            assertTrue("halt flag must survive the consult error handling", pe.isHalt());
+            assertEquals(7, pe.getExitCode());
+        }
+        // clauses before the halt are loaded; the load stops at the halt
+        assertEquals(1, prolog.solve("p0346(1).").size());
+        assertTrue(prolog.solve("p0346(2).").isEmpty());
+    }
+    // END_CHANGE: ISS-2025-0346
+
+    // START_CHANGE: ISS-2025-0347 - unknown procedure raises existence_error per the 'unknown' flag
+    @Test
+    public void testISS0347_UnknownProcedureRaisesExistenceError() {
+        // ISO 7.7.7 + flag 7.11.2.4: with unknown=error (the default), calling an undefined
+        // procedure raises error(existence_error(procedure, Name/Arity), _)
+        try {
+            prolog.solve("undefined_foo_0347(1).");
+            fail("calling an unknown procedure with unknown=error must raise existence_error");
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
+            assertNotNull(pe.getErrorTerm());
+            assertTrue(pe.getErrorTerm().toString().contains("existence_error"));
+            assertTrue(pe.getErrorTerm().toString().contains("undefined_foo_0347"));
+        }
+        // the error is a regular ISO ball, catchable with the standard term shape
+        List<Map<String, Term>> s = prolog.solve(
+            "catch(undefined_foo_0347(1), error(existence_error(procedure, PI), _), true).");
+        assertEquals(1, s.size());
+        assertTrue(s.get(0).get("PI").toString().contains("undefined_foo_0347"));
+    }
+
+    @Test
+    public void testISS0347_UnknownFlagFailAndWarningHonored() {
+        try {
+            prolog.solve("set_prolog_flag(unknown, fail).");
+            assertTrue(prolog.solve("undefined_bar_0347.").isEmpty());
+            prolog.solve("set_prolog_flag(unknown, warning).");
+            assertTrue(prolog.solve("undefined_bar_0347.").isEmpty());
+        } finally {
+            prolog.solve("set_prolog_flag(unknown, error).");   // flag store is process-wide
+        }
+    }
+
+    @Test
+    public void testISS0347_DynamicDirectiveSuppressesExistenceError() {
+        // ':- dynamic PI' (single, '/'-pair, and ','-sequence) makes empty predicates fail silently
+        prolog.consult(":- dynamic(dyn0347/1).\n:- dynamic dyn0347b/2, dyn0347c/3.");
+        assertTrue(prolog.solve("dyn0347(X).").isEmpty());
+        assertTrue(prolog.solve("dyn0347b(X, Y).").isEmpty());
+        assertTrue(prolog.solve("dyn0347c(X, Y, Z).").isEmpty());
+    }
+
+    @Test
+    public void testISS0347_AssertImpliesDynamicSurvivingRetract() {
+        // assert implies dynamic (ISO 8.9.1); the mark survives retracting every clause
+        prolog.solve("assertz(adyn0347(1)).");
+        assertEquals(1, prolog.solve("adyn0347(X).").size());
+        assertEquals(1, prolog.solve("retract(adyn0347(1)).").size());
+        assertTrue("retracted-to-empty dynamic procedure must FAIL, not raise",
+            prolog.solve("adyn0347(X).").isEmpty());
+    }
+
+    @Test
+    public void testISS0347_RetractallImpliesDynamic() {
+        // retractall creates the procedure as dynamic when it does not exist (SWI semantics)
+        prolog.solve("retractall(rdyn0347(_)).");
+        assertTrue(prolog.solve("rdyn0347(x).").isEmpty());
+    }
+
+    @Test
+    public void testISS0347_LegacyEngineAlsoRaisesExistenceError() {
+        try {
+            prolog.solveLegacy("undefined_leg_0347(1).");
+            fail("the legacy engine must also honour unknown=error");
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
+            assertNotNull(pe.getErrorTerm());
+            assertTrue(pe.getErrorTerm().toString().contains("existence_error"));
+        }
+        // control constructs resolved via KB miss (fail/0) are NOT unknown procedures
+        assertTrue(prolog.solveLegacy("fail.").isEmpty());
+    }
+    // END_CHANGE: ISS-2025-0347
+
+    @Test
+    public void testISS0348_StringStandardOrderingByContent() {
+        // Direct check of the shared ordering used by compare/3, @</2 .. @>=/2 and ==/2 (legacy)
+        assertEquals("identical strings must compare equal", 0,
+            it.denzosoft.jprolog.builtin.term.StandardTermOrdering.compare(
+                new PrologString("abc"), new PrologString("abc")));
+        assertTrue("\"abc\" must order before \"abd\"",
+            it.denzosoft.jprolog.builtin.term.StandardTermOrdering.compare(
+                new PrologString("abc"), new PrologString("abd")) < 0);
+        assertTrue("\"abd\" must order after \"abc\"",
+            it.denzosoft.jprolog.builtin.term.StandardTermOrdering.compare(
+                new PrologString("abd"), new PrologString("abc")) > 0);
+        assertTrue("distinct strings must NOT be identical",
+            !it.denzosoft.jprolog.builtin.term.StandardTermOrdering.identical(
+                new PrologString("abc"), new PrologString("abd")));
+        assertTrue("equal-content strings must be identical",
+            it.denzosoft.jprolog.builtin.term.StandardTermOrdering.identical(
+                new PrologString("abc"), new PrologString("abc")));
+    }
+
+    @Test
+    public void testISS0348_CompareDistinguishesStrings() {
+        List<Map<String, Term>> s = prolog.solve("compare(O, \"abc\", \"abd\").");
+        assertEquals(1, s.size());
+        assertEquals("<", s.get(0).get("O").toString());
+
+        s = prolog.solve("compare(O, \"abd\", \"abc\").");
+        assertEquals(1, s.size());
+        assertEquals(">", s.get(0).get("O").toString());
+
+        s = prolog.solve("compare(O, \"abc\", \"abc\").");
+        assertEquals(1, s.size());
+        assertEquals("=", s.get(0).get("O").toString());
+    }
+
+    @Test
+    public void testISS0348_TermOrderOperatorsOnStrings() {
+        assertEquals(1, prolog.solve("\"abc\" @< \"abd\".").size());
+        assertEquals(0, prolog.solve("\"abd\" @< \"abc\".").size());
+        assertEquals(1, prolog.solve("\"abc\" @=< \"abc\".").size());
+        assertEquals(1, prolog.solve("\"abd\" @> \"abc\".").size());
+    }
+
+    @Test
+    public void testISS0348_StringRankConsistentWithSort() {
+        // compare/3 must agree with sort/msort: Var < Number < Atom < String < Compound
+        assertEquals(1, prolog.solve("compare(O, \"abc\", f(x)), O == (<).").size());
+        assertEquals(1, prolog.solve("compare(O, foo, \"abc\"), O == (<).").size());
+        assertEquals(1, prolog.solve("compare(O, 1, \"abc\"), O == (<).").size());
+        // msort places the string between the atom and the compound, like compare/3 now does
+        List<Map<String, Term>> s = prolog.solve("msort([f(b), \"abc\", foo], L).");
+        assertEquals(1, s.size());
+        assertEquals("[foo, \"abc\", f(b)]", s.get(0).get("L").toString());
+    }
+
+    @Test
+    public void testISS0348_StringIdentityAndAtomicOnLegacyEngine() {
+        // ==/\==/atomic for strings on the legacy engine (the v2 engine inlines its own
+        // structural equality in core.engine.v2.MachineSolver — tracked separately).
+        boolean wasV2 = Prolog.isUsingV2Engine();
+        Prolog.setUseV2Engine(false);
+        try {
+            Prolog legacy = new Prolog();
+            assertEquals("\"abc\" == \"abc\" must succeed", 1, legacy.solve("\"abc\" == \"abc\".").size());
+            assertEquals("\"abc\" == \"abd\" must fail", 0, legacy.solve("\"abc\" == \"abd\".").size());
+            assertEquals("\"abc\" \\== \"abc\" must fail", 0, legacy.solve("\"abc\" \\== \"abc\".").size());
+            assertEquals("\"abc\" \\== \"abd\" must succeed", 1, legacy.solve("\"abc\" \\== \"abd\".").size());
+            assertEquals("strings are atomic", 1, legacy.solve("atomic(\"abc\").").size());
+        } finally {
+            Prolog.setUseV2Engine(wasV2);
+        }
+    }
+
+    @Test
+    public void testISS0348_StringIdentityAndAtomicOnDefaultEngine() {
+        // ==/\==/atomic for strings on the default v2 engine (inlined in MachineSolver)
+        assertEquals("\"abc\" == \"abc\" must succeed", 1, prolog.solve("\"abc\" == \"abc\".").size());
+        assertEquals("\"abc\" == \"abd\" must fail", 0, prolog.solve("\"abc\" == \"abd\".").size());
+        assertEquals("\"abc\" \\== \"abc\" must fail", 0, prolog.solve("\"abc\" \\== \"abc\".").size());
+        assertEquals("\"abc\" \\== \"abd\" must succeed", 1, prolog.solve("\"abc\" \\== \"abd\".").size());
+        assertEquals("strings are atomic", 1, prolog.solve("atomic(\"abc\").").size());
+    }
+    // END_CHANGE: ISS-2025-0348
+
+    // ======================== ISS-2025-0349: list builtins on proper lists with var elements ========================
+
+    // START_CHANGE: ISS-2025-0349 - length/reverse/select/permutation accept proper lists with unbound elements
+    @Test
+    public void testISS0349_LengthProperListWithVars() {
+        List<Map<String, Term>> s = prolog.solve("length([A, B], N).");
+        assertEquals(1, s.size());
+        assertEquals("2", s.get(0).get("N").toString());
+
+        s = prolog.solve("length([a, B], N).");
+        assertEquals(1, s.size());
+        assertEquals("2", s.get(0).get("N").toString());
+
+        // the ubiquitous sort-then-count pattern
+        assertEquals(1, prolog.solve("sort([X, Y], L), length(L, 2).").size());
+    }
+
+    @Test
+    public void testISS0349_LengthPartialListModePreserved() {
+        // length(PartialList, N) generative mode must keep working
+        assertEquals(1, prolog.solve("length([a|T], 3), T = [b, c].").size());
+        assertEquals(0, prolog.solve("length(foo, _N).").size());
+    }
+
+    @Test
+    public void testISS0349_ReverseProperListWithVars() {
+        assertEquals(1, prolog.solve("reverse([X, b], R), R == [b, X].").size());
+    }
+
+    @Test
+    public void testISS0349_SelectProperListWithVars() {
+        assertEquals(1, prolog.solve("findall(E-R, select(E, [X, b], R), L), length(L, 2).").size());
+    }
+
+    @Test
+    public void testISS0349_PermutationProperListWithVars() {
+        assertEquals(1, prolog.solve("findall(P, permutation([X, b], P), L), length(L, 2).").size());
+    }
+    // END_CHANGE: ISS-2025-0349
+
+    // ======================== ISS-2025-0350: keysort/2 modes and ISO errors ========================
+
+    // START_CHANGE: ISS-2025-0350 - keysort/2 accepts non-ground pairs, raises ISO errors on bad input
+    @Test
+    public void testISS0350_KeysortUnboundValues() {
+        // sorting Key-Var pairs is the canonical keysort idiom
+        assertEquals(1, prolog.solve("keysort([b-Y, a-X], L), L == [a-X, b-Y].").size());
+    }
+
+    @Test
+    public void testISS0350_KeysortStableByKeyOnly() {
+        // stable: equal keys keep their input order (b-2 stays before b-1)
+        assertEquals(1, prolog.solve("keysort([b-2, a-1, b-1], L), L == [a-1, b-2, b-1].").size());
+    }
+
+    @Test
+    public void testISS0350_KeysortNonListTypeError() {
+        // was: silent success with L = []
+        assertEquals(1, prolog.solve(
+            "catch(keysort(a, _), error(type_error(list, a), _), true).").size());
+    }
+
+    @Test
+    public void testISS0350_KeysortImproperListTypeError() {
+        // was: improper tail silently truncated
+        assertEquals(1, prolog.solve(
+            "catch(keysort([a-1|b], _), error(type_error(list, _), _), true).").size());
+    }
+
+    @Test
+    public void testISS0350_KeysortPartialListInstantiationError() {
+        assertEquals(1, prolog.solve(
+            "catch(keysort([a-1|_T], _), error(instantiation_error, _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(keysort(_M, _), error(instantiation_error, _), true).").size());
+    }
+
+    @Test
+    public void testISS0350_KeysortNonPairTypeError() {
+        assertEquals(1, prolog.solve(
+            "catch(keysort([a], _), error(type_error(pair, a), _), true).").size());
+    }
+    // END_CHANGE: ISS-2025-0350
+
+    // ======================== ISS-2025-0351: sort/2, sort/4, msort/2 ISO errors ========================
+
+    // START_CHANGE: ISS-2025-0351 - sort/msort raise ISO errors instead of failing silently
+    @Test
+    public void testISS0351_SortPartialListInstantiationError() {
+        assertEquals(1, prolog.solve(
+            "catch(sort([a|_T], _), error(instantiation_error, _), true).").size());
+    }
+
+    @Test
+    public void testISS0351_SortNonListTypeError() {
+        assertEquals(1, prolog.solve(
+            "catch(sort(foo, _), error(type_error(list, foo), _), true).").size());
+    }
+
+    @Test
+    public void testISS0351_MsortErrors() {
+        assertEquals(1, prolog.solve(
+            "catch(msort(foo, _), error(type_error(list, foo), _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(msort([a|_T], _), error(instantiation_error, _), true).").size());
+    }
+
+    @Test
+    public void testISS0351_Sort4Errors() {
+        assertEquals(1, prolog.solve(
+            "catch(sort(0, @<, foo, _), error(type_error(list, foo), _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(sort(0, @<, [a|_T], _), error(instantiation_error, _), true).").size());
+    }
+    // END_CHANGE: ISS-2025-0351
+
+    private String captureStdout(String query, List<Map<String, Term>> solutionsOut) {
+        java.io.PrintStream orig = System.out;
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        System.setOut(new java.io.PrintStream(baos));
+        try {
+            solutionsOut.addAll(prolog.solve(query));
+        } finally {
+            System.setOut(orig);
+        }
+        return baos.toString();
+    }
+
+    private java.io.File writeTempPrologFile(String prefix, String content) throws java.io.IOException {
+        java.io.File f = java.io.File.createTempFile(prefix, ".pl");
+        f.deleteOnExit();
+        java.io.PrintWriter pw = new java.io.PrintWriter(f, "UTF-8");
+        pw.print(content);
+        pw.close();
+        return f;
+    }
+
+    @Test
+    public void testISS0352_FormatSucceedsAsGoal() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        String out = captureStdout("format('x~n', []).", solutions);
+        assertEquals("format/2 must succeed with exactly one solution", 1, solutions.size());
+        assertEquals("x\n", out);
+    }
+
+    @Test
+    public void testISS0352_FormatInConjunctionBindsNextGoal() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        captureStdout("format('a~n', []), X = done.", solutions);
+        assertEquals("conjunction after format/2 must run", 1, solutions.size());
+        assertEquals("done", solutions.get(0).get("X").toString());
+    }
+
+    @Test
+    public void testISS0352_Format3SucceedsAsGoal() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        String out = captureStdout("format(user_output, '~w', [hi]), X = ok.", solutions);
+        assertEquals(1, solutions.size());
+        assertEquals("ok", solutions.get(0).get("X").toString());
+        assertEquals("hi", out);
+    }
+
+    @Test
+    public void testISS0352_WriteTermSucceedsAsGoal() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        String out = captureStdout("write_term(abc, [quoted(true)]), X = ok.", solutions);
+        assertEquals("write_term/2 must succeed with exactly one solution", 1, solutions.size());
+        assertEquals("ok", solutions.get(0).get("X").toString());
+        assertEquals("abc", out);
+    }
+
+    @Test
+    public void testISS0352_ReadTermSucceedsAsGoal() throws Exception {
+        java.io.File f = writeTempPrologFile("iss0352_read", "foo(bar).\n");
+        List<Map<String, Term>> solutions = prolog.solve(
+            "open('" + f.getAbsolutePath() + "', read, S), read_term(S, T), close(S), X = done.");
+        assertEquals("read_term/2 must succeed with exactly one solution", 1, solutions.size());
+        assertEquals("foo(bar)", solutions.get(0).get("T").toString());
+        assertEquals("done", solutions.get(0).get("X").toString());
+    }
+
+    // ======================== ISS-2025-0353: format/2,3 accepts double-quoted (PrologString) format strings ========================
+
+    @Test
+    public void testISS0353_FormatDoubleQuotedFormatString() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        String out = captureStdout("format(\"ok~n\", []).", solutions);
+        assertEquals("format/2 with a double-quoted format string must succeed", 1, solutions.size());
+        assertEquals("ok\n", out);
+    }
+
+    @Test
+    public void testISS0353_FormatStringViaVariable() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        String out = captureStdout("S = \"vv~n\", format(S, []).", solutions);
+        assertEquals(1, solutions.size());
+        assertEquals("vv\n", out);
+    }
+
+    @Test
+    public void testISS0353_FormatTildeSWithPrologString() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        String out = captureStdout("format(\"~s!\", [\"abc\"]).", solutions);
+        assertEquals(1, solutions.size());
+        assertEquals("abc!", out);
+    }
+
+    // ======================== ISS-2025-0354: read_term/3 (Stream, Term, Options) ========================
+
+    @Test
+    public void testISS0354_ReadTerm3FromFileStream() throws Exception {
+        java.io.File f = writeTempPrologFile("iss0354_read", "foo(bar).\n");
+        List<Map<String, Term>> solutions = prolog.solve(
+            "open('" + f.getAbsolutePath() + "', read, S), read_term(S, T, []), close(S).");
+        assertEquals("read_term/3 must succeed with exactly one solution", 1, solutions.size());
+        assertEquals("foo(bar)", solutions.get(0).get("T").toString());
+    }
+
+    @Test
+    public void testISS0354_ReadTerm3VariableNamesOption() throws Exception {
+        java.io.File f = writeTempPrologFile("iss0354_vars", "baz(A1, B2).\n");
+        List<Map<String, Term>> solutions = prolog.solve(
+            "open('" + f.getAbsolutePath() + "', read, S), read_term(S, T, [variable_names(V)]), close(S).");
+        assertEquals(1, solutions.size());
+        String v = solutions.get(0).get("V").toString();
+        assertTrue("variable_names must report A1: " + v, v.contains("A1"));
+        assertTrue("variable_names must report B2: " + v, v.contains("B2"));
+    }
+
+    // ======================== ISS-2025-0355: unification must respect CLP(FD) domains ========================
+
+    @Test
+    public void testISS0355_UnificationOutsideDomainFails() {
+        List<Map<String, Term>> solutions = prolog.solve("X in 1..3, X = 5.");
+        assertTrue("unifying an FD variable with a value outside its domain must fail", solutions.isEmpty());
+    }
+
+    @Test
+    public void testISS0355_UnificationOutsideNarrowedDomainFails() {
+        List<Map<String, Term>> solutions = prolog.solve("X in 1..3, X #> 2, X = 1.");
+        assertTrue("X is constrained to 3; X = 1 must fail", solutions.isEmpty());
+    }
+
+    @Test
+    public void testISS0355_UnificationWithNonIntegerFails() {
+        List<Map<String, Term>> solutions = prolog.solve("X in 1..3, X = a.");
+        assertTrue("unifying an FD variable with a non-integer must fail", solutions.isEmpty());
+    }
+
+    @Test
+    public void testISS0355_DisjointDomainAliasingFails() {
+        List<Map<String, Term>> solutions = prolog.solve("X in 1..3, Y in 5..7, X = Y.");
+        assertTrue("aliasing FD variables with disjoint domains must fail", solutions.isEmpty());
+    }
+
+    @Test
+    public void testISS0355_LabelAfterBadUnificationFails() {
+        List<Map<String, Term>> solutions = prolog.solve("X in 1..3, X = 5, label([X]).");
+        assertTrue(solutions.isEmpty());
+    }
+
+    @Test
+    public void testISS0355_UnificationInsideDomainSucceeds() {
+        List<Map<String, Term>> solutions = prolog.solve("X in 1..3, X = 2.");
+        assertEquals(1, solutions.size());
+        assertEquals("2", solutions.get(0).get("X").toString());
+    }
+
+    @Test
+    public void testISS0355_AliasingIntersectsDomains() {
+        List<Map<String, Term>> solutions = prolog.solve("X in 1..3, Y in 2..5, X = Y, label([X]).");
+        assertEquals("X = Y restricts both to 2..3", 2, solutions.size());
+    }
+
+    // ======================== ISS-2025-0356: constraints are undone on engine backtracking ========================
+
+    @Test
+    public void testISS0356_DisjunctionEnumeratesBothBranches() {
+        List<Map<String, Term>> solutions = prolog.solve("( X #= 1 ; X #= 2 ), label([X]).");
+        assertEquals("the X #= 1 post must be retracted before the second branch", 2, solutions.size());
+        assertEquals("1", solutions.get(0).get("X").toString());
+        assertEquals("2", solutions.get(1).get("X").toString());
+    }
+
+    @Test
+    public void testISS0356_FailedBranchDoesNotPoisonStore() {
+        List<Map<String, Term>> solutions = prolog.solve("( Y #> 10, fail ; true ), Y in 1..3, label([Y]).");
+        assertEquals("the failed Y #> 10 branch must not keep narrowing Y", 3, solutions.size());
+    }
+
+    @Test
+    public void testISS0356_BacktrackedConstraintRetracted() {
+        List<Map<String, Term>> solutions = prolog.solve("Z in 1..3, ( Z #> 5 ; Z #< 3 ), label([Z]).");
+        assertEquals("the wiped-out Z #> 5 post must leave no trace", 2, solutions.size());
+        assertEquals("1", solutions.get(0).get("Z").toString());
+        assertEquals("2", solutions.get(1).get("Z").toString());
+    }
+
+    // ======================== ISS-2025-0357: singleton domains bind the Prolog variable ========================
+
+    @Test
+    public void testISS0357_SingletonDomainBindsVariable() {
+        List<Map<String, Term>> solutions = prolog.solve("X #= 2, Y is X + 1.");
+        assertEquals("X #= 2 must bind X so is/2 can evaluate it", 1, solutions.size());
+        assertEquals("2", solutions.get(0).get("X").toString());
+        assertEquals("3", solutions.get(0).get("Y").toString());
+    }
+
+    @Test
+    public void testISS0357_PropagationToSingletonBinds() {
+        List<Map<String, Term>> solutions = prolog.solve("A in 1..3, A #> 2, B is A.");
+        assertEquals(1, solutions.size());
+        assertEquals("3", solutions.get(0).get("A").toString());
+        assertEquals("3", solutions.get(0).get("B").toString());
+    }
+
+    @Test
+    public void testISS0357_LabelingBindsDeterminedVariables() {
+        List<Map<String, Term>> solutions = prolog.solve("C in 1..3, D #= C*2+1, label([C]).");
+        assertEquals(3, solutions.size());
+        for (Map<String, Term> m : solutions) {
+            long c = Long.parseLong(m.get("C").toString());
+            assertTrue("D must come out bound after label([C])", m.get("D") instanceof Number);
+            assertEquals(c * 2 + 1, Long.parseLong(m.get("D").toString()));
+        }
+    }
+
+    // ======================== ISS-2025-0358: multi-variable #\= expressions ========================
+
+    @Test
+    public void testISS0358_MultiVariableDisequality() {
+        List<Map<String, Term>> solutions = prolog.solve(
+            "X in 1..5, X #\\= Y + 1, Y in 1..3, label([X,Y]).");
+        assertEquals("15 pairs minus (2,1),(3,2),(4,3)", 12, solutions.size());
+        for (Map<String, Term> m : solutions) {
+            long x = Long.parseLong(m.get("X").toString());
+            long y = Long.parseLong(m.get("Y").toString());
+            assertTrue("X #\\= Y + 1 must hold: " + x + "," + y, x != y + 1);
+        }
+    }
+
+    @Test
+    public void testISS0358_SingleVariableDisequalityStillWorks() {
+        List<Map<String, Term>> solutions = prolog.solve("X in 1..5, X + 1 #\\= 5, label([X]).");
+        assertEquals(4, solutions.size());                              // 1,2,3,5 (ISS-2025-0301)
+        for (Map<String, Term> m : solutions) assertNotEquals("4", m.get("X").toString());
+    }
+
+    @Test
+    public void testISS0358_SelfDisequalityFails() {
+        List<Map<String, Term>> solutions = prolog.solve("T in 1..3, T #\\= T.");
+        assertTrue("T #\\= T is unsatisfiable", solutions.isEmpty());
     }
 }

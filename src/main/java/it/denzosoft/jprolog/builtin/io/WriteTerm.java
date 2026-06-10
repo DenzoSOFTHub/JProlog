@@ -33,7 +33,9 @@ public class WriteTerm extends AbstractBuiltInWithContext {
 
     @Override
     public boolean execute(Term term, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        return solve(solver, bindings);
+        // START_CHANGE: ISS-2025-0352 - extract arguments from the query and report success via solutions
+        return executeWithContext(solver, term, bindings, solutions);
+        // END_CHANGE: ISS-2025-0352
     }
 
     @Override

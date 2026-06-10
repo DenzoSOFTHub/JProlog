@@ -137,6 +137,31 @@ public final class ClpStore {
         queued.clear();
     }
 
+    // START_CHANGE: ISS-2025-0356 - full store rollback (domains AND constraints) for engine backtracking
+    /** Current constraint count; pass to {@link #rollbackTo(int, int)} to restore. */
+    public int constraintMark() { return constraints.size(); }
+
+    /**
+     * Restore the store to a snapshot taken before a constraint post: undo all domain changes after
+     * {@code domainMark} and remove every constraint added after {@code constraintMark}, including
+     * its watcher registrations — so a constraint posted in a failed/abandoned branch can never
+     * re-propagate. Used by the engine's backtracking (via the legacy {@code Trail}).
+     */
+    public void rollbackTo(int domainMark, int constraintMark) {
+        undo(domainMark);
+        for (int i = constraints.size() - 1; i >= constraintMark; i--) {
+            Constraint c = constraints.remove(i);
+            for (FdVar v : c.variables()) {
+                List<Constraint> ws = watchers.get(v);
+                if (ws == null) continue;
+                for (int j = ws.size() - 1; j >= 0; j--) {   // identity-based removal of ONE registration
+                    if (ws.get(j) == c) { ws.remove(j); break; }
+                }
+            }
+        }
+    }
+    // END_CHANGE: ISS-2025-0356
+
     /** True if every variable's domain is a singleton (a complete consistent assignment). */
     public boolean allAssigned() {
         for (IntervalDomain d : domains.values()) {

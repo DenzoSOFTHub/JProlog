@@ -35,7 +35,9 @@ public class ReadTerm extends AbstractBuiltInWithContext {
 
     @Override
     public boolean execute(Term term, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        return solve(solver, bindings);
+        // START_CHANGE: ISS-2025-0352 - extract arguments from the query and report success via solutions
+        return executeWithContext(solver, term, bindings, solutions);
+        // END_CHANGE: ISS-2025-0352
     }
 
     @Override
@@ -44,7 +46,9 @@ public class ReadTerm extends AbstractBuiltInWithContext {
 
         if (args.length == 2) {
             // Check if first argument is stream or term
-            Term first = args[0];
+            // START_CHANGE: ISS-2025-0352 - resolve the first argument so a stream bound via a variable routes correctly
+            Term first = args[0].resolveBindings(bindings);
+            // END_CHANGE: ISS-2025-0352
             Term second = args[1];
 
             if (isStream(first)) {
@@ -52,9 +56,16 @@ public class ReadTerm extends AbstractBuiltInWithContext {
                 return readTermFromStream(first, second, new ArrayList<>(), bindings);
             } else {
                 // read_term(-Term, +Options)
-                return readTermWithOptions(first, second, bindings);
+                return readTermWithOptions(args[0], second, bindings);
             }
         }
+
+        // START_CHANGE: ISS-2025-0354 - read_term(+Stream, -Term, +Options): the primary ISO 8.14.1 form
+        if (args.length == 3) {
+            List<ReadOption> options = parseReadOptions(args[2].resolveBindings(bindings), bindings);
+            return readTermFromStream(args[0].resolveBindings(bindings), args[1], options, bindings);
+        }
+        // END_CHANGE: ISS-2025-0354
 
         return false;
     }

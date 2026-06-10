@@ -225,6 +225,13 @@ public class Prolog {
                         }
                         // END_CHANGE: CR-2025-0002
                     }
+                // START_CHANGE: ISS-2025-0346 - a halt raised by a directive aborts the load
+                } catch (PrologException pe) {
+                    if (pe.isHalt()) {
+                        throw pe;
+                    }
+                    errors.add("Error processing clause: '" + trimmed + "' - " + pe.getMessage());
+                // END_CHANGE: ISS-2025-0346
                 } catch (Exception e) {
                     errors.add("Error processing clause: '" + trimmed + "' - " + e.getMessage());
                     // Continue with next clause
@@ -234,6 +241,13 @@ public class Prolog {
             // START_CHANGE: ISS-2025-0279 - run deferred initialization/1 goals now that the file is loaded
             runPendingInitializationGoals();
             // END_CHANGE: ISS-2025-0279
+        // START_CHANGE: ISS-2025-0346 - propagate halt to the embedder (CLI/IDE terminate the session)
+        } catch (PrologException pe) {
+            if (pe.isHalt()) {
+                throw pe;
+            }
+            errors.add("Error extracting clauses: " + pe.getMessage());
+        // END_CHANGE: ISS-2025-0346
         } catch (Exception e) {
             errors.add("Error extracting clauses: " + e.getMessage());
         }
@@ -295,11 +309,25 @@ public class Prolog {
                             knowledgeBase.addRule(rule);
                         }
                     }
+                // START_CHANGE: ISS-2025-0346 - a halt raised by a directive aborts the load
+                } catch (PrologException pe) {
+                    if (pe.isHalt()) {
+                        throw pe;
+                    }
+                    errors.add("Error processing clause '" + clauseTerm + "': " + pe.getMessage());
+                // END_CHANGE: ISS-2025-0346
                 } catch (Exception e) {
                     errors.add("Error processing clause '" + clauseTerm + "': " + e.getMessage());
                 }
             }
             runPendingInitializationGoals();
+        // START_CHANGE: ISS-2025-0346 - propagate halt to the embedder (CLI/IDE terminate the session)
+        } catch (PrologException pe) {
+            if (pe.isHalt()) {
+                throw pe;
+            }
+            errors.add("Parse error (v2): " + pe.getMessage());
+        // END_CHANGE: ISS-2025-0346
         } catch (Exception e) {
             errors.add("Parse error (v2): " + e.getMessage());
         }
@@ -419,7 +447,13 @@ public class Prolog {
                         break;
                     // END_CHANGE: ISS-2025-0167
                     // START_CHANGE: ISS-2025-0122 - Handle dynamic directive and execute goal directives
+                    // START_CHANGE: ISS-2025-0347 - ':- dynamic PI' marks the procedure(s) dynamic in
+                    // the KnowledgeBase so an empty dynamic predicate fails instead of raising
+                    // existence_error under the 'unknown' flag (was a logged no-op).
                     case "dynamic":
+                        processDynamicDirective(directive);
+                        break;
+                    // END_CHANGE: ISS-2025-0347
                     case "discontiguous":
                     case "ensure_loaded":
                         // These are declaration directives - acknowledge and continue
@@ -445,6 +479,45 @@ public class Prolog {
             }
         }
     }
+
+    // START_CHANGE: ISS-2025-0347 - parse ':- dynamic(PI)' (PI = Name/Arity, a ','-sequence of
+    // indicators, or a list) and mark each procedure dynamic in the KnowledgeBase.
+    private void processDynamicDirective(Term directive) {
+        if (directive instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) directive;
+            for (Term arg : c.getArguments()) {
+                markDynamicIndicators(arg);
+            }
+        }
+        LOGGER.log(Level.FINE, "Dynamic directive processed: " + directive);
+    }
+
+    private void markDynamicIndicators(Term spec) {
+        if (spec instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) spec;
+            String f = c.getName();
+            int ar = c.getArguments().size();
+            if ((",".equals(f) || ".".equals(f)) && ar == 2) {       // ','-sequence or list of PIs
+                markDynamicIndicators(c.getArguments().get(0));
+                markDynamicIndicators(c.getArguments().get(1));
+                return;
+            }
+            if ("/".equals(f) && ar == 2) {                          // Name/Arity
+                Term name = c.getArguments().get(0);
+                Term arity = c.getArguments().get(1);
+                if (name instanceof Atom && arity instanceof it.denzosoft.jprolog.core.terms.Number) {
+                    knowledgeBase.markDynamic(((Atom) name).getName(),
+                        (int) Math.round(((it.denzosoft.jprolog.core.terms.Number) arity).getValue()));
+                    return;
+                }
+            }
+        }
+        if (spec instanceof Atom && !"[]".equals(((Atom) spec).getName())) {
+            // bare ':- dynamic foo.' (SWI extension): mark the arity-0 procedure
+            knowledgeBase.markDynamic(((Atom) spec).getName(), 0);
+        }
+    }
+    // END_CHANGE: ISS-2025-0347
 
     // START_CHANGE: ISS-2025-0279 - Run initialization/1 goals collected during consult, once the
     // whole file is loaded. Snapshot + clear first so a goal that itself consults is isolated.
@@ -476,6 +549,15 @@ public class Prolog {
         // START_CHANGE: ISS-2025-0288 - do not swallow the debugger stop signal; surface errors
         } catch (DebugController.DebugStopException e) {
             throw e;
+        // START_CHANGE: ISS-2025-0346 - ':- halt.' in a directive must stop the load and reach the
+        // embedder (CLI/IDE), which terminates the session; it is not a directive failure.
+        } catch (PrologException pe) {
+            if (pe.isHalt()) {
+                throw pe;
+            }
+            System.err.println("Warning: goal directive raised an error: " + goal + " - " + pe.getMessage());
+            LOGGER.log(Level.WARNING, "Goal directive error: " + goal + " - " + pe.getMessage());
+        // END_CHANGE: ISS-2025-0346
         } catch (Exception e) {
             System.err.println("Warning: goal directive raised an error: " + goal + " - " + e.getMessage());
             LOGGER.log(Level.WARNING, "Goal directive error: " + goal + " - " + e.getMessage());
@@ -744,12 +826,18 @@ public class Prolog {
                     // Only add to global KB if in user module (default)
                     if ("user".equals(moduleManager.getCurrentModule().getName())) {
                         knowledgeBase.asserta(transformedRule);
+                        // START_CHANGE: ISS-2025-0347 - assert implies dynamic (ISO 8.9.1)
+                        markRuleDynamic(transformedRule);
+                        // END_CHANGE: ISS-2025-0347
                     }
                     // END_CHANGE: CR-2025-0002
                 } else {
                     // START_CHANGE: CR-2025-0002 - Module-isolated rule storage
                     if ("user".equals(moduleManager.getCurrentModule().getName())) {
                         knowledgeBase.asserta(rule);
+                        // START_CHANGE: ISS-2025-0347 - assert implies dynamic (ISO 8.9.1)
+                        markRuleDynamic(rule);
+                        // END_CHANGE: ISS-2025-0347
                     } else {
                         moduleManager.addRule(rule);
                     }
@@ -762,9 +850,19 @@ public class Prolog {
     }
     // END_CHANGE: ISS-2025-0085
     
+    // START_CHANGE: ISS-2025-0347 - assert implies dynamic (ISO 8.9.1)
+    private void markRuleDynamic(Rule rule) {
+        Term head = rule.getHead();
+        java.lang.String functor = TermUtils.getFunctorName(head);
+        if (functor != null) {
+            knowledgeBase.markDynamic(functor, TermUtils.getArity(head));
+        }
+    }
+    // END_CHANGE: ISS-2025-0347
+
     /**
      * Retract a fact or rule from the knowledge base.
-     * 
+     *
      * @param clauseString The clause as a string
      */
     public void retract(String clauseString) {
@@ -1042,6 +1140,15 @@ public class Prolog {
         // START_CHANGE: ISS-2025-0252 - reset transient per-query state (CLP(FD) store)
         resetTransientQueryState();
         // END_CHANGE: ISS-2025-0252
+        // START_CHANGE: ISS-2025-0345 - route the Term overload through the same engine as
+        // solve(String): the default v2 MachineSolver with the inference budget applied and
+        // StackOverflowError converted to resource_error. Previously this overload silently ran
+        // the legacy engine with no budget, bypassing the v3.4.0 DoS protection (ISS-2025-0339).
+        query = spliceAttributedSessionVars(query);
+        if (USE_V2_ENGINE) {
+            return solveWithV2Engine(query);
+        }
+        // END_CHANGE: ISS-2025-0345
         return querySolver.solve(query);
     }
 

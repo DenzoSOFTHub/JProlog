@@ -46,9 +46,10 @@ public class Msort implements BuiltIn {
             }
             return false;
         } else {
-            // START_CHANGE: ISS-2025-0079 - Return false instead of throwing for normal failure
-            return false;
-            // END_CHANGE: ISS-2025-0079
+            // START_CHANGE: ISS-2025-0351 - ISO errors instead of silent failure: instantiation_error
+            // on a partial list, type_error(list, Culprit) on a non-list
+            throw Sort.notAProperList(inputList, "msort/2");
+            // END_CHANGE: ISS-2025-0351
         }
     }
 

@@ -617,6 +617,17 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
             } catch (DebugController.DebugStopException e) {
                 SwingUtilities.invokeLater(() ->
                     appendInfo("Query execution stopped by user.\n"));
+            // START_CHANGE: ISS-2025-0346 - halt ends the debug session gracefully (no JVM exit)
+            } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
+                if (pe.isHalt()) {
+                    final int exitCode = pe.getExitCode();
+                    SwingUtilities.invokeLater(() ->
+                        appendInfo("halt: debug session ended (exit code " + exitCode + ").\n"));
+                } else {
+                    SwingUtilities.invokeLater(() ->
+                        appendError("Error: " + pe.getMessage() + "\n"));
+                }
+            // END_CHANGE: ISS-2025-0346
             } catch (Exception e) {
                 SwingUtilities.invokeLater(() ->
                     appendError("Error: " + e.getMessage() + "\n"));

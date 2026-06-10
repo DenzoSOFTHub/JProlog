@@ -52,7 +52,11 @@ public final class ClpfdV2Builtins {
             Term hiT = range.getArguments().get(1).resolveBindings(b);
             if (!(loT instanceof Number) || !(hiT instanceof Number)) return false;
             if (ClpfdV2Bridge.postIn(a.get(0), ((Number) loT).longValue(), ((Number) hiT).longValue(), b)) {
-                sols.add(new HashMap<>(b));
+                // START_CHANGE: ISS-2025-0357 - propagation that fixed a domain binds the variable
+                Map<String, Term> nb = new HashMap<>(b);
+                ClpfdV2Bridge.exportSingletons(nb);
+                sols.add(nb);
+                // END_CHANGE: ISS-2025-0357
                 return true;
             }
             return false;
@@ -67,7 +71,11 @@ public final class ClpfdV2Builtins {
             List<Term> a = q.getArguments();
             if (a.size() != 2) return false;
             if (ClpfdV2Bridge.postCmp(a.get(0), rel, a.get(1), b)) {
-                sols.add(new HashMap<>(b));
+                // START_CHANGE: ISS-2025-0357 - propagation that fixed a domain binds the variable
+                Map<String, Term> nb = new HashMap<>(b);
+                ClpfdV2Bridge.exportSingletons(nb);
+                sols.add(nb);
+                // END_CHANGE: ISS-2025-0357
                 return true;
             }
             return false;
@@ -82,7 +90,11 @@ public final class ClpfdV2Builtins {
             List<Term> elems = toList(a.get(0).resolveBindings(b));
             if (elems == null) return false;
             if (ClpfdV2Bridge.postAllDifferent(elems, b)) {
-                sols.add(new HashMap<>(b));
+                // START_CHANGE: ISS-2025-0357 - propagation that fixed a domain binds the variable
+                Map<String, Term> nb = new HashMap<>(b);
+                ClpfdV2Bridge.exportSingletons(nb);
+                sols.add(nb);
+                // END_CHANGE: ISS-2025-0357
                 return true;
             }
             return false;

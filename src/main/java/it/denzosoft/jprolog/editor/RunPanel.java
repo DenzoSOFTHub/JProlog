@@ -1332,6 +1332,23 @@ public class RunPanel extends JPanel {
             // START_CHANGE: M06 - Clear running status on cancellation.
             SwingUtilities.invokeLater(() -> finishRunningStatus(-1));
             // END_CHANGE: M06
+        // START_CHANGE: ISS-2025-0346 - halt/0-halt/1 ends the run session gracefully (the IDE is
+        // the processor's host: report the exit code instead of killing the whole IDE JVM).
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
+            if (pe.isHalt()) {
+                final int exitCode = pe.getExitCode();
+                SwingUtilities.invokeLater(() -> {
+                    appendText("% halt: query session ended (exit code " + exitCode + ").\n", commentStyle);
+                    finishRunningStatus(-1);
+                });
+                return;
+            }
+            SwingUtilities.invokeLater(() -> {
+                appendText("ERROR: " + pe.getMessage() + "\n", errorStyle);
+                appendText("false.\n", errorStyle);
+                finishRunningStatus(-1);
+            });
+        // END_CHANGE: ISS-2025-0346
         } catch (Exception e) {
             if (e.getCause() instanceof it.denzosoft.jprolog.core.engine.QueryCancelledException) {
                 // START_CHANGE: M06 - Clear running status on (wrapped) cancellation.

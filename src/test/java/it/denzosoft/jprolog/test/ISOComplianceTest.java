@@ -318,16 +318,26 @@ public class ISOComplianceTest {
         };
         
         int implementedCount = 0;
-        for (String predicate : isoPredicates) {
-            try {
-                // Test if predicate can be called without errors
-                prolog.solve(predicate + ".");
-                implementedCount++; // If no exception, predicate exists
-            } catch (Exception e) {
-                // Predicate may not be implemented or have syntax issues
-                // This is expected for some predicates
+        // START_CHANGE: ISS-2025-0347 - this probe calls every predicate at arity 0, so the
+        // arity-0 indicator is an unknown procedure for most entries; the methodology relies on
+        // unknown procedures failing silently, which is exactly what the ISO 'unknown=fail' flag
+        // provides (the engine now raises existence_error under the default unknown=error).
+        prolog.solve("set_prolog_flag(unknown, fail).");
+        try {
+            for (String predicate : isoPredicates) {
+                try {
+                    // Test if predicate can be called without errors
+                    prolog.solve(predicate + ".");
+                    implementedCount++; // If no exception, predicate exists
+                } catch (Exception e) {
+                    // Predicate may not be implemented or have syntax issues
+                    // This is expected for some predicates
+                }
             }
+        } finally {
+            prolog.solve("set_prolog_flag(unknown, error).");
         }
+        // END_CHANGE: ISS-2025-0347
         
         // START_CHANGE: ISS-2025-0085 - Adjusted threshold: solve(pred + ".") calls
         // predicates with 0 args, so predicates requiring args may throw (false negative).

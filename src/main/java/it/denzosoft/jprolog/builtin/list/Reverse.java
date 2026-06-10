@@ -25,7 +25,10 @@ public class Reverse implements BuiltIn {
         Term reversedList = query.getArguments().get(1);
         // END_CHANGE: ISS-2025-0080
 
-        if (inputList.isGround()) {
+        // START_CHANGE: ISS-2025-0349 - a list need only be PROPER (closed spine), not ground;
+        // unbound elements are valid: reverse([X,Y],R) must give R=[Y,X]
+        if (ListUtils.isProperList(inputList)) {
+        // END_CHANGE: ISS-2025-0349
             // START_CHANGE: ISS-2025-0076 - Use centralized ListUtils
             // Extract elements from the input list
             List<Term> elements = ListUtils.extractElements(inputList);

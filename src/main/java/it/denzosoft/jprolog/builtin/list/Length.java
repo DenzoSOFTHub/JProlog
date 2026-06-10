@@ -32,15 +32,13 @@ public class Length implements BuiltIn {
         Term lengthTerm = query.getArguments().get(1).resolveBindings(bindings);
         // END_CHANGE: ISS-2025-0080
 
-        if (list.isGround()) {
-            // Case: length(GroundList, Length)
-            int count = countElements(list);
-            // START_CHANGE: ISS-2025-0182 - Built-in predicate bug fixes
-            // Fail gracefully for malformed lists instead of producing wrong results
-            if (count == -1) {
-                return false;
-            }
-            // END_CHANGE: ISS-2025-0182
+        // START_CHANGE: ISS-2025-0349 - a list need only be PROPER (closed spine), not ground;
+        // unbound elements are valid: length([X,Y],N) must give N=2. countElements is a
+        // cycle-safe spine walk that returns -1 for partial/non-lists, so use it directly
+        // instead of the old deep isGround() gate.
+        int count = countElements(list);
+        if (count >= 0) {
+            // Case: length(ProperList, Length)
             Term length = new Number(count);
             if (lengthTerm.unify(length, bindings)) {
                 solutions.add(new HashMap<>(bindings));
@@ -48,6 +46,7 @@ public class Length implements BuiltIn {
             }
             return false;
         } else if (lengthTerm.isGround() && lengthTerm instanceof Number) {
+        // END_CHANGE: ISS-2025-0349
             // Case: length(List, GroundInteger)
             int expectedLength = (int) Math.round(((Number) lengthTerm).getValue());
             if (expectedLength < 0) {
