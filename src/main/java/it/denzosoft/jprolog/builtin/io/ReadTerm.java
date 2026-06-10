@@ -89,17 +89,18 @@ public class ReadTerm extends AbstractBuiltInWithContext {
             BufferedReader reader = resolveReader(streamTerm);
             // END_CHANGE: ISS-2025-0202
 
-            String input = reader.readLine();
+            // START_CHANGE: ISS-2025-0408 - consume characters up to the ISO end token instead of
+            // one physical line: multi-line terms, leading comments and several terms on one line
+            // now all work (the shared reader persists, so the stream position is preserved).
+            String input = Read.readTermText(reader);
             if (input == null) {
                 // End of file
                 return unifyTerm(termVar, new Atom("end_of_file"), bindings);
             }
 
-            // Remove trailing period if present (Prolog term terminator)
+            // The end token '.' is already consumed by readTermText
             String trimmed = input.trim();
-            if (trimmed.endsWith(".")) {
-                trimmed = trimmed.substring(0, trimmed.length() - 1).trim();
-            }
+            // END_CHANGE: ISS-2025-0408
 
             // Parse the input
             TermParser parser = new TermParser();

@@ -167,7 +167,16 @@ public final class ClpfdV2Bridge {
     /** Post a comparison {@code Left <rel> Right} where each side is a linear expression. */
     public static boolean postCmp(Term left, Constraint.Rel rel, Term right, Map<String, Term> bindings) {
         // START_CHANGE: ISS-2025-0356 - bracket the post so backtracking undoes it
-        return guardedPost(() -> doPostCmp(left, rel, right, bindings));
+        // START_CHANGE: ISS-2025-0421 - an auxiliary post that wipes a domain means the whole
+        // comparison is unsatisfiable: fail the goal (guardedPost rolls the store back).
+        return guardedPost(() -> {
+            try {
+                return doPostCmp(left, rel, right, bindings);
+            } catch (Unsat e) {
+                return false;
+            }
+        });
+        // END_CHANGE: ISS-2025-0421
         // END_CHANGE: ISS-2025-0356
     }
 
@@ -282,6 +291,14 @@ public final class ClpfdV2Bridge {
 
     /** Label the given variables; returns one binding map per solution (bound to the values). */
     public static List<Map<String, Term>> label(List<Term> varTerms, Map<String, Term> bindings) {
+        // START_CHANGE: ISS-2025-0422 - delegate to the strategy-aware variant with the defaults
+        return label(varTerms, bindings, Labeler.VarSel.FF, Labeler.ValOrder.UP);
+    }
+
+    /** Label the given variables under the given strategies (labeling/2 options). */
+    public static List<Map<String, Term>> label(List<Term> varTerms, Map<String, Term> bindings,
+                                                Labeler.VarSel varSel, Labeler.ValOrder valOrder) {
+        // END_CHANGE: ISS-2025-0422
         List<FdVar> fdVars = new ArrayList<>();
         List<Variable> engineVars = new ArrayList<>();
         for (Term t : varTerms) {
@@ -290,14 +307,19 @@ public final class ClpfdV2Bridge {
                 engineVars.add((Variable) r);
                 fdVars.add(varFor((Variable) r));
             }
-            // already-ground numbers need no labeling
+            // START_CHANGE: ISS-2025-0422 - already-ground integers need no labeling, but any other
+            // term must raise type_error(integer, T): label([a]) used to silently succeed.
+            else if (!(r instanceof Number) || !((Number) r).isInteger()) {
+                throw new PrologException(ISOErrorTerms.typeError("integer", r, "label/1"));
+            }
+            // END_CHANGE: ISS-2025-0422
         }
         List<Map<String, Term>> out = new ArrayList<>();
         try {
             // START_CHANGE: ISS-2025-0357 - snapshot the bindings while the labeled assignment is in
             // the store, so EVERY variable whose domain is (now) a singleton comes out bound — not
             // just the ones in the label list (functionally-determined vars, e.g. D #= C*2+1).
-            Labeler.label(ctx().store, fdVars, sol -> {       // ISS-2025-0298
+            Labeler.label(ctx().store, fdVars, varSel, valOrder, sol -> {       // ISS-2025-0298
                 Map<String, Term> b = new HashMap<>(bindings);
                 for (int i = 0; i < engineVars.size(); i++) {
                     b.put(engineVars.get(i).getName(), new Number(sol.get(fdVars.get(i))));
@@ -355,7 +377,10 @@ public final class ClpfdV2Bridge {
         void addVar(FdVar v, long c) { terms.merge(v, c, Long::sum); }
     }
 
-    /** Compile {@code term} (scaled by {@code sign}) into {@code into}. Returns false if non-linear. */
+    /** Compile {@code term} (scaled by {@code sign}) into {@code into}. Non-linear subterms
+     *  (products, abs, min, max, mod) are folded into auxiliary FD variables backed by their
+     *  dedicated propagators; a genuinely unsupported expression raises
+     *  {@code type_error(evaluable, F/N)} instead of silently failing (ISS-2025-0421). */
     private static boolean compile(Term term, long sign, LinExpr into, Map<String, Term> bindings) {
         Term t = term.resolveBindings(bindings);
         if (t instanceof Number) {
@@ -384,12 +409,118 @@ public final class ClpfdV2Bridge {
                 Long cst = constOf(a.get(0), bindings);
                 Term other = a.get(1);
                 if (cst == null) { cst = constOf(a.get(1), bindings); other = a.get(0); }
-                if (cst == null) return false;            // var*var is non-linear
-                return compileScaled(other, sign * cst, into, bindings);
+                if (cst != null) return compileScaled(other, sign * cst, into, bindings);
+                // START_CHANGE: ISS-2025-0421 - var*var products: P = A*B via interval propagation
+                // (previously "non-linear -> return false" made X*X #= 16 silently fail though
+                // satisfiable). The X*X case gets the tighter Square propagator.
+                FdVar va = exprVar(a.get(0), bindings);
+                FdVar vb = exprVar(a.get(1), bindings);
+                FdVar p = auxVar("_p");
+                Constraint prod = (va == vb) ? new Constraint.Square(va, p) : new Constraint.Mul(va, vb, p);
+                if (!ctx().store.addConstraint(prod)) throw new Unsat();
+                into.addVar(p, sign);
+                return true;
+                // END_CHANGE: ISS-2025-0421
             }
+            // START_CHANGE: ISS-2025-0421 - abs/min/max/mod folded onto their existing propagators
+            if ("abs".equals(f) && a.size() == 1) {
+                FdVar vx = exprVar(a.get(0), bindings);
+                FdVar y = ctx().store.newVar("_a" + (ctx().aux++),
+                    IntervalDomain.interval(0, Long.MAX_VALUE / 2));
+                if (!ctx().store.addConstraint(new Constraint.Abs(vx, y))) throw new Unsat();
+                into.addVar(y, sign);
+                return true;
+            }
+            if (("min".equals(f) || "max".equals(f)) && a.size() == 2) {
+                FdVar vx = exprVar(a.get(0), bindings);
+                FdVar vy = exprVar(a.get(1), bindings);
+                FdVar z = auxVar("_m");
+                Constraint mm = "min".equals(f) ? new Constraint.Min(vx, vy, z)
+                                                : new Constraint.Max(vx, vy, z);
+                if (!ctx().store.addConstraint(mm)) throw new Unsat();
+                into.addVar(z, sign);
+                return true;
+            }
+            if ("mod".equals(f) && a.size() == 2) {
+                Long m = constOf(a.get(1), bindings);
+                if (m != null && m > 0) {                 // same support as tryMod, but composable
+                    FdVar vx = exprVar(a.get(0), bindings);
+                    FdVar z = ctx().store.newVar("_r" + (ctx().aux++),
+                        IntervalDomain.interval(0, m - 1));
+                    if (!ctx().store.addConstraint(new Constraint.Mod(vx, m, z))) throw new Unsat();
+                    into.addVar(z, sign);
+                    return true;
+                }
+            }
+            // END_CHANGE: ISS-2025-0421
         }
-        return false;
+        // START_CHANGE: ISS-2025-0421 - unsupported arithmetic must raise a clear error: a
+        // constraint system answering "false" to a satisfiable query is unsound.
+        throw unsupportedExpr(t);
+        // END_CHANGE: ISS-2025-0421
     }
+
+    // START_CHANGE: ISS-2025-0421 - helpers for folding non-linear subterms into auxiliary FdVars
+
+    /** Marker: an auxiliary constraint post wiped a domain — the enclosing comparison must FAIL
+     *  (the constraint is unsatisfiable), not error; caught in {@link #postCmp}. */
+    private static final class Unsat extends RuntimeException {
+        Unsat() { super(null, null, false, false); }
+    }
+
+    /** Fresh auxiliary variable on a domain wide enough to hold any product/difference of two
+     *  default-domain variables (the propagators saturate instead of overflowing). */
+    private static FdVar auxVar(String prefix) {
+        return ctx().store.newVar(prefix + (ctx().aux++),
+            IntervalDomain.interval(Long.MIN_VALUE / 2, Long.MAX_VALUE / 2));
+    }
+
+    /** Compile an arbitrary supported expression down to a single FdVar: variables and integer
+     *  constants map directly; anything else becomes an auxiliary variable D with D = expr posted
+     *  as a Linear EQ (which may itself recurse through {@link #compile} for nested operators). */
+    private static FdVar exprVar(Term t, Map<String, Term> bindings) {
+        Term r = t.resolveBindings(bindings);
+        if (r instanceof Variable) return varFor((Variable) r);
+        if (r instanceof Number) {
+            requireInt((Number) r);
+            long v = ((Number) r).longValue();
+            return ctx().store.newVar("_c" + v, IntervalDomain.singleton(v));
+        }
+        LinExpr le = new LinExpr();
+        if (!compile(r, 1, le, bindings)) throw new Unsat();      // defensive: compile errors instead
+        le.terms.values().removeIf(co -> co == 0);
+        if (le.constant == 0 && le.terms.size() == 1) {
+            Map.Entry<FdVar, Long> e = le.terms.entrySet().iterator().next();
+            if (e.getValue() == 1) return e.getKey();             // the expression IS a variable
+        }
+        long[] coeffs = new long[le.terms.size() + 1];
+        FdVar[] vars = new FdVar[le.terms.size() + 1];
+        int i = 0;
+        for (Map.Entry<FdVar, Long> e : le.terms.entrySet()) { coeffs[i] = e.getValue(); vars[i] = e.getKey(); i++; }
+        FdVar d = auxVar("_e");
+        coeffs[i] = -1; vars[i] = d;                              // sum(ci*xi) - D = -k0  <=>  D = expr
+        if (!ctx().store.addConstraint(new Constraint.Linear(coeffs, vars, Constraint.Rel.EQ, -le.constant))) {
+            throw new Unsat();
+        }
+        return d;
+    }
+
+    /** type_error(evaluable, F/N) for an unsupported functor (SWI parity); type_error(integer, T)
+     *  for terms that are not arithmetic at all. */
+    private static PrologException unsupportedExpr(Term t) {
+        if (t instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) t;
+            Term ind = new CompoundTerm(new Atom("/"), java.util.Arrays.asList(
+                (Term) new Atom(c.getName()), new Number((long) c.getArguments().size())));
+            return new PrologException(ISOErrorTerms.typeError("evaluable", ind, "clpfd"));
+        }
+        if (t instanceof Atom) {
+            Term ind = new CompoundTerm(new Atom("/"), java.util.Arrays.asList(t, new Number(0L)));
+            return new PrologException(ISOErrorTerms.typeError("evaluable", ind, "clpfd"));
+        }
+        return new PrologException(ISOErrorTerms.typeError("integer", t, "clpfd"));
+    }
+    // END_CHANGE: ISS-2025-0421
 
     private static boolean compileScaled(Term t, long scale, LinExpr into, Map<String, Term> bindings) {
         Term r = t.resolveBindings(bindings);
@@ -400,7 +531,11 @@ public final class ClpfdV2Bridge {
 
     private static Long constOf(Term t, Map<String, Term> bindings) {
         Term r = t.resolveBindings(bindings);
-        return (r instanceof Number) ? ((Number) r).longValue() : null;
+        if (!(r instanceof Number)) return null;
+        // START_CHANGE: ISS-2025-0421 - 2.5*X must raise type_error(integer, 2.5), not truncate to 2*X
+        requireInt((Number) r);
+        // END_CHANGE: ISS-2025-0421
+        return ((Number) r).longValue();
     }
 
     /** Map a simple operand (variable or constant) to an FdVar; constants become singleton vars. */

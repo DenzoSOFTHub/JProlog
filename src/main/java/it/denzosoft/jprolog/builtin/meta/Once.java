@@ -45,7 +45,14 @@ public class Once implements BuiltInWithContext {
         if (goal instanceof Variable) {
             throw new PrologException(createInstantiationError("once/1: goal must be instantiated"));
         }
-        
+
+        // START_CHANGE: ISS-2025-0415 - ISO 8.15.2: once(G) is call((G,!)), so a non-callable
+        // goal raises type_error(callable, G) instead of silently failing
+        if (!(goal instanceof Atom) && !(goal instanceof CompoundTerm)) {
+            throw new PrologException(createTypeError("callable", goal, "once/1"));
+        }
+        // END_CHANGE: ISS-2025-0415
+
         // Execute the goal and get only the first solution
         List<Map<String, Term>> goalSolutions = new ArrayList<>();
         boolean success = solver.solve(goal, new HashMap<>(bindings), goalSolutions, CutStatus.notOccurred());

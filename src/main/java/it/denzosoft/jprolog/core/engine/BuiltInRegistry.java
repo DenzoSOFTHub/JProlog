@@ -141,6 +141,10 @@ public class BuiltInRegistry {
         // (without this entry, registering it would claim every arity of 'dynamic')
         putArity("dynamic", 1);
         // END_CHANGE: ISS-2025-0369
+
+        // START_CHANGE: ISS-2025-0398 - V^Goal callable as an ordinary goal (call(Goal)) at arity 2
+        putArity("^", 2);
+        // END_CHANGE: ISS-2025-0398
     }
 
     private static void putArity(String name, int... arities) {

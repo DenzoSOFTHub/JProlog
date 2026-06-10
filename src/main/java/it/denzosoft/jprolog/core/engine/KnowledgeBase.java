@@ -402,9 +402,13 @@ public class KnowledgeBase {
      * Remove a rule from the knowledge base.
      *
      * @param rule The rule to remove
+     * @return true when a clause was removed, false when {@code rule} is not (or no longer) present
      */
     // START_CHANGE: ISS-2025-0164 - Thread safety for KnowledgeBase
-    public void retract(Rule rule) {
+    // START_CHANGE: ISS-2025-0396 - report whether a clause was actually removed, so the engine's
+    // re-executable retract/1 can skip a snapshot clause that was already retracted on a redo.
+    public boolean retract(Rule rule) {
+    // END_CHANGE: ISS-2025-0396
         synchronized (this) {
             // START_CHANGE: ISS-2025-0344 - remove exactly ONE clause (ISO 8.9.3) and keep the
             // rules list and ruleIndex/firstArgIndex in sync. The old removeIf(equals) dropped
@@ -425,8 +429,14 @@ public class KnowledgeBase {
                 Rule removed = rules.remove(idx);
                 removeFromIndex(removed);
                 LOGGER.fine("Rule retracted: " + removed);
+                // START_CHANGE: ISS-2025-0396 - signal removal to the caller
+                return true;
+                // END_CHANGE: ISS-2025-0396
             } else {
                 LOGGER.fine("Attempted to retract rule but it was not found: " + rule);
+                // START_CHANGE: ISS-2025-0396 - signal the clause was not found
+                return false;
+                // END_CHANGE: ISS-2025-0396
             }
             // END_CHANGE: ISS-2025-0344
         }

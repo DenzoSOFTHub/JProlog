@@ -50,7 +50,17 @@ public class ForAll implements BuiltInWithContext {
         if (action instanceof Variable) {
             throw new PrologException(createInstantiationError("forall/2: action must be instantiated"));
         }
-        
+
+        // START_CHANGE: ISS-2025-0415 - forall/2 is \+(Cond,\+Action) (ISO Cor.2): a non-callable
+        // condition or action raises type_error(callable, T) instead of silently succeeding
+        if (!(condition instanceof Atom) && !(condition instanceof CompoundTerm)) {
+            throw new PrologException(createTypeError("callable", condition, "forall/2"));
+        }
+        if (!(action instanceof Atom) && !(action instanceof CompoundTerm)) {
+            throw new PrologException(createTypeError("callable", action, "forall/2"));
+        }
+        // END_CHANGE: ISS-2025-0415
+
         // Find all solutions to the condition
         List<Map<String, Term>> conditionSolutions = new ArrayList<>();
         boolean conditionHasSolutions = solver.solve(condition, new HashMap<>(bindings), 

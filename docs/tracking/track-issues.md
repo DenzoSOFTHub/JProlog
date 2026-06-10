@@ -2,6 +2,121 @@
 
 ## Active and Resolved Issues
 
+## Audit follow-up 2026-06-10 evening (wave 3, v3.6.0)
+
+Third fix wave over the ISS-2025-0395 open-findings roll-up: 27 issues resolved (ISS-2025-0396..0422), including LIM-026 (retract re-execution, default engine) and LIM-029 (line-based read). The ISS-2025-0395 roll-up below is updated accordingly.
+
+### ISS-2025-0396
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: retract/1 is now re-executable on the default v2 engine (ISO 8.9.3): MachineSolver.retractClause pushes a choice point over a snapshot of the matching clauses (logical update view) and retracts the NEXT matching clause per redo; retractions of earlier solutions persist across backtracking (side effect, deliberately not trailed); a snapshot clause already removed by an intervening retract is skipped via identity check (KnowledgeBase.retract(Rule) now returns boolean to report actual removal; prototype-mode kb map removal is identity-based too). Verified: findall(X, retract(r(X)), L) -> L=[1,2,3] with r/1 empty; (retract(p(X)), X == 2) -> X=2 with both clauses gone; \+ (retract(c(X)), fail) purges every clause; clause-form retract((H:-B)) also re-executable. Resolves LIM-026 for the default engine. Legacy engine: NOT mirrored (not cheap — the eager BuiltIn protocol materializes all solutions in one call with no redo hook); legacy enumeration is already ISO-correct (retract(p(X)), X == 2 succeeds) but it retracts ALL matching clauses up front even if the query commits early; gap documented in Retract.java javadoc and pinned by testISS0396_LegacyEngineRetractStillEnumerates.
+
+### ISS-2025-0397
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: phrase(nt, [a|T], R) with two distinct free vars no longer raises spurious representation_error(cyclic_term) on the v2 engine. Root cause: MachineSolver.applySolution installed legacy-builtin solution maps verbatim; a var-var union from phrase/3 yields a self-binding entry (e.g. {R=R, T=R}) whose blind installation creates a deref cycle R -> R that resolve() mis-reports as cyclic_term. Fix: skip an entry when its value dereferences back to the key variable itself (binding a var to itself is a no-op) — compound values are never skipped, so real rational-tree protection (ISS-2025-0313, X = f(X)) is untouched and pinned by testISS0397_RealCyclicTermProtectionUntouched. Verified fail-without-fix by temporarily reverting the hunk: the phrase query then produces no answer (error swallowed); with the fix it answers T = R as expected.
+
+### ISS-2025-0398
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: V^Goal callable as an ordinary goal = call(Goal) (SWI/SICStus/YAP consensus). v2 engine: native dispatch in MachineSolver.run() next to call/N — pushes Goal with cutBarrier = cps.size() (opaque to cut, like call/1), keeping lazy backtracking. Legacy engine: finished/kept predecessor's builtin/meta/Caret.java (BuiltInWithContext; instantiation_error on unbound goal, type_error(callable) on non-callable, delegates to solver.solve), registered as "^" in BuiltInFactory.FACTORY_MAP and BuiltInRegistry with putArity("^", 2) so it doesn't claim other arities. No interference with bagof/setof (CollectionUtils strips ^ before solving — pinned by test) or arithmetic ^ (X is 2^3 -> 8 verified; evaluable namespace is separate).
+
+### ISS-2025-0399
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: Type-faithful float text<->term conversion: a shared strict parser (AtomNumber.parseNumberToken) makes float-syntax text yield FLOATS (number_chars(X,['1','.','0']) -> 1.0; '1.0e5' -> 100000.0) and AtomNumber.formatNumberExact now keeps float syntax on output (number_codes(1.0,L) -> "1.0"; atom_number(A,123.0) -> '123.0'). Both-ground modes compare exactly (Number.equals / canonical text), removing the 1e-10 epsilon, so number_chars(1,['1','.','0']) and number_chars(1.00000000001,['1','.','0']) now fail. Big-integer exactness (ISS-2025-0365) preserved via BigInteger parsing/formatting. Routed through NumberChars, NumberCodes, NumberString, AtomNumber.
+
+### ISS-2025-0400
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: number_chars/2 and number_codes/2 (and atom_number/2, number_string/2 via the shared helper) now parse with a strict ISO 6.4.4/6.4.5 number-token parser: 0xff/0o77/0b11 radix integers and 0'c char-code constants (incl. escapes and 0''') accepted; Java-only spellings (Infinity, NaN, '.5', '3.', trailing layout, d/f suffixes, underscores) rejected with error(syntax_error(illegal_number),_). Leading layout and sign remain legal per ISO 8.16.7.1.
+
+### ISS-2025-0401
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: char_code/2 raises ISO 8.16.6.3 errors instead of silent false: both unbound -> instantiation_error; non-one-char-atom Char -> type_error(character, Culprit); non-integer Code -> type_error(integer, Culprit); integer outside [0,0x10FFFF] -> representation_error(character_code). Outer catch(Exception) now rethrows PrologException so the ball survives.
+
+### ISS-2025-0402
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: term_to_atom/2 works on non-ground terms: dispatch restructured atom-side-first (per the verdict's fixPlan, not the finder's literal suggestion) — bound Atom side keeps parse-and-unify semantics (term_to_atom(foo(Z),'foo(bar)') binds Z=bar), unbound atom side formats ANY term incl. variables via TermFormatter (term_to_atom(foo(X,bar),A) -> A='foo(_G1,bar)').
+
+### ISS-2025-0403
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: string_to_atom/2 (-String,+Atom) mode now binds a PrologString (string_to_atom(S,foo) -> S="foo", string(S) true, atom(S) false); was constructing an Atom, making the mode a no-op. (+,-) direction unchanged.
+
+### ISS-2025-0404
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: New builtin/type/StringCheck.java implementing string/1 (true iff the resolved argument is a PrologString; fails for atoms/numbers/compounds/vars), registered as "string" in BuiltInFactory next to the other type checks. Works on the default v2 engine via the registry bridge (verified at CLI).
+
+### ISS-2025-0405
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: SWI text interop via new shared helper builtin/string/TextTerm.textOf (Atom name | PrologString value): atom_length, atom_chars, atom_codes, atom_concat now accept PrologStrings (atom_codes(X,"abc") -> abc; atom_length("abc",3)); string_length, string_chars (both-ground gap), string_concat now accept atoms (string_concat(a,b,S) -> S="ab", result stays a string). number_chars/number_codes also accept a string as the text side.
+
+### ISS-2025-0406
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: Typed ISO errors (atom_*/number_* part of finding 98 only, per ownership): atom_length(1,_) -> type_error(atom,1); atom_length(_,_) -> instantiation_error (pre-existing 0277, kept); atom_length(a,-1) -> domain_error(not_less_than_zero,-1); Length non-integer -> type_error(integer,L). atom_concat all-unbound -> instantiation_error; non-atom arg -> proper error(type_error(atom,Culprit),_) ball naming the culprit (was bare-message PrologEvaluationException). atom_chars/atom_codes: partial list / unbound element with unbound atom -> instantiation_error; bad element -> type_error(character,E) / representation_error(character_code); numbers stringify (SWI/GNU) instead of silent false. number_chars/number_codes: both unbound -> instantiation_error; non-number arg1 -> type_error(number,_); unparsable text -> syntax_error.
+
+### ISS-2025-0407
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: core/arith/v2/ArithEvaluator float_integer_part/float_fractional_part computed in double math (Math.ceil/floor toward zero) instead of the (long) cast that saturated at +/-2^63: float_integer_part(1.0e20) -> 1.0e20, float_fractional_part(1.0e20) -> 0.0; small-value and negative truncate-toward-zero semantics preserved (-2.5 -> -2.0 / -0.5).
+
+### ISS-2025-0408
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: read/1,2 and read_term/2,3 were line-based (BufferedReader.readLine + naive trailing-'.' strip). Implemented shared public static Read.readTermText(Reader) that consumes characters up to and including the ISO end token ('.' + layout / %-comment / EOF), tracking quoted atoms '...', strings "..."/`...`, 0'c char literals (incl. 0''' and 0'\esc), % line comments, /* */ block comments, graphic tokens (=..) and float dots (3.14) so embedded dots never end the term early; characters after the end token stay buffered on the persistent per-alias readers (Read.READERS / ReadTerm.READER_CACHE), so multi-line terms, several terms per line, and leading comments all work, and the next read resumes after the end token. Interactive stdin path now uses a persistent STDIN_TERM_READER instead of a throwaway Scanner. CLI interactive read/1 manually verified with line-by-line input timing: single-line term, multi-line term, follow-up queries all work, no prompt deadlock. Resolves LIM-029.
+
+### ISS-2025-0409
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: format/2,3 strictness: too-few arguments now raise error(format('not enough arguments'), format/2) instead of printing ''/'0'; ~d/~D with a non-integer raise type_error(integer, Arg) instead of coercing; unknown directives (~z) raise error(format(...), _) instead of echoing literally; Atom [] in the arguments position is now the EMPTY argument list (while [[]] still passes the atom [] as one argument, and a non-list term is still one argument for SWI compat). PrologException now propagates out of processFormat to catch/3 instead of being absorbed into goal failure. Leniency audit done first: no JUnit test or example program relied on the old lenient behaviors (core 20 examples use no format directives at all).
+
+### ISS-2025-0410
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: DCG head validation only (per ownership): DCGTranslator.translate now calls checkCallableHead on the grammar-rule head and on the non-terminal of a push-back head, raising instantiation_error for a Variable head and type_error(callable, Head) for a non-callable head (e.g. 123 --> [a]) at translation/load time, instead of fabricating call(123,S0,S) which consult rejected with the misleading 'Cannot redefine built-in predicate call/3'. Verified via CLI: consult of '123 --> [a].' now reports error(type_error(callable, 123), dcg_head). The body-side late error (foo --> 123. erroring only at phrase time, with the correct ISO term) is out of my scope (head validation only) and left as-is.
+
+### ISS-2025-0411
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: setof/3 witness groups are now enumerated in the standard order of terms (StandardTermOrdering.compare on the witness tuples) instead of lexicographic string order of "Var=value;" signatures. setof(X,member(X-Y,[a-10,b-2]),L) now yields Y=2,L=[b] first, then Y=10,L=[a].
+
+### ISS-2025-0412
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: bagof/3 and setof/3 grouping rewritten per ISO 8.10.2.1: a solution joins a group when its witness tuple is a VARIANT of the group's representative (structural walk with bidirectional variable mapping), and all member tuples are unified with the witness variables at emission (merging witness variables). Genuinely variant witnesses (e.g. fresh clause variables: p(1,f(_)). p(2,f(_)). bagof(X,p(X,Y),L)) now form ONE group L=[1,2] where the old string-signature keying produced two. NOTE: the finding's literal repro bagof(X,member(X-Y,[1-A,2-B]),L) correctly remains TWO groups — see notes.
+
+### ISS-2025-0413
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: aggregate_all(max(X)/min(X), Goal, M) now FAILS when Goal has no solutions (was a bare-text PrologEvaluationException) and raises ISO error(type_error(number,T), aggregate_all/3) on any non-numeric solution (was silently skipped, leaking the ±Infinity seed). Extrema are tracked as Terms and compared exactly (BigInteger for integer pairs), so big-integer extrema and int/float identity survive.
+
+### ISS-2025-0414
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: aggregate_all(sum(X)) now accumulates exactly: BigInteger accumulator for integers (123456789012345678+1 = 123456789012345679 exactly), float contagion switches to a double accumulator and returns a genuine float (sum of [1.5,2.5] is 4.0 with float(S) true), integer sums stay integers, empty sum is integer 0, and a non-numeric solution raises type_error(number, T) instead of being silently skipped.
+
+### ISS-2025-0415
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: once/1, ignore/1 and forall/2 (both Condition and Action) now raise error(type_error(callable, G), _) for non-callable goals — once(1) silently failed, ignore(1) and forall(1,true)/forall(true,1) silently SUCCEEDED. Ignore's check is placed before its error-swallowing try block. Unbound goals keep raising instantiation_error (already worked). Used each class's existing createTypeError helper to match surrounding style.
+
+### ISS-2025-0416
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: findall/3 now type-checks its Instances argument per ISO 8.10.1.3(c): findall(X,fail,a) raises type_error(list,a); variables, partial lists and proper lists stay legal (cycle-safe spine walk). Implemented as a public helper CollectionUtils.checkInstancesArgument shared by the legacy collector and the v2 engine's native findall — the latter required a minimal tagged 5-line hook in MachineSolver.java (see notes). Only findall/3 was changed (issue scope); findall/4 was out of scope per the verdict.
+
+### ISS-2025-0417
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: compare/3 validates a pre-bound Order per ISO 8.4.2.3: non-atom -> type_error(atom, O) (compare(3,1,2)), atom outside <,=,> -> domain_error(order, O) (compare(foo,1,2)). Valid pre-bound orders still verify/fail by unification as before.
+
+### ISS-2025-0418
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: sort/4 with Key>0: every element must be a compound with arity >= Key — non-compound raises type_error(compound, Elem), Key beyond the arity raises domain_error(argument_index, Key). Keys are validated up front for ALL elements (the comparator is never invoked on lists of <2 elements, so sort(2,@<,[f(a)],L) would otherwise silently pass). Also converted the Key/Order validation from generic PrologEvaluationException to ISO terms: instantiation_error, type_error(integer,K), domain_error(not_less_than_zero,K), type_error(atom,O), domain_error(order,O).
+
+### ISS-2025-0419
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: predsort/3: dropped the isGround gate (input need only be a proper list; variables are legal elements — predsort(compare,[X,Y],L) gives [X,Y]); when the comparison predicate fails on a pair or binds Order outside <,=,>, predsort now FAILS (null propagated through mergeSort/merge) instead of silently sorting with a default '<'; an unbound Pred raises instantiation_error and a non-callable Pred raises type_error(callable, Pred). Non-proper-list input fails (SWI length/2 semantics, per the reviewer's consensus-safe guidance).
+
+### ISS-2025-0420
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: arg/3 + =../2 part of index 98 only. arg/3 per ISO 8.5.2.3: arg(_,f(a),A) -> instantiation_error, arg(0.5,..) -> type_error(integer,0.5), arg(-1,..) -> domain_error(not_less_than_zero,-1), arg(1,foo,A) -> type_error(compound,foo); out-of-range/0 index stays plain failure; the removed isGround gate also wrongly failed arg/3 on non-ground compounds (arg(1,f(X),A) now works). =../2 per ISO 8.5.3.3: X=..Y -> instantiation_error, X=..a (and improper tails) -> type_error(list,a), X=..[3,x] / X=..[f(a),a] -> type_error(atom,Head), X=..[] -> domain_error(non_empty_list,[]), X=..[f(a)] -> type_error(atomic,f(a)); the old isGround gates also wrongly raised instantiation_error for f(Q)=..L (decomposition of non-ground terms) and X=..[f,Y] (construction with unbound args) — both now work.
+
+### ISS-2025-0421
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: Non-linear CLP(FD) expressions no longer fail silently. compile() folds var*var products onto Constraint.Mul, X*X onto a new Constraint.Square (integer-sqrt backward propagation: X in 0..10, X*X #= 16 narrows to X=4 even before labeling), abs(E) onto Constraint.Abs, min/2 & max/2 onto new Constraint.Min/Max propagators, and E mod M (positive const M) onto Constraint.Mod — all over arbitrary linear subexpressions via a new exprVar() helper that introduces wide-domain auxiliary FdVars. Genuinely unsupported functors raise type_error(evaluable, F/N) (atoms F/0; non-arithmetic terms type_error(integer,T)) instead of silently answering false; float coefficients (2.5*X) raise type_error(integer, 2.5) instead of truncating to 2*X. Aux posts that wipe a domain fail the goal cleanly (private Unsat marker caught in postCmp), composing with the ISS-0356 guardedPost rollback — verified with disjunction/backtracking over product posts. Repros now: X*X #= 16 -> X=4; Z #= abs(Y-3) -> 5 solutions; Pythagorean A*A+B*B #= C*C -> exactly (3,4,5),(4,3,5).
+
+### ISS-2025-0422
+**Status**: RESOLVED (v3.6.0)
+**Resolution**: labeling/2 now honors its options (SWI names): leftmost/ff/ffc/min/max select the branching variable (threaded as Labeler.VarSel), up/down set the value enumeration order (Labeler.ValOrder; down yields X=5 first for X in 0..5), min(Expr)/max(Expr) order solutions optimum-first (stable sort over the eagerly collected solution list, Expr evaluated per solution over integers/+,-,*,abs), step/enum accepted as no-ops (they describe the labeler's actual enumeration). Unknown options raise domain_error(labeling_option, O), unbound options instantiation_error, non-list options type_error(list, O). label/1 (and labeling/2) list elements that are neither variables nor integers raise type_error(integer, T) — label([a]) no longer silently succeeds; ground integers remain legal.
+
+---
+
+
 ## Audit 2026-06-10 (multi-agent empirical audit, v3.5.0)
 
 Full-system empirical audit: 13 domain finders ran ISO-conformance queries against the build; 111 unique findings, 98 confirmed by adversarial verification, 13 rejected. 53 issues fixed in v3.5.0 (ISS-2025-0342..0394, below); 30 confirmed findings remain open (roll-up at the end of this section).
@@ -220,7 +335,9 @@ Full-system empirical audit: 13 domain finders ran ISO-conformance queries again
 
 ### ISS-2025-0395: Open audit findings 2026-06-10 (roll-up)
 **Status**: TO_ANALYZE
-Confirmed by adversarial verification, not yet fixed (severity in brackets; full repro/evidence retained in the audit record):
+**Update 2026-06-10 (v3.6.0)**: wave 3 (ISS-2025-0396..0422) resolved all but one of these findings. Still open: the broad tail of "several built-ins throw plain message atoms as exception balls instead of error/2 terms" (the predicates named in the audit — atom_*, number_*, char_code, open/close, arg, =.., sort family — were all converted to ISO error terms in v3.5.0/v3.6.0; other built-ins may still throw text balls and should be converted opportunistically when touched).
+
+Originally listed (all RESOLVED in v3.6.0 except the plain-ball tail above):
 
 - [high] Float text <-> term conversion collapses integral floats to integers in number_chars/2, number_codes/2, number_string/2, atom_number/2
 - [high] retract/1 is semi-deterministic: not re-executable on backtracking, so retract-fail purge loops leave clauses behind

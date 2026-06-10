@@ -26,11 +26,14 @@ public class ConversionBuiltinsTest {
         assertEquals("123", nValue.toString());
         
         // Test atom_number with number to atom conversion
+        // START_CHANGE: ISS-2025-0399 - the float 123.0 converts to '123.0' (valid float syntax
+        // per ISO 6.4.5 / SWI), no longer to the integer-looking '123'
         solutions = prolog.solve("atom_number(A, 123.0).");
         assertEquals(1, solutions.size());
         Term aValue = solutions.get(0).get("A");
         assertNotNull(aValue);
-        assertEquals("123", aValue.toString());
+        assertEquals("123.0", aValue.toString());
+        // END_CHANGE: ISS-2025-0399
         
         // Test with float number
         solutions = prolog.solve("atom_number('3.14', N).");

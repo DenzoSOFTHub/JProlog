@@ -75,6 +75,13 @@ public final class CollectionUtils {
         }
         // END_CHANGE: ISS-2025-0384
 
+        // START_CHANGE: ISS-2025-0416 - ISO 8.10.1.3(c): Instances must be a list or a partial
+        // list, otherwise type_error(list, Instances) — never silent failure.
+        if (isFindall) {
+            checkInstancesArgument(listVariable.resolveBindings(bindings), "findall/3");
+        }
+        // END_CHANGE: ISS-2025-0416
+
         List<Map<String, Term>> tempSolutions = new ArrayList<>();
         try {
             querySolver.solve(goal, bindings, tempSolutions, CutStatus.notOccurred());
@@ -129,40 +136,59 @@ public final class CollectionUtils {
             return false;
         }
 
-        // Group by witness binding signature; preserve discovery order via LinkedHashMap
-        Map<String, List<Term>> groups = new LinkedHashMap<>();
-        Map<String, Map<String, Term>> groupWitness = new LinkedHashMap<>();
+        // START_CHANGE: ISS-2025-0411/ISS-2025-0412 - ISO 8.10.2.1 witness grouping: a solution
+        // joins an existing group when its witness tuple is a VARIANT of the group's witness
+        // (witnesses are then unified, merging unbound witness variables), and setof/3 enumerates
+        // the groups in the STANDARD ORDER of the witness terms — not by string signatures.
+        List<String> wvOrder = new ArrayList<>(witnessVars);
+        Collections.sort(wvOrder);
+
+        List<List<List<Term>>> groupTuples = new ArrayList<>();   // per group: all member witness tuples
+        List<List<Term>> groupBags = new ArrayList<>();           // per group: collected template instances
         for (Map<String, Term> sol : tempSolutions) {
-            Map<String, Term> witness = new TreeMap<>();
-            for (String wv : witnessVars) {
+            List<Term> tuple = new ArrayList<>(wvOrder.size());
+            for (String wv : wvOrder) {
                 Term v = sol.containsKey(wv) ? sol.get(wv).resolveBindings(sol) : new Variable(wv);
-                witness.put(wv, v);
+                tuple.add(v);
             }
-            StringBuilder sig = new StringBuilder();
-            for (Map.Entry<String, Term> e : witness.entrySet()) {
-                sig.append(e.getKey()).append('=').append(termCanonical(e.getValue())).append(';');
+            int gi = -1;
+            for (int i = 0; i < groupTuples.size(); i++) {
+                if (isVariantTuple(groupTuples.get(i).get(0), tuple)) { gi = i; break; }
             }
-            String key = sig.toString();
-            groups.computeIfAbsent(key, k -> new ArrayList<>())
-                  .add(collectInstance(template, sol));
-            groupWitness.putIfAbsent(key, witness);
+            if (gi < 0) {
+                List<List<Term>> tuples = new ArrayList<>();
+                tuples.add(tuple);
+                groupTuples.add(tuples);
+                groupBags.add(new ArrayList<>());
+                gi = groupTuples.size() - 1;
+            } else {
+                groupTuples.get(gi).add(tuple);
+            }
+            groupBags.get(gi).add(collectInstance(template, sol));
         }
 
-        // For setof, also sort the GROUPS by witness-binding order (ISO §8.10.3 says results enumerated in standard order)
-        List<String> groupOrder = new ArrayList<>(groups.keySet());
+        // bagof/3 keeps discovery order; setof/3 enumerates groups in the standard order of the
+        // (representative) witness tuples (ISO 8.10.3.1 sorts the Witness+Template pairs).
+        List<Integer> groupOrder = new ArrayList<>();
+        for (int i = 0; i < groupTuples.size(); i++) groupOrder.add(i);
         if (isSetof) {
-            groupOrder.sort(java.util.Comparator.naturalOrder());
+            groupOrder.sort((i, j) -> compareTuples(groupTuples.get(i).get(0), groupTuples.get(j).get(0)));
         }
 
         boolean any = false;
-        for (String key : groupOrder) {
-            List<Term> bag = groups.get(key);
+        for (int gi : groupOrder) {
+            List<Term> bag = groupBags.get(gi);
             if (isSetof) bag = sortAndDedup(bag);
             Map<String, Term> newBindings = new HashMap<>(bindings);
             boolean ok = true;
-            for (Map.Entry<String, Term> we : groupWitness.get(key).entrySet()) {
-                Variable v = new Variable(we.getKey());
-                if (!v.unify(we.getValue(), newBindings)) { ok = false; break; }
+            // Unify every member tuple with the witness variables: the first tuple binds them,
+            // the later (variant) tuples unify against it — merging witness variables (A = B).
+            for (List<Term> tuple : groupTuples.get(gi)) {
+                for (int k = 0; k < wvOrder.size() && ok; k++) {
+                    Variable v = new Variable(wvOrder.get(k));
+                    if (!v.unify(tuple.get(k), newBindings)) ok = false;
+                }
+                if (!ok) break;
             }
             if (!ok) continue;
             if (listVariable.unify(createListTerm(bag), newBindings)) {
@@ -171,6 +197,7 @@ public final class CollectionUtils {
             }
         }
         return any;
+        // END_CHANGE: ISS-2025-0411/ISS-2025-0412
         // END_CHANGE: ISS-2025-0196
     }
 
@@ -216,11 +243,76 @@ public final class CollectionUtils {
         return out;
     }
 
-    private static String termCanonical(Term t) {
-        // Stable canonical key — uses toString of resolved term; sufficient for grouping
-        return t == null ? "<null>" : t.toString();
-    }
     // END_CHANGE: ISS-2025-0195
+
+    // START_CHANGE: ISS-2025-0411/ISS-2025-0412 - variant test + standard-order comparison on
+    // witness tuples (replaces the toString signature grouping of ISS-2025-0195/0196).
+    private static int compareTuples(List<Term> a, List<Term> b) {
+        for (int i = 0; i < a.size(); i++) {
+            int c = it.denzosoft.jprolog.builtin.term.StandardTermOrdering.compare(a.get(i), b.get(i));
+            if (c != 0) return c;
+        }
+        return 0;
+    }
+
+    private static boolean isVariantTuple(List<Term> a, List<Term> b) {
+        Map<String, String> ab = new HashMap<>();
+        Map<String, String> ba = new HashMap<>();
+        for (int i = 0; i < a.size(); i++) {
+            if (!isVariant(a.get(i), b.get(i), ab, ba)) return false;
+        }
+        return true;
+    }
+
+    /** Structural equality up to a consistent (bidirectional) renaming of variables. */
+    private static boolean isVariant(Term a, Term b, Map<String, String> ab, Map<String, String> ba) {
+        if (a instanceof Variable && b instanceof Variable) {
+            String an = ((Variable) a).getName();
+            String bn = ((Variable) b).getName();
+            String mappedA = ab.get(an);
+            String mappedB = ba.get(bn);
+            if (mappedA == null && mappedB == null) {
+                ab.put(an, bn);
+                ba.put(bn, an);
+                return true;
+            }
+            return bn.equals(mappedA) && an.equals(mappedB);
+        }
+        if (a instanceof Variable || b instanceof Variable) return false;
+        if (a instanceof CompoundTerm && b instanceof CompoundTerm) {
+            CompoundTerm ca = (CompoundTerm) a;
+            CompoundTerm cb = (CompoundTerm) b;
+            int na = ca.getArguments() != null ? ca.getArguments().size() : 0;
+            int nb = cb.getArguments() != null ? cb.getArguments().size() : 0;
+            if (na != nb || !ca.getName().equals(cb.getName())) return false;
+            for (int i = 0; i < na; i++) {
+                if (!isVariant(ca.getArguments().get(i), cb.getArguments().get(i), ab, ba)) return false;
+            }
+            return true;
+        }
+        if (a instanceof CompoundTerm || b instanceof CompoundTerm) return false;
+        // atomic terms (atoms, numbers, strings): identical iff equal in the standard order
+        return a.getClass() == b.getClass() && Sort.compareTerms(a, b) == 0;
+    }
+    // END_CHANGE: ISS-2025-0411/ISS-2025-0412
+
+    // START_CHANGE: ISS-2025-0416 - ISO 8.10.1.3(c): findall/3's Instances argument must be a
+    // list or a partial list; anything else raises type_error(list, Instances). Shared by the
+    // legacy collector above and the v2 engine's native findall (MachineSolver).
+    public static void checkInstancesArgument(Term instances, String context) {
+        Term tail = instances;
+        java.util.IdentityHashMap<Term, Boolean> seen = new java.util.IdentityHashMap<>();
+        while (tail instanceof CompoundTerm
+                && ".".equals(((CompoundTerm) tail).getName())
+                && ((CompoundTerm) tail).getArguments().size() == 2) {
+            if (seen.put(tail, Boolean.TRUE) != null) break;   // cyclic spine: not a (partial) list
+            tail = ((CompoundTerm) tail).getArguments().get(1);
+        }
+        if (tail instanceof Variable) return;                                      // partial list / var
+        if (tail instanceof Atom && "[]".equals(((Atom) tail).getName())) return;  // proper list
+        throw new PrologException(ISOErrorTerms.typeError("list", instances, context));
+    }
+    // END_CHANGE: ISS-2025-0416
 
     // START_CHANGE: ISS-2025-0196 - collect variables in a term
     private static void collectVars(Term t, Set<String> out) {

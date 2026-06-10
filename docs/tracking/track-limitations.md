@@ -7,12 +7,12 @@ When an issue is resolved, the corresponding limitation should be removed from t
 
 ---
 
-## LIM-026: retract/1 is semi-deterministic
+## LIM-026: retract/1 on the LEGACY engine retracts eagerly
 
-`retract/1` removes the first matching clause and is not re-executable on backtracking (ISO
-requires re-satisfaction, one clause per redo). A `retract(p(X)), fail` purge loop removes only
-one clause per outer attempt. Workaround: `retractall/1` or an explicit repeat loop. Root cause:
-the eager built-in protocol produces one solution per call (audit 2026-06-10, findings 55/89).
+RESOLVED for the default v2 engine in v3.6.0 (ISS-2025-0396): retract/1 is re-executable, one
+clause per redo. Remaining gap: under `-Djprolog.engine=legacy` the eager built-in protocol
+materializes all retract solutions in one call, so all matching clauses are retracted up front
+even if the query commits early (enumeration itself is ISO-correct).
 
 ## LIM-027: open-tail generative list modes are bounded
 
@@ -25,12 +25,6 @@ Sound but incomplete; consequence of the eager built-in protocol (ISS-2025-0379/
 Under `-Djprolog.engine=legacy`: CLP(FD) constraint posts are not undone on backtracking (the
 legacy solver never rolls the Trail back at choice points), the four-port `trace/0` output is not
 emitted, and the inference budget (`Prolog.setInferenceBudget`) is not enforced.
-
-## LIM-029: read/1,2 is line-based
-
-A term spanning multiple lines raises a spurious syntax error and two terms on one line break
-parsing: `read` consumes whole lines instead of reading up to the end token (audit finding 109;
-`Read.readLineFromStream` uses `BufferedReader.readLine()`).
 
 ## LIM-030: maplist on very long lists
 

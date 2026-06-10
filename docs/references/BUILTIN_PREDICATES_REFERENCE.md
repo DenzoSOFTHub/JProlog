@@ -1,6 +1,6 @@
 # JProlog Built-in Predicates Reference
 
-**Version**: JProlog v3.5.0
+**Version**: JProlog v3.6.0
 **Last Updated**: 2026-06-10
 **Total Predicates**: 270+ predicates organized by functional category
 **ISO 13211-1 Compliance**: 100% (111/111 core predicates)
@@ -227,6 +227,29 @@ Cannot store complex term: person(john, 25)
 false.
 ```
 
+### string/1
+**Purpose**: Checks if a term is a string (a `"..."` text object, distinct from atoms and character/code lists). *(v3.6.0)*
+
+**When to use**: Use to distinguish string terms from atoms when handling text that may arrive in either representation. With the default flag `double_quotes=string`, `"abc"` denotes a string term.
+
+```prolog
+?- string("hello").
+true.
+
+?- string(hello).
+false.   % atom, not a string
+
+?- string(123).
+false.
+
+?- string(X).
+false.   % unbound variable
+
+% Dispatch on the text representation
+text_length(T, L) :- string(T), !, string_length(T, L).
+text_length(T, L) :- atom(T), atom_length(T, L).
+```
+
 ### compound/1
 **Purpose**: Checks if a term is a compound structure (has a functor and arguments).
 
@@ -404,6 +427,8 @@ false.
 
 **When to use**: Use to access fields in structured data without pattern matching.
 
+*v3.6.0*: full ISO error clauses (8.5.2.3) — an unbound index or term raises `instantiation_error`, a non-integer index raises `type_error(integer, N)`, a negative index raises `domain_error(not_less_than_zero, N)`, a non-compound term raises `type_error(compound, T)`; an out-of-range index still just fails. Also works on non-ground compounds: `arg(1, f(X), A)` gives `A = X` (previously failed).
+
 ```prolog
 % Example: Database of person records
 % person(Name, Age, City)
@@ -438,6 +463,8 @@ City = london.
 **When to use**: Use for generic term manipulation, creating terms dynamically, or converting between representations.
 
 ISO §8.5.3 — handles atoms, numbers, and compound terms. Numbers are 0-ary atomic terms: `42 =.. [42]` *(v2.8.2)*. Construction with numeric functor and arity > 0 throws `type_error(atom, _)`.
+
+*v3.6.0*: full ISO error clauses (8.5.3.3) — both sides unbound raises `instantiation_error`, a non-list (or improper-tail) list side raises `type_error(list, L)`, `X =.. []` raises `domain_error(non_empty_list, [])`, a compound head with extra arguments raises `type_error(atom, Head)`, `X =.. [f(a)]` raises `type_error(atomic, f(a))`. Works on non-ground terms in both directions: `f(Q) =.. L` decomposes and `X =.. [f, Y]` constructs with unbound arguments (both previously raised `instantiation_error`).
 
 ```prolog
 % Example: Convert term to list and back
@@ -504,6 +531,8 @@ apply_template(Template, Values, Result) :-
 **Purpose**: Three-way comparison of terms using standard ordering.
 
 **When to use**: Use for sorting, searching, or implementing ordered data structures.
+
+*v3.6.0*: a pre-bound order argument is validated (ISO 8.4.2.3) — a non-atom raises `type_error(atom, Order)` and an atom other than `<`, `=`, `>` raises `domain_error(order, Order)`; valid pre-bound orders still verify by unification.
 
 ```prolog
 % Standard term ordering: variables < numbers < atoms < compound terms
@@ -608,6 +637,8 @@ Match = person(john, _, _).
 **Purpose**: Convert between a term and its atom representation. Bidirectional.
 
 *v2.8.2*: term→atom direction uses operator-aware formatter for proper roundtrip (`1+2` is written as `1+2`, not `+(1,2)`).
+
+*v3.6.0*: works on non-ground terms — `term_to_atom(foo(X, bar), A)` formats the variable (`A = 'foo(_G1, bar)'`) instead of failing; a bound atom side keeps parse-and-unify semantics (`term_to_atom(foo(Z), 'foo(bar)')` binds `Z = bar`).
 
 ```prolog
 ?- term_to_atom(f(a, b), X).
@@ -953,6 +984,8 @@ Key = 0 means compare whole terms; Key = N (N≥1) extracts N-th argument of com
 
 *v3.5.0*: ISO error handling — an unbound first argument or a partial list (e.g. `[a|_]`) raises `instantiation_error`, a non-list raises `type_error(list, Culprit)` (previously these failed silently). Lists may contain unbound variables, which sort first in the standard order.
 
+*v3.6.0*: `sort/4` validates keys and options with ISO error terms — with `Key > 0` every element must be a compound of arity >= Key (`type_error(compound, Elem)`, `domain_error(argument_index, Key)` otherwise); a bad Key raises `type_error(integer, K)` / `domain_error(not_less_than_zero, K)` and a bad Order raises `type_error(atom, O)` / `domain_error(order, O)`. `predsort/3` accepts non-ground lists (`predsort(compare, [X, Y], L)` works), fails when the comparison predicate fails or yields a non-order, and raises `instantiation_error` / `type_error(callable, Pred)` on a bad predicate.
+
 **When to use**: Use for ordering data, removing duplicates, or preparing data for efficient searching.
 
 ```prolog
@@ -1135,6 +1168,8 @@ Prolog treats arithmetic expressions differently from other terms:
 **Constants** (`pi`, `e`, `inf`, `nan`, `epsilon` *(v2.8.1)*, `max_tagged_integer` *(v2.8.1)*, `min_tagged_integer` *(v2.8.1)*)
 
 *v3.5.0*: ISO error behavior — a computed float overflow raises `evaluation_error(float_overflow)` and a NaN result raises `evaluation_error(undefined)` (the `inf`/`nan` constants and their propagation still work); `0 ^ -1` raises `evaluation_error(zero_divisor)`; huge `^`/`<<`/`>>` operands raise a catchable ISO error instead of an unhandled Java exception.
+
+*v3.6.0*: `float_integer_part` and `float_fractional_part` are correct beyond ±2^63 — `float_integer_part(1.0e20)` gives `1.0e20` (results no longer saturate at the 64-bit integer range); truncate-toward-zero semantics for small and negative values are unchanged.
 
 ```prolog
 % Basic arithmetic
@@ -1536,6 +1571,8 @@ false.
 
 **When to use**: Use to make non-deterministic predicates deterministic.
 
+*v3.6.0*: a non-callable goal raises `type_error(callable, Goal)` (`once(1)` used to fail silently); an unbound goal raises `instantiation_error`.
+
 ```prolog
 % Without once/1 - multiple solutions
 ?- member(X, [a, b, c]).
@@ -1608,6 +1645,8 @@ get_positive_number(N) :-
 
 **When to use**: Use to verify universal conditions or perform actions on all solutions.
 
+*v3.6.0*: a non-callable Condition or Action raises `type_error(callable, G)` (`forall(1, true)` and `forall(true, 1)` used to succeed silently); an unbound goal raises `instantiation_error`.
+
 ```prolog
 % Syntax: forall(Condition, Action)
 % Succeeds if Action succeeds for every solution of Condition
@@ -1649,6 +1688,8 @@ check_parent_child_consistency :-
 **Purpose**: Always succeeds, whether the goal succeeds or fails.
 
 **When to use**: Use for optional operations that shouldn't stop execution if they fail.
+
+*v3.6.0*: a non-callable goal raises `type_error(callable, Goal)` (`ignore(1)` used to succeed silently); an unbound goal raises `instantiation_error`.
 
 ```prolog
 % ignore/1 tries to execute the goal but always succeeds
@@ -1764,10 +1805,34 @@ Result = [2, 4, 6].
 Result = [1, 4, 9, 16].
 ```
 
+### ^/2 (existential quantification / goal call)
+**Purpose**: `V^Goal` is callable as an ordinary goal, equivalent to `call(Goal)` — the `V^` prefix is simply ignored outside `bagof/3`/`setof/3` (SWI/SICStus/YAP-compatible). *(v3.6.0)*
+
+**When to use**: Normally written inside `bagof/3`/`setof/3` to existentially quantify variables; direct calls matter when such a goal is built dynamically or passed around as data and eventually invoked.
+
+```prolog
+% As an ordinary goal: V^Goal = call(Goal)
+?- X^member(X, [a, b]).
+X = a ;
+X = b.
+
+% Unchanged inside bagof/setof: ^ marks variables to ignore for grouping
+?- bagof(Child, Parent^parent(Parent, Child), Children).
+Children = [bob, liz, ann, pat, jim].
+
+% The arithmetic ^ (integer power) is a separate evaluable functor:
+?- X is 2 ^ 3.
+X = 8.
+```
+
+An unbound `Goal` raises `instantiation_error`; a non-callable one raises `type_error(callable, Goal)`. Like `call/1`, the called goal is opaque to cut.
+
 ### findall/3
 **Purpose**: Collects all solutions to a goal into a list.
 
 **When to use**: Use when you need all possible solutions collected together.
+
+*v3.6.0*: the result argument is type-checked (ISO 8.10.1.3) — `findall(X, fail, a)` raises `type_error(list, a)`; variables, partial lists and proper lists remain legal.
 
 ```prolog
 % Syntax: findall(Template, Goal, List)
@@ -1825,6 +1890,8 @@ List = [].  % Empty list, not failure
 
 *v3.5.0*: each collected solution is a renamed-apart fresh copy (result lists no longer alias caller variables); an unbound goal raises `instantiation_error` and a non-callable goal raises `type_error(callable, Goal)`.
 
+*v3.6.0*: witness grouping follows ISO 8.10.2.1 — solutions whose witness tuples are variants of each other merge into a single group (e.g. fresh clause variables in the witness no longer split groups), with the member tuples unified against the witness variables on emission.
+
 ```prolog
 % bagof/3 is like findall/3 but treats free variables differently
 
@@ -1872,6 +1939,8 @@ Cat = food, Prods = [apple, bread].
 **When to use**: Use when you want unique, sorted solutions.
 
 *v3.5.0*: each collected solution is a renamed-apart fresh copy (result lists no longer alias caller variables); an unbound goal raises `instantiation_error` and a non-callable goal raises `type_error(callable, Goal)`.
+
+*v3.6.0*: witness groups are enumerated in the standard order of terms (not in textual order) — `setof(X, member(X-Y, [a-10, b-2]), L)` yields `Y = 2, L = [b]` before `Y = 10, L = [a]` — and variant witnesses merge into a single group (ISO 8.10.2.1, also in `bagof/3`).
 
 ```prolog
 % setof/3 = bagof/3 + sort + remove duplicates
@@ -1923,6 +1992,8 @@ P = [john, mary].  % Sorted list of people
 **When to use**: Use when you need to compute aggregate statistics (sum, count, max, min, bag, set) over all solutions to a goal in a single call.
 
 *v3.5.0*: ISO error balls raised by Goal propagate unchanged (no longer wrapped or swallowed); an unbound or non-callable goal raises `instantiation_error` / `type_error(callable, _)`.
+
+*v3.6.0*: `max(Expr)`/`min(Expr)` fail when the goal has no solutions and raise `type_error(number, T)` on a non-numeric solution (previously skipped silently); `sum(Expr)` accumulates integers exactly (BigInteger — no 64-bit overflow), with float contagion producing a genuine float (`sum` over `[1.5, 2.5]` is `4.0`); the empty sum is the integer `0`.
 
 ```prolog
 % Syntax: aggregate_all(Template, Goal, Result)
@@ -2102,6 +2173,8 @@ A = '3.14'.
 
 *v3.5.0*: `format/2,3` now succeed as goals (output used to be produced with the goal then failing, killing any conjunction containing it); the format string may be an atom, a double-quoted string (the spelling produced by the default `double_quotes=string` flag), or a code/char list; `format/3` honours its first argument — a stream alias/handle, or a capture sink `atom(A)` / `string(S)` / `codes(C)` / `chars(C)`. `~w`/`~q` imply `numbervars(true)`.
 
+*v3.6.0*: argument mismatches raise errors instead of being papered over — too few arguments for the directives raise a format error, `~d` with a non-integer raises `type_error(integer, Arg)`, and an unknown directive raises an error (previously echoed literally). The atom `[]` in the argument position is the **empty argument list** (`[[]]` passes the atom `[]` as a single argument; a non-list term still counts as one argument, SWI-style).
+
 ### Basic Input
 
 ### read/1, read/2
@@ -2115,6 +2188,8 @@ A = '3.14'.
 T = foo(1, 2).
 ```
 On end-of-file, both bind the term to the atom `end_of_file`.
+
+*v3.6.0*: input is consumed up to the ISO **end token** (`.` followed by layout) rather than one line at a time — terms spanning several lines, several terms on one line, leading `%` and `/* */` comments, and dots inside quotes/escapes/floats/graphic tokens are all handled; the stream position is preserved between calls, so the next read resumes right after the end token. Resolves LIM-029.
 
 **When to use**: Use for reading structured Prolog data.
 
@@ -2167,6 +2242,8 @@ T = foo(1, 2).
 ```
 
 *v3.5.0*: `read_term/2,3` succeed as goals (previously the read happened but the goal failed). On end-of-file, `Term` is bound to the atom `end_of_file`.
+
+*v3.6.0*: like `read/1,2`, reads up to the ISO end token instead of one line — multi-line terms, several terms per line, and leading comments all work, with the stream position preserved between calls.
 
 ### Character I/O
 
@@ -2443,6 +2520,8 @@ fibonacci_cached(N, Result) :-
 
 *v3.5.0*: ISO validation — `retract/1` validates its argument (`instantiation_error` for an unbound term, `type_error(callable, _)` for a non-callable one, instead of an internal error); retracting clauses of a built-in raises `permission_error(modify, static_procedure, Name/Arity)`; `retractall/1` validates its argument the same way and implies declaring the predicate dynamic.
 
+*v3.6.0*: `retract/1` is **re-executable on backtracking** on the default (v2) engine (ISO 8.9.3) — each redo retracts the next matching clause, so `findall(X, retract(p(X)), L)` drains the predicate one clause per solution; retractions of earlier solutions persist across backtracking. The legacy engine (`-Djprolog.engine=legacy`) still enumerates the solutions correctly but retracts all matching clauses eagerly on the first call, even if the query commits early.
+
 ```prolog
 % Remove a specific fact
 ?- assertz(temp(1)), assertz(temp(2)), assertz(temp(3)).
@@ -2614,10 +2693,14 @@ safe_call_predicate(Name, Arity, _) :-
 
 These predicates manipulate atoms (symbolic constants) and strings.
 
+*v3.6.0* (SWI-style text interop): the `atom_*` predicates accept strings (`atom_length("abc", 3)`, `atom_codes(X, "abc")` gives the atom `abc`), and `string_length/2`, `string_chars/2`, `string_concat/3` accept atoms (`string_concat(a, b, S)` gives the string `S = "ab"` — the result stays a string).
+
 ### atom_length/2
 **Purpose**: Determines the length of an atom.
 
 **When to use**: Use for validation, formatting, or string processing.
+
+*v3.6.0*: ISO error terms — an unbound atom raises `instantiation_error`, a non-atom raises `type_error(atom, A)`, a non-integer length raises `type_error(integer, L)` and a negative length raises `domain_error(not_less_than_zero, L)`. Also accepts a string first argument (SWI interop).
 
 ```prolog
 % Get length of atom
@@ -2653,6 +2736,8 @@ pad_atom(Atom, TargetLen, PadChar, Padded) :-
 **Purpose**: Concatenates atoms or splits an atom.
 
 **When to use**: Use for building identifiers, messages, or parsing.
+
+*v3.6.0*: ISO error terms — all arguments unbound raises `instantiation_error`, a non-atomic argument raises a proper `error(type_error(atom, Culprit), _)` ball naming the culprit (was a plain-text exception). Also accepts string arguments (SWI interop).
 
 ```prolog
 % Concatenate atoms
@@ -2748,6 +2833,8 @@ U = john, D = 'example.com'.
 
 **When to use**: Use for character-level processing or encoding conversions.
 
+*v3.6.0*: ISO error terms — with the atom side unbound, a partial list or a list with an unbound element raises `instantiation_error`; a bad element raises `type_error(character, E)` (`atom_chars`) or `representation_error(character_code)` (`atom_codes`). A number first argument stringifies (`atom_chars(42, L)` gives `L = ['4','2']`, SWI/GNU behavior). Both also accept a string first argument (SWI interop).
+
 ```prolog
 % atom_chars/2 - Convert to/from character list
 ?- atom_chars(hello, Chars).
@@ -2801,6 +2888,8 @@ Codes = [50, 53, 53].
 
 *v3.5.0*: arbitrarily large integers round-trip exactly (values beyond 64-bit precision were previously corrupted silently).
 
+*v3.6.0*: type-faithful floats — float-syntax text yields a float (`number_chars(X, ['1','.','0'])` gives `X = 1.0`, not the integer `1`) and floats keep float syntax on output (`number_codes(1.0, L)` gives `"1.0"`). ISO `0x`/`0o`/`0b` radix notation and `0'c` char-code constants are accepted; Java-only spellings (`Infinity`, `NaN`, `1f`, `'.5'`, `'3.'`) raise `syntax_error(illegal_number)`. ISO error terms otherwise: both sides unbound raises `instantiation_error`, a non-number first argument raises `type_error(number, N)`.
+
 ### atom_number/2
 **Purpose**: Converts between atoms and numbers.
 
@@ -2809,6 +2898,8 @@ Codes = [50, 53, 53].
 *v2.8.2*: accepts hex (`0xFF`), binary (`0b1010`), octal (`0o77`) prefixes when parsing atom→number.
 
 *v3.5.0*: arbitrarily large integers convert exactly in both directions (no more silent 64-bit corruption).
+
+*v3.6.0*: float syntax is preserved in the number→atom direction — `atom_number(A, 123.0)` gives `A = '123.0'` (previously `'123'`); the atom→number direction is type-faithful (`atom_number('1.0', X)` gives the float `1.0`) and rejects Java-only spellings (`'Infinity'`, `'NaN'`, `'1f'`) with `syntax_error(illegal_number)`.
 
 ```prolog
 % Convert atom to number
@@ -2948,7 +3039,13 @@ Msg = 'Error: 404, Not Found'.
 ```prolog
 ?- string_to_atom(hello, X).
 X = hello.
+
+% (-, +) mode binds a string (v3.6.0)
+?- string_to_atom(S, foo).
+S = "foo".
 ```
+
+*v3.6.0*: the `(-, +)` mode binds a **string** — `string_to_atom(S, foo)` gives `S = "foo"` with `string(S)` true and `atom(S)` false (it used to bind an atom, making the mode a no-op). The `(+, -)` direction is unchanged.
 
 ### number_to_atom/2, atom_to_number/2
 **Purpose**: Convert between number and atom representations.
@@ -2977,6 +3074,8 @@ Character processing predicates work with individual characters and their proper
 **Purpose**: Converts between characters and their numeric codes.
 
 **When to use**: Use for character encoding, ASCII operations, or character arithmetic.
+
+*v3.6.0*: ISO error terms (8.16.6.3) — both arguments unbound raises `instantiation_error`, a first argument that is not a one-char atom raises `type_error(character, C)`, a non-integer code raises `type_error(integer, Code)`, and an integer outside the Unicode range raises `representation_error(character_code)` (previously these failed silently).
 
 ```prolog
 % Character to code
@@ -3169,6 +3268,8 @@ noun --> [dog].
 **When to use**: Use to parse input with grammar rules or generate valid sequences.
 
 *v3.5.0*: the first argument may be any DCG body, not just a non-terminal — `(A, B)`, `(A ; B)`, `(A -> B)`, `\+ A`, `!`, `{Goal}`, terminal lists `[a, b]` and `[]` are all translated correctly; a non-list second/third argument raises `type_error(list, _)` and a non-callable body raises `type_error(callable, _)` (previously these failed silently).
+
+*v3.6.0*: `phrase/3` with two free variables (e.g. `phrase(nt, [a|T], R)`) no longer raises a spurious `representation_error(cyclic_term)` on the default engine — it now answers with the expected var-var binding; real cyclic-term (rational-tree) protection is unaffected.
 
 ```prolog
 % Define a simple grammar
@@ -5075,6 +5176,8 @@ sudoku_vars(Vars) :-
 
 *v3.5.0*: when propagation narrows a variable to a singleton domain the variable is bound — `X #= 2` gives `X = 2` without labeling.
 
+*v3.6.0*: non-linear constraints propagate instead of failing silently — variable products (`X*Y`) and squares (`X*X #= 16` narrows `X in 0..10` to `X = 4` before labeling) work via interval products, as do `abs/1`, `min/2`, `max/2` and `E mod M` (constant positive `M`); a genuinely unsupported functor raises `type_error(evaluable, F/N)` and a float coefficient (`2.5*X`) raises `type_error(integer, 2.5)` instead of truncating.
+
 ```prolog
 % Syntax: Expr1 #= Expr2
 ?- X in 1..10, X #= 3 + 4.
@@ -5083,6 +5186,15 @@ X = 7.
 % Bidirectional reasoning
 ?- X in 1..10, Y in 1..10, X + Y #= 10, X #= 3.
 X = 3, Y = 7.
+
+% Non-linear products (v3.6.0)
+?- X in 0..10, X*X #= 16.
+X = 4.
+
+?- A in 1..5, B in 1..5, C in 1..5,
+   A*A + B*B #= C*C, label([A, B, C]).
+A = 3, B = 4, C = 5 ;
+A = 4, B = 3, C = 5.
 ```
 
 ### #\=/2
@@ -5154,6 +5266,8 @@ X = 1, Y = 3, Z = 2 ;
 
 **When to use**: Use after posting all constraints to enumerate solutions.
 
+*v3.6.0*: list elements that are neither variables nor integers raise `type_error(integer, T)` — `label([a])` no longer succeeds silently; ground integers remain legal.
+
 ```prolog
 % Syntax: label(+Vars)
 ?- X in 1..3, Y in 1..3, X #< Y, label([X, Y]).
@@ -5167,14 +5281,25 @@ X = 2, Y = 3.
 
 **When to use**: Use for fine-grained control over variable and value ordering.
 
+*v3.6.0*: the options are honoured — `leftmost`/`ff`/`ffc`/`min`/`max` select the branching variable, `up`/`down` set the value enumeration order (`down` yields the largest value first), `min(Expr)`/`max(Expr)` order solutions optimum-first, and `step`/`enum` are accepted. An unknown option raises `domain_error(labeling_option, O)`, an unbound option raises `instantiation_error`, and a non-list options argument raises `type_error(list, O)`. Non-variable, non-integer list elements raise `type_error(integer, T)` (as for `label/1`).
+
 ```prolog
 % Syntax: labeling(+Options, +Vars)
-% Options: leftmost, ff (first-fail), min, max, up, down
+% Options: leftmost, ff (first-fail), ffc, min, max, up, down, min(Expr), max(Expr)
 ?- X in 1..5, Y in 1..5, X + Y #= 6,
    labeling([ff], [X, Y]).
 X = 1, Y = 5 ;
 X = 2, Y = 4 ;
 ...
+
+% Value order (v3.6.0)
+?- X in 0..5, labeling([down], [X]).
+X = 5 ;
+X = 4 ;
+...
+
+?- X in 1..3, labeling([bogus], [X]).
+% throws domain_error(labeling_option, bogus)
 ```
 
 ### indomain/1

@@ -974,9 +974,12 @@ public class BugFixVerificationTest {
     // #10 AtomConcat unsupported mode returns false
     @Test
     public void testISS0191_atomConcatUnsupportedMode() {
-        // All three unbound should fail, not throw
-        List<Map<String, Term>> solutions = prolog.solve("atom_concat(X, Y, Z).");
-        assertEquals(0, solutions.size());
+        // START_CHANGE: ISS-2025-0406 - ISO 8.16.2.3a: all three unbound raises a catchable
+        // instantiation_error ball (the original ISS-0191 intent — no raw Java exception — holds)
+        List<Map<String, Term>> solutions = prolog.solve(
+            "catch(atom_concat(X, Y, Z), error(instantiation_error, _), true).");
+        assertEquals(1, solutions.size());
+        // END_CHANGE: ISS-2025-0406
     }
 
     // #11 ListTerm.createListTerm iterative
@@ -2380,14 +2383,19 @@ public class BugFixVerificationTest {
     // START_CHANGE: ISS-2025-0344 - retract removes exactly ONE clause; rules list stays in sync with the indexes
     @Test
     public void testISS0344_RetractRemovesExactlyOneDuplicateClause() {
-        // ISO 8.9.3: each retract removes exactly one clause, even with duplicates
+        // ISO 8.9.3: each retract SOLUTION removes exactly one clause, even with duplicates.
+        // START_CHANGE: ISS-2025-0396 - retract/1 is now re-executable, and solve() enumerates
+        // every solution — so a bare retract goal would (correctly) drain all duplicates in one
+        // query. Commit to the first solution with a cut to keep pinning the ISS-0344 invariant:
+        // ONE clause removed per retract solution, no immortal phantom clauses.
         assertEquals(1, prolog.solve("assertz(q0344(a)), assertz(q0344(a)).").size());
-        assertEquals(1, prolog.solve("retract(q0344(a)).").size());
+        assertEquals(1, prolog.solve("retract(q0344(a)), !.").size());
         assertEquals("one duplicate must survive the first retract", 1, prolog.solve("q0344(a).").size());
-        assertEquals(1, prolog.solve("retract(q0344(a)).").size());
+        assertEquals(1, prolog.solve("retract(q0344(a)), !.").size());
         assertTrue("both clauses retracted -> call must fail", prolog.solve("q0344(a).").isEmpty());
-        assertTrue("third retract must fail (no immortal phantom)", prolog.solve("retract(q0344(a)).").isEmpty());
+        assertTrue("third retract must fail (no immortal phantom)", prolog.solve("retract(q0344(a)), !.").isEmpty());
         assertTrue(prolog.solve("q0344(a).").isEmpty());
+        // END_CHANGE: ISS-2025-0396
     }
 
     @Test
@@ -2400,10 +2408,13 @@ public class BugFixVerificationTest {
             (it.denzosoft.jprolog.core.engine.KnowledgeBase) kbField.get(prolog);
         assertEquals(2, kb.getRulesForPredicate("q0344s", 1).size());
         assertEquals(2, countRules(kb, "q0344s"));
-        prolog.solve("retract(q0344s(a)).");
+        // START_CHANGE: ISS-2025-0396 - cut after the first solution (retract is now re-executable
+        // and solve() enumerates all solutions, which would drain both duplicates in one query)
+        prolog.solve("retract(q0344s(a)), !.");
         assertEquals(1, kb.getRulesForPredicate("q0344s", 1).size());
         assertEquals("rules list desynced from ruleIndex", 1, countRules(kb, "q0344s"));
-        prolog.solve("retract(q0344s(a)).");
+        prolog.solve("retract(q0344s(a)), !.");
+        // END_CHANGE: ISS-2025-0396
         assertEquals(0, kb.getRulesForPredicate("q0344s", 1).size());
         assertEquals(0, countRules(kb, "q0344s"));
     }
@@ -3177,7 +3188,9 @@ public class BugFixVerificationTest {
         assertEquals("123", prolog.solve("atom_number('123', X).").get(0).get("X").toString());
         assertEquals("-42", prolog.solve("atom_number('-42', X).").get(0).get("X").toString());
         assertEquals("3.14", prolog.solve("atom_number('3.14', X).").get(0).get("X").toString());
-        assertEquals("123", prolog.solve("atom_number(A, 123.0).").get(0).get("A").toString());
+        // START_CHANGE: ISS-2025-0399 - floats keep valid float syntax through text conversion
+        assertEquals("123.0", prolog.solve("atom_number(A, 123.0).").get(0).get("A").toString());
+        // END_CHANGE: ISS-2025-0399
     }
 
     @Test
@@ -3950,4 +3963,880 @@ public class BugFixVerificationTest {
         assertEquals(1, prolog.solve("phrase(pa0394b, [a|T]).").size());
     }
     // END_CHANGE: ISS-2025-0394
+
+    // ======================== ISS-2025-0396: retract/1 is re-executable ========================
+
+    // START_CHANGE: ISS-2025-0396 - retract/1 backtracks into further matching clauses (ISO 8.9.3)
+    @Test
+    public void testISS0396_RetractDrainsPredicateViaFindall() {
+        prolog.solve("assertz(rq0396(1)), assertz(rq0396(2)), assertz(rq0396(3)).");
+        List<Map<String, Term>> s = prolog.solve("findall(X, retract(rq0396(X)), L).");
+        assertEquals(1, s.size());
+        assertEquals("retract/1 must retract the NEXT matching clause on each redo",
+            "[1, 2, 3]", s.get(0).get("L").toString());
+        // and the predicate must be empty afterwards
+        assertEquals("[]", prolog.solve("findall(X, rq0396(X), R).").get(0).get("R").toString());
+    }
+
+    @Test
+    public void testISS0396_RetractRetractsNextClauseOnRedo() {
+        prolog.solve("assertz(pq0396(1)), assertz(pq0396(2)).");
+        List<Map<String, Term>> s = prolog.solve("retract(pq0396(X)), X == 2.");
+        assertEquals("(retract(p(X)), X == 2) must succeed by retracting p(2) on redo", 1, s.size());
+        assertEquals("2", s.get(0).get("X").toString());
+        // the first solution retracted pq0396(1), the redo retracted pq0396(2) -> none left
+        assertTrue(prolog.solve("pq0396(_).").isEmpty());
+    }
+
+    @Test
+    public void testISS0396_RetractFailPurgeLoopRemovesAllClauses() {
+        prolog.solve("assertz(cq0396(1)), assertz(cq0396(2)).");
+        assertEquals("the universal purge idiom must succeed",
+            1, prolog.solve("\\+ ( retract(cq0396(_)), fail ).").size());
+        assertEquals("the retract-fail purge loop must remove every clause",
+            "[]", prolog.solve("findall(X, cq0396(X), C).").get(0).get("C").toString());
+    }
+
+    @Test
+    public void testISS0396_RetractClauseFormOnRedo() {
+        prolog.solve("assertz((hq0396(X) :- X = 1)), assertz((hq0396(X) :- X = 2)).");
+        List<Map<String, Term>> s = prolog.solve("retract((hq0396(Y) :- Y = V)), V == 2.");
+        assertEquals("clause-form retract must also be re-executable", 1, s.size());
+        assertEquals("2", s.get(0).get("V").toString());
+    }
+
+    @Test
+    public void testISS0396_KnowledgeBaseRetractReportsRemoval() {
+        it.denzosoft.jprolog.core.engine.KnowledgeBase kb =
+            new it.denzosoft.jprolog.core.engine.KnowledgeBase();
+        it.denzosoft.jprolog.core.engine.Rule r = new it.denzosoft.jprolog.core.engine.Rule(
+            new Atom("kbiss0396"), new java.util.ArrayList<>());
+        kb.addRule(r);
+        assertTrue("retract must report the clause was removed", kb.retract(r));
+        assertFalse("retracting an already-removed clause must report false", kb.retract(r));
+    }
+
+    @Test
+    public void testISS0396_LegacyEngineRetractStillEnumerates() {
+        prolog.solveLegacy("assertz(lr0396(1)), assertz(lr0396(2)).");
+        List<Map<String, Term>> s = prolog.solveLegacy("findall(X, retract(lr0396(X)), L).");
+        assertEquals(1, s.size());
+        assertEquals("[1, 2]", s.get(0).get("L").toString());
+    }
+    // END_CHANGE: ISS-2025-0396
+
+    // ======================== ISS-2025-0397: phrase/3 with two free variables ========================
+
+    // START_CHANGE: ISS-2025-0397 - no spurious representation_error(cyclic_term) from a var-var union
+    @Test
+    public void testISS0397_PhraseWithTwoFreeVariablesNoSpuriousCyclicError() {
+        prolog.consult("nt0397 --> [a].");
+        // previously the legacy solution map's self-binding ({R=R, T=R}) was installed verbatim,
+        // creating a deref cycle mis-reported as representation_error(cyclic_term)
+        List<Map<String, Term>> s = prolog.solve("phrase(nt0397, [a|T], R).");
+        assertEquals(1, s.size());
+        // T and R must end up unified with each other, like the direct non-terminal call
+        assertEquals(1, prolog.solve("phrase(nt0397, [a|T], R), T == R.").size());
+        // ground input still works
+        assertEquals("[b]", prolog.solve("phrase(nt0397, [a, b], R2).").get(0).get("R2").toString());
+    }
+
+    @Test
+    public void testISS0397_RealCyclicTermProtectionUntouched() {
+        // ISS-2025-0313: a rational tree (X = f(X) with occurs_check off) must STILL raise the
+        // controlled representation_error, not be weakened by the var-var skip.
+        try {
+            prolog.solve("X = f(X), Y = X.");
+            fail("X = f(X) must still raise representation_error(cyclic_term)");
+        } catch (Exception e) {
+            assertTrue(e.getMessage(), e.getMessage().contains("cyclic_term"));
+        }
+    }
+    // END_CHANGE: ISS-2025-0397
+
+    // ======================== ISS-2025-0398: ^/2 callable as an ordinary goal ========================
+
+    // START_CHANGE: ISS-2025-0398 - V^Goal outside bagof/setof behaves as call(Goal)
+    @Test
+    public void testISS0398_CaretGoalBehavesAsCall() {
+        List<Map<String, Term>> s = prolog.solve("Y^member(X, [1, 2]).");
+        assertEquals("V^Goal must call Goal", 2, s.size());
+        assertEquals("1", s.get(0).get("X").toString());
+        assertEquals("2", s.get(1).get("X").toString());
+    }
+
+    @Test
+    public void testISS0398_CaretGoalInsideFindall() {
+        List<Map<String, Term>> s = prolog.solve("findall(X, Y^member(X, [1, 2]), L).");
+        assertEquals(1, s.size());
+        assertEquals("[1, 2]", s.get(0).get("L").toString());
+    }
+
+    @Test
+    public void testISS0398_CaretGoalOnLegacyEngine() {
+        assertEquals(2, prolog.solveLegacy("Y^member(X, [1, 2]).").size());
+    }
+
+    @Test
+    public void testISS0398_BagofExistentialQuantifierStillStripped() {
+        prolog.consult("pair0398(1, a). pair0398(2, a). pair0398(3, b).");
+        List<Map<String, Term>> s = prolog.solve("bagof(X, Y^pair0398(X, Y), L).");
+        assertEquals("bagof must keep treating ^ as the existential quantifier", 1, s.size());
+        assertEquals("[1, 2, 3]", s.get(0).get("L").toString());
+    }
+    // END_CHANGE: ISS-2025-0398
+
+    @Test
+    public void testISS0411_SetofWitnessGroupsInStandardOrder() {
+        List<Map<String, Term>> s = prolog.solve("setof(X, member(X-Y, [a-10, b-2]), L).");
+        assertEquals("two witness groups", 2, s.size());
+        // 2 @< 10 in the standard order of terms (string order would put "10" first)
+        assertEquals("first group must be the witness Y = 2", "2", s.get(0).get("Y").toString());
+        assertEquals("[b]", s.get(0).get("L").toString());
+        assertEquals("second group must be the witness Y = 10", "10", s.get(1).get("Y").toString());
+        assertEquals("[a]", s.get(1).get("L").toString());
+    }
+    // END_CHANGE: ISS-2025-0411
+
+    // ======================== ISS-2025-0412: bagof/setof merge VARIANT witnesses ========================
+
+    // START_CHANGE: ISS-2025-0412 - ISO 8.10.2.1: witnesses that are variants form ONE group
+    @Test
+    public void testISS0412_BagofSetofMergeVariantWitnesses() {
+        // Each solution leaves a fresh (renamed-apart) variable in the witness: f(_G1) and
+        // f(_G2) are variants, so they must form a single group — the old string-signature
+        // grouping keyed them by variable name and produced two groups.
+        prolog.consult("p0412(1, f(_)). p0412(2, f(_)).");
+        List<Map<String, Term>> s = prolog.solve("bagof(X, p0412(X, Y), L).");
+        assertEquals("variant witnesses must merge into one bagof group", 1, s.size());
+        assertEquals("[1, 2]", s.get(0).get("L").toString());
+
+        s = prolog.solve("setof(X, p0412(X, Y), L).");
+        assertEquals("variant witnesses must merge into one setof group", 1, s.size());
+        assertEquals("[1, 2]", s.get(0).get("L").toString());
+
+        // ISO 8.10.2.4-style control: both disjuncts leave the witness pair unbound -> one group
+        assertEquals(1, prolog.solve("bagof(X, (X = Y ; X = Z), S), S = [_, _].").size());
+    }
+    // END_CHANGE: ISS-2025-0412
+
+    // ======================== ISS-2025-0413: aggregate_all max/min fail on no solutions ========================
+
+    // START_CHANGE: ISS-2025-0413 - max/min fail on no solutions; type_error(number) on non-numbers
+    @Test
+    public void testISS0413_AggregateAllMaxMinFailOnNoSolutions() {
+        assertTrue("aggregate_all(max(X), fail, M) must FAIL (SWI), not throw",
+            prolog.solve("aggregate_all(max(X), fail, _M).").isEmpty());
+        assertTrue("aggregate_all(min(X), fail, M) must FAIL (SWI), not throw",
+            prolog.solve("aggregate_all(min(X), fail, _M).").isEmpty());
+    }
+
+    @Test
+    public void testISS0413_AggregateAllMaxMinTypeErrorOnNonNumber() {
+        assertEquals("max over non-numbers must raise type_error(number, _), not -Infinity", 1,
+            prolog.solve("catch(aggregate_all(max(X), member(X, [a, c, b]), _M), error(type_error(number, _), _), true).").size());
+        assertEquals("min over a mixed list must raise type_error(number, _)", 1,
+            prolog.solve("catch(aggregate_all(min(X), member(X, [1, a]), _M), error(type_error(number, _), _), true).").size());
+        // numeric extrema still work
+        List<Map<String, Term>> s = prolog.solve("aggregate_all(max(X), member(X, [3, 1, 2]), M).");
+        assertEquals(1, s.size());
+        assertEquals("3", s.get(0).get("M").toString());
+        s = prolog.solve("aggregate_all(min(X), member(X, [3, 1, 2]), M).");
+        assertEquals(1, s.size());
+        assertEquals("1", s.get(0).get("M").toString());
+    }
+    // END_CHANGE: ISS-2025-0413
+
+    // ======================== ISS-2025-0414: aggregate_all(sum) exact and typed ========================
+
+    // START_CHANGE: ISS-2025-0414 - exact big-integer sums, typed results, type_error on non-numbers
+    @Test
+    public void testISS0414_AggregateAllSumExactAndTyped() {
+        // a non-numeric solution raises type_error(number, a) instead of being silently skipped
+        assertEquals(1, prolog.solve(
+            "catch(aggregate_all(sum(X), member(X, [1, a, 2]), _S), error(type_error(number, a), _), true).").size());
+        // exact big-integer sum (the double accumulator rounded this to ...680)
+        List<Map<String, Term>> s = prolog.solve("aggregate_all(sum(X), member(X, [123456789012345678, 1]), S).");
+        assertEquals(1, s.size());
+        assertEquals("123456789012345679", s.get(0).get("S").toString());
+        // integer sums stay integers; float sums stay floats; empty sum is integer 0
+        assertEquals(1, prolog.solve("aggregate_all(sum(X), member(X, [1, 2]), S), integer(S), S =:= 3.").size());
+        assertEquals(1, prolog.solve("aggregate_all(sum(X), member(X, [1.5, 2.5]), S), float(S), S =:= 4.0.").size());
+        assertEquals(1, prolog.solve("aggregate_all(sum(X), fail, S), S == 0.").size());
+    }
+    // END_CHANGE: ISS-2025-0414
+
+    // ======================== ISS-2025-0415: once/ignore/forall callable checks ========================
+
+    // START_CHANGE: ISS-2025-0415 - type_error(callable, G) for non-callable goals
+    @Test
+    public void testISS0415_OnceIgnoreForallNonCallableTypeError() {
+        assertEquals("once(1) must raise type_error(callable, 1)", 1, prolog.solve(
+            "catch(once(1), error(type_error(callable, 1), _), true).").size());
+        // ignore(1)/forall(1,true) silently SUCCEEDED before the fix, so conjoin with fail:
+        // only the caught error path can yield a solution
+        assertEquals("ignore(1) must raise type_error(callable, 1), not succeed", 1, prolog.solve(
+            "catch((ignore(1), fail), error(type_error(callable, 1), _), true).").size());
+        assertEquals("forall(1, true) must raise type_error(callable, 1)", 1, prolog.solve(
+            "catch((forall(1, true), fail), error(type_error(callable, 1), _), true).").size());
+        assertEquals("forall(true, 1) must raise type_error(callable, 1)", 1, prolog.solve(
+            "catch((forall(true, 1), fail), error(type_error(callable, 1), _), true).").size());
+        // unbound goals keep raising instantiation_error
+        assertEquals(1, prolog.solve("catch(once(_G), error(instantiation_error, _), true).").size());
+        assertEquals(1, prolog.solve("catch((ignore(_G), fail), error(instantiation_error, _), true).").size());
+        assertEquals(1, prolog.solve("catch((forall(_G, true), fail), error(instantiation_error, _), true).").size());
+        // callable goals are untouched
+        assertEquals(1, prolog.solve("once(member(_X, [1, 2])).").size());
+        assertEquals(1, prolog.solve("ignore(fail).").size());
+        assertEquals(1, prolog.solve("forall(member(X, [1, 2]), number(X)).").size());
+    }
+    // END_CHANGE: ISS-2025-0415
+
+    // ======================== ISS-2025-0416: findall/3 Instances type check ========================
+
+    // START_CHANGE: ISS-2025-0416 - ISO 8.10.1.3(c): type_error(list, Instances)
+    @Test
+    public void testISS0416_FindallThirdArgTypeCheck() {
+        assertEquals("findall(X, fail, a) must raise type_error(list, a)", 1, prolog.solve(
+            "catch(findall(X, fail, a), error(type_error(list, a), _), true).").size());
+        // the legacy engine path (CollectionUtils) must raise it too
+        assertEquals("findall(X, fail, a) must raise type_error(list, a) on the legacy engine", 1,
+            prolog.solveLegacy("catch(findall(X, fail, a), error(type_error(list, a), _), true).").size());
+        // a partial list stays legal, as do variables and proper lists
+        assertEquals(1, prolog.solve("findall(X, member(X, [1, 2]), [A|T]), A == 1, T == [2].").size());
+        assertEquals(1, prolog.solve("findall(X, fail, L), L == [].").size());
+        assertTrue("a wrong proper list still just fails", prolog.solve("findall(X, fail, [a]).").isEmpty());
+    }
+    // END_CHANGE: ISS-2025-0416
+
+    // ======================== ISS-2025-0417: compare/3 Order validation ========================
+
+    // START_CHANGE: ISS-2025-0417 - ISO 8.4.2.3: domain_error(order)/type_error(atom) for bad Order
+    @Test
+    public void testISS0417_CompareInvalidOrderArg() {
+        assertEquals("compare(foo, 1, 2) must raise domain_error(order, foo)", 1, prolog.solve(
+            "catch(compare(foo, 1, 2), error(domain_error(order, foo), _), true).").size());
+        assertEquals("compare(3, 1, 2) must raise type_error(atom, 3)", 1, prolog.solve(
+            "catch(compare(3, 1, 2), error(type_error(atom, 3), _), true).").size());
+        // valid pre-bound orders still verify (or fail) by comparison, without errors
+        assertEquals(1, prolog.solve("compare(<, 1, 2).").size());
+        assertTrue(prolog.solve("compare(>, 1, 2).").isEmpty());
+    }
+    // END_CHANGE: ISS-2025-0417
+
+    // ======================== ISS-2025-0418: sort/4 key validation ========================
+
+    // START_CHANGE: ISS-2025-0418 - Key > 0 requires compound elements with arity >= Key
+    @Test
+    public void testISS0418_Sort4KeyValidation() {
+        assertEquals("sort(1, @<, [b, a], L): non-compound element must raise type_error(compound, _)",
+            1, prolog.solve("catch(sort(1, @<, [b, a], _L), error(type_error(compound, _), _), true).").size());
+        assertEquals("sort(2, @<, [f(a)], L): Key beyond the arity must raise domain_error(argument_index, _)",
+            1, prolog.solve("catch(sort(2, @<, [f(a)], _L), error(domain_error(argument_index, _), _), true).").size());
+        // ISO error terms for bad Key/Order (was a generic PrologEvaluationException)
+        assertEquals(1, prolog.solve("catch(sort(x, @<, [a], _L), error(type_error(integer, x), _), true).").size());
+        assertEquals(1, prolog.solve("catch(sort(0, foo, [a], _L), error(domain_error(order, foo), _), true).").size());
+        // valid keyed sorts unchanged
+        assertEquals(1, prolog.solve("sort(1, @<, [f(b, 1), f(a, 2)], L), L == [f(a, 2), f(b, 1)].").size());
+        assertEquals(1, prolog.solve("sort(0, @=<, [c, a, b, a], L), L == [a, a, b, c].").size());
+    }
+    // END_CHANGE: ISS-2025-0418
+
+    // ======================== ISS-2025-0419: predsort/3 non-ground lists + failing Pred ========================
+
+    // START_CHANGE: ISS-2025-0419 - no groundness gate; Pred failure makes predsort fail; bad Pred errors
+    @Test
+    public void testISS0419_PredsortNonGroundListAndFailingPred() {
+        // variables are legal list elements (lowest in the standard order)
+        List<Map<String, Term>> s = prolog.solve("predsort(compare, [X, Y], L).");
+        assertEquals("predsort must accept non-ground lists", 1, s.size());
+        // a comparison predicate that fails on a pair makes predsort FAIL — it must never
+        // 'sort' with a silent default ordering
+        prolog.consult("pfail0419(_, _, _) :- fail.");
+        assertTrue("predsort must fail when Pred fails on a pair",
+            prolog.solve("predsort(pfail0419, [b, a, c], _L).").isEmpty());
+        // an Order outside <, =, > also makes predsort fail
+        prolog.consult("pbad0419(foo, _, _).");
+        assertTrue("predsort must fail when Pred binds Order outside <, =, >",
+            prolog.solve("predsort(pbad0419, [b, a], _L).").isEmpty());
+        // unbound / non-callable Pred raise the proper errors
+        assertEquals(1, prolog.solve(
+            "catch(predsort(_P, [a, b], _L), error(instantiation_error, _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch((predsort(7, [a, b], _L), fail), error(type_error(callable, 7), _), true).").size());
+        // control: normal sorting with '=' dedup still works
+        assertEquals(1, prolog.solve("predsort(compare, [b, a, c, a], L), L == [a, b, c].").size());
+    }
+    // END_CHANGE: ISS-2025-0419
+
+    // ======================== ISS-2025-0420: arg/3 and =../2 ISO errors ========================
+
+    // START_CHANGE: ISS-2025-0420 - ISO 8.5.2.3 arg/3 error terms; works on non-ground compounds
+    @Test
+    public void testISS0420_ArgIsoErrors() {
+        assertEquals("arg(_, f(a), A) -> instantiation_error", 1, prolog.solve(
+            "catch(arg(_N, f(a), _A), error(instantiation_error, _), true).").size());
+        assertEquals("arg(0.5, f(a), A) -> type_error(integer, 0.5)", 1, prolog.solve(
+            "catch(arg(0.5, f(a), _A), error(type_error(integer, _), _), true).").size());
+        assertEquals("arg(-1, f(a), A) -> domain_error(not_less_than_zero, -1)", 1, prolog.solve(
+            "catch(arg(-1, f(a), _A), error(domain_error(not_less_than_zero, _), _), true).").size());
+        assertEquals("arg(1, foo, A) -> type_error(compound, foo)", 1, prolog.solve(
+            "catch(arg(1, foo, _A), error(type_error(compound, foo), _), true).").size());
+        // the old isGround gate wrongly FAILED arg/3 on non-ground compounds
+        assertEquals("arg/3 must work on non-ground compounds", 1,
+            prolog.solve("arg(1, f(X), A), X = hello, A == hello.").size());
+        // out-of-range / zero index is still plain failure
+        assertTrue(prolog.solve("arg(3, f(a, b), _A).").isEmpty());
+        assertTrue(prolog.solve("arg(0, f(a), _A).").isEmpty());
+    }
+
+    @Test
+    public void testISS0420_UnivIsoErrors() {
+        assertEquals("X =.. Y (both unbound) -> instantiation_error", 1, prolog.solve(
+            "catch(_X =.. _Y, error(instantiation_error, _), true).").size());
+        assertEquals("X =.. a -> type_error(list, a)", 1, prolog.solve(
+            "catch(_X =.. a, error(type_error(list, a), _), true).").size());
+        assertEquals("X =.. [3, x] -> type_error(atom, 3)", 1, prolog.solve(
+            "catch(_X =.. [3, x], error(type_error(atom, 3), _), true).").size());
+        assertEquals("X =.. [f(a), a] -> type_error(atom, f(a))", 1, prolog.solve(
+            "catch(_X =.. [f(a), a], error(type_error(atom, f(a)), _), true).").size());
+        assertEquals("X =.. [] -> domain_error(non_empty_list, [])", 1, prolog.solve(
+            "catch(_X =.. [], error(domain_error(non_empty_list, []), _), true).").size());
+        // the old isGround gates wrongly raised instantiation_error for these two legal modes
+        assertEquals("construction with unbound arguments must work", 1,
+            prolog.solve("X =.. [f, Y], X = f(1), Y == 1.").size());
+        assertEquals("decomposition of a non-ground term must work", 1,
+            prolog.solve("f(_Q) =.. L, L = [F | _], F == f.").size());
+    }
+    // END_CHANGE: ISS-2025-0420
+
+    @Test
+    public void testISS0399_FloatTextYieldsFloat() {
+        // "1.0" must parse to the FLOAT 1.0 (ISO 8.16.7), not collapse to the integer 1
+        assertEquals(1, prolog.solve("number_chars(X, ['1','.','0']), float(X).").size());
+        // "1.0e5" must stay a float (100000.0), not the integer 100000
+        List<Map<String, Term>> s = prolog.solve("number_chars(X, ['1','.','0','e','5']), float(X).");
+        assertEquals(1, s.size());
+        assertEquals("100000.0", s.get(0).get("X").toString());
+        // number_string keeps the float type too
+        assertEquals(1, prolog.solve("number_string(N, \"1.0\"), float(N).").size());
+    }
+
+    @Test
+    public void testISS0399_FloatToTextKeepsFloatSyntax() {
+        // number_codes(1.0, L) -> "1.0" = [49,46,48] (the .0 used to be dropped)
+        assertEquals(1, prolog.solve("number_codes(1.0, [49, 46, 48]).").size());
+        // atom_number(A, 1.0) -> '1.0', not the atom '1'
+        assertEquals("1.0", prolog.solve("atom_number(A, 1.0).").get(0).get("A").toString());
+        // round trip preserves the float type
+        assertEquals(1, prolog.solve("number_chars(123.0, L), number_chars(X, L), float(X).").size());
+    }
+
+    @Test
+    public void testISS0399_BothGroundComparesExactly() {
+        // the chars of the integer 1 name the FLOAT 1.0 -> type mismatch must fail
+        assertTrue(prolog.solve("number_chars(1, ['1','.','0']).").isEmpty());
+        // the old 1e-10 epsilon wrongly equated 1.00000000001 with "1.0"
+        assertTrue(prolog.solve("number_chars(1.00000000001, ['1','.','0']).").isEmpty());
+        // ISO list-first semantics: "1.00" still denotes the float 1.0
+        assertEquals(1, prolog.solve("number_chars(1.0, ['1','.','0','0']).").size());
+        assertTrue(prolog.solve("atom_number('1.0', 1).").isEmpty());
+        assertEquals(1, prolog.solve("number_string(1.0, \"1.0\").").size());
+        assertTrue(prolog.solve("number_string(1, \"1.0\").").isEmpty());
+        // big-integer exactness (ISS-2025-0365) stays intact
+        assertEquals("9223372036854775808",
+            prolog.solve("number_chars(X, ['9','2','2','3','3','7','2','0','3','6','8','5','4','7','7','5','8','0','8']).")
+                .get(0).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0399
+
+    // ======================== ISS-2025-0400: ISO number notation in number_chars/number_codes ========================
+
+    // START_CHANGE: ISS-2025-0400 - 0x/0o/0b/0'c accepted, Java-only spellings raise syntax_error
+    @Test
+    public void testISS0400_NumberCharsAcceptsIsoNotation() {
+        assertEquals("255", prolog.solve("number_chars(X, ['0','x','f','f']).").get(0).get("X").toString());
+        assertEquals("63", prolog.solve("number_chars(X, ['0','o','7','7']).").get(0).get("X").toString());
+        assertEquals("3", prolog.solve("number_chars(X, ['0','b','1','1']).").get(0).get("X").toString());
+        // "0'a" = [48,39,97] is the character-code constant 97
+        assertEquals("97", prolog.solve("number_codes(X, [48, 39, 97]).").get(0).get("X").toString());
+        // leading layout stays legal (ISO 8.16.7.1), sign included
+        assertEquals("-1", prolog.solve("number_chars(X, [' ','-','1']).").get(0).get("X").toString());
+    }
+
+    @Test
+    public void testISS0400_NumberCharsRejectsJavaOnlySyntax() {
+        // Infinity / NaN / ".5" / "3." / trailing layout are not Prolog number tokens (ISO 6.4.4/6.4.5)
+        assertEquals(1, prolog.solve(
+            "catch(number_chars(X, ['I','n','f','i','n','i','t','y']), error(syntax_error(_), _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(number_chars(X, ['N','a','N']), error(syntax_error(_), _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(number_chars(X, ['.','5']), error(syntax_error(_), _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(number_chars(X, ['3','.']), error(syntax_error(_), _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(number_chars(X, ['5',' ']), error(syntax_error(_), _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(number_codes(X, [49, 102]), error(syntax_error(_), _), true).").size()); // "1f"
+    }
+    // END_CHANGE: ISS-2025-0400
+
+    // ======================== ISS-2025-0401: char_code/2 ISO error terms ========================
+
+    // START_CHANGE: ISS-2025-0401 - instantiation/type/representation errors instead of silent false
+    @Test
+    public void testISS0401_CharCodeIsoErrors() {
+        assertEquals(1, prolog.solve(
+            "catch(char_code(X, Y), error(instantiation_error, _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(char_code(ab, X), error(type_error(character, ab), _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(char_code(X, foo), error(type_error(integer, foo), _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(char_code(X, -1), error(representation_error(character_code), _), true).").size());
+        // success cases unchanged
+        assertEquals("97", prolog.solve("char_code(a, X).").get(0).get("X").toString());
+        assertEquals("b", prolog.solve("char_code(X, 98).").get(0).get("X").toString());
+        assertEquals(1, prolog.solve("char_code(a, 97).").size());
+        assertTrue(prolog.solve("char_code(a, 98).").isEmpty());
+    }
+    // END_CHANGE: ISS-2025-0401
+
+    // ======================== ISS-2025-0402: term_to_atom/2 on non-ground terms ========================
+
+    // START_CHANGE: ISS-2025-0402 - non-ground terms serialize (variables render with their names)
+    @Test
+    public void testISS0402_TermToAtomNonGroundTerm() {
+        List<Map<String, Term>> s = prolog.solve("term_to_atom(foo(X, bar), A), atom(A).");
+        assertEquals(1, s.size());
+        String a = s.get(0).get("A").toString();
+        assertTrue("must serialize the non-ground term, got: " + a, a.startsWith("foo("));
+        assertTrue("must keep the ground part, got: " + a, a.contains("bar"));
+        // the (+partial_term, +atom) mode keeps parse-and-unify semantics
+        s = prolog.solve("term_to_atom(foo(Z), 'foo(bar)').");
+        assertEquals(1, s.size());
+        assertEquals("bar", s.get(0).get("Z").toString());
+        // ground direction unchanged
+        assertEquals("foo(a,b)", prolog.solve("term_to_atom(foo(a, b), A).").get(0).get("A").toString());
+    }
+    // END_CHANGE: ISS-2025-0402
+
+    // ======================== ISS-2025-0403: string_to_atom/2 (-,+) mode binds a string ========================
+
+    // START_CHANGE: ISS-2025-0403 - the string side gets a PrologString, not an Atom
+    @Test
+    public void testISS0403_StringToAtomBindsString() {
+        assertEquals(1, prolog.solve("string_to_atom(S, foo), string(S).").size());
+        assertTrue(prolog.solve("string_to_atom(S, foo), atom(S).").isEmpty());
+        // (+,-) direction unchanged: produces an atom
+        assertEquals(1, prolog.solve("string_to_atom(\"hello\", A), atom(A).").size());
+    }
+    // END_CHANGE: ISS-2025-0403
+
+    // ======================== ISS-2025-0404: string/1 type check ========================
+
+    // START_CHANGE: ISS-2025-0404 - string/1 is true for PrologString terms only
+    @Test
+    public void testISS0404_StringTypeCheck() {
+        assertEquals(1, prolog.solve("string(\"abc\").").size());
+        assertEquals(1, prolog.solve("X = \"abc\", string(X).").size());
+        assertTrue(prolog.solve("string(abc).").isEmpty());
+        assertTrue(prolog.solve("string(123).").isEmpty());
+        assertTrue(prolog.solve("string(f(x)).").isEmpty());
+        assertTrue(prolog.solve("string(X).").isEmpty());
+        assertTrue(prolog.solve("string([104, 105]).").isEmpty());
+    }
+    // END_CHANGE: ISS-2025-0404
+
+    // ======================== ISS-2025-0405: SWI-style atom/string text interop ========================
+
+    // START_CHANGE: ISS-2025-0405 - atom_* accept strings, string_* accept atoms
+    @Test
+    public void testISS0405_AtomPredicatesAcceptStrings() {
+        assertEquals("abc", prolog.solve("atom_codes(X, \"abc\").").get(0).get("X").toString());
+        assertEquals("ab", prolog.solve("atom_chars(X, \"ab\").").get(0).get("X").toString());
+        assertEquals("3", prolog.solve("atom_length(\"abc\", N).").get(0).get("N").toString());
+        assertEquals("abcd", prolog.solve("atom_concat(\"ab\", cd, R).").get(0).get("R").toString());
+        assertEquals("-1", prolog.solve("number_codes(X, \"-1\").").get(0).get("X").toString());
+    }
+
+    @Test
+    public void testISS0405_StringPredicatesAcceptAtoms() {
+        // results stay strings
+        assertEquals(1, prolog.solve("string_concat(a, b, S), string(S), string_chars(S, [a, b]).").size());
+        assertEquals("3", prolog.solve("string_length(abc, N).").get(0).get("N").toString());
+        assertEquals(1, prolog.solve("string_chars(abc, [a, b, c]).").size());
+    }
+    // END_CHANGE: ISS-2025-0405
+
+    // ======================== ISS-2025-0406: typed ISO errors in conversion/concat predicates ========================
+
+    // START_CHANGE: ISS-2025-0406 - instantiation/type/domain/syntax errors instead of silent false
+    @Test
+    public void testISS0406_AtomConcatIsoErrors() {
+        // ISO 8.16.2.3 a: A3 unbound together with A1/A2 unbound -> instantiation_error
+        assertEquals(1, prolog.solve(
+            "catch(atom_concat(X, Y, Z), error(instantiation_error, _), true).").size());
+        // ISO 8.16.2.3: non-atom argument -> error(type_error(atom, 1), _) as a proper ball
+        assertEquals(1, prolog.solve(
+            "catch(atom_concat(a, 1, R), error(type_error(atom, 1), _), true).").size());
+        // working modes unchanged
+        assertEquals("ab", prolog.solve("atom_concat(a, b, X).").get(0).get("X").toString());
+        assertEquals(3, prolog.solve("atom_concat(X, Y, ab).").size());
+    }
+
+    @Test
+    public void testISS0406_NumberConversionIsoErrors() {
+        // ISO 8.16.8.3 a: both unbound -> instantiation_error (was a bare message exception)
+        assertEquals(1, prolog.solve(
+            "catch(number_codes(X, Y), error(instantiation_error, _), true).").size());
+        // ISO 8.16.8.3 b: non-number first argument -> type_error(number, a)
+        assertEquals(1, prolog.solve(
+            "catch(number_codes(a, L), error(type_error(number, a), _), true).").size());
+        // ISO 8.16.7.3: unparsable chars -> syntax_error (was a silent false)
+        assertEquals(1, prolog.solve(
+            "catch(number_chars(X, [a, b]), error(syntax_error(_), _), true).").size());
+    }
+
+    @Test
+    public void testISS0406_AtomCharsCodesIsoErrors() {
+        // ISO 8.16.4.3 a: partial list / unbound element with unbound atom -> instantiation_error
+        assertEquals(1, prolog.solve(
+            "catch(atom_chars(X, [a, Y]), error(instantiation_error, _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(atom_chars(X, Y), error(instantiation_error, _), true).").size());
+        // element not a one-char atom -> type_error(character, ab)
+        assertEquals(1, prolog.solve(
+            "catch(atom_chars(X, [ab]), error(type_error(character, ab), _), true).").size());
+        // atom_codes element not a character code -> representation_error(character_code)
+        assertEquals(1, prolog.solve(
+            "catch(atom_codes(X, [a]), error(representation_error(character_code), _), true).").size());
+        // numbers stringify (SWI/GNU) instead of failing silently
+        assertEquals(1, prolog.solve("atom_chars(123, ['1','2','3']).").size());
+        assertEquals(1, prolog.solve("atom_codes(1.5, [49, 46, 53]).").size());
+    }
+
+    @Test
+    public void testISS0406_AtomLengthLengthValidation() {
+        // ISO 8.16.1.3 c: Length neither var nor integer -> type_error(integer, foo)
+        assertEquals(1, prolog.solve(
+            "catch(atom_length(abc, foo), error(type_error(integer, foo), _), true).").size());
+        // ISO 8.16.1.3 d: negative Length -> domain_error(not_less_than_zero, -1)
+        assertEquals(1, prolog.solve(
+            "catch(atom_length(a, -1), error(domain_error(not_less_than_zero, -1), _), true).").size());
+        // valid checks unchanged
+        assertEquals(1, prolog.solve("atom_length(abc, 3).").size());
+        assertTrue(prolog.solve("atom_length(abc, 4).").isEmpty());
+    }
+    // END_CHANGE: ISS-2025-0406
+
+    // ======================== ISS-2025-0407: float_integer_part / float_fractional_part beyond 2^63 ========================
+
+    // START_CHANGE: ISS-2025-0407 - no more (long)-cast saturation at +/-2^63
+    @Test
+    public void testISS0407_FloatPartsBeyondLongRange() {
+        assertEquals("1.0e20", prolog.solve("X is float_integer_part(1.0e20).").get(0).get("X").toString());
+        assertEquals("0.0", prolog.solve("X is float_fractional_part(1.0e20).").get(0).get("X").toString());
+        assertEquals("-1.0e20", prolog.solve("X is float_integer_part(-1.0e20).").get(0).get("X").toString());
+        // small values keep truncate-toward-zero semantics
+        assertEquals("0.75", prolog.solve("X is float_fractional_part(3.75).").get(0).get("X").toString());
+        assertEquals("-2.0", prolog.solve("X is float_integer_part(-2.5).").get(0).get("X").toString());
+        assertEquals("-0.5", prolog.solve("X is float_fractional_part(-2.5).").get(0).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0407
+
+    @Test
+    public void testISS0408_ReadMultiLineTermFromStream() throws Exception {
+        java.io.File f = writeTempPrologFile("iss0408_multi", "foo(\n  1\n).\n");
+        List<Map<String, Term>> s = prolog.solve(
+            "open('" + f.getAbsolutePath() + "', read, S), read(S, T), close(S).");
+        assertEquals("a term spanning several lines must be read", 1, s.size());
+        assertEquals("foo(1)", s.get(0).get("T").toString());
+    }
+
+    @Test
+    public void testISS0408_ReadTwoTermsOnOneLine() throws Exception {
+        java.io.File f = writeTempPrologFile("iss0408_two", "a(1). b(2).\n");
+        List<Map<String, Term>> s = prolog.solve(
+            "open('" + f.getAbsolutePath() + "', read, S), read(S, T1), read(S, T2), read(S, T3), close(S).");
+        assertEquals("two terms on one line must be read one at a time", 1, s.size());
+        assertEquals("a(1)", s.get(0).get("T1").toString());
+        assertEquals("b(2)", s.get(0).get("T2").toString());
+        assertEquals("end_of_file", s.get(0).get("T3").toString());
+    }
+
+    @Test
+    public void testISS0408_ReadSkipsLeadingComments() throws Exception {
+        java.io.File f = writeTempPrologFile("iss0408_cmt", "% leading comment\nfoo(42). /* block */ bar(7).\n");
+        List<Map<String, Term>> s = prolog.solve(
+            "open('" + f.getAbsolutePath() + "', read, S), read(S, T1), read(S, T2), close(S).");
+        assertEquals("comment lines must be skipped as layout", 1, s.size());
+        assertEquals("foo(42)", s.get(0).get("T1").toString());
+        assertEquals("bar(7)", s.get(0).get("T2").toString());
+    }
+
+    @Test
+    public void testISS0408_ReadTermMultiLineFromStream() throws Exception {
+        java.io.File f = writeTempPrologFile("iss0408_rt", "foo(\n  bar\n). baz(9).\n");
+        List<Map<String, Term>> s = prolog.solve(
+            "open('" + f.getAbsolutePath() + "', read, S), read_term(S, T1, []), read_term(S, T2, []), close(S).");
+        assertEquals("read_term must read up to the end token, not one line", 1, s.size());
+        assertEquals("foo(bar)", s.get(0).get("T1").toString());
+        assertEquals("baz(9)", s.get(0).get("T2").toString());
+    }
+
+    @Test
+    public void testISS0408_ReadTermTextTokenAwareness() throws Exception {
+        // graphic token =.. and float dots must not terminate the term; the reader position
+        // is preserved between calls so the next term can be read from the same reader
+        java.io.StringReader r = new java.io.StringReader("p(X) :- X =.. L, q(3.14). rest(1).");
+        assertEquals("p(X) :- X =.. L, q(3.14)", it.denzosoft.jprolog.builtin.io.Read.readTermText(r));
+        assertEquals("rest(1)", it.denzosoft.jprolog.builtin.io.Read.readTermText(r));
+        assertNull("EOF must yield null (end_of_file)", it.denzosoft.jprolog.builtin.io.Read.readTermText(r));
+        // dots inside quoted atoms, strings and 0'. char literals must not end the term
+        java.io.StringReader q = new java.io.StringReader("x('a.b', \"c.d\", 0'.). next.");
+        assertEquals("x('a.b', \"c.d\", 0'.)", it.denzosoft.jprolog.builtin.io.Read.readTermText(q));
+        assertEquals("next", it.denzosoft.jprolog.builtin.io.Read.readTermText(q));
+    }
+    // END_CHANGE: ISS-2025-0408
+
+    // ======================== ISS-2025-0409: format/2,3 argument-mismatch strictness ========================
+
+    // START_CHANGE: ISS-2025-0409 - format argument mismatches raised silently absorbed errors
+    @Test
+    public void testISS0409_FormatTooFewArgumentsRaisesFormatError() {
+        assertEquals("missing ~d argument must raise error(format(...), _)", 1, prolog.solve(
+            "catch(format('a~db~n', []), error(format(_), _), true).").size());
+        assertEquals("missing second ~w argument must raise error(format(...), _)", 1, prolog.solve(
+            "catch(format('~w-~w~n', [only_one]), error(format(_), _), true).").size());
+    }
+
+    @Test
+    public void testISS0409_FormatDirectiveDRequiresInteger() {
+        assertEquals("~d with a float must raise type_error(integer, 3.7)", 1, prolog.solve(
+            "catch(format('~d~n', [3.7]), error(type_error(integer, _), _), true).").size());
+        assertEquals("~d with an atom must raise type_error(integer, foo)", 1, prolog.solve(
+            "catch(format('~d~n', [foo]), error(type_error(integer, foo), _), true).").size());
+    }
+
+    @Test
+    public void testISS0409_FormatUnknownDirectiveRaisesError() {
+        List<Map<String, Term>> s = new java.util.ArrayList<>();
+        String out = captureStdout("catch(format('~z~n', [hello]), error(format(_), _), true).", s);
+        assertEquals("~z must raise error(format(...), _)", 1, s.size());
+        assertEquals("~z must not be echoed literally", "", out);
+    }
+
+    @Test
+    public void testISS0409_FormatEmptyListIsEmptyArgumentList() {
+        // [] is the EMPTY argument list, so '~a' has no argument: error, not printing '[]'
+        assertEquals(1, prolog.solve(
+            "catch(format('~a~n', []), error(format(_), _), true).").size());
+        // ...but [[]] supplies the atom [] as ONE argument
+        List<Map<String, Term>> s = new java.util.ArrayList<>();
+        assertEquals("[]", captureStdout("format('~a', [[]]).", s));
+        assertEquals(1, s.size());
+    }
+
+    @Test
+    public void testISS0409_FormatWellFormedCallsStillWork() {
+        List<Map<String, Term>> s = new java.util.ArrayList<>();
+        assertEquals("a-b\n", captureStdout("format('~w-~w~n', [a, b]).", s));
+        assertEquals(1, s.size());
+        s.clear();
+        assertEquals("42", captureStdout("format('~d', [42]).", s));
+        assertEquals(1, s.size());
+        s.clear();
+        // a non-list argument term is still treated as a single argument (SWI compatibility)
+        assertEquals("ok", captureStdout("format('~w', ok).", s));
+        assertEquals(1, s.size());
+    }
+    // END_CHANGE: ISS-2025-0409
+
+    // ======================== ISS-2025-0410: non-callable DCG head diagnostics ========================
+
+    // START_CHANGE: ISS-2025-0410 - 7 --> [a] reported "Cannot redefine built-in predicate call/3"
+    @Test
+    public void testISS0410_NonCallableDcgHeadIsTypeError() {
+        Prolog.CompilationResult r = prolog.consultWithDiagnostics("123 --> [a].", "iss0410.pl");
+        assertFalse("a numeric DCG head must be a load error", r.success);
+        String msg = r.errors.get(0).message;
+        assertTrue("error must be type_error(callable, 123), got: " + msg,
+            msg.contains("type_error(callable, 123)"));
+        assertFalse("misleading built-in redefinition error must be gone: " + msg,
+            msg.contains("Cannot redefine"));
+    }
+
+    @Test
+    public void testISS0410_VariableDcgHeadIsInstantiationError() {
+        Prolog.CompilationResult r = prolog.consultWithDiagnostics("X --> [a].", "iss0410.pl");
+        assertFalse("a variable DCG head must be a load error", r.success);
+        assertTrue("error must be instantiation_error, got: " + r.errors.get(0).message,
+            r.errors.get(0).message.contains("instantiation_error"));
+    }
+
+    @Test
+    public void testISS0410_NonCallablePushBackHeadIsTypeError() {
+        Prolog.CompilationResult r = prolog.consultWithDiagnostics("(7, [a]) --> [b].", "iss0410.pl");
+        assertFalse("a numeric push-back non-terminal must be a load error", r.success);
+        assertTrue("error must be type_error(callable, 7), got: " + r.errors.get(0).message,
+            r.errors.get(0).message.contains("type_error(callable, 7)"));
+    }
+
+    @Test
+    public void testISS0410_CallableDcgHeadsStillLoad() {
+        Prolog.CompilationResult r = prolog.consultWithDiagnostics(
+            "greet0410 --> [hello].\npair0410(X) --> [X].", "iss0410.pl");
+        assertTrue("callable DCG heads must still load", r.success);
+        assertEquals(1, prolog.solve("phrase(greet0410, [hello]).").size());
+    }
+    // END_CHANGE: ISS-2025-0410
+
+    @Test
+    public void testISS0421_SquareConstraintIsSatisfiable() {
+        // X*X #= 16 used to silently answer false though satisfiable
+        List<Map<String, Term>> solutions = prolog.solve("X in 1..10, X*X #= 16, label([X]).");
+        assertEquals(1, solutions.size());
+        assertEquals("4", solutions.get(0).get("X").toString());
+    }
+
+    @Test
+    public void testISS0421_SquareBothRoots() {
+        List<Map<String, Term>> solutions = prolog.solve("X in -10..10, X*X #= 16, label([X]).");
+        assertEquals("both roots of X*X = 16", 2, solutions.size());
+        assertEquals("-4", solutions.get(0).get("X").toString());
+        assertEquals("4", solutions.get(1).get("X").toString());
+    }
+
+    @Test
+    public void testISS0421_VarVarProduct() {
+        List<Map<String, Term>> solutions = prolog.solve(
+            "X in 1..9, Y in 1..9, X*Y #= 12, X #< Y, label([X,Y]).");
+        assertEquals("12 = 2*6 = 3*4 with X < Y", 2, solutions.size());
+        for (Map<String, Term> m : solutions) {
+            long x = Long.parseLong(m.get("X").toString());
+            long y = Long.parseLong(m.get("Y").toString());
+            assertEquals(12, x * y);
+            assertTrue(x < y);
+        }
+    }
+
+    @Test
+    public void testISS0421_AbsExpression() {
+        // Z #= abs(Y - 3) used to silently fail for every Y
+        List<Map<String, Term>> solutions = prolog.solve("Y in 1..5, Z #= abs(Y - 3), label([Y]).");
+        assertEquals(5, solutions.size());
+        for (Map<String, Term> m : solutions) {
+            long y = Long.parseLong(m.get("Y").toString());
+            assertEquals(Math.abs(y - 3), Long.parseLong(m.get("Z").toString()));
+        }
+    }
+
+    @Test
+    public void testISS0421_PythagoreanTriples() {
+        List<Map<String, Term>> solutions = prolog.solve(
+            "A in 1..4, B in 1..4, C in 1..6, A*A + B*B #= C*C, label([A,B,C]).");
+        assertEquals("(3,4,5) and (4,3,5)", 2, solutions.size());
+        for (Map<String, Term> m : solutions) {
+            long a = Long.parseLong(m.get("A").toString());
+            long b = Long.parseLong(m.get("B").toString());
+            long c = Long.parseLong(m.get("C").toString());
+            assertEquals(c * c, a * a + b * b);
+        }
+    }
+
+    @Test
+    public void testISS0421_MinMaxExpressions() {
+        List<Map<String, Term>> solutions = prolog.solve("M in 1..5, min(M, 3) #= 3, label([M]).");
+        assertEquals("min(M,3) = 3 means M >= 3", 3, solutions.size());
+        solutions = prolog.solve("M in 1..5, max(M, 4) #= 4, label([M]).");
+        assertEquals("max(M,4) = 4 means M =< 4", 4, solutions.size());
+    }
+
+    @Test
+    public void testISS0421_UnsupportedExpressionRaisesTypeError() {
+        // a genuinely unsupported expression must error, never silently answer "no"
+        List<Map<String, Term>> solutions = prolog.solve(
+            "catch(X #= foo(2), error(type_error(evaluable, foo/1), _), true).");
+        assertEquals("unsupported functor must raise type_error(evaluable, foo/1)", 1, solutions.size());
+        solutions = prolog.solve(
+            "catch(X // 2 #= 3, error(type_error(evaluable, (//)/2), _), true).");
+        assertEquals(1, solutions.size());
+    }
+
+    @Test
+    public void testISS0421_ProductPostUndoneOnBacktracking() {
+        // the auxiliary Mul/Square constraints must roll back with the rest of the post
+        List<Map<String, Term>> solutions = prolog.solve(
+            "( X*X #= 16 ; X #= 5 ), X in 0..10, label([X]).");
+        assertEquals(2, solutions.size());
+        assertEquals("4", solutions.get(0).get("X").toString());
+        assertEquals("5", solutions.get(1).get("X").toString());
+    }
+    // END_CHANGE: ISS-2025-0421
+
+    // ======================== ISS-2025-0422: labeling/2 options ========================
+
+    // START_CHANGE: ISS-2025-0422 - labeling/2 honors its options; label/1 type-checks elements
+    @Test
+    public void testISS0422_DownEnumeratesDescending() {
+        List<Map<String, Term>> solutions = prolog.solve("X in 0..5, labeling([down], [X]).");
+        assertEquals(6, solutions.size());
+        assertEquals("down must yield the largest value first", "5", solutions.get(0).get("X").toString());
+        assertEquals("0", solutions.get(5).get("X").toString());
+    }
+
+    @Test
+    public void testISS0422_UpAndLeftmostKeepAscending() {
+        List<Map<String, Term>> solutions = prolog.solve("X in 0..2, labeling([leftmost, up], [X]).");
+        assertEquals(3, solutions.size());
+        assertEquals("0", solutions.get(0).get("X").toString());
+        assertEquals("2", solutions.get(2).get("X").toString());
+    }
+
+    @Test
+    public void testISS0422_MaxObjectiveYieldsOptimumFirst() {
+        List<Map<String, Term>> solutions = prolog.solve("Y in 0..5, labeling([max(Y)], [Y]).");
+        assertEquals(6, solutions.size());
+        assertEquals("max(Y) must yield Y = 5 first", "5", solutions.get(0).get("Y").toString());
+        solutions = prolog.solve("Y in 2..5, labeling([min(Y)], [Y]).");
+        assertEquals("min(Y) must yield Y = 2 first", "2", solutions.get(0).get("Y").toString());
+    }
+
+    @Test
+    public void testISS0422_UnknownOptionRaisesDomainError() {
+        List<Map<String, Term>> solutions = prolog.solve(
+            "catch((Z in 0..5, labeling([no_such_option], [Z])), "
+            + "error(domain_error(labeling_option, no_such_option), _), true).");
+        assertEquals("bogus options must not be silently accepted", 1, solutions.size());
+    }
+
+    @Test
+    public void testISS0422_NonListOptionsRaiseErrors() {
+        List<Map<String, Term>> solutions = prolog.solve(
+            "catch(labeling(foo, [X]), error(type_error(list, foo), _), true).");
+        assertEquals(1, solutions.size());
+        solutions = prolog.solve(
+            "catch(labeling([_O], [X]), error(instantiation_error, _), true).");
+        assertEquals("an unbound option must raise instantiation_error", 1, solutions.size());
+    }
+
+    @Test
+    public void testISS0422_LabelNonIntegerRaisesTypeError() {
+        List<Map<String, Term>> solutions = prolog.solve(
+            "catch(label([a]), error(type_error(integer, a), _), true).");
+        assertEquals("label([a]) must raise type_error(integer, a), not succeed", 1, solutions.size());
+        // ground integers in the list remain legal
+        assertEquals(1, prolog.solve("label([3]).").size());
+    }
+
+    @Test
+    public void testISS0422_FfOptionStillAccepted() {
+        // the documented ff option (already exercised by examples) keeps working
+        List<Map<String, Term>> solutions = prolog.solve(
+            "X in 1..2, Y in 1..3, labeling([ff], [X, Y]).");
+        assertEquals(6, solutions.size());
+    }
+    // END_CHANGE: ISS-2025-0422
 }

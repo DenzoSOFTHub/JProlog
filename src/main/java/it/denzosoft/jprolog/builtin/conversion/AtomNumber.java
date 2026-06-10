@@ -71,12 +71,10 @@ public class AtomNumber implements BuiltIn {
                 return false; // Atom is not a valid number
             }
             Number numberValue = (Number) numberTerm;
-            boolean same;
-            if (atomAsNumber.isInteger() && numberValue.isInteger()) {
-                same = atomAsNumber.bigIntegerValue().equals(numberValue.bigIntegerValue());
-            } else {
-                same = Math.abs(atomAsNumber.doubleValue() - numberValue.doubleValue()) < 1e-10;
-            }
+            // START_CHANGE: ISS-2025-0399 - exact type-aware comparison (Number.equals): an
+            // integer never equals a float, and floats compare exactly (no 1e-10 epsilon)
+            boolean same = atomAsNumber.equals(numberValue);
+            // END_CHANGE: ISS-2025-0399
             if (same) {
                 solutions.add(new HashMap<>(bindings));
                 return true;
@@ -93,19 +91,17 @@ public class AtomNumber implements BuiltIn {
     }
     
     // START_CHANGE: ISS-2025-0365 - exact text<->number helpers shared with NumberChars/NumberCodes
-    /** Format a Number exactly: BigInteger digits for integers, double syntax for floats.
-     *  Integral floats within long range keep the historical digits-only form (123.0 -> "123");
-     *  beyond long range the (long) cast would corrupt, so the double syntax is used instead. */
-    static String formatNumberExact(Number n) {
+    // START_CHANGE: ISS-2025-0399 - floats always keep valid float syntax (123.0 -> "123.0", not
+    // "123"), so the text of a float reads back as a float. Delegates to Number.toString(), which
+    // already emits canonical ISO float text (lowercase 'e' exponent, ISS-2025-0390).
+    /** Format a Number exactly: BigInteger digits for integers, float syntax for floats. */
+    public static String formatNumberExact(Number n) {
         if (n.isInteger()) {
             return n.bigIntegerValue().toString();
         }
-        double v = n.doubleValue();
-        if (v == Math.floor(v) && !Double.isInfinite(v) && Math.abs(v) < 9.223372036854776E18) {
-            return String.valueOf((long) v);
-        }
-        return String.valueOf(v);
+        return n.toString();
     }
+    // END_CHANGE: ISS-2025-0399
 
     /** Parse optionally-signed all-digit text as an exact (arbitrary precision) integer; null if not. */
     static Number parseExactInteger(String s) {
@@ -125,43 +121,152 @@ public class AtomNumber implements BuiltIn {
     // END_CHANGE: ISS-2025-0365
 
     // START_CHANGE: ISS-2025-0235 - parse Prolog number syntax: decimals, floats, hex, binary, octal
-    static Number parsePrologNumber(String s) {
+    // START_CHANGE: ISS-2025-0400 - delegate to the strict ISO number-token parser, so atom_number
+    // also gains 0'c constants and rejects the Java-only spellings (Infinity, NaN, '.5', '3.').
+    public static Number parsePrologNumber(String s) {
         if (s == null || s.isEmpty()) return null;
-        String t = s.trim();
-        boolean neg = false;
+        return parseNumberToken(s.trim());
+    }
+    // END_CHANGE: ISS-2025-0400
+    // END_CHANGE: ISS-2025-0235
+
+    // START_CHANGE: ISS-2025-0400 - strict ISO number-token parser shared by number_chars/2,
+    // number_codes/2 and atom_number/2 (mirrors core.parser.v2.Lexer's number tokenization).
+    /** Parse text as a Prolog number token (ISO 6.4.4/6.4.5): decimal integers, 0x/0o/0b radix
+     *  integers, 0'c character-code constants (including escapes and 0'''), and strict floats
+     *  (digits '.' digits and/or exponent). An optional leading layout and a +/- sign are
+     *  accepted (ISO 8.16.7.1 / 6.3.1.2); trailing characters and the Java-only spellings
+     *  (Infinity, NaN, '.5', '3.', d/f suffixes, '_' separators) are rejected.
+     *  Returns null if the text is not a valid Prolog number. Integers parse via BigInteger so
+     *  values beyond 64 bits stay exact (ISS-2025-0365); float syntax yields a FLOAT even for
+     *  integral values like "1.0e10" (ISS-2025-0399). */
+    public static Number parseNumberToken(String s) {
+        if (s == null) return null;
+        int len = s.length();
         int i = 0;
-        if (t.startsWith("-")) { neg = true; i = 1; }
-        else if (t.startsWith("+")) { i = 1; }
-        String body = t.substring(i);
+        while (i < len && Character.isWhitespace(s.charAt(i))) i++;   // leading layout (ISO 8.16.7.1)
+        boolean neg = false;
+        if (i < len && (s.charAt(i) == '-' || s.charAt(i) == '+')) {
+            neg = s.charAt(i) == '-';
+            i++;
+        }
+        if (i >= len || s.charAt(i) < '0' || s.charAt(i) > '9') return null;
         try {
-            if (body.startsWith("0x") || body.startsWith("0X")) {
-                java.math.BigInteger bi = new java.math.BigInteger(body.substring(2), 16);
-                if (neg) bi = bi.negate();
-                return new Number(bi);
+            if (s.charAt(i) == '0' && i + 1 < len) {
+                char marker = s.charAt(i + 1);
+                if (marker == '\'') {                                 // 0'c character-code constant
+                    int code = parseCharCodeConstant(s, i + 2);
+                    if (code < 0) return null;
+                    return new Number(neg ? -(long) code : (long) code);
+                }
+                int radix = (marker == 'x' || marker == 'X') ? 16
+                          : (marker == 'o' || marker == 'O') ? 8
+                          : (marker == 'b' || marker == 'B') ? 2 : 0;
+                if (radix != 0) {
+                    String digits = s.substring(i + 2);
+                    if (digits.isEmpty()) return null;
+                    for (int j = 0; j < digits.length(); j++) {
+                        if (Character.digit(digits.charAt(j), radix) < 0) return null;
+                    }
+                    java.math.BigInteger bi = new java.math.BigInteger(digits, radix);
+                    return new Number(neg ? bi.negate() : bi);
+                }
             }
-            if (body.startsWith("0o") || body.startsWith("0O")) {
-                java.math.BigInteger bi = new java.math.BigInteger(body.substring(2), 8);
-                if (neg) bi = bi.negate();
-                return new Number(bi);
+            int bodyStart = i;
+            while (i < len && s.charAt(i) >= '0' && s.charAt(i) <= '9') i++;
+            boolean isFloat = false;
+            // fraction: '.' must be followed by a digit (so "3." is the integer 3 + end mark)
+            if (i + 1 < len && s.charAt(i) == '.' && s.charAt(i + 1) >= '0' && s.charAt(i + 1) <= '9') {
+                isFloat = true;
+                i += 2;
+                while (i < len && s.charAt(i) >= '0' && s.charAt(i) <= '9') i++;
             }
-            if (body.startsWith("0b") || body.startsWith("0B")) {
-                java.math.BigInteger bi = new java.math.BigInteger(body.substring(2), 2);
-                if (neg) bi = bi.negate();
-                return new Number(bi);
+            // exponent: e/E, optional sign, at least one digit
+            if (i < len && (s.charAt(i) == 'e' || s.charAt(i) == 'E')) {
+                int j = i + 1;
+                if (j < len && (s.charAt(j) == '+' || s.charAt(j) == '-')) j++;
+                if (j >= len || s.charAt(j) < '0' || s.charAt(j) > '9') return null;
+                isFloat = true;
+                i = j + 1;
+                while (i < len && s.charAt(i) >= '0' && s.charAt(i) <= '9') i++;
             }
-            // START_CHANGE: ISS-2025-0365 - all-digit decimals parse via BigInteger so integers
-            // beyond 64 bits stay exact (the old Double.parseDouble + (long) cast saturated)
-            Number exact = parseExactInteger(t);
-            if (exact != null) {
-                return exact;
+            if (i != len) return null;                                // trailing characters
+            String body = s.substring(bodyStart, len);
+            if (isFloat) {
+                double d = Double.parseDouble(body);
+                return new Number(neg ? -d : d, false);
             }
-            // END_CHANGE: ISS-2025-0365
-            // Default: try double
-            double d = Double.parseDouble(t);
-            return new Number(d, false);
+            java.math.BigInteger bi = new java.math.BigInteger(body);
+            return new Number(neg ? bi.negate() : bi);
         } catch (NumberFormatException e) {
             return null;
         }
     }
-    // END_CHANGE: ISS-2025-0235
+
+    /** Parse the single-quoted character of a 0'c constant starting at {@code from}; the
+     *  character (plain, escape sequence, or '' / ''' for the quote) must extend exactly to the
+     *  end of the text. Returns the code point, or -1 if invalid. */
+    private static int parseCharCodeConstant(String s, int from) {
+        int len = s.length();
+        if (from >= len) return -1;
+        char c = s.charAt(from);
+        if (c == '\\') {
+            return parseCharEscape(s, from + 1);
+        }
+        if (c == '\'') {                                              // 0''' (ISO) or lenient 0''
+            int after = from + 1;
+            if (after < len && s.charAt(after) == '\'') after++;
+            return after == len ? '\'' : -1;
+        }
+        int cp = s.codePointAt(from);
+        return from + Character.charCount(cp) == len ? cp : -1;
+    }
+
+    /** Parse a backslash escape body (backslash already consumed) ending exactly at the end of
+     *  the text. Mirrors core.parser.v2.Lexer.readEscape. Returns the code point or -1. */
+    private static int parseCharEscape(String s, int from) {
+        int len = s.length();
+        if (from >= len) return -1;
+        char e = s.charAt(from);
+        switch (e) {
+            case 'n': return from + 1 == len ? '\n' : -1;
+            case 't': return from + 1 == len ? '\t' : -1;
+            case 'r': return from + 1 == len ? '\r' : -1;
+            case 'a': return from + 1 == len ? 7 : -1;
+            case 'b': return from + 1 == len ? '\b' : -1;
+            case 'f': return from + 1 == len ? '\f' : -1;
+            case 'v': return from + 1 == len ? 11 : -1;
+            case '\\': return from + 1 == len ? '\\' : -1;
+            case '\'': return from + 1 == len ? '\'' : -1;
+            case '"': return from + 1 == len ? '"' : -1;
+            case '`': return from + 1 == len ? '`' : -1;
+            case 'x': {                                               // \xHH...\ hex escape
+                long val = 0;
+                int j = from + 1, digits = 0;
+                while (j < len && Character.digit(s.charAt(j), 16) >= 0) {
+                    val = val * 16 + Character.digit(s.charAt(j), 16);
+                    if (val > Character.MAX_CODE_POINT) return -1;
+                    j++; digits++;
+                }
+                if (digits == 0) return -1;
+                if (j < len && s.charAt(j) == '\\') j++;
+                return j == len ? (int) val : -1;
+            }
+            default: {
+                if (e >= '0' && e <= '7') {                           // \NNN\ octal escape
+                    long val = 0;
+                    int j = from;
+                    while (j < len && s.charAt(j) >= '0' && s.charAt(j) <= '7') {
+                        val = val * 8 + (s.charAt(j) - '0');
+                        if (val > Character.MAX_CODE_POINT) return -1;
+                        j++;
+                    }
+                    if (j < len && s.charAt(j) == '\\') j++;
+                    return j == len ? (int) val : -1;
+                }
+                return -1;
+            }
+        }
+    }
+    // END_CHANGE: ISS-2025-0400
 }

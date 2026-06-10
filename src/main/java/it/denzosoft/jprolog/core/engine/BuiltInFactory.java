@@ -82,6 +82,9 @@ public class BuiltInFactory {
         registerFactory("ground", GroundCheck::new);
         registerFactory("simple", SimpleCheck::new);
         registerFactory("partial_list", PartialListCheck::new);
+        // START_CHANGE: ISS-2025-0404 - string/1 type check (true for PrologString only)
+        registerFactory("string", StringCheck::new);
+        // END_CHANGE: ISS-2025-0404
         // START_CHANGE: ISS-2025-0170 - Add missing ISO predicates acyclic_term/1 and proper_list/1
         registerFactory("acyclic_term", AcyclicTermCheck::new);
         registerFactory("proper_list", ProperListCheck::new);
@@ -287,6 +290,9 @@ public class BuiltInFactory {
         registerFactory("setup_call_cleanup", () -> new it.denzosoft.jprolog.builtin.meta.SetupCallCleanup(null));
         registerFactory("call_cleanup", () -> new it.denzosoft.jprolog.builtin.meta.SetupCallCleanup(null));
         // END_CHANGE: ISS-2025-0273
+        // START_CHANGE: ISS-2025-0398 - V^Goal as an ordinary goal behaves as call(Goal)
+        registerFactory("^", () -> new it.denzosoft.jprolog.builtin.meta.Caret());
+        // END_CHANGE: ISS-2025-0398
         // START_CHANGE: LIM-005 - predicate_property/2 meta-predicate
         registerFactory("predicate_property", () -> new PredicateProperty(null)); // QuerySolver will be injected
         // END_CHANGE: LIM-005

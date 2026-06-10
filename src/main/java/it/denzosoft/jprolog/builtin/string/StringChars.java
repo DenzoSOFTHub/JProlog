@@ -68,11 +68,12 @@ public class StringChars implements BuiltIn {
             
         } else if (stringTerm.isGround() && charsTerm.isGround()) {
             // Both ground - check if they match
-            if (!(stringTerm instanceof PrologString)) {
+            // START_CHANGE: ISS-2025-0405 - SWI text interop: atoms accepted as their text
+            java.lang.String stringValue = TextTerm.textOf(stringTerm);
+            if (stringValue == null) {
                 return false;
             }
-            
-            java.lang.String stringValue = ((PrologString) stringTerm).getStringValue();
+            // END_CHANGE: ISS-2025-0405
             List<java.lang.String> chars = extractChars(charsTerm);
             
             if (chars != null) {

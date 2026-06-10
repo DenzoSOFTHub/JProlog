@@ -84,12 +84,24 @@ public class Sort implements BuiltIn {
         Term inputList = query.getArguments().get(2).resolveBindings(bindings);
         Term resultVar = query.getArguments().get(3);
 
+        // START_CHANGE: ISS-2025-0418 - ISO error terms for Key/Order validation (instantiation,
+        // type and domain errors instead of generic PrologEvaluationException)
+        if (keyT instanceof Variable || orderT instanceof Variable) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError("sort/4"));
+        }
         if (!(keyT instanceof it.denzosoft.jprolog.core.terms.Number) || !((it.denzosoft.jprolog.core.terms.Number) keyT).isInteger()) {
-            throw new PrologEvaluationException("sort/4: Key must be integer");
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("integer", keyT, "sort/4"));
         }
         int key = (int) ((it.denzosoft.jprolog.core.terms.Number) keyT).longValue();
+        if (key < 0) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.domainError("not_less_than_zero", keyT, "sort/4"));
+        }
         if (!(orderT instanceof Atom)) {
-            throw new PrologEvaluationException("sort/4: Order must be atom (@<, @=<, @>, @>=)");
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("atom", orderT, "sort/4"));
         }
         String order = ((Atom) orderT).getName();
         boolean ascending;
@@ -99,14 +111,26 @@ public class Sort implements BuiltIn {
             case "@=<": ascending = true;  dedup = false; break;
             case "@>":  ascending = false; dedup = true; break;
             case "@>=": ascending = false; dedup = false; break;
-            default: throw new PrologEvaluationException("sort/4: Order must be @<, @=<, @>, or @>=");
+            default:
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.domainError("order", orderT, "sort/4"));
         }
+        // END_CHANGE: ISS-2025-0418
         // START_CHANGE: ISS-2025-0351 - ISO errors instead of silent failure (was ISS-2025-0335 return false)
         if (!it.denzosoft.jprolog.core.util.ListUtils.isProperList(inputList)) {
             throw notAProperList(inputList, "sort/4");
         }
         // END_CHANGE: ISS-2025-0351
         List<Term> elements = ListUtils.extractElements(inputList);
+        // START_CHANGE: ISS-2025-0418 - validate every element's key up front: the comparator is
+        // never invoked for lists of fewer than two elements, so sort(2, @<, [f(a)], L) must not
+        // silently skip the check
+        if (key > 0) {
+            for (Term e : elements) {
+                extractKey(e, key);
+            }
+        }
+        // END_CHANGE: ISS-2025-0418
         java.util.Comparator<Term> cmp = (a, b) -> {
             Term ka = key == 0 ? a : extractKey(a, key);
             Term kb = key == 0 ? b : extractKey(b, key);
@@ -130,13 +154,23 @@ public class Sort implements BuiltIn {
         return false;
     }
 
+    // START_CHANGE: ISS-2025-0418 - with Key > 0 every element must be a compound with at least
+    // Key arguments (SWI semantics): non-compound -> type_error(compound, Elem), Key beyond the
+    // arity -> domain_error(argument_index, Key) — never silently sort by the whole element.
     private static Term extractKey(Term t, int key) {
-        if (t instanceof CompoundTerm) {
-            CompoundTerm ct = (CompoundTerm) t;
-            if (key >= 1 && key <= ct.getArguments().size()) return ct.getArguments().get(key - 1);
+        if (!(t instanceof CompoundTerm)) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("compound", t, "sort/4"));
         }
-        return t;
+        CompoundTerm ct = (CompoundTerm) t;
+        if (key > ct.getArguments().size()) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.domainError("argument_index",
+                    new it.denzosoft.jprolog.core.terms.Number((long) key), "sort/4"));
+        }
+        return ct.getArguments().get(key - 1);
     }
+    // END_CHANGE: ISS-2025-0418
     // END_CHANGE: ISS-2025-0220
 
     // START_CHANGE: ISS-2025-0184 - ISO standard order of terms

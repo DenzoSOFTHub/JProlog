@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.6.0] - 2026-06-10
+
+### Audit wave 3 — the remaining 27 confirmed findings fixed (ISS-2025-0396..0422)
+
+Closes out the ISS-2025-0395 open-findings roll-up from the v3.5.0 audit (one broad
+documentation-tail item remains). Baseline: **935/935 JUnit tests, 20/20 example programs.**
+
+**Engine & meta-call**
+- **ISS-2025-0396**: `retract/1` is re-executable on backtracking (ISO 8.9.3) on the default v2
+  engine: each redo retracts the NEXT matching clause — `findall(X, retract(p(X)), L)` drains the
+  predicate; resolves **LIM-026** (legacy engine keeps the documented eager gap).
+- **ISS-2025-0397**: `phrase/3` with two free variables no longer raises a spurious
+  `representation_error(cyclic_term)` (self-binding var-var union entries are now skipped; real
+  rational-tree protection untouched).
+- **ISS-2025-0398**: `V^Goal` is callable as an ordinary goal (= `call(Goal)`), native on v2 and
+  via a new `Caret` built-in on legacy; bagof/setof and arithmetic `^` unaffected.
+
+**Reader & format strictness**
+- **ISS-2025-0408**: `read/1,2` and `read_term/2,3` read up to the ISO **end token** instead of
+  one line: multi-line terms, several terms per line, leading `%`/`/* */` comments, quoted/escaped
+  dots all handled; stream position preserved between calls; resolves **LIM-029**.
+- **ISS-2025-0409**: `format/2,3` raises errors on argument mismatches: too-few args, `~d` with a
+  non-integer (`type_error(integer,_)`), unknown directives; `[]` is the empty argument list.
+- **ISS-2025-0410**: a non-callable DCG head (`123 --> [a]`) raises `type_error(callable, 123)` at
+  load time instead of the misleading "Cannot redefine built-in predicate call/3".
+
+**Text & strings**
+- **ISS-2025-0399**: float text↔term conversion is type-faithful: `number_chars(X, "1.0")` gives
+  the float `1.0` (not integer 1), `atom_number(A, 123.0)` gives `'123.0'`.
+- **ISS-2025-0400**: `number_chars/2`, `number_codes/2` accept ISO `0x`/`0o`/`0b`/`0'c` notation
+  and reject Java-only spellings (`Infinity`, `NaN`, `1f`) with `syntax_error`.
+- **ISS-2025-0401/0406**: ISO error terms from `char_code/2`, `atom_length/2`, `atom_chars/2`,
+  `atom_codes/2`, `atom_concat/3`, `number_*` (instantiation/type/domain/representation/syntax).
+- **ISS-2025-0402**: `term_to_atom/2` works on non-ground terms.
+- **ISS-2025-0403**: `string_to_atom(S, foo)` binds `S` to a string, not an atom.
+- **ISS-2025-0404**: `string/1` type check implemented.
+- **ISS-2025-0405**: SWI-style text interop: `atom_*` predicates accept strings, `string_*`
+  predicates accept atoms.
+- **ISS-2025-0407**: `float_integer_part/1`, `float_fractional_part/1` correct beyond ±2^63.
+
+**All-solutions & ordering polish**
+- **ISS-2025-0411/0412**: `setof/3` witness groups enumerate in the standard order of terms and
+  variant witnesses merge into one group (ISO 8.10.2.1).
+- **ISS-2025-0413/0414**: `aggregate_all(max/min)` fails on no solutions and type-errors on
+  non-numerics; `aggregate_all(sum)` is BigInteger-exact with correct float contagion.
+- **ISS-2025-0415/0416/0417/0418/0419/0420**: callable/type validation for `once/1`, `ignore/1`,
+  `forall/2`, `findall/3`, `compare/3`, `sort/4` keys, `predsort/3` (also non-ground lists), and
+  full ISO error clauses for `arg/3` and `=../2` (which now also work on non-ground terms).
+
+**CLP(FD)**
+- **ISS-2025-0421**: non-linear constraints no longer fail silently: `X*X #= 16` propagates
+  (interval products, square case included); genuinely unsupported expressions raise a clear error.
+- **ISS-2025-0422**: `labeling/2` honours its options (`leftmost`/`ff`/`ffc`/`min`/`max`,
+  `up`/`down`); invalid options raise `domain_error(labeling_option, O)`; `label([a])` type-errors.
+
+**Behavior changes**: stricter format/conversion errors replace silent leniency;
+`atom_number(A, 123.0)` now yields `'123.0'`; `retract/1` backtracks (code relying on
+single-shot retract semantics behaves differently).
+
+---
+
 ## [3.5.0] - 2026-06-10
 
 ### ISO-conformance sweep — 53 confirmed defects fixed (ISS-2025-0342..0394)

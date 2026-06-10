@@ -1,5 +1,27 @@
 # JProlog - Release Notes
 
+## Release 3.6.0 - 2026-06-10
+
+### Audit wave 3 — remaining 27 confirmed findings fixed
+
+Closes the ISS-2025-0395 open-findings roll-up (ISS-2025-0396..0422).
+**935/935 JUnit tests, 20/20 example programs.**
+
+- **retract/1 re-executable** on the default engine (ISO 8.9.3) — resolves LIM-026; `phrase/3`
+  spurious cyclic_term fixed; `V^Goal` callable as a goal.
+- **read/1,2 reads to the end token** (multi-line terms, several terms per line, comments) —
+  resolves LIM-029; format/2,3 strict on argument mismatches; non-callable DCG heads diagnosed.
+- **Text conversions**: type-faithful floats, ISO 0x/0o/0b/0'c, ISO error terms across
+  atom_*/char_code/number_*; term_to_atom on non-ground terms; string/1; atom/string interop;
+  float_integer_part beyond 2^63.
+- **All-solutions polish**: setof standard-order witness groups, variant-witness merging,
+  exact aggregate_all sums/extrema, callable validation (once/ignore/forall/findall),
+  compare/sort(4)/predsort/arg/=.. ISO errors.
+- **CLP(FD)**: non-linear products propagate (X*X #= 16); labeling/2 options honored.
+
+Behavior changes: stricter errors replace silent leniency; `atom_number(A, 123.0)` → `'123.0'`;
+retract backtracks.
+
 ## Release 3.5.0 - 2026-06-10
 
 ### ISO-conformance sweep — 53 confirmed defects fixed

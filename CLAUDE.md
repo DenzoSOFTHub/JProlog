@@ -13,7 +13,7 @@ JProlog is a Prolog interpreter written in Java (1.8). It includes a core engine
 
 ```bash
 mvn compile                  # Build
-mvn test                     # JUnit tests (full suite; v3.5.0 baseline: 866/866)
+mvn test                     # JUnit tests (full suite; v3.6.0 baseline: 935/935)
 mvn test -Dtest=BugFixVerificationTest                  # Single test class
 mvn test -Dtest=BugFixVerificationTest#testISS0188_ModNegativeDivisor   # Single method
 mvn clean compile            # Clean rebuild

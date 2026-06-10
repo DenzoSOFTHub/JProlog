@@ -64,13 +64,14 @@ public class StringConcat implements BuiltIn {
     }
     
     private boolean checkConcatenation(Term s1, Term s2, Term s3, Map<java.lang.String, Term> bindings, List<Map<java.lang.String, Term>> solutions) {
-        if (!(s1 instanceof PrologString) || !(s2 instanceof PrologString) || !(s3 instanceof PrologString)) {
+        // START_CHANGE: ISS-2025-0405 - SWI text interop: atoms accepted as their text
+        java.lang.String str1 = TextTerm.textOf(s1);
+        java.lang.String str2 = TextTerm.textOf(s2);
+        java.lang.String str3 = TextTerm.textOf(s3);
+        if (str1 == null || str2 == null || str3 == null) {
             return false;
         }
-        
-        java.lang.String str1 = ((PrologString) s1).getStringValue();
-        java.lang.String str2 = ((PrologString) s2).getStringValue();
-        java.lang.String str3 = ((PrologString) s3).getStringValue();
+        // END_CHANGE: ISS-2025-0405
         
         if ((str1 + str2).equals(str3)) {
             solutions.add(new HashMap<>(bindings));
@@ -81,12 +82,13 @@ public class StringConcat implements BuiltIn {
     }
     
     private boolean concatenateMode(Term s1, Term s2, Term s3Var, Map<java.lang.String, Term> bindings, List<Map<java.lang.String, Term>> solutions) {
-        if (!(s1 instanceof PrologString) || !(s2 instanceof PrologString)) {
+        // START_CHANGE: ISS-2025-0405 - SWI text interop: atoms accepted as their text
+        java.lang.String str1 = TextTerm.textOf(s1);
+        java.lang.String str2 = TextTerm.textOf(s2);
+        if (str1 == null || str2 == null) {
             return false;
         }
-        
-        java.lang.String str1 = ((PrologString) s1).getStringValue();
-        java.lang.String str2 = ((PrologString) s2).getStringValue();
+        // END_CHANGE: ISS-2025-0405
         java.lang.String result = str1 + str2;
         
         PrologString resultString = new PrologString(result);
@@ -99,12 +101,13 @@ public class StringConcat implements BuiltIn {
     }
     
     private boolean extractSuffixMode(Term s1, Term s2Var, Term s3, Map<java.lang.String, Term> bindings, List<Map<java.lang.String, Term>> solutions) {
-        if (!(s1 instanceof PrologString) || !(s3 instanceof PrologString)) {
+        // START_CHANGE: ISS-2025-0405 - SWI text interop: atoms accepted as their text
+        java.lang.String str1 = TextTerm.textOf(s1);
+        java.lang.String str3 = TextTerm.textOf(s3);
+        if (str1 == null || str3 == null) {
             return false;
         }
-        
-        java.lang.String str1 = ((PrologString) s1).getStringValue();
-        java.lang.String str3 = ((PrologString) s3).getStringValue();
+        // END_CHANGE: ISS-2025-0405
         
         if (str3.startsWith(str1)) {
             java.lang.String suffix = str3.substring(str1.length());
@@ -121,12 +124,13 @@ public class StringConcat implements BuiltIn {
     }
     
     private boolean extractPrefixMode(Term s1Var, Term s2, Term s3, Map<java.lang.String, Term> bindings, List<Map<java.lang.String, Term>> solutions) {
-        if (!(s2 instanceof PrologString) || !(s3 instanceof PrologString)) {
+        // START_CHANGE: ISS-2025-0405 - SWI text interop: atoms accepted as their text
+        java.lang.String str2 = TextTerm.textOf(s2);
+        java.lang.String str3 = TextTerm.textOf(s3);
+        if (str2 == null || str3 == null) {
             return false;
         }
-        
-        java.lang.String str2 = ((PrologString) s2).getStringValue();
-        java.lang.String str3 = ((PrologString) s3).getStringValue();
+        // END_CHANGE: ISS-2025-0405
         
         if (str3.endsWith(str2)) {
             java.lang.String prefix = str3.substring(0, str3.length() - str2.length());
@@ -143,11 +147,12 @@ public class StringConcat implements BuiltIn {
     }
     
     private boolean generateSplitsMode(Term s1Var, Term s2Var, Term s3, Map<java.lang.String, Term> bindings, List<Map<java.lang.String, Term>> solutions) {
-        if (!(s3 instanceof PrologString)) {
+        // START_CHANGE: ISS-2025-0405 - SWI text interop: atoms accepted as their text
+        java.lang.String str3 = TextTerm.textOf(s3);
+        if (str3 == null) {
             return false;
         }
-        
-        java.lang.String str3 = ((PrologString) s3).getStringValue();
+        // END_CHANGE: ISS-2025-0405
         boolean foundSolution = false;
         
         // Generate all possible splits

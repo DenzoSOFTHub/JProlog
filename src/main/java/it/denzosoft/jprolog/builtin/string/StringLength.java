@@ -34,13 +34,14 @@ public class StringLength implements BuiltIn {
             throw new PrologEvaluationException("string_length/2: first argument must be instantiated to a string.");
         }
         
-        if (!(stringTerm instanceof PrologString)) {
-            return false; // Not a string, fail
+        // START_CHANGE: ISS-2025-0405 - SWI text interop: atoms are accepted as their text
+        String strVal = TextTerm.textOf(stringTerm);
+        if (strVal == null) {
+            return false; // Not a string or atom, fail
         }
-        
-        PrologString prologString = (PrologString) stringTerm;
+        // END_CHANGE: ISS-2025-0405
+
         // START_CHANGE: ISS-2025-0193 - Use codePointCount for correct Unicode character counting
-        String strVal = prologString.getStringValue();
         int length = strVal.codePointCount(0, strVal.length());
         // END_CHANGE: ISS-2025-0193
         Number lengthNumber = new Number((double) length);

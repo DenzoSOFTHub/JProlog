@@ -45,7 +45,15 @@ public class Ignore implements BuiltInWithContext {
         if (goal instanceof Variable) {
             throw new PrologException(createInstantiationError("ignore/1: goal must be instantiated"));
         }
-        
+
+        // START_CHANGE: ISS-2025-0415 - a non-callable goal raises type_error(callable, G)
+        // (SWI/SICStus consensus) instead of silently SUCCEEDING; must precede the try block
+        // below so the error is not converted into success by the user-error handler.
+        if (!(goal instanceof Atom) && !(goal instanceof CompoundTerm)) {
+            throw new PrologException(createTypeError("callable", goal, "ignore/1"));
+        }
+        // END_CHANGE: ISS-2025-0415
+
         try {
             // Try to execute the goal
             List<Map<String, Term>> goalSolutions = new ArrayList<>();

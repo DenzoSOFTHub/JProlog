@@ -237,6 +237,104 @@ public abstract class Constraint {
         }
     }
 
+    // START_CHANGE: ISS-2025-0421 - square propagator (z = x*x): tighter than Mul(x,x,z) because
+    // it knows z >= 0 and can invert through the integer square root in both sign cases.
+    // =====================================================================================
+    // Square:  z = x * x
+    // =====================================================================================
+    public static final class Square extends Constraint {
+        private final FdVar x, z;
+        public Square(FdVar x, FdVar z) { this.x = x; this.z = z; }
+
+        @Override public List<FdVar> variables() { return Arrays.asList(x, z); }
+
+        @Override public boolean propagate(ClpStore s) {
+            IntervalDomain dx = s.dom(x), dz = s.dom(z);
+            if (dx.isEmpty() || dz.isEmpty()) return false;
+            long lo = dx.min(), hi = dx.max();
+            long sLo = mul(lo, lo), sHi = mul(hi, hi);
+            long zmin = (lo <= 0 && hi >= 0) ? 0 : Math.min(sLo, sHi);
+            long zmax = Math.max(sLo, sHi);
+            if (!s.narrow(z, IntervalDomain.interval(zmin, zmax))) return false;
+            dz = s.dom(z);
+            // backward: |x| in [ceil(sqrt(zmin)) .. floor(sqrt(zmax))]
+            long r = floorSqrt(dz.max());
+            long c = ceilSqrt(Math.max(dz.min(), 0));
+            dx = s.dom(x);
+            if (dx.min() >= 0) return s.narrow(x, IntervalDomain.interval(c, r));
+            if (dx.max() <= 0) return s.narrow(x, IntervalDomain.interval(-r, -c));
+            return s.narrow(x, IntervalDomain.interval(-r, r));
+        }
+
+        /** Largest r >= 0 with r*r <= v (v >= 0). */
+        static long floorSqrt(long v) {
+            if (v <= 0) return 0;
+            if (v >= 3037000499L * 3037000499L) return 3037000499L;   // floorSqrt(Long.MAX_VALUE)
+            long r = (long) Math.sqrt((double) v);
+            while (r > 0 && r * r > v) r--;
+            while ((r + 1) * (r + 1) <= v) r++;
+            return r;
+        }
+
+        /** Smallest r >= 0 with r*r >= v (v >= 0). */
+        static long ceilSqrt(long v) {
+            if (v <= 0) return 0;
+            return floorSqrt(v - 1) + 1;
+        }
+    }
+
+    // =====================================================================================
+    // Minimum / maximum:  z = min(x, y)  /  z = max(x, y)   (bounds consistency)
+    // =====================================================================================
+    public static final class Min extends Constraint {
+        private final FdVar x, y, z;
+        public Min(FdVar x, FdVar y, FdVar z) { this.x = x; this.y = y; this.z = z; }
+
+        @Override public List<FdVar> variables() { return Arrays.asList(x, y, z); }
+
+        @Override public boolean propagate(ClpStore s) {
+            IntervalDomain dx = s.dom(x), dy = s.dom(y);
+            if (dx.isEmpty() || dy.isEmpty() || s.dom(z).isEmpty()) return false;
+            if (!s.narrow(z, IntervalDomain.interval(Math.min(dx.min(), dy.min()),
+                                                     Math.min(dx.max(), dy.max())))) return false;
+            long zmin = s.dom(z).min();
+            if (!s.removeBelow(x, zmin)) return false;    // both operands are >= the minimum
+            if (!s.removeBelow(y, zmin)) return false;
+            // if one operand is certainly larger, z equals the other
+            if (s.dom(x).min() > s.dom(y).max()) {
+                if (!s.narrow(z, s.dom(y)) || !s.narrow(y, s.dom(z))) return false;
+            } else if (s.dom(y).min() > s.dom(x).max()) {
+                if (!s.narrow(z, s.dom(x)) || !s.narrow(x, s.dom(z))) return false;
+            }
+            return true;
+        }
+    }
+
+    public static final class Max extends Constraint {
+        private final FdVar x, y, z;
+        public Max(FdVar x, FdVar y, FdVar z) { this.x = x; this.y = y; this.z = z; }
+
+        @Override public List<FdVar> variables() { return Arrays.asList(x, y, z); }
+
+        @Override public boolean propagate(ClpStore s) {
+            IntervalDomain dx = s.dom(x), dy = s.dom(y);
+            if (dx.isEmpty() || dy.isEmpty() || s.dom(z).isEmpty()) return false;
+            if (!s.narrow(z, IntervalDomain.interval(Math.max(dx.min(), dy.min()),
+                                                     Math.max(dx.max(), dy.max())))) return false;
+            long zmax = s.dom(z).max();
+            if (!s.removeAbove(x, zmax)) return false;    // both operands are =< the maximum
+            if (!s.removeAbove(y, zmax)) return false;
+            // if one operand is certainly smaller, z equals the other
+            if (s.dom(x).max() < s.dom(y).min()) {
+                if (!s.narrow(z, s.dom(y)) || !s.narrow(y, s.dom(z))) return false;
+            } else if (s.dom(y).max() < s.dom(x).min()) {
+                if (!s.narrow(z, s.dom(x)) || !s.narrow(x, s.dom(z))) return false;
+            }
+            return true;
+        }
+    }
+    // END_CHANGE: ISS-2025-0421
+
     // =====================================================================================
     // Absolute value:  y = |x|
     // =====================================================================================

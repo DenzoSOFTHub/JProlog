@@ -1,6 +1,10 @@
 package it.denzosoft.jprolog.builtin.io;
 
 import it.denzosoft.jprolog.builtin.AbstractBuiltInWithContext;
+// START_CHANGE: ISS-2025-0409 - ISO/format error terms for argument-mismatch strictness
+import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
+// END_CHANGE: ISS-2025-0409
 import it.denzosoft.jprolog.core.engine.QuerySolver;
 import it.denzosoft.jprolog.core.terms.*;
 
@@ -82,6 +86,11 @@ public class Format extends AbstractBuiltInWithContext {
         String output;
         try {
             output = processFormat(formatString, arguments, bindings);
+        // START_CHANGE: ISS-2025-0409 - let format/type errors propagate to catch/3 instead of
+        // silently failing the goal
+        } catch (PrologException pe) {
+            throw pe;
+        // END_CHANGE: ISS-2025-0409
         } catch (Exception e) {
             return false;
         }
@@ -267,12 +276,26 @@ public class Format extends AbstractBuiltInWithContext {
             }
         }
 
+        // START_CHANGE: ISS-2025-0409 - argument mismatches must raise errors (SWI-compatible
+        // error(format(Message), _) shape) instead of being silently absorbed: an unknown
+        // directive used to be echoed literally, and a missing argument printed ''/'0'.
+        if (KNOWN_DIRECTIVES.indexOf(formatChar) < 0) {
+            throw formatError("unknown directive: ~" + formatChar);
+        }
+        if (arg == null && consumesArgument(formatChar)) {
+            throw formatError("not enough arguments");
+        }
+        // END_CHANGE: ISS-2025-0409
+
         switch (formatChar) {
             case 'a': // Atom
                 return arg != null ? formatAtom(arg) : "";
 
             case 'd': // Decimal integer (with optional width N or N=decimal positions)
                 if (arg == null) return "0";
+                // START_CHANGE: ISS-2025-0409 - ~d requires an integer argument (type_error otherwise)
+                requireIntegerArg(arg);
+                // END_CHANGE: ISS-2025-0409
                 if (numArg != null && numArg > 0) {
                     // ~Nd: insert decimal point N digits from right
                     String s = formatInteger(arg);
@@ -286,6 +309,9 @@ public class Format extends AbstractBuiltInWithContext {
 
             case 'D': // Decimal with comma grouping (SWI extension)
                 if (arg == null) return "0";
+                // START_CHANGE: ISS-2025-0409 - ~D requires an integer argument (type_error otherwise)
+                requireIntegerArg(arg);
+                // END_CHANGE: ISS-2025-0409
                 return formatIntegerGrouped(arg);
 
             case 'f': // Float (~Nf with N decimals)
@@ -345,9 +371,31 @@ public class Format extends AbstractBuiltInWithContext {
                 return formatRadixBase(arg, numArg, true);
 
             default:
-                return "~" + formatChar; // Unknown format code
+                // START_CHANGE: ISS-2025-0409 - unreachable: unknown directives are rejected upfront
+                throw formatError("unknown directive: ~" + formatChar);
+                // END_CHANGE: ISS-2025-0409
         }
     }
+
+    // START_CHANGE: ISS-2025-0409 - strict format/2,3 helpers
+    /** Directives understood by processFormatCode (~t/~|/~+ and ~* are handled earlier in processFormat). */
+    private static final String KNOWN_DIRECTIVES = "adDfegswqnt~ipcrR";
+
+    /** Build an error(format(Message), format/2) exception (pragmatic SWI-style shape). */
+    private static PrologException formatError(String message) {
+        Term formal = new CompoundTerm(new Atom("format"),
+            Collections.singletonList((Term) new Atom(message)));
+        return new PrologException(ISOErrorTerms.error(formal, new Atom("format/2")));
+    }
+
+    /** ~d/~D require an integer argument: raise type_error(integer, Arg) otherwise. */
+    private static void requireIntegerArg(Term t) {
+        if (!(t instanceof it.denzosoft.jprolog.core.terms.Number)
+                || !((it.denzosoft.jprolog.core.terms.Number) t).isInteger()) {
+            throw new PrologException(ISOErrorTerms.typeError("integer", t, "format/2"));
+        }
+    }
+    // END_CHANGE: ISS-2025-0409
 
     // START_CHANGE: R4 - portray hook: invoke user-defined portray/1 capturing its output
     private String formatViaPortray(Term arg, Map<String, Term> bindings) {
@@ -599,6 +647,10 @@ public class Format extends AbstractBuiltInWithContext {
     private List<Term> getArgumentList(Term argumentsTerm) {
         if (argumentsTerm instanceof CompoundTerm && ".".equals(TermUtils.getFunctorName(argumentsTerm))) {
             return extractListElements(argumentsTerm);
+        // START_CHANGE: ISS-2025-0409 - [] is the EMPTY argument list, not one atom argument
+        } else if (argumentsTerm instanceof Atom && "[]".equals(((Atom) argumentsTerm).getName())) {
+            return Collections.emptyList();
+        // END_CHANGE: ISS-2025-0409
         } else {
             return Collections.singletonList(argumentsTerm);
         }

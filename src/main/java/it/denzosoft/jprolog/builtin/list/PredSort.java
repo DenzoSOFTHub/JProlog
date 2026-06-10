@@ -43,12 +43,27 @@ public class PredSort implements BuiltInWithContext {
         Term inputList = query.getArguments().get(1).resolveBindings(bindings);
         Term sortedList = query.getArguments().get(2);
 
-        if (!inputList.isGround()) {
-            return false;
+        // START_CHANGE: ISS-2025-0419 - an unbound comparison predicate raises
+        // instantiation_error, a non-callable one type_error(callable, Pred); the input list
+        // need only be a PROPER list (variables are legal elements, lowest in standard order)
+        if (predTerm instanceof Variable) {
+            throw new PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError("predsort/3"));
+        }
+        if (!(predTerm instanceof Atom) && !(predTerm instanceof CompoundTerm)) {
+            throw new PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("callable", predTerm, "predsort/3"));
+        }
+        if (!ListUtils.isProperList(inputList)) {
+            return false;   // SWI: predsort fails on a non-list (its length/2 call fails)
         }
 
         List<Term> elements = ListUtils.extractElements(inputList);
         List<Term> sorted = mergeSort(solver, predTerm, elements, bindings);
+        if (sorted == null) {
+            return false;   // SWI: predsort fails when Pred fails on some pair
+        }
+        // END_CHANGE: ISS-2025-0419
 
         Term sortedTerm = ListUtils.createList(sorted);
         Map<String, Term> newBindings = new HashMap<>(bindings);
@@ -64,6 +79,8 @@ public class PredSort implements BuiltInWithContext {
         throw new UnsupportedOperationException("Context-dependent built-in 'predsort' must be invoked with context");
     }
 
+    // START_CHANGE: ISS-2025-0419 - mergeSort/merge return null when the comparison predicate
+    // fails (or binds Order to something other than <, =, >), making predsort/3 fail
     private List<Term> mergeSort(QuerySolver solver, Term pred, List<Term> list, Map<String, Term> bindings) {
         if (list.size() <= 1) {
             return new ArrayList<>(list);
@@ -71,7 +88,9 @@ public class PredSort implements BuiltInWithContext {
 
         int mid = list.size() / 2;
         List<Term> left = mergeSort(solver, pred, list.subList(0, mid), bindings);
+        if (left == null) return null;
         List<Term> right = mergeSort(solver, pred, list.subList(mid, list.size()), bindings);
+        if (right == null) return null;
 
         return merge(solver, pred, left, right, bindings);
     }
@@ -82,6 +101,7 @@ public class PredSort implements BuiltInWithContext {
 
         while (i < left.size() && j < right.size()) {
             String order = compareTerms(solver, pred, left.get(i), right.get(j), bindings);
+            if (order == null) return null;
             if ("<".equals(order)) {
                 result.add(left.get(i++));
             } else if ("=".equals(order)) {
@@ -114,20 +134,28 @@ public class PredSort implements BuiltInWithContext {
             boolean success = solver.solve(callGoal, new HashMap<>(bindings), tempSolutions, CutStatus.notOccurred());
             if (success && !tempSolutions.isEmpty()) {
                 Term orderTerm = orderVar.resolveBindings(tempSolutions.get(0));
+                // START_CHANGE: ISS-2025-0419 - only an Order of <, =, or > counts as a
+                // successful comparison; anything else makes predsort/3 fail (SWI semantics)
                 if (orderTerm instanceof Atom) {
-                    return ((Atom) orderTerm).getName();
+                    String name = ((Atom) orderTerm).getName();
+                    if ("<".equals(name) || "=".equals(name) || ">".equals(name)) {
+                        return name;
+                    }
                 }
+                // END_CHANGE: ISS-2025-0419
             }
         } catch (PrologException e) {
             throw e; // Propagate Prolog exceptions
         } catch (RuntimeException e) {
             throw e; // Propagate system errors
         } catch (Exception e) {
-            // Fall through to default for checked exceptions
+            // Fall through for checked exceptions: predsort fails
         }
 
-        // Default to standard term ordering
-        return "<";
+        // START_CHANGE: ISS-2025-0419 - the comparison failed: predsort/3 must FAIL, never
+        // silently fall back to '<' (which returned arbitrary, un-deduplicated orderings)
+        return null;
+        // END_CHANGE: ISS-2025-0419
     }
     // END_CHANGE: ISS-2025-0191
 }

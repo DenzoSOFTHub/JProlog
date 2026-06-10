@@ -33,7 +33,8 @@ import java.util.*;
  *   aggregate_all(bag(Template), Goal, Bag)         - like findall
  *   aggregate_all(set(Template), Goal, Set)         - like findall + sort
  *
- * Always succeeds (returns 0/[]/etc. for no solutions).
+ * count/sum/bag/set always succeed (returning 0/[]/etc. for no solutions);
+ * max/min FAIL when Goal has no solutions (SWI semantics, ISS-2025-0413).
  */
 public class AggregateAll implements BuiltInWithContext {
 
@@ -102,10 +103,16 @@ public class AggregateAll implements BuiltInWithContext {
                 case "max":
                     if (specArgs.size() != 1) throw new PrologEvaluationException("aggregate_all: max/1 expected.");
                     result = aggregateMinMax(specArgs.get(0), goalSolutions, true);
+                    // START_CHANGE: ISS-2025-0413 - SWI: max/min FAIL when Goal has no solutions
+                    if (result == null) return false;
+                    // END_CHANGE: ISS-2025-0413
                     break;
                 case "min":
                     if (specArgs.size() != 1) throw new PrologEvaluationException("aggregate_all: min/1 expected.");
                     result = aggregateMinMax(specArgs.get(0), goalSolutions, false);
+                    // START_CHANGE: ISS-2025-0413 - SWI: max/min FAIL when Goal has no solutions
+                    if (result == null) return false;
+                    // END_CHANGE: ISS-2025-0413
                     break;
                 case "bag":
                     if (specArgs.size() != 1) throw new PrologEvaluationException("aggregate_all: bag/1 expected.");
@@ -132,31 +139,61 @@ public class AggregateAll implements BuiltInWithContext {
         return false;
     }
 
+    // START_CHANGE: ISS-2025-0414 - exact big-integer sums (BigInteger accumulator), integer
+    // sums stay integers, float contagion gives a float result, and a non-numeric solution
+    // raises type_error(number, T) instead of being silently skipped.
     private Term aggregateSum(Term template, List<Map<String, Term>> goalSolutions) {
-        double sum = 0;
+        java.math.BigInteger intSum = java.math.BigInteger.ZERO;
+        double floatSum = 0.0;
+        boolean sawFloat = false;
         for (Map<String, Term> sol : goalSolutions) {
             Term resolved = template.copy().resolveBindings(sol);
-            if (resolved instanceof Number) {
-                sum += ((Number) resolved).getValue();
+            if (!(resolved instanceof Number)) {
+                throw new PrologException(ISOErrorTerms.typeError("number", resolved, "aggregate_all/3"));
+            }
+            Number n = (Number) resolved;
+            if (n.isInteger() && !sawFloat) {
+                intSum = intSum.add(n.bigIntegerValue());
+            } else {
+                if (!sawFloat) {
+                    sawFloat = true;
+                    floatSum = intSum.doubleValue();
+                }
+                floatSum += n.doubleValue();
             }
         }
-        return new Number(sum);
+        return sawFloat ? new Number(floatSum, false) : new Number(intSum);
+    }
+    // END_CHANGE: ISS-2025-0414
+
+    // START_CHANGE: ISS-2025-0413 - SWI semantics: returns null (-> aggregate_all fails) when
+    // Goal has no solutions instead of throwing a bare-text exception, raises
+    // type_error(number, T) on a non-numeric solution instead of leaving the ±Infinity seed,
+    // and compares exactly (BigInteger) so big-integer extrema survive.
+    private Term aggregateMinMax(Term template, List<Map<String, Term>> goalSolutions, boolean isMax) {
+        Term best = null;
+        for (Map<String, Term> sol : goalSolutions) {
+            Term resolved = template.copy().resolveBindings(sol);
+            if (!(resolved instanceof Number)) {
+                throw new PrologException(ISOErrorTerms.typeError("number", resolved, "aggregate_all/3"));
+            }
+            if (best == null) {
+                best = resolved;
+                continue;
+            }
+            int c = numCompare((Number) resolved, (Number) best);
+            if (isMax ? c > 0 : c < 0) best = resolved;
+        }
+        return best;   // null when Goal had no solutions
     }
 
-    private Term aggregateMinMax(Term template, List<Map<String, Term>> goalSolutions, boolean isMax) {
-        if (goalSolutions.isEmpty()) {
-            throw new PrologEvaluationException("aggregate_all: " + (isMax ? "max" : "min") + " requires at least one solution.");
+    private static int numCompare(Number x, Number y) {
+        if (x.isInteger() && y.isInteger()) {
+            return x.bigIntegerValue().compareTo(y.bigIntegerValue());
         }
-        double result = isMax ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
-        for (Map<String, Term> sol : goalSolutions) {
-            Term resolved = template.copy().resolveBindings(sol);
-            if (resolved instanceof Number) {
-                double v = ((Number) resolved).getValue();
-                if (isMax ? v > result : v < result) result = v;
-            }
-        }
-        return new Number(result);
+        return Double.compare(x.doubleValue(), y.doubleValue());
     }
+    // END_CHANGE: ISS-2025-0413
 
     private Term collectBag(Term template, List<Map<String, Term>> goalSolutions) {
         List<Term> collected = new ArrayList<>();

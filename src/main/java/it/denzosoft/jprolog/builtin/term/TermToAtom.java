@@ -20,17 +20,10 @@ public class TermToAtom implements BuiltIn {
         Term termArg = query.getArguments().get(0).resolveBindings(bindings);
         Term atomArg = query.getArguments().get(1).resolveBindings(bindings);
 
-        if (termArg.isGround()) {
-            // START_CHANGE: ISS-2025-0243 - operator-aware roundtrip via TermFormatter
-            String str = it.denzosoft.jprolog.core.util.TermFormatter.format(termArg, true, false, false, 1200);
-            // END_CHANGE: ISS-2025-0243
-            Map<String, Term> newBindings = new HashMap<>(bindings);
-            if (atomArg.unify(new Atom(str), newBindings)) {
-                solutions.add(newBindings);
-                return true;
-            }
-            return false;
-        } else if (atomArg.isGround() && atomArg instanceof Atom) {
+        // START_CHANGE: ISS-2025-0402 - dispatch on the atom side, so NON-GROUND terms format
+        // too (variables render with their writeq names; SWI/GNU consensus). The (+Term, +Atom)
+        // mode keeps parse-and-unify semantics, e.g. term_to_atom(foo(X), 'foo(bar)') binds X.
+        if (atomArg instanceof Atom) {
             // Atom -> Term: parse atom string
             String str = ((Atom) atomArg).getName();
             try {
@@ -47,8 +40,20 @@ public class TermToAtom implements BuiltIn {
                 return false;
             }
             return false;
+        } else if (!atomArg.isGround()) {
+            // Term -> Atom: format any term, ground or not (was gated on termArg.isGround())
+            // START_CHANGE: ISS-2025-0243 - operator-aware roundtrip via TermFormatter
+            String str = it.denzosoft.jprolog.core.util.TermFormatter.format(termArg, true, false, false, 1200);
+            // END_CHANGE: ISS-2025-0243
+            Map<String, Term> newBindings = new HashMap<>(bindings);
+            if (atomArg.unify(new Atom(str), newBindings)) {
+                solutions.add(newBindings);
+                return true;
+            }
+            return false;
         }
 
         return false;
+        // END_CHANGE: ISS-2025-0402
     }
 }

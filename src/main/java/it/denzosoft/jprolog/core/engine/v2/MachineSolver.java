@@ -379,6 +379,14 @@ public final class MachineSolver {
                     goalStack = new Goal(goal, cps.size(), goalStack);
                     continue;
                 }
+                // START_CHANGE: ISS-2025-0398 - V^Goal as an ordinary goal behaves as call(Goal)
+                // (SWI/SICStus/YAP consensus; the quantifier only matters inside bagof/setof,
+                // which strip it themselves before solving). Opaque to cut, like call/1.
+                if ("^".equals(f) && a.size() == 2) {
+                    goalStack = new Goal(a.get(1), cps.size(), goalStack);
+                    continue;
+                }
+                // END_CHANGE: ISS-2025-0398
                 if (":".equals(f) && a.size() == 2) {                 // Module:Goal
                     Term inner = deref(a.get(1));
                     if (modules != null && (inner instanceof Atom || inner instanceof CompoundTerm)) {
@@ -390,6 +398,11 @@ public final class MachineSolver {
                     continue;
                 }
                 if ("findall".equals(f) && a.size() == 3) {
+                    // START_CHANGE: ISS-2025-0416 - ISO 8.10.1.3(c): Instances must be a list or
+                    // partial list -> type_error(list, Instances) instead of silent failure.
+                    it.denzosoft.jprolog.core.utils.CollectionUtils
+                        .checkInstancesArgument(resolve(a.get(2)), "findall/3");
+                    // END_CHANGE: ISS-2025-0416
                     Term list = makeList(findAll(a.get(0), a.get(1)));
                     if (!unify(a.get(2), list)) { if (!backtrack(floor)) return; }
                     continue;
@@ -424,7 +437,10 @@ public final class MachineSolver {
                 if (("assertz".equals(f) || "assert".equals(f)) && a.size() == 1) { assertClause(a.get(0), false); continue; }
                 if ("asserta".equals(f) && a.size() == 1) { assertClause(a.get(0), true); continue; }
                 if ("retract".equals(f) && a.size() == 1) {
+                    // START_CHANGE: ISS-2025-0396 - retract/1 is re-executable (ISO 8.9.3): it
+                    // pushes a choice point over the matching clauses, retracting one per solution.
                     if (!retractClause(a.get(0))) { if (!backtrack(floor)) return; }
+                    // END_CHANGE: ISS-2025-0396
                     continue;
                 }
                 if (debugController == null) {                    // fast-path native builtins (skipped
@@ -784,9 +800,17 @@ public final class MachineSolver {
         }
     }
 
-    /** retract the first clause that unifies with {@code clause}; first-match (semi-det). Both the
+    // START_CHANGE: ISS-2025-0396 - retract/1 is RE-EXECUTABLE (ISO 8.9.3, resolves LIM-026): a
+    // choice point over a snapshot of the matching clauses (logical update view) replaces the old
+    // "first-match (semi-det)" scan, so on redo the next matching clause is retracted — making
+    // findall(X, retract(p(X)), L) drain the predicate and `(retract(c(X)), fail ; true)` purge
+    // every clause. Retractions of earlier solutions persist across backtracking (the removal is a
+    // side effect, deliberately NOT trailed); a snapshot clause already removed by an intervening
+    // retract is skipped (identity check) rather than retracted twice.
+    /** retract one clause that unifies with {@code clause} per solution; nondeterministic. Both the
      *  query and each stored clause are normalised to (Head :- Body) form, so a fact retracts via
-     *  either {@code retract(Head)} or {@code retract((Head :- true))} (ISS-2025-0310). */
+     *  either {@code retract(Head)} or {@code retract((Head :- true))} (ISS-2025-0310). Returns
+     *  false when no clause matches (the caller backtracks). */
     private boolean retractClause(Term clause) {
         Term q = deref(clause);
         // START_CHANGE: ISS-2025-0366 - ISO 8.9.3.3: retract(X) -> instantiation_error and
@@ -807,20 +831,40 @@ public final class MachineSolver {
             head = q;
             queryClause = new CompoundTerm(new Atom(":-"), Arrays.asList(q, new Atom("true")));
         }
-        List<Rule> list = (liveKb != null) ? clausesFor(deref(head)) : kb.get(key(deref(head)));
-        if (list == null) return false;
-        for (int i = 0; i < list.size(); i++) {
-            Rule original = list.get(i);
-            int m = mark();
-            Term stored = makeClauseTerm(renameRule(original));     // always (Head :- Body); facts -> (Head :- true)
-            if (unify(stored, queryClause)) {
-                if (liveKb != null) liveKb.retract(original); else list.remove(i);
-                return true;
-            }
-            undo(m);
+        final String protoKey = key(deref(head));                   // for prototype-mode removal
+        List<Rule> list = (liveKb != null) ? clausesFor(deref(head)) : kb.get(protoKey);
+        if (list == null || list.isEmpty()) return false;
+        final List<Rule> candidates = new ArrayList<>(list);        // snapshot: logical update view
+        final Goal cont = goalStack;
+        final Term qc = queryClause;
+        List<Alt> alts = new ArrayList<>(candidates.size());
+        for (Rule rule : candidates) {
+            final Rule fr = rule;
+            alts.add(() -> {
+                Term stored = makeClauseTerm(renameRule(fr));       // always (Head :- Body); facts -> (Head :- true)
+                if (!unify(stored, qc)) return FAILED;
+                if (!removeRetracted(fr, protoKey)) return FAILED;  // already gone (retracted meanwhile)
+                return cont;
+            });
+        }
+        CP cp = new CP(alts, mark());
+        cps.add(cp);
+        if (advance(cp)) return true;
+        cps.remove(cps.size() - 1);
+        return false;
+    }
+
+    /** Remove the retracted clause from the live database; false when it is no longer present. */
+    private boolean removeRetracted(Rule rule, String protoKey) {
+        if (liveKb != null) return liveKb.retract(rule);
+        List<Rule> live = kb.get(protoKey);
+        if (live == null) return false;
+        for (int i = 0; i < live.size(); i++) {
+            if (live.get(i) == rule) { live.remove(i); return true; }
         }
         return false;
     }
+    // END_CHANGE: ISS-2025-0396
 
     private Rule toRule(Term c) {
         if (c instanceof CompoundTerm && ":-".equals(((CompoundTerm) c).getName())
@@ -856,7 +900,21 @@ public final class MachineSolver {
     /** Install a builtin solution map: bind every variable the builtin introduced (on the trail). */
     private void applySolution(Map<String, Term> sol) {
         for (Map.Entry<String, Term> e : sol.entrySet()) {
-            if (!binding.containsKey(e.getKey())) bind(e.getKey(), e.getValue());
+            if (!binding.containsKey(e.getKey())) {
+                // START_CHANGE: ISS-2025-0397 - skip identity var-var entries. Legacy-solver
+                // solution maps can contain a self-binding (e.g. {R=R, T=R} from a var-var union
+                // in phrase/3); blindly installing it creates a deref cycle R -> R that resolve()
+                // then mis-reports as representation_error(cyclic_term) — or that deref() loops
+                // on, depending on map order. Binding a variable to itself is a no-op, so the
+                // entry is skipped whenever the value ultimately dereferences back to the key
+                // variable (the exact condition under which this bind would create a var cycle).
+                // Real cyclic-term protection for rational trees through compounds (ISS-2025-0313)
+                // is untouched: a compound value is never skipped.
+                Term v = deref(e.getValue());
+                if (v instanceof Variable && ((Variable) v).getName().equals(e.getKey())) continue;
+                // END_CHANGE: ISS-2025-0397
+                bind(e.getKey(), e.getValue());
+            }
         }
     }
 

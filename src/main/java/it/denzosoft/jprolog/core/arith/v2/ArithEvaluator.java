@@ -98,8 +98,11 @@ public final class ArithEvaluator {
             case "floor": return x.isInteger() ? x : roundToInt(Math.floor(x.doubleValue()), op);
             case "ceiling": return x.isInteger() ? x : roundToInt(Math.ceil(x.doubleValue()), op);
             case "round": return x.isInteger() ? x : roundToInt(Math.floor(x.doubleValue() + 0.5), op);
-            case "float_integer_part": return f((double) (long) x.doubleValue());
-            case "float_fractional_part": { double v = x.doubleValue(); return f(v - (long) v); }
+            // START_CHANGE: ISS-2025-0407 - truncate toward zero in double math: the old (long)
+            // cast saturated at +/-2^63, silently corrupting results for |x| >= 2^63
+            case "float_integer_part": { double v = x.doubleValue(); return f(v < 0 ? Math.ceil(v) : Math.floor(v)); }
+            case "float_fractional_part": { double v = x.doubleValue(); return f(v - (v < 0 ? Math.ceil(v) : Math.floor(v))); }
+            // END_CHANGE: ISS-2025-0407
             case "\\": requireInt(x, "(\\)/1"); return big(x.bigIntegerValue().not());
             case "msb":
                 requireInt(x, "msb/1");

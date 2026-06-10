@@ -43,7 +43,10 @@ public class StringToAtom implements BuiltIn {
                 value = atomTerm.toString();
             }
             Map<String, Term> newBindings = new HashMap<>(bindings);
-            if (strTerm.unify(new Atom(value), newBindings)) {
+            // START_CHANGE: ISS-2025-0403 - the (-String, +Atom) mode must bind a STRING (SWI:
+            // string_to_atom(S, foo) -> S = "foo"); it constructed an Atom, making the mode a no-op
+            if (strTerm.unify(new PrologString(value), newBindings)) {
+            // END_CHANGE: ISS-2025-0403
                 solutions.add(newBindings);
                 return true;
             }

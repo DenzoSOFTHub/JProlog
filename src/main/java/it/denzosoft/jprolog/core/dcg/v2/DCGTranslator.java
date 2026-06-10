@@ -73,6 +73,9 @@ public final class DCGTranslator {
             CompoundTerm h = (CompoundTerm) head;
             Term nt = h.getArguments().get(0);
             Term pushback = h.getArguments().get(1);
+            // START_CHANGE: ISS-2025-0410 - validate the push-back head's non-terminal
+            checkCallableHead(nt);
+            // END_CHANGE: ISS-2025-0410
             // START_CHANGE: ISS-2025-0392 - the push-back must be a terminal sequence: convert a
             // string to its code list (mirroring the body path); a variable or non-list push-back
             // is rejected inside terminal() instead of silently discarding the body's rest var.
@@ -87,9 +90,26 @@ public final class DCGTranslator {
             return clause(newHead, conj(goal, pb));
         }
 
+        // START_CHANGE: ISS-2025-0410 - validate the grammar-rule head at translation time
+        checkCallableHead(head);
+        // END_CHANGE: ISS-2025-0410
         Term newHead = addArgs(head, s0, s);
         return clause(newHead, translateBody(body, s0, s));
     }
+
+    // START_CHANGE: ISS-2025-0410 - a grammar-rule head must be a callable non-terminal.
+    // A number/string head (e.g. 7 --> [a]) used to be wrapped as call(Head, S0, S), which
+    // consult then rejected with the misleading "Cannot redefine built-in predicate call/3";
+    // raise instantiation_error / type_error(callable, Head) here instead (ISO 13211-3).
+    private static void checkCallableHead(Term head) {
+        if (head instanceof Variable) {
+            throw new PrologException(ISOErrorTerms.instantiationError("dcg_head"));
+        }
+        if (!(head instanceof Atom) && !(head instanceof CompoundTerm)) {
+            throw new PrologException(ISOErrorTerms.typeError("callable", head, "dcg_head"));
+        }
+    }
+    // END_CHANGE: ISS-2025-0410
 
     // ------------------------------------------------------------------- body translation
     private Term translateBody(Term b, Term s0, Term s) {

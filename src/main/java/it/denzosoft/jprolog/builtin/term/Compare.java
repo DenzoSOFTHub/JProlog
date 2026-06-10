@@ -4,6 +4,9 @@ import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Term;
+// START_CHANGE: ISS-2025-0417 - validate a pre-bound Order argument
+import it.denzosoft.jprolog.core.terms.Variable;
+// END_CHANGE: ISS-2025-0417
 
 import java.util.HashMap;
 import java.util.List;
@@ -29,6 +32,23 @@ public class Compare implements BuiltIn {
         Term orderTerm = query.getArguments().get(0);
         Term term1 = query.getArguments().get(1).resolveBindings(bindings);
         Term term2 = query.getArguments().get(2).resolveBindings(bindings);
+
+        // START_CHANGE: ISS-2025-0417 - ISO 8.4.2.3: a pre-bound Order that is not an atom
+        // raises type_error(atom, Order); an atom other than <, =, > raises
+        // domain_error(order, Order) — never silent failure.
+        Term resolvedOrder = orderTerm.resolveBindings(bindings);
+        if (!(resolvedOrder instanceof Variable)) {
+            if (!(resolvedOrder instanceof Atom)) {
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("atom", resolvedOrder, "compare/3"));
+            }
+            String orderName = ((Atom) resolvedOrder).getName();
+            if (!"<".equals(orderName) && !"=".equals(orderName) && !">".equals(orderName)) {
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.domainError("order", resolvedOrder, "compare/3"));
+            }
+        }
+        // END_CHANGE: ISS-2025-0417
 
         // Compare the two terms using standard term ordering
         int comparisonResult = StandardTermOrdering.compare(term1, term2);

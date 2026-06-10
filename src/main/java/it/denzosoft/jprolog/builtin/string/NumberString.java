@@ -36,8 +36,11 @@ public class NumberString implements BuiltIn {
                 return false;
             }
             
-            double numberValue = ((Number) numberTerm).getValue();
-            java.lang.String stringValue = formatNumber(numberValue);
+            // START_CHANGE: ISS-2025-0399 - type-faithful formatting: floats keep float syntax
+            // (1.0 -> "1.0") and big integers stay exact (the old (long) cast collapsed both)
+            java.lang.String stringValue =
+                it.denzosoft.jprolog.builtin.conversion.AtomNumber.formatNumberExact((Number) numberTerm);
+            // END_CHANGE: ISS-2025-0399
             PrologString stringObj = new PrologString(stringValue);
             
             Map<java.lang.String, Term> newBindings = new HashMap<>(bindings);
@@ -53,25 +56,22 @@ public class NumberString implements BuiltIn {
             }
             
             java.lang.String stringValue = ((PrologString) stringTerm).getStringValue();
-            try {
-                // START_CHANGE: ISS-2025-0284 - parse integer strings as exact BigInteger so large
-                // values keep full precision (Double.parseDouble loses precision past 2^53).
-                java.lang.String trimmed = stringValue.trim();
-                Number numberObj;
-                if (trimmed.matches("[+-]?\\d+")) {
-                    numberObj = new Number(new java.math.BigInteger(trimmed));
-                } else {
-                    numberObj = new Number(Double.parseDouble(trimmed));
-                }
-                // END_CHANGE: ISS-2025-0284
-
-                Map<java.lang.String, Term> newBindings = new HashMap<>(bindings);
-                if (numberTerm.unify(numberObj, newBindings)) {
-                    solutions.add(newBindings);
-                    return true;
-                }
-            } catch (NumberFormatException e) {
+            // START_CHANGE: ISS-2025-0284 - parse integer strings as exact BigInteger so large
+            // values keep full precision (Double.parseDouble loses precision past 2^53).
+            // START_CHANGE: ISS-2025-0399 - parse via the shared type-faithful Prolog number
+            // parser, so float syntax yields a FLOAT ("1.0" -> 1.0, not the integer 1)
+            Number numberObj =
+                it.denzosoft.jprolog.builtin.conversion.AtomNumber.parsePrologNumber(stringValue);
+            if (numberObj == null) {
                 return false; // String is not a valid number
+            }
+            // END_CHANGE: ISS-2025-0399
+            // END_CHANGE: ISS-2025-0284
+
+            Map<java.lang.String, Term> newBindings = new HashMap<>(bindings);
+            if (numberTerm.unify(numberObj, newBindings)) {
+                solutions.add(newBindings);
+                return true;
             }
             
         } else if (numberTerm.isGround() && stringTerm.isGround()) {
@@ -80,21 +80,19 @@ public class NumberString implements BuiltIn {
                 return false;
             }
             
-            double numberValue = ((Number) numberTerm).getValue();
             java.lang.String stringValue = ((PrologString) stringTerm).getStringValue();
 
-            // START_CHANGE: ISS-2025-0240 - exact roundtrip comparison: format number and compare strings
-            // (Avoids epsilon-based false positives. Two numbers are equal iff their canonical reprs match.)
-            try {
-                double parsedValue = Double.parseDouble(stringValue.trim());
-                if (Double.doubleToLongBits(numberValue) == Double.doubleToLongBits(parsedValue)) {
-                    solutions.add(new HashMap<>(bindings));
-                    return true;
-                }
-            } catch (NumberFormatException e) {
-                return false;
+            // START_CHANGE: ISS-2025-0240 - exact roundtrip comparison
+            // START_CHANGE: ISS-2025-0399 - parse the string and compare type-aware (Number.equals):
+            // an integer never equals a float, big integers compare exactly via BigInteger
+            Number parsed =
+                it.denzosoft.jprolog.builtin.conversion.AtomNumber.parsePrologNumber(stringValue);
+            if (parsed != null && parsed.equals(numberTerm)) {
+                solutions.add(new HashMap<>(bindings));
+                return true;
             }
             return false;
+            // END_CHANGE: ISS-2025-0399
             // END_CHANGE: ISS-2025-0240
             
         } else {
@@ -106,17 +104,7 @@ public class NumberString implements BuiltIn {
         return false;
     }
     
-    /**
-     * Formats a number for string representation.
-     * Removes unnecessary decimal points for integers.
-     */
-    private java.lang.String formatNumber(double value) {
-        if (value == Math.floor(value) && !Double.isInfinite(value)) {
-            // It's an integer
-            return java.lang.String.valueOf((long) value);
-        } else {
-            // It's a floating point number
-            return java.lang.String.valueOf(value);
-        }
-    }
+    // START_CHANGE: ISS-2025-0399 - formatNumber removed: formatting now goes through the shared
+    // type-faithful AtomNumber.formatNumberExact (the (long) cast collapsed floats and big ints)
+    // END_CHANGE: ISS-2025-0399
 }

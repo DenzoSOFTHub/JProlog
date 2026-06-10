@@ -21,6 +21,18 @@ import java.util.Map;
  * Non-deterministic: on backtracking, retracts the next matching clause.
  * Each solution removes one clause from the database and returns
  * its unification bindings.
+ *
+ * START_CHANGE: ISS-2025-0396 - documented legacy-engine gap
+ * <p><b>Legacy-engine gap (ISS-2025-0396):</b> this builtin backs retract/1 only under
+ * {@code -Djprolog.engine=legacy}. The eager built-in protocol (all solutions materialised in
+ * one call, no redo hook) forces it to retract EVERY matching clause up front and return the
+ * bindings as alternatives. Enumeration is therefore ISO-correct ({@code retract(p(X)), X == 2}
+ * succeeds, findall drains the predicate), but the side effect is not one-clause-per-redo: a
+ * query that commits early (e.g. {@code retract(p(X)), !}) has still removed ALL matching
+ * clauses. Making this lazy would require redesigning the legacy BuiltIn protocol, so the gap
+ * is accepted here; the default v2 engine (MachineSolver.retractClause) implements the full
+ * re-executable ISO 8.9.3 semantics with a real choice point.
+ * END_CHANGE: ISS-2025-0396
  */
 public class Retract implements BuiltInWithContext {
     
