@@ -8,6 +8,7 @@ import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.terms.Variable;
 
 import java.util.HashMap;
 import java.util.List;
@@ -40,7 +41,33 @@ public class CurrentPredicate implements BuiltInWithContext {
         }
         
         Term predicateIndicator = query.getArguments().get(0);
-        
+
+        // START_CHANGE: ISS-2025-0372 - ISO 8.8.2.3: a non-variable argument that is not a valid
+        // predicate indicator (Name/Arity with Name a variable or atom and Arity a variable or
+        // non-negative integer) raises type_error(predicate_indicator, PI) instead of failing.
+        // Validated BEFORE the try block: the catch below wraps everything into system_error.
+        Term resolvedPI = predicateIndicator.resolveBindings(bindings);
+        if (!(resolvedPI instanceof Variable)) {
+            boolean validIndicator = false;
+            if (resolvedPI instanceof CompoundTerm) {
+                CompoundTerm c = (CompoundTerm) resolvedPI;
+                if ("/".equals(c.getName()) && c.getArguments().size() == 2) {
+                    Term name = c.getArguments().get(0);
+                    Term arityTerm = c.getArguments().get(1);
+                    boolean nameOk = (name instanceof Variable) || (name instanceof Atom);
+                    boolean arityOk = (arityTerm instanceof Variable)
+                        || (arityTerm instanceof Number && ((Number) arityTerm).isInteger()
+                            && ((Number) arityTerm).getValue() >= 0);
+                    validIndicator = nameOk && arityOk;
+                }
+            }
+            if (!validIndicator) {
+                throw new PrologException(
+                    createTypeError("predicate_indicator", resolvedPI, "current_predicate/1"));
+            }
+        }
+        // END_CHANGE: ISS-2025-0372
+
         try {
             // Get all current predicates
             Prolog prolog = solver.getPrologContext();

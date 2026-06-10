@@ -1,7 +1,7 @@
 # JProlog Built-in Predicates Reference
 
-**Version**: JProlog v3.0.0
-**Last Updated**: 2026-06-09
+**Version**: JProlog v3.5.0
+**Last Updated**: 2026-06-10
 **Total Predicates**: 270+ predicates organized by functional category
 **ISO 13211-1 Compliance**: 100% (111/111 core predicates)
 
@@ -730,6 +730,8 @@ validate_option(Option, ValidOptions) :-
 
 **When to use**: Use to count elements, create lists of specific length, or constrain list size.
 
+*v3.5.0*: accepts proper lists containing unbound elements (e.g. `length([A, B, C], N)` gives `N = 3`) — only the list skeleton must be proper.
+
 ```prolog
 % Mode 1: Find length of a list
 ?- length([a, b, c, d], Len).
@@ -771,10 +773,16 @@ generate_lists(_).
 
 **When to use**: Use for reversing sequences, implementing stacks, or palindrome checking.
 
+*v3.5.0*: the inverse mode `reverse(-List, +Reversed)` works, and lists may contain unbound elements (`reverse([A, B], R)` gives `R = [B, A]`).
+
 ```prolog
 % Basic usage
 ?- reverse([1, 2, 3, 4], Rev).
 Rev = [4, 3, 2, 1].
+
+% Inverse mode (v3.5.0+)
+?- reverse(X, [1, 2, 3]).
+X = [3, 2, 1].
 
 % Check if list is palindrome
 is_palindrome(List) :-
@@ -844,10 +852,39 @@ get_elements_at([Index|Indices], List, [Element|Elements]) :-
 Elements = [a, c, d].
 ```
 
+### permutation/2
+**Purpose**: True when one list is a permutation (reordering) of the other.
+
+**When to use**: Use to enumerate all orderings of a list or to check that two lists contain the same elements.
+
+```prolog
+% Enumerate permutations
+?- permutation([a, b, c], P).
+P = [a, b, c] ;
+P = [a, c, b] ;
+P = [b, a, c] ;
+P = [b, c, a] ;
+P = [c, a, b] ;
+P = [c, b, a].
+
+% Check a specific reordering
+?- permutation([1, 2, 3], [3, 1, 2]).
+true.
+
+% Inverse mode (v3.5.0+)
+?- permutation(P, [1, 2]).
+P = [1, 2] ;
+P = [2, 1].
+```
+
+*v3.5.0*: the inverse mode `permutation(-List, +Permutation)` works, and lists may contain unbound elements.
+
 ### select/3
 **Purpose**: Selects an element from a list, returning the element and the rest.
 
 **When to use**: Use for removing elements, permutations, or non-deterministic selection.
+
+*v3.5.0*: the insertion mode `select(+Elem, -List, +Rest)` (shown below) works, and lists may contain unbound elements.
 
 ```prolog
 % Remove an element from a list
@@ -914,6 +951,8 @@ L = [pair(b, 10), pair(c, 20), pair(a, 30)].
 
 Key = 0 means compare whole terms; Key = N (N≥1) extracts N-th argument of compound. Order operators: `@<`, `@=<`, `@>`, `@>=` (the `=<`/`>=` variants keep duplicates).
 
+*v3.5.0*: ISO error handling — an unbound first argument or a partial list (e.g. `[a|_]`) raises `instantiation_error`, a non-list raises `type_error(list, Culprit)` (previously these failed silently). Lists may contain unbound variables, which sort first in the standard order.
+
 **When to use**: Use for ordering data, removing duplicates, or preparing data for efficient searching.
 
 ```prolog
@@ -953,6 +992,18 @@ count_same(X, [X|T], Acc, Count, Rest) :-
 count_same(_, List, Count, Count, List).
 ```
 
+### keysort/2
+**Purpose**: Sorts a list of `Key-Value` pairs by key in standard order, keeping duplicates (stable sort).
+
+**When to use**: Use to order tagged data by key while preserving the relative order of values with equal keys.
+
+```prolog
+?- keysort([b-2, a-1, c-3, a-0], Sorted).
+Sorted = [a-1, a-0, b-2, c-3].   % stable: a-1 stays before a-0
+```
+
+*v3.5.0*: accepts non-ground pairs (`keysort([K-V, b-2], S)` works — its primary use case), compares keys only (values are never compared), and raises ISO errors — `instantiation_error` on an unbound argument or partial list, `type_error(list, _)` on a non-list, `type_error(pair, _)` on an element that is not a `Key-Value` pair.
+
 ### last/2
 **Purpose**: True if Elem is the last element of List.
 ```prolog
@@ -973,6 +1024,8 @@ X = [1, 2, 3, 4, 5].
 ?- numlist(1, 5, X).
 X = [1, 2, 3, 4, 5].
 ```
+
+*v3.5.0*: raises ISO errors on bad bounds — `instantiation_error` if Low or High is unbound, `type_error(integer, Culprit)` if a bound is not an integer (previously failed silently).
 
 ### sum_list/2, sumlist/2
 **Purpose**: Sum all numeric elements of a list.
@@ -1080,6 +1133,8 @@ Prolog treats arithmetic expressions differently from other terms:
 **Bitwise integer** (`/\`, `\/`, `xor`, `\` (NOT), `<<`, `>>`, `msb`, `lsb`, `popcount`)
 
 **Constants** (`pi`, `e`, `inf`, `nan`, `epsilon` *(v2.8.1)*, `max_tagged_integer` *(v2.8.1)*, `min_tagged_integer` *(v2.8.1)*)
+
+*v3.5.0*: ISO error behavior — a computed float overflow raises `evaluation_error(float_overflow)` and a NaN result raises `evaluation_error(undefined)` (the `inf`/`nan` constants and their propagation still work); `0 ^ -1` raises `evaluation_error(zero_divisor)`; huge `^`/`<<`/`>>` operands raise a catchable ISO error instead of an unhandled Java exception.
 
 ```prolog
 % Basic arithmetic
@@ -1768,6 +1823,8 @@ List = [].  % Empty list, not failure
 
 **When to use**: Use when you want solutions grouped by free variables.
 
+*v3.5.0*: each collected solution is a renamed-apart fresh copy (result lists no longer alias caller variables); an unbound goal raises `instantiation_error` and a non-callable goal raises `type_error(callable, Goal)`.
+
 ```prolog
 % bagof/3 is like findall/3 but treats free variables differently
 
@@ -1813,6 +1870,8 @@ Cat = food, Prods = [apple, bread].
 **Purpose**: Like bagof/3 but removes duplicates and sorts results.
 
 **When to use**: Use when you want unique, sorted solutions.
+
+*v3.5.0*: each collected solution is a renamed-apart fresh copy (result lists no longer alias caller variables); an unbound goal raises `instantiation_error` and a non-callable goal raises `type_error(callable, Goal)`.
 
 ```prolog
 % setof/3 = bagof/3 + sort + remove duplicates
@@ -1863,6 +1922,8 @@ P = [john, mary].  % Sorted list of people
 
 **When to use**: Use when you need to compute aggregate statistics (sum, count, max, min, bag, set) over all solutions to a goal in a single call.
 
+*v3.5.0*: ISO error balls raised by Goal propagate unchanged (no longer wrapped or swallowed); an unbound or non-callable goal raises `instantiation_error` / `type_error(callable, _)`.
+
 ```prolog
 % Syntax: aggregate_all(Template, Goal, Result)
 % Template can be: count, sum(Expr), max(Expr), min(Expr), bag(Expr), set(Expr)
@@ -1906,12 +1967,14 @@ I/O predicates handle reading from and writing to files and streams.
 
 ### Basic Output
 
-### write/1 and writeln/1
+### write/1-2 and writeln/1-2
 **Purpose**: Output terms to the current output stream.
 
 **When to use**: Use for displaying results, debugging, or user interaction.
 
 *v2.8.2*: Output is now **operator-aware** — consults the operator table for infix/prefix/postfix notation, list notation, curly braces, and `'$VAR'(N)` rendering when `numbervars(true)`. Output of `write(1+2)` is `1+2` (was `+(1,2)`); lists print as `[a,b,c]`; precedence-aware parens added when needed.
+
+*v3.5.0*: stream-argument forms `write(Stream, Term)` and `writeln(Stream, Term)` added; `write/1` and `writeln/1` imply `numbervars(true)`, so `'$VAR'(0)` prints as `A` (ISO 8.14.2); floats print in ISO syntax — lowercase exponent (`1.0e10`) and `inf`/`-inf`/`nan` spellings — so output re-reads as the same term.
 
 ```prolog
 % write/1 - Output without newline
@@ -1952,10 +2015,12 @@ ERROR 404: File not found
 true.
 ```
 
-### nl/0
+### nl/0-1
 **Purpose**: Outputs a newline character.
 
 **When to use**: Use to control line breaks in output.
+
+*v3.5.0*: the stream form `nl(Stream)` writes the newline to the given stream.
 
 ```prolog
 % Basic usage
@@ -1983,6 +2048,59 @@ print_list([H|T]) :-
   - cherry
 true.
 ```
+
+### print/1-2
+**Purpose**: Output a term with `write` semantics (unquoted, operators honoured) and `numbervars(true)`. *(added v3.5.0)*
+
+**When to use**: Use as the conventional "user-friendly output" predicate; equivalent to `write_term(Term, [numbervars(true)])`. The `portray/1` hook is not supported.
+
+```prolog
+?- print(hello), nl.
+hello
+true.
+
+?- print('$VAR'(0)), nl.
+A
+true.
+
+% print/2 writes to a specific stream
+?- open('out.txt', write, S), print(S, foo(1)), close(S).
+true.
+```
+
+### writeq/1-2
+**Purpose**: Output a term with quoting — atoms that need quotes are quoted so the output can be read back.
+
+```prolog
+?- writeq('hello world').
+'hello world'
+true.
+
+?- writeq(Stream, Term).   % stream form
+```
+
+*v3.5.0*: quoting/spacing fixes — `writeq(-(1))` prints `- 1`, which re-reads as the same compound (it used to print `-1`, a number); `','`, `'.'` and comment-opening symbolic atoms such as `'/*'` are quoted; `numbervars(true)` is implied (`'$VAR'(0)` prints as `A`); floats print in ISO syntax (`1.0e10`, `inf`, `-inf`, `nan`).
+
+### format/2 and format/3
+**Purpose**: Formatted output driven by a directive string (`~w`, `~a`, `~d`, `~q`, `~n`, `~2f`, ...), similar to C's printf.
+
+**When to use**: Use for readable, formatted output instead of chains of `write/1` calls.
+
+```prolog
+?- format("Hello ~w, you are ~w years old~n", [john, 25]).
+Hello john, you are 25 years old
+true.
+
+% format/3 with an output stream
+?- open('out.txt', write, S), format(S, "~w~n", [data]), close(S).
+true.
+
+% format/3 with a capture sink
+?- format(atom(A), '~2f', [3.14159]).
+A = '3.14'.
+```
+
+*v3.5.0*: `format/2,3` now succeed as goals (output used to be produced with the goal then failing, killing any conjunction containing it); the format string may be an atom, a double-quoted string (the spelling produced by the default `double_quotes=string` flag), or a code/char list; `format/3` honours its first argument — a stream alias/handle, or a capture sink `atom(A)` / `string(S)` / `codes(C)` / `chars(C)`. `~w`/`~q` imply `numbervars(true)`.
 
 ### Basic Input
 
@@ -2029,12 +2147,35 @@ process_command(list) :- listing.
 process_command(_) :- writeln('Unknown command. Type help for assistance.').
 ```
 
+### read_term/2-3
+**Purpose**: Read a term with control options.
+- `read_term(-Term, +Options)` reads from the current input
+- `read_term(+Stream, -Term)` reads from a stream with default options
+- `read_term(+Stream, -Term, +Options)` — the primary ISO 8.14.1 form *(added v3.5.0)*
+
+Supported options: `variables(Vars)` (all variables of the term), `variable_names(Pairs)` (`Name=Var` pairs for the named variables), `singletons(Pairs)` (`Name=Var` pairs for singleton variables).
+
+```prolog
+?- read_term(T, [variable_names(Vs)]).
+|: foo(X, Y, X).
+T = foo(_A, _B, _A),
+Vs = ['X'=_A, 'Y'=_B].
+
+% From a stream (v3.5.0+)
+?- open('data.pl', read, S), read_term(S, T, []), close(S).
+T = foo(1, 2).
+```
+
+*v3.5.0*: `read_term/2,3` succeed as goals (previously the read happened but the goal failed). On end-of-file, `Term` is bound to the atom `end_of_file`.
+
 ### Character I/O
 
-### get_char/1 and put_char/1
+### get_char/1-2 and put_char/1-2
 **Purpose**: Read or write single characters.
 
 **When to use**: Use for character-by-character processing.
+
+*v3.5.0*: the stream form `put_char(Stream, Char)` writes the character to the given stream; `get_char/1` honours the current input set by `set_input/1`.
 
 ```prolog
 % Read a single character
@@ -2059,6 +2200,22 @@ read_password_chars(Acc, Password) :-
         read_password_chars([C|Acc], Password)
     ).
 ```
+
+### get_code/1-2, peek_char/1-2 and peek_code/1-2
+**Purpose**: Read the next character code (`get_code`), or look ahead at the next character (`peek_char`) / character code (`peek_code`) without consuming it.
+
+```prolog
+?- get_code(C).          % from current input; C is the character code
+?- get_code(Stream, C).  % from a specific stream (v3.5.0+)
+
+?- peek_char(C).         % C is the next character (an atom), not consumed
+?- peek_char(Stream, C).
+
+?- peek_code(C).         % C is the next character code, not consumed
+?- peek_code(Stream, C).
+```
+
+On end-of-file, `get_code`/`peek_code` unify the code with `-1` and `peek_char` unifies the character with `end_of_file`. *(stream-argument forms added v3.5.0)*
 
 ### Byte I/O
 
@@ -2105,6 +2262,29 @@ read_password_chars(Acc, Password) :-
 ?- write_canonical(Stream, Term).
 ```
 
+### write_term/2-3
+**Purpose**: Write a term under explicit control options.
+- `write_term(+Term, +Options)` writes to the current output
+- `write_term(+Stream, +Term)` writes to a stream with default options
+- `write_term(+Stream, +Term, +Options)` — the primary ISO 8.14.2 form *(added v3.5.0)*
+
+Supported options: `quoted(Bool)`, `ignore_ops(Bool)`, `numbervars(Bool)`, `max_depth(N)`.
+
+```prolog
+?- write_term('hello world', [quoted(true)]).
+'hello world'
+true.
+
+?- write_term('$VAR'(0), [numbervars(true)]).
+A
+true.
+
+?- write_term(Stream, 1+2, [ignore_ops(true)]).
+% Writes: +(1,2)
+```
+
+*v3.5.0*: `write_term/2` succeeds as a goal (previously it printed and then failed); the three-argument stream form was added.
+
 ### char_conversion/2 and current_char_conversion/2
 **Purpose**: Manage character conversion table used during term reading.
 
@@ -2126,6 +2306,8 @@ X = a.
 **Purpose**: Open and close file streams.
 
 **When to use**: Use for file-based I/O operations.
+
+*v3.5.0*: failures raise ISO `error/2` terms instead of plain-atom exceptions — opening a missing file raises `existence_error(source_sink, File)`, an invalid stream or alias raises `domain_error(stream_or_alias, S)` / `existence_error(stream, S)`. Also applies to `open/4`, which takes an options list (e.g. `alias(Name)`).
 
 ```prolog
 % Open file for reading
@@ -2157,8 +2339,23 @@ append_to_log(Message) :-
     close(Stream).
 ```
 
-### tab/1
-**Purpose**: Write N space characters to current output.
+### set_input/1 and set_output/1
+**Purpose**: Make a stream the current input / current output.
+
+```prolog
+% Redirect input: read/1, get_char/1, get_code/1, ... now read from the stream
+?- open('data.pl', read, S), set_input(S), read(T).
+T = foo(1, 2).
+
+% Redirect output: write/1, nl/0, format/2, ... now write to the stream
+?- open('out.txt', write, S), set_output(S), writeln(hello).
+true.
+```
+
+*v3.5.0*: these predicates actually redirect — the arity-1 input predicates honour the current input, and the output built-ins honour the current output (previously the setting was recorded but ignored).
+
+### tab/1-2
+**Purpose**: Write N space characters to current output (`tab/1`) or to a given stream (`tab(Stream, N)`, *added v3.5.0*).
 ```prolog
 ?- write(hello), tab(5), write(world).
 hello     world
@@ -2190,6 +2387,8 @@ Prolog's database can be modified during program execution:
 - `asserta/1` adds at the beginning
 
 **When to use**: Use to store runtime data, learn new information, or build dynamic knowledge bases.
+
+*v3.5.0*: ISO validation — asserting an unbound term raises `instantiation_error`; a non-callable clause (`1`, `(1 :- true)`, `(foo :- 7)`) raises `type_error(callable, _)`; asserting over a built-in raises `permission_error(modify, static_procedure, Name/Arity)`. Asserting a predicate implies declaring it dynamic (see `dynamic/1`).
 
 ```prolog
 % Add a simple fact
@@ -2242,6 +2441,8 @@ fibonacci_cached(N, Result) :-
 
 **When to use**: Use to remove outdated information, clean up temporary data, or implement undo functionality.
 
+*v3.5.0*: ISO validation — `retract/1` validates its argument (`instantiation_error` for an unbound term, `type_error(callable, _)` for a non-callable one, instead of an internal error); retracting clauses of a built-in raises `permission_error(modify, static_procedure, Name/Arity)`; `retractall/1` validates its argument the same way and implies declaring the predicate dynamic.
+
 ```prolog
 % Remove a specific fact
 ?- assertz(temp(1)), assertz(temp(2)), assertz(temp(3)).
@@ -2288,6 +2489,8 @@ with_temp_fact(Fact, Goal) :-
 
 **When to use**: Use to completely remove a predicate definition.
 
+*v3.5.0*: abolishing a built-in raises `permission_error(modify, static_procedure, Name/Arity)`.
+
 ```prolog
 % Remove entire predicate
 ?- assertz(test(1)), assertz(test(2)), assertz((test(X) :- X > 10)).
@@ -2312,6 +2515,32 @@ cleanup_temp :-
     abolish(cache/2),
     abolish(session/1).
 ```
+
+### dynamic/1
+**Purpose**: Declares procedures dynamic, so calling them while they have no clauses fails silently instead of raising `existence_error(procedure, Name/Arity)`. *(callable as a goal since v3.5.0)*
+
+**When to use**: Declare every predicate you plan to `assert`/`retract` at runtime, so querying it before any clause exists fails instead of raising an error (with the `unknown` flag at its default `error`).
+
+```prolog
+% Directive form (in a consulted file)
+:- dynamic(counter/1).
+
+% Goal form (v3.5.0+): a predicate indicator ...
+?- dynamic(score/2).
+true.
+
+?- score(X, Y).
+false.   % no existence_error: score/2 is dynamic
+
+% ... a ','-sequence of indicators, or a list of indicators
+?- dynamic((foo/1, bar/2)).
+true.
+
+?- dynamic([baz/0, quux/3]).
+true.
+```
+
+Note: `assert`/`retractall` on a predicate imply declaring it dynamic; the `:- dynamic` directive is honoured during consult (it was a no-op before v3.5.0).
 
 ### listing/0 and listing/1
 **Purpose**: Display current database contents.
@@ -2556,12 +2785,30 @@ shift_code(Shift, Code, Shifted) :-
 Encrypted = bcd.
 ```
 
+### number_chars/2 and number_codes/2
+**Purpose**: Convert between numbers and character/code lists.
+
+```prolog
+?- number_chars(42, Chars).
+Chars = ['4', '2'].
+
+?- number_chars(N, ['3', '.', '1', '4']).
+N = 3.14.
+
+?- number_codes(255, Codes).
+Codes = [50, 53, 53].
+```
+
+*v3.5.0*: arbitrarily large integers round-trip exactly (values beyond 64-bit precision were previously corrupted silently).
+
 ### atom_number/2
 **Purpose**: Converts between atoms and numbers.
 
 **When to use**: Use for parsing numeric input or formatting numbers.
 
 *v2.8.2*: accepts hex (`0xFF`), binary (`0b1010`), octal (`0o77`) prefixes when parsing atom→number.
+
+*v3.5.0*: arbitrarily large integers convert exactly in both directions (no more silent 64-bit corruption).
 
 ```prolog
 % Convert atom to number
@@ -2916,10 +3163,12 @@ noun --> [dog].
 % noun([dog|Rest], Rest).
 ```
 
-### phrase/2
-**Purpose**: Executes DCG rules for parsing or generation.
+### phrase/2 and phrase/3
+**Purpose**: Executes DCG rules for parsing or generation. `phrase(Body, List)` parses the whole list; `phrase(Body, List, Rest)` unifies `Rest` with the unparsed remainder.
 
 **When to use**: Use to parse input with grammar rules or generate valid sequences.
+
+*v3.5.0*: the first argument may be any DCG body, not just a non-terminal — `(A, B)`, `(A ; B)`, `(A -> B)`, `\+ A`, `!`, `{Goal}`, terminal lists `[a, b]` and `[]` are all translated correctly; a non-list second/third argument raises `type_error(list, _)` and a non-callable body raises `type_error(callable, _)` (previously these failed silently).
 
 ```prolog
 % Define a simple grammar
@@ -2963,6 +3212,10 @@ number(N) -->
 
 ?- phrase(number(N), ['1', '2', '3']).
 N = 123.
+
+% phrase/3 returns the remainder; the body can be any DCG body (v3.5.0+)
+?- phrase((article, noun), [the, dog, runs], Rest).
+Rest = [runs].
 ```
 
 ### enhanced_phrase/2 and enhanced_phrase/3
@@ -3278,10 +3531,12 @@ with_resource(Resource, Goal) :-
     release_resource(Resource).
 ```
 
-### halt/1
-**Purpose**: Terminates the Prolog system with an exit code.
+### halt/0 and halt/1
+**Purpose**: Terminates the Prolog processor. `halt/0` is equivalent to `halt(0)`; `halt(Code)` exits with the given exit code.
 
 **When to use**: Use to exit the program, typically after fatal errors or completion.
+
+*v3.5.0*: `halt/0`, `halt/1` actually terminate the processor — the CLI process exits with the given exit code, `:- halt` aborts a consult, and the IDE ends the run session gracefully (previously halt was effectively a no-op).
 
 ```prolog
 % Exit with success
@@ -3374,6 +3629,8 @@ debug_print(Message) :-
 **Purpose**: Sets system flags (where allowed).
 
 **When to use**: Use to configure system behavior.
+
+*v3.5.0*: the `unknown` flag is enforced — calling an undefined procedure raises `existence_error(procedure, Name/Arity)` when the flag is `error` (the default), prints a warning and fails when `warning`, and fails silently when `fail`. Procedures declared dynamic (via the `:- dynamic` directive, the `dynamic/1` goal, or implied by `assert`/`retractall`) fail silently instead of raising the error.
 
 ```prolog
 % Enable debug mode
@@ -4798,6 +5055,8 @@ CLP(FD) (Constraint Logic Programming over Finite Domains) predicates allow you 
 
 **When to use**: Use to declare the possible values for a constraint variable before posting constraints.
 
+*v3.5.0*: unification respects domains — `X in 1..3, X = 5` fails (it used to succeed unsoundly), while `X in 1..3, X = 2` succeeds; constraint posts are undone on backtracking.
+
 ```prolog
 % Syntax: X in +Low..+High
 ?- X in 1..10.
@@ -4814,6 +5073,8 @@ sudoku_vars(Vars) :-
 
 **When to use**: Use instead of `is/2` when working with constraint variables that are not yet bound.
 
+*v3.5.0*: when propagation narrows a variable to a singleton domain the variable is bound — `X #= 2` gives `X = 2` without labeling.
+
 ```prolog
 % Syntax: Expr1 #= Expr2
 ?- X in 1..10, X #= 3 + 4.
@@ -4828,6 +5089,8 @@ X = 3, Y = 7.
 **Purpose**: Posts a disequality (not-equal) constraint.
 
 **When to use**: Use to declare that two expressions must have different values.
+
+*v3.5.0*: multi-variable expressions work (`X #\= Y + 1`), and `X #\= X` fails.
 
 ```prolog
 % Syntax: Expr1 #\= Expr2

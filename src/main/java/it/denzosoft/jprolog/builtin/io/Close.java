@@ -24,10 +24,19 @@ public class Close implements BuiltIn {
         }
 
         Term streamTerm = query.getArguments().get(0).resolveBindings(bindings);
-        if (!(streamTerm instanceof Atom)) {
-            throw new PrologEvaluationException("close: Stream must be an atom.");
+        // START_CHANGE: ISS-2025-0377 - raise ISO error/2 terms (8.11.6): instantiation_error for an
+        // unbound stream, domain_error(stream_or_alias, S) for a non-stream term.
+        String ctx = "close/" + arity;
+        if (streamTerm instanceof it.denzosoft.jprolog.core.terms.Variable) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError(ctx));
         }
-        String streamAlias = ((Atom) streamTerm).getName();
+        String streamAlias = IOStreamUtils.streamAlias(streamTerm);
+        if (streamAlias == null) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.domainError("stream_or_alias", streamTerm, ctx));
+        }
+        // END_CHANGE: ISS-2025-0377
 
         // START_CHANGE: ISS-2025-0253 - parse force option
         boolean force = false;
@@ -57,6 +66,14 @@ public class Close implements BuiltIn {
             solutions.add(bindings);
             return true;
         }
+        // START_CHANGE: ISS-2025-0377 - an alias that names no open stream is the ISO
+        // error(existence_error(stream, S), _) (8.11.6); only the system-stream / I/O-failure
+        // case keeps the implementation-specific message.
+        if (!StreamManager.hasStream(streamAlias)) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.existenceError("stream", streamTerm, ctx));
+        }
+        // END_CHANGE: ISS-2025-0377
         throw new PrologEvaluationException("close: Cannot close stream '" + streamAlias + "' (not found or system stream).");
     }
 }

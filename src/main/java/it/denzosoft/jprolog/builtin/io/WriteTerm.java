@@ -43,7 +43,9 @@ public class WriteTerm extends AbstractBuiltInWithContext {
         Term[] args = getArguments();
 
         if (args.length == 2) {
-            Term first = args[0];
+            // START_CHANGE: ISS-2025-0373 - resolve the first argument so a stream bound via a variable routes correctly
+            Term first = args[0].resolveBindings(bindings);
+            // END_CHANGE: ISS-2025-0373
             Term second = args[1];
 
             if (isStream(first)) {
@@ -51,9 +53,16 @@ public class WriteTerm extends AbstractBuiltInWithContext {
                 return writeTermToStream(first, second, getDefaultWriteOptions(), bindings);
             } else {
                 // write_term(+Term, +Options)
-                return writeTermWithOptions(first, second, bindings);
+                return writeTermWithOptions(args[0], second, bindings);
             }
         }
+
+        // START_CHANGE: ISS-2025-0373 - write_term(+Stream, +Term, +Options): the primary ISO 8.14.2 form
+        if (args.length == 3) {
+            WriteOptions options = parseWriteOptions(args[2].resolveBindings(bindings), bindings);
+            return writeTermToStream(args[0].resolveBindings(bindings), args[1], options, bindings);
+        }
+        // END_CHANGE: ISS-2025-0373
 
         return false;
     }
@@ -62,9 +71,12 @@ public class WriteTerm extends AbstractBuiltInWithContext {
      * Write term to specified stream.
      */
     private boolean writeTermToStream(Term streamTerm, Term term, WriteOptions options, Map<String, Term> bindings) {
+        // START_CHANGE: ISS-2025-0373 - actually resolve the stream argument via StreamManager
+        // (this method previously ignored streamTerm and always wrote to the current output)
+        java.io.PrintStream out = IOStreamUtils.resolveOutputStream(streamTerm, bindings, "write_term/3");
         try {
-            // Get output writer (simplified - in full implementation, use StreamManager)
-            PrintWriter writer = getCurrentOutputStream();
+            PrintWriter writer = new PrintWriter(out);
+        // END_CHANGE: ISS-2025-0373
 
             // Resolve the term through bindings before formatting
             Term resolvedTerm = term.resolveBindings(bindings);

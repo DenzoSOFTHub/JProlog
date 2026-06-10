@@ -45,7 +45,16 @@ public class Assertz implements BuiltInWithContext {
         if (clauseTerm instanceof Variable) {
             throw new PrologException(createInstantiationError("assertz/1: clause must be instantiated"));
         }
-        
+
+        // START_CHANGE: ISS-2025-0368 - ISO 8.9.2.3: validate the clause (head and body callable,
+        // head instantiated) at assert time instead of silently storing garbage.
+        Term checkedHead = DatabaseValidation.checkClauseTerm(clauseTerm, "assertz/1", true);
+        // END_CHANGE: ISS-2025-0368
+        // START_CHANGE: ISS-2025-0367 - ISO 8.9.2.3: a built-in procedure is static, raise
+        // permission_error(modify, static_procedure, Name/Arity) instead of silently accepting.
+        DatabaseValidation.checkProcedureAccess(solver, checkedHead, "modify", "static_procedure", "assertz/1");
+        // END_CHANGE: ISS-2025-0367
+
         try {
             Clause clause = parseClause(clauseTerm);
             

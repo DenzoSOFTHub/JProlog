@@ -75,22 +75,25 @@ public final class ArithEvaluator {
                 return f(Math.signum(x.doubleValue()));
             case "min": case "max": return x; // unary degenerate
             case "sqrt": return f(checkDomain(x.doubleValue() >= 0, "sqrt/1") ? Math.sqrt(x.doubleValue()) : 0);
-            case "sin": return f(Math.sin(x.doubleValue()));
-            case "cos": return f(Math.cos(x.doubleValue()));
-            case "tan": return f(Math.tan(x.doubleValue()));
+            // START_CHANGE: ISS-2025-0359 / ISS-2025-0360 - computed floats go through fc() so
+            // Infinity raises float_overflow and NaN raises undefined (e.g. sin(inf), exp(1000))
+            case "sin": return fc(Math.sin(x.doubleValue()), "sin/1", x);
+            case "cos": return fc(Math.cos(x.doubleValue()), "cos/1", x);
+            case "tan": return fc(Math.tan(x.doubleValue()), "tan/1", x);
             case "asin": return f(Math.asin(inUnit(x.doubleValue(), "asin/1")));
             case "acos": return f(Math.acos(inUnit(x.doubleValue(), "acos/1")));
             case "atan": return f(Math.atan(x.doubleValue()));
-            case "exp": return f(Math.exp(x.doubleValue()));
+            case "exp": return fc(Math.exp(x.doubleValue()), "exp/1", x);
             case "log": checkDomain(x.doubleValue() > 0, "log/1"); return f(Math.log(x.doubleValue()));
-            case "sinh": return f(Math.sinh(x.doubleValue()));
-            case "cosh": return f(Math.cosh(x.doubleValue()));
+            case "sinh": return fc(Math.sinh(x.doubleValue()), "sinh/1", x);
+            case "cosh": return fc(Math.cosh(x.doubleValue()), "cosh/1", x);
             case "tanh": return f(Math.tanh(x.doubleValue()));
-            case "asinh": return f(Math.log(x.doubleValue() + Math.sqrt(x.doubleValue() * x.doubleValue() + 1)));
-            case "acosh": checkDomain(x.doubleValue() >= 1, "acosh/1"); return f(Math.log(x.doubleValue() + Math.sqrt(x.doubleValue() * x.doubleValue() - 1)));
+            case "asinh": return fc(Math.log(x.doubleValue() + Math.sqrt(x.doubleValue() * x.doubleValue() + 1)), "asinh/1", x);
+            case "acosh": checkDomain(x.doubleValue() >= 1, "acosh/1"); return fc(Math.log(x.doubleValue() + Math.sqrt(x.doubleValue() * x.doubleValue() - 1)), "acosh/1", x);
             case "atanh": checkDomain(Math.abs(x.doubleValue()) < 1, "atanh/1"); return f(0.5 * Math.log((1 + x.doubleValue()) / (1 - x.doubleValue())));
             case "cbrt": return f(Math.cbrt(x.doubleValue()));
-            case "float": return f(x.doubleValue());
+            case "float": return fc(x.doubleValue(), "float/1", x);
+            // END_CHANGE: ISS-2025-0359 / ISS-2025-0360
             case "integer": case "truncate": return roundToInt(x.doubleValue() < 0 ? Math.ceil(x.doubleValue()) : Math.floor(x.doubleValue()), op);
             case "floor": return x.isInteger() ? x : roundToInt(Math.floor(x.doubleValue()), op);
             case "ceiling": return x.isInteger() ? x : roundToInt(Math.ceil(x.doubleValue()), op);
@@ -111,9 +114,10 @@ public final class ArithEvaluator {
     private Number binary(String op, Number a, Number b) {
         boolean bothInt = a.isInteger() && b.isInteger();
         switch (op) {
-            case "+": return bothInt ? big(a.bigIntegerValue().add(b.bigIntegerValue())) : f(a.doubleValue() + b.doubleValue());
-            case "-": return bothInt ? big(a.bigIntegerValue().subtract(b.bigIntegerValue())) : f(a.doubleValue() - b.doubleValue());
-            case "*": return bothInt ? big(a.bigIntegerValue().multiply(b.bigIntegerValue())) : f(a.doubleValue() * b.doubleValue());
+            // START_CHANGE: ISS-2025-0359 / ISS-2025-0360 - computed floats go through fc()
+            case "+": return bothInt ? big(a.bigIntegerValue().add(b.bigIntegerValue())) : fc(a.doubleValue() + b.doubleValue(), "(+)/2", a, b);
+            case "-": return bothInt ? big(a.bigIntegerValue().subtract(b.bigIntegerValue())) : fc(a.doubleValue() - b.doubleValue(), "(-)/2", a, b);
+            case "*": return bothInt ? big(a.bigIntegerValue().multiply(b.bigIntegerValue())) : fc(a.doubleValue() * b.doubleValue(), "(*)/2", a, b);
             case "/":
                 if (bothInt) {
                     if (b.bigIntegerValue().signum() == 0) throw new PrologException(ISOErrorTerms.zeroDivisorError("(/)/2"));
@@ -121,7 +125,8 @@ public final class ArithEvaluator {
                     if (qr[1].signum() == 0) return big(qr[0]);              // exact -> integer
                 }
                 if (b.doubleValue() == 0.0) throw new PrologException(ISOErrorTerms.zeroDivisorError("(/)/2"));
-                return f(a.doubleValue() / b.doubleValue());
+                return fc(a.doubleValue() / b.doubleValue(), "(/)/2", a, b);
+            // END_CHANGE: ISS-2025-0359 / ISS-2025-0360
             case "//": requireInt(a, "(//)/2"); requireInt(b, "(//)/2"); checkNonZero(b, "(//)/2");
                 return big(a.bigIntegerValue().divide(b.bigIntegerValue()));            // truncate toward zero
             case "div": requireInt(a, "(div)/2"); requireInt(b, "(div)/2"); checkNonZero(b, "(div)/2");
@@ -132,27 +137,60 @@ public final class ArithEvaluator {
                 return big(a.bigIntegerValue().remainder(b.bigIntegerValue()));
             case "**":                                                                 // float power (ISO §9.3.1)
                 if (a.doubleValue() == 0.0 && b.doubleValue() < 0.0) throw new PrologException(ISOErrorTerms.evaluationError("undefined", "(**)/2"));
-                return f(Math.pow(a.doubleValue(), b.doubleValue()));
+                // START_CHANGE: ISS-2025-0359 / ISS-2025-0360 - 2.0 ** 10000 -> float_overflow; (-2.0) ** 0.5 -> undefined
+                return fc(Math.pow(a.doubleValue(), b.doubleValue()), "(**)/2", a, b);
+                // END_CHANGE: ISS-2025-0359 / ISS-2025-0360
             case "^":                                                                  // integer power (ISO §9.3.10)
                 if (bothInt) {
-                    int exp = b.bigIntegerValue().intValueExact();
-                    if (exp >= 0) return big(a.bigIntegerValue().pow(exp));
-                    if (a.bigIntegerValue().abs().equals(BigInteger.ONE)) return big(a.bigIntegerValue().pow(-exp).equals(BigInteger.ONE) ? BigInteger.ONE : a.bigIntegerValue());
-                    throw new PrologException(ISOErrorTerms.typeError("float", a, "(^)/2"));
+                    BigInteger base = a.bigIntegerValue();
+                    BigInteger bexp = b.bigIntegerValue();
+                    if (bexp.signum() < 0) {
+                        // START_CHANGE: ISS-2025-0362 - 0 ^ negative is evaluation_error(zero_divisor) (ISO 9.3.10.3)
+                        if (base.signum() == 0) throw new PrologException(ISOErrorTerms.zeroDivisorError("(^)/2"));
+                        // END_CHANGE: ISS-2025-0362
+                        // |base| == 1: (-1)^odd = -1, otherwise 1 (computable for any exponent size)
+                        if (base.abs().equals(BigInteger.ONE)) return big(bexp.testBit(0) ? base : BigInteger.ONE);
+                        throw new PrologException(ISOErrorTerms.typeError("float", a, "(^)/2"));
+                    }
+                    // START_CHANGE: ISS-2025-0361 - an exponent beyond int range must raise a catchable
+                    // ISO error, not a raw java.lang.ArithmeticException from intValueExact(); bases in
+                    // {-1, 0, 1} stay exactly computable for any exponent size.
+                    if (bexp.bitLength() > 31) {
+                        if (base.signum() == 0) return i(0);
+                        if (base.abs().equals(BigInteger.ONE)) return big(base.signum() > 0 || !bexp.testBit(0) ? BigInteger.ONE : base);
+                        throw new PrologException(ISOErrorTerms.resourceError("memory", "(^)/2"));
+                    }
+                    // END_CHANGE: ISS-2025-0361
+                    return big(base.pow(bexp.intValueExact()));
                 }
-                return f(Math.pow(a.doubleValue(), b.doubleValue()));
+                // START_CHANGE: ISS-2025-0359 / ISS-2025-0360 - 2.0 ^ 10000 -> float_overflow; -2 ^ 0.5 -> undefined
+                return fc(Math.pow(a.doubleValue(), b.doubleValue()), "(^)/2", a, b);
+                // END_CHANGE: ISS-2025-0359 / ISS-2025-0360
             case "min": return compareNum(a, b) <= 0 ? a : b;                          // preserve operand type
             case "max": return compareNum(a, b) >= 0 ? a : b;
             case "gcd": requireInt(a, "gcd/2"); requireInt(b, "gcd/2");
                 return big(a.bigIntegerValue().gcd(b.bigIntegerValue()));
-            case ">>": requireInt(a, "(>>)/2"); requireInt(b, "(>>)/2"); requireNonNegShift(b); return big(a.bigIntegerValue().shiftRight(b.bigIntegerValue().intValueExact()));
-            case "<<": requireInt(a, "(<<)/2"); requireInt(b, "(<<)/2"); requireNonNegShift(b); return big(a.bigIntegerValue().shiftLeft(b.bigIntegerValue().intValueExact()));
+            // START_CHANGE: ISS-2025-0361 - shift counts beyond int range must not raise a raw
+            // java.lang.ArithmeticException from intValueExact(): (>>) has the exact mathematical
+            // result (the sign extension), (<<) raises a catchable ISO resource_error.
+            case ">>": requireInt(a, "(>>)/2"); requireInt(b, "(>>)/2"); requireNonNegShift(b);
+                if (b.bigIntegerValue().bitLength() > 31) return i(a.bigIntegerValue().signum() < 0 ? -1 : 0);
+                return big(a.bigIntegerValue().shiftRight(b.bigIntegerValue().intValueExact()));
+            case "<<": requireInt(a, "(<<)/2"); requireInt(b, "(<<)/2"); requireNonNegShift(b);
+                if (b.bigIntegerValue().bitLength() > 31) {
+                    if (a.bigIntegerValue().signum() == 0) return i(0);
+                    throw new PrologException(ISOErrorTerms.resourceError("memory", "(<<)/2"));
+                }
+                return big(a.bigIntegerValue().shiftLeft(b.bigIntegerValue().intValueExact()));
+            // END_CHANGE: ISS-2025-0361
             case "/\\": requireInt(a, "(/\\)/2"); requireInt(b, "(/\\)/2"); return big(a.bigIntegerValue().and(b.bigIntegerValue()));
             case "\\/": requireInt(a, "(\\/)/2"); requireInt(b, "(\\/)/2"); return big(a.bigIntegerValue().or(b.bigIntegerValue()));
             case "xor": requireInt(a, "xor/2"); requireInt(b, "xor/2"); return big(a.bigIntegerValue().xor(b.bigIntegerValue()));
             case "atan": case "atan2": return f(Math.atan2(a.doubleValue(), b.doubleValue()));
             case "copysign": return f(Math.copySign(a.doubleValue(), b.doubleValue()));
-            case "log": checkDomain(a.doubleValue() > 0 && b.doubleValue() > 0, "log/2"); return f(Math.log(b.doubleValue()) / Math.log(a.doubleValue()));
+            // START_CHANGE: ISS-2025-0359 - log(1, X) divides by log(1) = 0 -> float_overflow, not Infinity
+            case "log": checkDomain(a.doubleValue() > 0 && b.doubleValue() > 0, "log/2"); return fc(Math.log(b.doubleValue()) / Math.log(a.doubleValue()), "log/2", a, b);
+            // END_CHANGE: ISS-2025-0359
             case "truncate": return roundToInt(a.doubleValue() < 0 ? Math.ceil(a.doubleValue()) : Math.floor(a.doubleValue()), op);
             default: throw evaluableError(op, 2);
         }
@@ -164,6 +202,29 @@ public final class ArithEvaluator {
         return (v.bitLength() <= 63) ? new Number(v.longValueExact()) : new Number(v);
     }
     private static Number f(double v) { return new Number(v, false); }
+
+    // START_CHANGE: ISS-2025-0359 / ISS-2025-0360 - a COMPUTED float result must raise
+    // evaluation_error(float_overflow) instead of silently returning Infinity (ISO 9.1.4.1) and
+    // evaluation_error(undefined) instead of NaN (ISO 9.3.1.3), unless an operand was already
+    // exceptional (so inf + 1 stays inf and nan + 1 stays nan; the inf/nan CONSTANTS still build
+    // their value directly via f() in constant()). Integer operands are mathematically finite even
+    // when their double image saturates (e.g. float(10^400) -> float_overflow).
+    private static Number fc(double v, String ctx, Number... ops) {
+        if (Double.isInfinite(v)) {
+            for (Number op : ops) {
+                if (!op.isInteger() && Double.isInfinite(op.doubleValue())) return new Number(v, false);
+            }
+            throw new PrologException(ISOErrorTerms.evaluationError("float_overflow", ctx));
+        }
+        if (Double.isNaN(v)) {
+            for (Number op : ops) {
+                if (!op.isInteger() && Double.isNaN(op.doubleValue())) return new Number(v, false);
+            }
+            throw new PrologException(ISOErrorTerms.evaluationError("undefined", ctx));
+        }
+        return new Number(v, false);
+    }
+    // END_CHANGE: ISS-2025-0359 / ISS-2025-0360
 
     private static int compareNum(Number a, Number b) {
         if (a.isInteger() && b.isInteger()) return a.bigIntegerValue().compareTo(b.bigIntegerValue());

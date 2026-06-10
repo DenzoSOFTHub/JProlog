@@ -3023,4 +3023,931 @@ public class BugFixVerificationTest {
         List<Map<String, Term>> solutions = prolog.solve("T in 1..3, T #\\= T.");
         assertTrue("T #\\= T is unsatisfiable", solutions.isEmpty());
     }
+
+    // ======================== ISS-2025-0359: computed float Infinity raises float_overflow ========================
+
+    @Test
+    public void testISS0359_FloatOverflowRaisesEvaluationError() {
+        assertEquals("1.0e308 * 10.0 must raise evaluation_error(float_overflow)", 1, prolog.solve(
+            "catch(_ is 1.0e308 * 10.0, error(evaluation_error(float_overflow), _), true).").size());
+        assertEquals("exp(1000) must raise evaluation_error(float_overflow)", 1, prolog.solve(
+            "catch(_ is exp(1000), error(evaluation_error(float_overflow), _), true).").size());
+        assertEquals("2.0 ** 10000 must raise evaluation_error(float_overflow)", 1, prolog.solve(
+            "catch(_ is 2.0 ** 10000, error(evaluation_error(float_overflow), _), true).").size());
+    }
+
+    @Test
+    public void testISS0359_InfConstantAndPropagationStillWork() {
+        List<Map<String, Term>> solutions = prolog.solve("X is inf.");
+        assertEquals(1, solutions.size());
+        assertTrue("the inf constant must still evaluate to Infinity",
+            Double.isInfinite(((Number) solutions.get(0).get("X")).doubleValue()));
+        solutions = prolog.solve("X is inf + 1.");
+        assertEquals("an already-infinite operand must propagate, not raise", 1, solutions.size());
+        assertTrue(Double.isInfinite(((Number) solutions.get(0).get("X")).doubleValue()));
+    }
+
+    // ======================== ISS-2025-0360: computed float NaN raises evaluation_error(undefined) ========================
+
+    @Test
+    public void testISS0360_UndefinedFloatResultRaisesEvaluationError() {
+        assertEquals("(-2.0) ** 0.5 must raise evaluation_error(undefined)", 1, prolog.solve(
+            "catch(_ is (-2.0) ** 0.5, error(evaluation_error(undefined), _), true).").size());
+        assertEquals("(-2) ^ 0.5 must raise evaluation_error(undefined)", 1, prolog.solve(
+            "catch(_ is (-2) ^ 0.5, error(evaluation_error(undefined), _), true).").size());
+        assertEquals("inf - inf must raise evaluation_error(undefined)", 1, prolog.solve(
+            "catch(_ is inf - inf, error(evaluation_error(undefined), _), true).").size());
+        assertEquals("inf / inf must raise evaluation_error(undefined)", 1, prolog.solve(
+            "catch(_ is inf / inf, error(evaluation_error(undefined), _), true).").size());
+    }
+
+    @Test
+    public void testISS0360_NanConstantAndPropagationStillWork() {
+        List<Map<String, Term>> solutions = prolog.solve("X is nan.");
+        assertEquals(1, solutions.size());
+        assertTrue("the nan constant must still evaluate to NaN",
+            Double.isNaN(((Number) solutions.get(0).get("X")).doubleValue()));
+        solutions = prolog.solve("X is nan + 1.");
+        assertEquals("an already-NaN operand must propagate, not raise", 1, solutions.size());
+        assertTrue(Double.isNaN(((Number) solutions.get(0).get("X")).doubleValue()));
+    }
+
+    // ======================== ISS-2025-0361: huge exponent / shift count raises a catchable ISO error ========================
+
+    @Test
+    public void testISS0361_HugeExponentAndShiftAreCatchable() {
+        // Used to escape catch/3 as a raw java.lang.ArithmeticException ("BigInteger out of int range")
+        assertEquals("2 ^ 10000000000 must raise a catchable resource_error", 1, prolog.solve(
+            "catch(_ is 2 ^ 10000000000, error(resource_error(_), _), true).").size());
+        assertEquals("1 << 10000000000 must raise a catchable resource_error", 1, prolog.solve(
+            "catch(_ is 1 << 10000000000, error(resource_error(_), _), true).").size());
+    }
+
+    @Test
+    public void testISS0361_HugeExponentExactCasesStillEvaluate() {
+        // Bases in {-1, 0, 1} and the (>>) sign extension are exactly computable for any exponent size
+        assertEquals("1", prolog.solve("X is 1 ^ 10000000000.").get(0).get("X").toString());
+        assertEquals("-1", prolog.solve("X is (-1) ^ 10000000001.").get(0).get("X").toString());
+        assertEquals("0", prolog.solve("X is 0 ^ 10000000000.").get(0).get("X").toString());
+        assertEquals("0", prolog.solve("X is 5 >> 10000000000.").get(0).get("X").toString());
+        assertEquals("-1", prolog.solve("X is (-5) >> 10000000000.").get(0).get("X").toString());
+        assertEquals("0", prolog.solve("X is 0 << 10000000000.").get(0).get("X").toString());
+    }
+
+    // ======================== ISS-2025-0362: 0 ^ negative raises evaluation_error(zero_divisor) ========================
+
+    @Test
+    public void testISS0362_ZeroPowerNegativeIsZeroDivisor() {
+        assertEquals("0 ^ -1 must raise evaluation_error(zero_divisor), not type_error(float, 0)",
+            1, prolog.solve(
+                "catch(_ is 0 ^ -1, error(evaluation_error(zero_divisor), _), true).").size());
+    }
+
+    // ======================== ISS-2025-0363: throw/1 with an unbound ball ========================
+
+    @Test
+    public void testISS0363_ThrowUnboundRaisesInstantiationError() {
+        assertEquals("throw(_) must raise instantiation_error (ISO 7.8.10.3)", 1, prolog.solve(
+            "catch(throw(_), error(instantiation_error, _), true).").size());
+        assertEquals("legacy engine must agree", 1, prolog.solveLegacy(
+            "catch(throw(_), error(instantiation_error, _), true).").size());
+    }
+
+    @Test
+    public void testISS0363_UnboundBallNotTrappedByUnrelatedCatcher() {
+        // The fresh-variable ball used to unify with ANY catcher and run the recovery goal
+        List<Map<String, Term>> solutions;
+        try {
+            solutions = prolog.solve("catch(throw(_), very_specific_catcher(abc), R = wrongly_caught).");
+        } catch (Exception e) {
+            solutions = java.util.Collections.emptyList();   // escaping to Java as an error is correct
+        }
+        assertTrue("an unrelated catcher must not trap the instantiation_error", solutions.isEmpty());
+    }
+
+    // ======================== ISS-2025-0364: functor/3 compound Name raises type_error(atomic, Name) ========================
+
+    @Test
+    public void testISS0364_FunctorCompoundNameTypeErrorAtomic() {
+        assertEquals("functor(T, f(a), 2) must raise type_error(atomic, f(a)) (ISO 8.5.1.3)",
+            1, prolog.solve(
+                "catch(functor(_, f(a), 2), error(type_error(atomic, f(a)), _), true).").size());
+        // atomic-but-not-atom Names with Arity > 0 keep type_error(atom, Name)
+        assertEquals(1, prolog.solve(
+            "catch(functor(_, 1.5, 2), error(type_error(atom, 1.5), _), true).").size());
+    }
+
+    // ======================== ISS-2025-0365: >64-bit integers in number/text conversions ========================
+
+    @Test
+    public void testISS0365_AtomNumberBigInteger() {
+        // 2^63 — one past Long.MAX_VALUE; used to saturate silently to 9223372036854775807
+        List<Map<String, Term>> solutions = prolog.solve("atom_number('9223372036854775808', X).");
+        assertEquals(1, solutions.size());
+        assertEquals("9223372036854775808", solutions.get(0).get("X").toString());
+
+        solutions = prolog.solve("atom_number(A, 9223372036854775808).");
+        assertEquals(1, solutions.size());
+        assertEquals("9223372036854775808", solutions.get(0).get("A").toString());
+
+        // 20 digits used to come back as the float 1.0E19
+        solutions = prolog.solve("atom_number('10000000000000000000', X).");
+        assertEquals(1, solutions.size());
+        assertEquals("10000000000000000000", solutions.get(0).get("X").toString());
+    }
+
+    @Test
+    public void testISS0365_NumberCharsAndCodesBigIntegerRoundTrip() {
+        List<Map<String, Term>> solutions = prolog.solve(
+            "number_chars(X, ['9','2','2','3','3','7','2','0','3','6','8','5','4','7','7','5','8','0','8']).");
+        assertEquals(1, solutions.size());
+        assertEquals("9223372036854775808", solutions.get(0).get("X").toString());
+
+        solutions = prolog.solve("number_chars(9223372036854775808, L), atom_chars(A, L).");
+        assertEquals(1, solutions.size());
+        assertEquals("9223372036854775808", solutions.get(0).get("A").toString());
+
+        solutions = prolog.solve("number_codes(9223372036854775808, L), number_codes(X, L).");
+        assertEquals(1, solutions.size());
+        assertEquals("9223372036854775808", solutions.get(0).get("X").toString());
+    }
+
+    @Test
+    public void testISS0365_SmallValuesUnchanged() {
+        assertEquals("123", prolog.solve("atom_number('123', X).").get(0).get("X").toString());
+        assertEquals("-42", prolog.solve("atom_number('-42', X).").get(0).get("X").toString());
+        assertEquals("3.14", prolog.solve("atom_number('3.14', X).").get(0).get("X").toString());
+        assertEquals("123", prolog.solve("atom_number(A, 123.0).").get(0).get("A").toString());
+    }
+
+    @Test
+    public void testISS0366_RetractUnboundRaisesInstantiationError() {
+        // Previously a raw ClassCastException escaped catch/3 entirely (v2 engine).
+        List<Map<String, Term>> s = prolog.solve(
+            "catch(retract(_X), error(instantiation_error, _), true).");
+        assertEquals("retract(X) with X unbound must raise a catchable instantiation_error",
+            1, s.size());
+    }
+
+    @Test
+    public void testISS0366_RetractNonCallableRaisesTypeError() {
+        List<Map<String, Term>> s = prolog.solve(
+            "catch(retract(1), error(type_error(callable, 1), _), true).");
+        assertEquals("retract(1) must raise type_error(callable, 1)", 1, s.size());
+    }
+
+    @Test
+    public void testISS0366_RetractUnboundHeadInClauseRaisesInstantiationError() {
+        List<Map<String, Term>> s = prolog.solve(
+            "catch(retract((_H :- true)), error(instantiation_error, _), true).");
+        assertEquals("retract((H :- true)) with H unbound must raise instantiation_error",
+            1, s.size());
+    }
+
+    @Test
+    public void testISS0366_RetractValidationOnLegacyEngine() {
+        assertEquals(1, prolog.solveLegacy(
+            "catch(retract(_X), error(instantiation_error, _), true).").size());
+        assertEquals(1, prolog.solveLegacy(
+            "catch(retract(1), error(type_error(callable, 1), _), true).").size());
+    }
+
+    // ======================== ISS-2025-0367: built-in procedures are static ========================
+
+    @Test
+    public void testISS0367_AssertOnBuiltInRaisesPermissionError() {
+        assertEquals("asserta on a built-in must raise permission_error", 1, prolog.solve(
+            "catch(asserta(atom_length(zzz, 99)), "
+            + "error(permission_error(modify, static_procedure, atom_length/2), _), true).").size());
+        assertEquals("assertz on a built-in must raise permission_error", 1, prolog.solve(
+            "catch(assertz(atom_length(zzz, 99)), "
+            + "error(permission_error(modify, static_procedure, atom_length/2), _), true).").size());
+        // built-in behaviour unchanged
+        List<Map<String, Term>> s = prolog.solve("atom_length(abc, L).");
+        assertEquals(1, s.size());
+        assertEquals("3", s.get(0).get("L").toString());
+    }
+
+    @Test
+    public void testISS0367_RetractAndRetractallOnBuiltInRaisePermissionError() {
+        assertEquals(1, prolog.solve(
+            "catch(retract(atom_length(_, _)), "
+            + "error(permission_error(modify, static_procedure, atom_length/2), _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(retractall(atom_length(_, _)), "
+            + "error(permission_error(modify, static_procedure, atom_length/2), _), true).").size());
+    }
+
+    @Test
+    public void testISS0367_AbolishOnBuiltInRaisesPermissionError() {
+        assertEquals(1, prolog.solve(
+            "catch(abolish(atom_length/2), "
+            + "error(permission_error(modify, static_procedure, atom_length/2), _), true).").size());
+        // and abolish must NOT have silently succeeded: atom_length/2 still works
+        assertEquals(1, prolog.solve("atom_length(abc, 3).").size());
+    }
+
+    @Test
+    public void testISS0367_AssertOnBuiltInRaisesOnLegacyEngine() {
+        assertEquals(1, prolog.solveLegacy(
+            "catch(assertz(atom_length(zzz, 99)), "
+            + "error(permission_error(modify, static_procedure, atom_length/2), _), true).").size());
+    }
+
+    @Test
+    public void testISS0367_UserPredicatesRemainModifiable() {
+        assertEquals(1, prolog.solve("assertz(iss0367_fact(1)).").size());
+        assertEquals(1, prolog.solve("retract(iss0367_fact(1)).").size());
+        // sharing a library name at a DIFFERENT arity stays legal: atom_length/3 is no built-in
+        assertEquals(1, prolog.solve("assertz(atom_length(a, b, c)).").size());
+        assertEquals(1, prolog.solve("retract(atom_length(a, b, c)).").size());
+    }
+
+    // ======================== ISS-2025-0368: assert clause validation ========================
+
+    @Test
+    public void testISS0368_AssertzUnboundRaisesInstantiationError() {
+        assertEquals(1, prolog.solve(
+            "catch(assertz(_X), error(instantiation_error, _), true).").size());
+        assertEquals("an unbound head inside (Head :- Body) must also raise", 1, prolog.solve(
+            "catch(assertz((_H :- true)), error(instantiation_error, _), true).").size());
+    }
+
+    @Test
+    public void testISS0368_AssertzNonCallableRaisesTypeError() {
+        assertEquals(1, prolog.solve(
+            "catch(assertz(1), error(type_error(callable, 1), _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(assertz((1 :- true)), error(type_error(callable, 1), _), true).").size());
+    }
+
+    @Test
+    public void testISS0368_AssertzNonCallableBodyRaisesAtAssertTime() {
+        assertEquals("a number body goal must raise type_error(callable, 7) at assert time",
+            1, prolog.solve(
+                "catch(assertz((iss0368_foo :- 7)), error(type_error(callable, 7), _), true).").size());
+        assertEquals("inside a conjunction too", 1, prolog.solve(
+            "catch(assertz((iss0368_bar :- true, 7)), error(type_error(callable, 7), _), true).").size());
+    }
+
+    @Test
+    public void testISS0368_AssertzVariableBodyStillLegal() {
+        // ISO 7.6.2: a variable body goal is legal (converted to call/1 at run time)
+        assertEquals(1, prolog.solve("assertz((iss0368_v :- _G)).").size());
+    }
+
+    @Test
+    public void testISS0368_AssertValidationOnLegacyEngine() {
+        assertEquals(1, prolog.solveLegacy(
+            "catch(assertz(1), error(type_error(callable, 1), _), true).").size());
+        assertEquals(1, prolog.solveLegacy(
+            "catch(asserta((iss0368_leg :- 7)), error(type_error(callable, 7), _), true).").size());
+    }
+
+    @Test
+    public void testISS0368_NoGarbageEntryAfterRejectedAssert() {
+        // assertz(X) used to store a Variable-headed rule indexed as "unknown/0"
+        prolog.solve("catch(assertz(_X), _, true).");
+        assertTrue("no unknown/0 garbage may enter the knowledge base",
+            prolog.solve("current_predicate(unknown/0).").isEmpty());
+    }
+
+    // ======================== ISS-2025-0369: dynamic/1 callable as a goal ========================
+
+    @Test
+    public void testISS0369_DynamicCallableAsGoal() {
+        assertEquals("dynamic(Name/Arity) must succeed as a goal",
+            1, prolog.solve("dynamic(iss0369_counter/1).").size());
+        assertTrue("a declared-dynamic predicate with no clauses fails instead of existence_error",
+            prolog.solve("iss0369_counter(_).").isEmpty());
+    }
+
+    @Test
+    public void testISS0369_DynamicGoalInConjunction() {
+        // the classic init pattern that silently failed before the fix
+        List<Map<String, Term>> s = prolog.solve(
+            "dynamic(iss0369_c/1), assertz(iss0369_c(0)), iss0369_c(X).");
+        assertEquals(1, s.size());
+        assertEquals("0", s.get(0).get("X").toString());
+    }
+
+    @Test
+    public void testISS0369_DynamicCommaSequenceAndList() {
+        assertEquals(1, prolog.solve("dynamic((iss0369_a/1, iss0369_b/2)).").size());
+        assertTrue(prolog.solve("iss0369_a(_).").isEmpty());
+        assertTrue(prolog.solve("iss0369_b(_, _).").isEmpty());
+        assertEquals(1, prolog.solve("dynamic([iss0369_l1/1, iss0369_l2/1]).").size());
+        assertTrue(prolog.solve("iss0369_l1(_).").isEmpty());
+        assertTrue(prolog.solve("iss0369_l2(_).").isEmpty());
+    }
+
+    @Test
+    public void testISS0369_DynamicErrorCases() {
+        assertEquals(1, prolog.solve(
+            "catch(dynamic(_X), error(instantiation_error, _), true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(dynamic(foo/bar), error(type_error(predicate_indicator, foo/bar), _), true).").size());
+    }
+
+    // ======================== ISS-2025-0370: clause/2 access checks ========================
+
+    @Test
+    public void testISS0370_ClauseOnBuiltInRaisesPermissionError() {
+        assertEquals("clause/2 on a built-in must raise permission_error, not fail",
+            1, prolog.solve(
+                "catch(clause(atom_length(_, _), _), "
+                + "error(permission_error(access, private_procedure, atom_length/2), _), true).").size());
+    }
+
+    @Test
+    public void testISS0370_ClauseNonCallableBodyRaisesTypeError() {
+        prolog.solve("assertz(iss0370_f(a)).");
+        assertEquals("clause(f(a), 1) must raise type_error(callable, 1), not fail",
+            1, prolog.solve(
+                "catch(clause(iss0370_f(a), 1), error(type_error(callable, 1), _), true).").size());
+    }
+
+    @Test
+    public void testISS0370_ClauseOnUserPredicateStillWorks() {
+        prolog.solve("assertz(iss0370_g(x)).");
+        List<Map<String, Term>> s = prolog.solve("clause(iss0370_g(x), B).");
+        assertEquals(1, s.size());
+        assertEquals("true", s.get(0).get("B").toString());
+    }
+
+    // ======================== ISS-2025-0371: retractall/1 non-callable ========================
+
+    @Test
+    public void testISS0371_RetractallNonCallableRaisesTypeError() {
+        assertEquals("retractall(1) must raise type_error(callable, 1), not succeed",
+            1, prolog.solve(
+                "catch(retractall(1), error(type_error(callable, 1), _), true).").size());
+    }
+
+    // ======================== ISS-2025-0372: current_predicate/1 PI validation ========================
+
+    @Test
+    public void testISS0372_CurrentPredicateNonPIRaisesTypeError() {
+        assertEquals("current_predicate(foo) must raise type_error(predicate_indicator, foo)",
+            1, prolog.solve(
+                "catch(current_predicate(foo), "
+                + "error(type_error(predicate_indicator, foo), _), true).").size());
+        assertEquals("current_predicate(foo/bar) must raise type_error(predicate_indicator, foo/bar)",
+            1, prolog.solve(
+                "catch(current_predicate(foo/bar), "
+                + "error(type_error(predicate_indicator, foo/bar), _), true).").size());
+    }
+
+    @Test
+    public void testISS0372_CurrentPredicateEnumerationStillWorks() {
+        prolog.solve("assertz(iss0372_p(x)).");
+        List<Map<String, Term>> s = prolog.solve("current_predicate(iss0372_p/A).");
+        assertEquals(1, s.size());
+        assertEquals("1", s.get(0).get("A").toString());
+    }
+
+    private String readWholeFile(java.io.File f) throws java.io.IOException {
+        return new String(java.nio.file.Files.readAllBytes(f.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    @Test
+    public void testISS0373_Write2Nl1Writeln2ToFileStream() throws Exception {
+        java.io.File f = java.io.File.createTempFile("iss0373_w2", ".txt");
+        f.deleteOnExit();
+        List<Map<String, Term>> solutions = prolog.solve(
+            "open('" + f.getAbsolutePath() + "', write, S), write(S, hello(world)), nl(S), writeln(S, bye), close(S).");
+        assertEquals("write/2 + nl/1 + writeln/2 must succeed", 1, solutions.size());
+        assertEquals("hello(world)\nbye\n", readWholeFile(f));
+    }
+
+    @Test
+    public void testISS0373_PutChar2Tab2ToFileStream() throws Exception {
+        java.io.File f = java.io.File.createTempFile("iss0373_pc", ".txt");
+        f.deleteOnExit();
+        List<Map<String, Term>> solutions = prolog.solve(
+            "open('" + f.getAbsolutePath() + "', write, S), put_char(S, x), tab(S, 3), put_char(S, y), close(S).");
+        assertEquals("put_char/2 + tab/2 must succeed", 1, solutions.size());
+        assertEquals("x   y", readWholeFile(f));
+    }
+
+    @Test
+    public void testISS0373_WriteTerm3QuotedToFileStream() throws Exception {
+        java.io.File f = java.io.File.createTempFile("iss0373_wt", ".txt");
+        f.deleteOnExit();
+        List<Map<String, Term>> solutions = prolog.solve(
+            "open('" + f.getAbsolutePath() + "', write, S), write_term(S, f('A b'), [quoted(true)]), close(S).");
+        assertEquals("write_term/3 must succeed", 1, solutions.size());
+        assertEquals("f('A b')", readWholeFile(f));
+    }
+
+    @Test
+    public void testISS0373_WriteAndNlOnUserOutput() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        String out = captureStdout("write(user_output, hi), nl(user_output).", solutions);
+        assertEquals("write/2 + nl/1 on user_output must succeed", 1, solutions.size());
+        assertEquals("hi\n", out);
+    }
+
+    @Test
+    public void testISS0373_Format1PrintsFormatString() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        String out = captureStdout("format('hello~n').", solutions);
+        assertEquals("format/1 must succeed", 1, solutions.size());
+        assertEquals("hello\n", out);
+    }
+
+    // ======================== ISS-2025-0374: format/3 honours the stream/sink argument ========================
+
+    @Test
+    public void testISS0374_Format3WritesToFileStream() throws Exception {
+        java.io.File f = java.io.File.createTempFile("iss0374_fmt", ".txt");
+        f.deleteOnExit();
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        String console = captureStdout(
+            "open('" + f.getAbsolutePath() + "', write, S), format(S, 'hello ~w~n', [file]), close(S).", solutions);
+        assertEquals("format/3 to a file stream must succeed", 1, solutions.size());
+        assertEquals("hello file\n", readWholeFile(f));
+        assertEquals("format/3 output must not leak to the console", "", console);
+    }
+
+    @Test
+    public void testISS0374_FormatAtomSink() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        String console = captureStdout("format(atom(A), '~w-~w', [foo(1), bar]).", solutions);
+        assertEquals("format(atom(A), ...) must succeed", 1, solutions.size());
+        assertEquals("foo(1)-bar", ((Atom) solutions.get(0).get("A")).getName());
+        assertEquals("format(atom(A), ...) must not print to the console", "", console);
+    }
+
+    @Test
+    public void testISS0374_FormatCodesSink() {
+        List<Map<String, Term>> solutions = prolog.solve("format(codes(C), '~w', [ab]), C = [97, 98].");
+        assertEquals("format(codes(C), ...) must bind a code list", 1, solutions.size());
+    }
+
+    // ======================== ISS-2025-0375: set_input/1 and set_output/1 actually redirect ========================
+
+    @Test
+    public void testISS0375_SetOutputRedirectsWrite() throws Exception {
+        java.io.File f = java.io.File.createTempFile("iss0375_out", ".txt");
+        f.deleteOnExit();
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        String console = captureStdout(
+            "open('" + f.getAbsolutePath() + "', write, S), set_output(S), write(redirected), "
+            + "set_output(user_output), close(S).", solutions);
+        assertEquals("set_output redirection query must succeed", 1, solutions.size());
+        assertEquals("redirected", readWholeFile(f));
+        assertEquals("write/1 after set_output must not reach the console", "", console);
+    }
+
+    @Test
+    public void testISS0375_SetInputRedirectsGetCharAndGetCode() throws Exception {
+        java.io.File f = writeTempPrologFile("iss0375_in", "foo(bar).\n");
+        List<Map<String, Term>> solutions = prolog.solve(
+            "open('" + f.getAbsolutePath() + "', read, S), set_input(S), get_char(C1), get_char(C2), "
+            + "get_code(C3), set_input(user_input), close(S).");
+        assertEquals("set_input redirection query must succeed", 1, solutions.size());
+        assertEquals("f", solutions.get(0).get("C1").toString());
+        assertEquals("o", solutions.get(0).get("C2").toString());
+        assertEquals("111", solutions.get(0).get("C3").toString());
+    }
+
+    // ======================== ISS-2025-0376: peek_char/2, peek_code/2, get_code/2 stream forms ========================
+
+    @Test
+    public void testISS0376_PeekChar2DoesNotConsume() throws Exception {
+        java.io.File f = writeTempPrologFile("iss0376_pk", "abc");
+        List<Map<String, Term>> solutions = prolog.solve(
+            "open('" + f.getAbsolutePath() + "', read, S), peek_char(S, P1), peek_char(S, P2), "
+            + "get_char(S, G1), get_char(S, G2), close(S).");
+        assertEquals("peek_char/2 must succeed", 1, solutions.size());
+        assertEquals("a", solutions.get(0).get("P1").toString());
+        assertEquals("peek_char/2 must not consume", "a", solutions.get(0).get("P2").toString());
+        assertEquals("a", solutions.get(0).get("G1").toString());
+        assertEquals("b", solutions.get(0).get("G2").toString());
+    }
+
+    @Test
+    public void testISS0376_PeekCode2AndGetCode2() throws Exception {
+        java.io.File f = writeTempPrologFile("iss0376_gc", "abc");
+        List<Map<String, Term>> solutions = prolog.solve(
+            "open('" + f.getAbsolutePath() + "', read, S), peek_code(S, P), get_code(S, C1), get_code(S, C2), close(S).");
+        assertEquals("peek_code/2 and get_code/2 must succeed", 1, solutions.size());
+        assertEquals("97", solutions.get(0).get("P").toString());
+        assertEquals("97", solutions.get(0).get("C1").toString());
+        assertEquals("98", solutions.get(0).get("C2").toString());
+    }
+
+    // ======================== ISS-2025-0377: open/close raise ISO error/2 terms ========================
+
+    @Test
+    public void testISS0377_OpenNonexistentRaisesExistenceError() throws Exception {
+        java.io.File missing = java.io.File.createTempFile("iss0377_gone", ".txt");
+        assertTrue(missing.delete());
+        List<Map<String, Term>> solutions = prolog.solve(
+            "catch(open('" + missing.getAbsolutePath() + "', read, _S), "
+            + "error(existence_error(source_sink, F), _), true).");
+        assertEquals("ISO existence_error(source_sink, F) pattern must match", 1, solutions.size());
+        assertEquals(missing.getAbsolutePath(), solutions.get(0).get("F").toString());
+    }
+
+    @Test
+    public void testISS0377_OpenInvalidModeRaisesDomainError() {
+        assertEquals(1, prolog.solve(
+            "catch(open('/tmp/iss0377_any.txt', frobnicate, _S), error(domain_error(io_mode, frobnicate), _), true).").size());
+    }
+
+    @Test
+    public void testISS0377_CloseErrorsAreISO() {
+        assertEquals("close of an unknown alias is existence_error(stream, S)", 1, prolog.solve(
+            "catch(close(no_such_stream_iss0377), error(existence_error(stream, no_such_stream_iss0377), _), true).").size());
+        assertEquals("close of a non-stream term is domain_error(stream_or_alias, S)", 1, prolog.solve(
+            "catch(close(7), error(domain_error(stream_or_alias, 7), _), true).").size());
+        assertEquals("close of an unbound variable is instantiation_error", 1, prolog.solve(
+            "catch(close(_S), error(instantiation_error, _), true).").size());
+    }
+
+    // ======================== ISS-2025-0378: print/1 and print/2 ========================
+
+    @Test
+    public void testISS0378_Print1WritesWithNumbervars() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        String out = captureStdout("print(hello), print(' '), print('$VAR'(0)).", solutions);
+        assertEquals("print/1 must succeed", 1, solutions.size());
+        assertEquals("hello A", out);
+    }
+
+    @Test
+    public void testISS0378_Print2WritesToStream() throws Exception {
+        java.io.File f = java.io.File.createTempFile("iss0378_print", ".txt");
+        f.deleteOnExit();
+        List<Map<String, Term>> solutions = prolog.solve(
+            "open('" + f.getAbsolutePath() + "', write, S), print(S, foo(bar)), close(S).");
+        assertEquals("print/2 must succeed", 1, solutions.size());
+        assertEquals("foo(bar)", readWholeFile(f));
+    }
+
+    @Test
+    public void testISS0379_AppendThirdUnboundGivesPartialListAnswer() {
+        // append([1],X,Z) must succeed with Z=[1|X] instead of throwing "unsupported mode"
+        List<Map<String, Term>> solutions = prolog.solve("append([1],X,Z), X = [2,3], Z == [1,2,3].");
+        assertEquals("append/3 with unbound 3rd arg must give Z=[1|X]", 1, solutions.size());
+    }
+
+    @Test
+    public void testISS0379_AppendSecondAndThirdUnbound() {
+        List<Map<String, Term>> solutions = prolog.solve("append([1,2],Y,Z).");
+        assertEquals(1, solutions.size());
+        // Z must be the partial list [1,2|Y]
+        assertEquals(1, prolog.solve("append([1,2],Y,Z), Y = [], Z == [1,2].").size());
+    }
+
+    @Test
+    public void testISS0379_AppendFullyOpenDoesNotThrow() {
+        // Fully-open append(X,Y,Z): the eager builtin protocol cannot enumerate the infinite
+        // relation; it must at least produce the first standard solution X=[], Z=Y without throwing.
+        List<Map<String, Term>> solutions = prolog.solve("append(X,Y,Z), X == [].");
+        assertFalse("append(X,Y,Z) must produce the X=[] solution, not throw", solutions.isEmpty());
+    }
+
+    // ======================== ISS-2025-0380: no unsound success on partial lists ========================
+
+    @Test
+    public void testISS0380_LastClosesPartialListTail() {
+        // last([a|T],X) must bind T=[] (first standard solution), never leave T unconstrained
+        List<Map<String, Term>> solutions = prolog.solve("last([a|T],X), T == [], X == a.");
+        assertEquals("last/2 on a partial list must close the tail with []", 1, solutions.size());
+    }
+
+    @Test
+    public void testISS0380_LastImproperListFails() {
+        assertTrue("last on improper list [a|b] must fail, not truncate",
+            prolog.solve("last([a|b],_X).").isEmpty());
+    }
+
+    @Test
+    public void testISS0380_MaplistClosesPartialListTail() {
+        // maplist(atom,[a,b|T]) must bind T=[] instead of succeeding with T unconstrained
+        List<Map<String, Term>> solutions = prolog.solve("maplist(atom,[a,b|T]), T == [].");
+        assertEquals("maplist/2 on a partial list must close the tail with []", 1, solutions.size());
+    }
+
+    // ======================== ISS-2025-0381: maplist nondeterminism + (-,+) mode ========================
+
+    @Test
+    public void testISS0381_MaplistEnumeratesInnerGoalSolutions() {
+        List<Map<String, Term>> solutions = prolog.solve("maplist(member,[X,Y],[[1,2],[3,4]]).");
+        assertEquals("maplist must be re-satisfiable through the mapped goal", 4, solutions.size());
+    }
+
+    @Test
+    public void testISS0381_MaplistDoesNotCommitToFirstElementSolution() {
+        // X=2 satisfies both member(X,[1,2]) and member(X,[2]); the old first-solution
+        // commitment (X=1 from the first element) made this fail unsoundly
+        List<Map<String, Term>> solutions = prolog.solve("maplist(member,[X,X],[[1,2],[2]]).");
+        assertEquals(1, solutions.size());
+        assertEquals("2", solutions.get(0).get("X").toString());
+    }
+
+    @Test
+    public void testISS0381_MaplistDerivesLengthFromSecondList() {
+        // (-,+) mode: length comes from the second (proper) list
+        List<Map<String, Term>> solutions = prolog.solve("maplist(succ,X,[2,3]), X == [1,2].");
+        assertEquals("maplist(succ,X,[2,3]) must give X=[1,2]", 1, solutions.size());
+    }
+
+    // ======================== ISS-2025-0382: bagof/setof fresh copies per solution ========================
+
+    @Test
+    public void testISS0382_BagofResultHoldsFreshCopies() {
+        // ISO 8.10.2: each collected element is a renamed-apart instance, so the two
+        // W occurrences in the result are DISTINCT fresh variables
+        List<Map<String, Term>> solutions = prolog.solve(
+            "bagof(f(X,W),member(X,[1,2]),L), L = [f(1,a),f(2,b)].");
+        assertEquals("result list vars must be independently bindable", 1, solutions.size());
+    }
+
+    @Test
+    public void testISS0382_BagofResultDoesNotAliasCallerVariable() {
+        // Binding list elements must NOT propagate back to the caller's template variable W
+        List<Map<String, Term>> solutions = prolog.solve(
+            "bagof(f(X,W),member(X,[1,2]),L), L = [f(1,a),f(2,a)], W == a.");
+        assertTrue("W must stay unbound after binding the collected copies", solutions.isEmpty());
+    }
+
+    @Test
+    public void testISS0382_SetofResultNotRewrittenByLaterBinding() {
+        // The collected instance of Y is a fresh variable; binding Y afterwards must not
+        // retroactively rewrite the setof result list
+        List<Map<String, Term>> solutions = prolog.solve(
+            "setof(Y,member(X,[1,2]),L), Y = 5, L == [5].");
+        assertTrue("setof result must hold a fresh copy, not the caller's Y", solutions.isEmpty());
+    }
+
+    // ======================== ISS-2025-0383: aggregate_all/3 error transparency ========================
+
+    @Test
+    public void testISS0383_AggregateAllPropagatesISOErrorBall() {
+        // The error(type_error(evaluable,a/0),_) ball raised inside the goal must escape
+        // aggregate_all/3 unchanged and be caught by a matching catch/3
+        List<Map<String, Term>> solutions = prolog.solve(
+            "catch(aggregate_all(count,(member(X,[1,2]),X>a),_N),error(type_error(T,_),_),true).");
+        assertEquals(1, solutions.size());
+        assertEquals("evaluable", solutions.get(0).get("T").toString());
+    }
+
+    // ======================== ISS-2025-0384: bagof/setof/aggregate_all callable checks ========================
+
+    @Test
+    public void testISS0384_BagofUnboundGoalInstantiationError() {
+        assertEquals(1, prolog.solve(
+            "catch(bagof(X,_G,_L),error(instantiation_error,_),true).").size());
+    }
+
+    @Test
+    public void testISS0384_SetofUnboundGoalInstantiationError() {
+        assertEquals(1, prolog.solve(
+            "catch(setof(X,_G,_L),error(instantiation_error,_),true).").size());
+    }
+
+    @Test
+    public void testISS0384_BagofExistentialUnboundBodyInstantiationError() {
+        // The body of Y^G is what must be callable (ISO 8.10.2.3)
+        assertEquals(1, prolog.solve(
+            "catch(bagof(X,Y^_G,_L),error(instantiation_error,_),true).").size());
+    }
+
+    @Test
+    public void testISS0384_BagofNonCallableGoalTypeError() {
+        assertEquals(1, prolog.solve(
+            "catch(bagof(X,1,_L),error(type_error(callable,1),_),true).").size());
+    }
+
+    @Test
+    public void testISS0384_AggregateAllUnboundGoalInstantiationError() {
+        // Must raise instantiation_error, never silently answer N = 0
+        assertEquals(1, prolog.solve(
+            "catch(aggregate_all(count,_G,_N),error(instantiation_error,_),true).").size());
+        assertTrue(prolog.solve(
+            "catch(aggregate_all(count,_G,N),error(instantiation_error,_),fail), N == 0.").isEmpty());
+    }
+
+    // ======================== ISS-2025-0385: numlist/3 ISO errors on bad bounds ========================
+
+    @Test
+    public void testISS0385_NumlistUnboundBoundInstantiationError() {
+        assertEquals(1, prolog.solve(
+            "catch(numlist(_X,5,_L),error(instantiation_error,_),true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(numlist(1,_Y,_L),error(instantiation_error,_),true).").size());
+    }
+
+    @Test
+    public void testISS0385_NumlistNonIntegerBoundTypeError() {
+        assertEquals(1, prolog.solve(
+            "catch(numlist(1.5,3,_L),error(type_error(integer,1.5),_),true).").size());
+        assertEquals(1, prolog.solve(
+            "catch(numlist(1,foo,_L),error(type_error(integer,foo),_),true).").size());
+    }
+
+    @Test
+    public void testISS0385_NumlistLowGreaterThanHighStillFailsQuietly() {
+        assertTrue("numlist(1,0,L) is a normal failure, not an error",
+            prolog.solve("numlist(1,0,_L).").isEmpty());
+    }
+
+    // ======================== ISS-2025-0386: inverse modes for reverse/select/permutation ========================
+
+    @Test
+    public void testISS0386_ReverseInverseMode() {
+        List<Map<String, Term>> solutions = prolog.solve("reverse(X,[1,2,3]), X == [3,2,1].");
+        assertEquals("reverse(-,+) must work", 1, solutions.size());
+    }
+
+    @Test
+    public void testISS0386_SelectInsertionMode() {
+        // select(2,L,[1,3]) -> L=[2,1,3] ; L=[1,2,3] ; L=[1,3,2]
+        List<Map<String, Term>> solutions = prolog.solve("select(2,L,[1,3]).");
+        assertEquals("select(+,-,+) must enumerate all insertion positions", 3, solutions.size());
+        assertEquals(1, prolog.solve("select(2,L,[1,3]), L == [1,2,3].").size());
+    }
+
+    @Test
+    public void testISS0386_PermutationInverseMode() {
+        List<Map<String, Term>> solutions = prolog.solve("permutation(P,[1,2]).");
+        assertEquals("permutation(-,+) must enumerate permutations", 2, solutions.size());
+        assertEquals(1, prolog.solve("permutation(P,[1,2]), P == [2,1].").size());
+    }
+
+    @Test
+    public void testISS0387_WriteqSeparatesMergingSymbolicTokens() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        assertEquals("-(1) is a compound, not the integer -1", "- 1", captureStdout("writeq(-(1)).", solutions));
+        solutions.clear();
+        assertEquals("1--1 re-tokenizes as the atom '--'", "1- -1", captureStdout("X = 1 - -1, writeq(X).", solutions));
+        solutions.clear();
+        assertEquals("- -a", captureStdout("writeq(- -a).", solutions));
+        solutions.clear();
+        assertEquals("2^ -1", captureStdout("writeq(2^ -1).", solutions));
+        solutions.clear();
+        assertEquals("- - -", captureStdout("writeq(-(-,-)).", solutions));
+    }
+
+    @Test
+    public void testISS0387_WriteqOutputReReadsToSameTerm() {
+        // Round-trip through JProlog's own parser: writeq output must denote the same term.
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        String out = captureStdout("X = 1 - -1, writeq(X).", solutions);
+        List<Map<String, Term>> s = prolog.solve("Y = " + out + ", Y == 1 - -1.");
+        assertEquals("'" + out + "' must re-read as 1 - -1", 1, s.size());
+
+        solutions.clear();
+        out = captureStdout("writeq(-(1)).", solutions);
+        s = prolog.solve("Y = " + out + ", Y == -(1), \\+ integer(Y).");
+        assertEquals("'" + out + "' must re-read as the compound -(1)", 1, s.size());
+    }
+    // END_CHANGE: ISS-2025-0387
+
+    // ======================== ISS-2025-0388: writeq quoting of ',' '.' and comment openers ========================
+
+    // START_CHANGE: ISS-2025-0388 - writeq must quote ',' '.' and comment-opening symbolic atoms
+    @Test
+    public void testISS0388_WriteqQuotesCommaDotAndCommentOpener() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        assertEquals("',' is a solo char, not an atom token", "f(',')", captureStdout("writeq(f(',')).", solutions));
+        solutions.clear();
+        assertEquals("a solo '.' forms the end token", "a+'.'", captureStdout("writeq(a+'.').", solutions));
+        solutions.clear();
+        assertEquals("unquoted /* opens a block comment", "'/*'", captureStdout("writeq('/*').", solutions));
+        solutions.clear();
+        // the genuine ','/2 control operator must STAY a bare comma
+        assertEquals("a,b", captureStdout("writeq((a,b)).", solutions));
+        solutions.clear();
+        assertEquals("[a,',']", captureStdout("writeq([a,',']).", solutions));
+    }
+    // END_CHANGE: ISS-2025-0388
+
+    // ======================== ISS-2025-0389: write/writeq render '$VAR'(N) (numbervars) ========================
+
+    // START_CHANGE: ISS-2025-0389 - ISO 8.14.2: write/1 and writeq/1 imply numbervars(true)
+    @Test
+    public void testISS0389_NumbervarsRenderedByWriteAndWriteq() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        assertEquals("A", captureStdout("writeq('$VAR'(0)).", solutions));
+        solutions.clear();
+        assertEquals("Z", captureStdout("writeq('$VAR'(25)).", solutions));
+        solutions.clear();
+        assertEquals("Z1", captureStdout("writeq('$VAR'(51)).", solutions));
+        solutions.clear();
+        assertEquals("B", captureStdout("write('$VAR'(1)).", solutions));
+        solutions.clear();
+        assertEquals("A", captureStdout("format('~w', ['$VAR'(0)]).", solutions));
+        solutions.clear();
+        assertEquals("A", captureStdout("format('~q', ['$VAR'(0)]).", solutions));
+    }
+    // END_CHANGE: ISS-2025-0389
+
+    // ======================== ISS-2025-0390: float writing (lowercase 'e', inf/nan) ========================
+
+    // START_CHANGE: ISS-2025-0390 - ISO 6.4.5 float syntax: lowercase exponent; inf/-inf/nan spellings
+    @Test
+    public void testISS0390_FloatExponentLowercaseAndInfNan() {
+        List<Map<String, Term>> solutions = new java.util.ArrayList<>();
+        assertEquals("1.0e10", captureStdout("writeq(1.0e10).", solutions));
+        solutions.clear();
+        assertEquals("1.0e-6", captureStdout("writeq(0.000001).", solutions));
+        solutions.clear();
+        assertEquals("inf", captureStdout("X is inf, writeq(X).", solutions));
+        solutions.clear();
+        assertEquals("-inf", captureStdout("X is -inf, writeq(X).", solutions));
+        solutions.clear();
+        assertEquals("nan", captureStdout("X is nan, writeq(X).", solutions));
+        // Direct checks on the single source of the rendering (Java's 'Infinity'/'NaN'
+        // re-read as fresh VARIABLES, silently changing the term).
+        assertEquals("inf", new Number(Double.POSITIVE_INFINITY, false).toString());
+        assertEquals("-inf", new Number(Double.NEGATIVE_INFINITY, false).toString());
+        assertEquals("nan", new Number(Double.NaN, false).toString());
+        assertEquals("2.0e100", new Number(2.0e100, false).toString());
+    }
+    // END_CHANGE: ISS-2025-0390
+
+    // ======================== ISS-2025-0391: phrase/2,3 applies the full DCG body translation ========================
+
+    // START_CHANGE: ISS-2025-0391 - control constructs and terminal lists as phrase bodies
+    @Test
+    public void testISS0391_PhraseTranslatesControlConstructs() {
+        prolog.consult("pa0391 --> [a].\npb0391 --> [b].");
+        assertEquals("(A,B) body", 1, prolog.solve("phrase((pa0391, pb0391), [a, b]).").size());
+        assertEquals("(A;B) body", 1, prolog.solve("phrase((pa0391 ; pb0391), [b]).").size());
+        assertEquals("terminal-list body", 1, prolog.solve("phrase([a, b], [a, b]).").size());
+        assertEquals("[] body", 1, prolog.solve("phrase([], []).").size());
+        assertEquals("! body", 1, prolog.solve("phrase(!, []).").size());
+        assertEquals("{G} body", 1, prolog.solve("phrase({true}, []).").size());
+        assertEquals("(A->B) body", 1, prolog.solve("phrase((pa0391 -> pb0391), [a, b]).").size());
+    }
+
+    @Test
+    public void testISS0391_PhraseNegationBodyIsZeroWidth() {
+        prolog.consult("pa0391b --> [a].");
+        List<Map<String, Term>> s = prolog.solve("phrase(\\+ pa0391b, [b], R).");
+        assertEquals(1, s.size());
+        assertEquals("\\+ is zero-width: the rest is the whole input", "[b]", s.get(0).get("R").toString());
+        assertTrue(prolog.solve("phrase(\\+ pa0391b, [a], _).").isEmpty());
+    }
+    // END_CHANGE: ISS-2025-0391
+
+    // ======================== ISS-2025-0392: non-list head push-back ========================
+
+    // START_CHANGE: ISS-2025-0392 - variable push-back rejected; string push-back becomes codes
+    @Test
+    public void testISS0392_VariablePushbackIsLoadError() {
+        Prolog.CompilationResult r = prolog.consultWithDiagnostics(
+            "vp0392, X --> [a], {X = [q]}.", "iss0392.pl");
+        assertFalse("variable push-back must be rejected (instantiation_error), "
+            + "not silently drop unconsumed input", r.success);
+    }
+
+    @Test
+    public void testISS0392_StringPushbackConvertsToCodes() {
+        prolog.consult("sp0392, \"x\" --> [a].");
+        List<Map<String, Term>> s = prolog.solve("phrase(sp0392, [a], R).");
+        assertEquals(1, s.size());
+        assertEquals("\"x\" push-back must become its code list", "[120]", s.get(0).get("R").toString());
+    }
+    // END_CHANGE: ISS-2025-0392
+
+    // ======================== ISS-2025-0393: partial terminal list in a DCG body ========================
+
+    // START_CHANGE: ISS-2025-0393 - [a|T] terminal must error, not silently mean [a]
+    @Test
+    public void testISS0393_PartialTerminalListIsLoadError() {
+        Prolog.CompilationResult r = prolog.consultWithDiagnostics("pt0393 --> [a|_X].", "iss0393.pl");
+        assertFalse("[a|_] terminal must raise instantiation_error at translation time", r.success);
+        Prolog.CompilationResult r2 = prolog.consultWithDiagnostics("pt0393b --> [a|b].", "iss0393.pl");
+        assertFalse("[a|b] terminal must raise type_error(list, ...)", r2.success);
+    }
+    // END_CHANGE: ISS-2025-0393
+
+    // ======================== ISS-2025-0394: phrase/2,3 ISO error clauses ========================
+
+    // START_CHANGE: ISS-2025-0394 - type_error(list, L) / type_error(callable, B) instead of silent failure
+    @Test
+    public void testISS0394_PhraseRaisesTypeErrors() {
+        prolog.consult("pa0394 --> [a].");
+        List<Map<String, Term>> s = prolog.solve(
+            "catch(phrase(pa0394, foo), error(type_error(list, foo), _), true).");
+        assertEquals("non-list input must raise type_error(list, foo)", 1, s.size());
+        s = prolog.solve(
+            "catch(phrase(123, [a]), error(type_error(callable, 123), _), true).");
+        assertEquals("non-callable body must raise type_error(callable, 123)", 1, s.size());
+    }
+
+    @Test
+    public void testISS0394_PhraseStillAcceptsVarAndPartialLists() {
+        prolog.consult("pa0394b --> [a].");
+        // generation mode and partial-list input must stay legal (no over-eager type checks)
+        assertEquals(1, prolog.solve("phrase(pa0394b, L).").size());
+        assertEquals(1, prolog.solve("phrase(pa0394b, [a|T]).").size());
+    }
+    // END_CHANGE: ISS-2025-0394
 }

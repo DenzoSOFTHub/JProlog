@@ -44,6 +44,14 @@ public class Open implements BuiltIn {
         String filename = ((Atom) fileTerm).getName();
         String mode = ((Atom) modeTerm).getName();
 
+        // START_CHANGE: ISS-2025-0377 - an invalid mode is the ISO error(domain_error(io_mode, Mode), _)
+        // (8.11.5.3) instead of an uncaught IllegalArgumentException out of StreamManager.openStream.
+        if (!"read".equals(mode) && !"write".equals(mode) && !"append".equals(mode)) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.domainError("io_mode", modeTerm, "open/" + arity));
+        }
+        // END_CHANGE: ISS-2025-0377
+
         // START_CHANGE: R3 - parse all open/4 options
         String aliasName = null;
         String typeOpt = null;
@@ -106,8 +114,22 @@ public class Open implements BuiltIn {
                 StreamManager.closeStream(streamAlias);
                 return false;
             }
+        // START_CHANGE: ISS-2025-0377 - raise ISO error/2 terms (8.11.5.3) instead of plain-atom balls:
+        // a missing source file is error(existence_error(source_sink, F), _); any other open failure
+        // (e.g. access denied, unwritable target) is error(permission_error(open, source_sink, F), _);
+        // an invalid mode is error(domain_error(io_mode, Mode), _).
+        } catch (java.io.FileNotFoundException e) {
+            String ctx = "open/" + arity;
+            if ("read".equals(mode) && !new java.io.File(filename).exists()) {
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.existenceError("source_sink", fileTerm, ctx));
+            }
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.permissionError("open", "source_sink", fileTerm, ctx));
         } catch (IOException e) {
-            throw new PrologEvaluationException("open: Failed to open file '" + filename + "': " + e.getMessage());
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.permissionError("open", "source_sink", fileTerm, "open/" + arity));
         }
+        // END_CHANGE: ISS-2025-0377
     }
 }

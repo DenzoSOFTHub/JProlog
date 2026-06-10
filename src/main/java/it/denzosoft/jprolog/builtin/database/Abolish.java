@@ -80,6 +80,11 @@ public class Abolish implements BuiltInWithContext {
             throw new PrologException(createTypeError("predicate_indicator", predicateIndicator, "abolish/1: argument must be Functor/Arity"));
         }
         
+        // START_CHANGE: ISS-2025-0367 - ISO 8.9.4.3: abolishing a built-in procedure raises
+        // permission_error(modify, static_procedure, Name/Arity) instead of silently succeeding.
+        DatabaseValidation.checkProcedureAccess(solver, functor, arity, "modify", "static_procedure", "abolish/1");
+        // END_CHANGE: ISS-2025-0367
+
         try {
             // Remove all clauses for the predicate
             Prolog prolog = solver.getPrologContext();

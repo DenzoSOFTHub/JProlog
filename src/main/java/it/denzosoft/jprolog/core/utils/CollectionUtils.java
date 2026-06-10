@@ -1,5 +1,8 @@
 package it.denzosoft.jprolog.core.utils;
 
+// START_CHANGE: ISS-2025-0384 - ISO error terms for non-callable goals
+import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
+// END_CHANGE: ISS-2025-0384
 import it.denzosoft.jprolog.builtin.list.Sort;
 import it.denzosoft.jprolog.core.engine.CutStatus;
 import it.denzosoft.jprolog.core.engine.QuerySolver;
@@ -61,6 +64,17 @@ public final class CollectionUtils {
         boolean isFindall = "findall".equals(collectorType);
         boolean isSetof = "setof".equals(collectorType);
 
+        // START_CHANGE: ISS-2025-0384 - ISO 8.10.1.3/8.10.2.3/8.10.3.3: Goal (after stripping
+        // ^/2 quantifiers) must be callable: instantiation_error when unbound, type_error(callable)
+        // when it is neither an atom nor a compound term.
+        if (goal instanceof Variable) {
+            throw new PrologException(ISOErrorTerms.instantiationError(collectorType + "/3"));
+        }
+        if (!(goal instanceof Atom) && !(goal instanceof CompoundTerm)) {
+            throw new PrologException(ISOErrorTerms.typeError("callable", goal, collectorType + "/3"));
+        }
+        // END_CHANGE: ISS-2025-0384
+
         List<Map<String, Term>> tempSolutions = new ArrayList<>();
         try {
             querySolver.solve(goal, bindings, tempSolutions, CutStatus.notOccurred());
@@ -76,7 +90,7 @@ public final class CollectionUtils {
         if (isFindall) {
             List<Term> collected = new ArrayList<>();
             for (Map<String, Term> sol : tempSolutions) {
-                collected.add(template.copy().resolveBindings(sol));
+                collected.add(collectInstance(template, sol));
             }
             Map<String, Term> newBindings = new HashMap<>(bindings);
             if (listVariable.unify(createListTerm(collected), newBindings)) {
@@ -104,7 +118,7 @@ public final class CollectionUtils {
             // No grouping needed — one solution
             List<Term> collected = new ArrayList<>();
             for (Map<String, Term> sol : tempSolutions) {
-                collected.add(template.copy().resolveBindings(sol));
+                collected.add(collectInstance(template, sol));
             }
             if (isSetof) collected = sortAndDedup(collected);
             Map<String, Term> newBindings = new HashMap<>(bindings);
@@ -130,7 +144,7 @@ public final class CollectionUtils {
             }
             String key = sig.toString();
             groups.computeIfAbsent(key, k -> new ArrayList<>())
-                  .add(template.copy().resolveBindings(sol));
+                  .add(collectInstance(template, sol));
             groupWitness.putIfAbsent(key, witness);
         }
 
@@ -159,6 +173,35 @@ public final class CollectionUtils {
         return any;
         // END_CHANGE: ISS-2025-0196
     }
+
+    // START_CHANGE: ISS-2025-0382 - collected instances must be renamed-apart copies (ISO 8.10.x:
+    // findall/bagof/setof collect *instances* of the template; variables left unbound by a solution
+    // must come out as fresh variables, never as aliases of the caller's template variables).
+    // Variable.copy() preserves the name and binding maps are name-keyed, so a plain copy aliases
+    // the caller's variables; rename them apart with a per-instance unique prefix (mirrors the v2
+    // engine's native findall renaming in MachineSolver).
+    private static final java.util.concurrent.atomic.AtomicInteger RENAME_COUNTER =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    private static Term collectInstance(Term template, Map<String, Term> sol) {
+        Term instance = template.copy().resolveBindings(sol);
+        return renameApart(instance, RENAME_COUNTER.getAndIncrement(), new HashMap<>());
+    }
+
+    private static Term renameApart(Term t, int id, Map<String, Variable> map) {
+        if (t instanceof Variable) {
+            String name = ((Variable) t).getName();
+            return map.computeIfAbsent(name, nm -> new Variable("_C" + id + "_" + nm));
+        }
+        if (t instanceof CompoundTerm) {
+            CompoundTerm ct = (CompoundTerm) t;
+            List<Term> args = new ArrayList<>(ct.getArguments().size());
+            for (Term a : ct.getArguments()) args.add(renameApart(a, id, map));
+            return new CompoundTerm(new Atom(ct.getName()), args);
+        }
+        return t;
+    }
+    // END_CHANGE: ISS-2025-0382
 
     // START_CHANGE: ISS-2025-0195 - sort+dedup helper for setof/3
     private static List<Term> sortAndDedup(List<Term> in) {

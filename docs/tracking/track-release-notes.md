@@ -1,5 +1,33 @@
 # JProlog - Release Notes
 
+## Release 3.5.0 - 2026-06-10
+
+### ISO-conformance sweep — 53 confirmed defects fixed
+
+A multi-agent empirical audit (13 domain finders running ISO-conformance queries, adversarial
+verification of every finding: 98 confirmed of 111 unique) followed by two fix waves.
+**866/866 JUnit tests, 20/20 example programs.**
+
+Highlights (full list: CHANGELOG.md [3.5.0], ISS-2025-0342..0394 in track-issues.md):
+- **Engine soundness**: local cut in `(->)/2`/`\+/1` conditions; catch/3 frame lifecycle;
+  `existence_error` for undefined procedures per the `unknown` flag; working `halt`;
+  `throw(unbound)` → `instantiation_error`; KnowledgeBase retract/index desync fixed.
+- **CLP(FD) soundness**: unification respects domains; posts undone on backtracking; singleton
+  domains bind; multi-variable `#\=`.
+- **Strings**: `"abc" == "abc"` finally true; consistent standard order; `atomic/1`.
+- **Sorting/lists**: keysort/sort/msort ISO modes+errors; proper lists with var elements accepted;
+  maplist re-satisfiable; bagof/setof fresh copies; inverse modes for reverse/select/permutation.
+- **Arithmetic**: float overflow/NaN → ISO evaluation_errors; big-integer text conversions exact.
+- **I/O**: format/read_term/write_term succeed as goals; stream-argument forms (`write/2`, `nl/1`,
+  `put_char/2`, `get_code/2`, `peek_char/2`, ...); working `set_input/set_output`; ISO stream
+  errors; `print/1,2`.
+- **Writer/DCG**: writeq round-trips (token merging, quoting, numbervars, float syntax);
+  phrase/2,3 full body translation; DCG push-back/terminal validation.
+
+Behavior changes: undefined procedures throw by default (set `unknown` flag to `fail` for old
+behavior); `halt/1` exits the CLI; stricter ISO errors replace silent failures in several
+built-ins. New limitations: LIM-026..LIM-030. Open findings: ISS-2025-0395 roll-up.
+
 ## Release 3.4.0 - 2026-06-09
 
 ### Production hardening (sandbox, resource budget, robustness, correctness)

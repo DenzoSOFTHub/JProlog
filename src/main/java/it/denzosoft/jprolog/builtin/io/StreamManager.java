@@ -41,7 +41,11 @@ public class StreamManager {
         if (is == null) return null;
         String enc = getProperty(alias, PROP_ENCODING);
         java.nio.charset.Charset cs = resolveCharset(enc);
-        java.io.Reader nr = new java.io.InputStreamReader(is, cs);
+        // START_CHANGE: ISS-2025-0376 - wrap in a PushbackReader so peek_char/2 and peek_code/2 can
+        // look ahead without consuming; get_char/2 reads through the same reader, keeping peek+get
+        // on the same stream consistent. Buffer of 2 chars covers surrogate pairs.
+        java.io.Reader nr = new java.io.PushbackReader(new java.io.InputStreamReader(is, cs), 2);
+        // END_CHANGE: ISS-2025-0376
         READERS.put(alias, nr);
         return nr;
     }
@@ -82,10 +86,55 @@ public class StreamManager {
         java.io.PrintStream tl = THREAD_OUTPUT.get();
         if (tl != null) return tl;
         if (currentOutputStream == null || "user_output".equals(currentOutputStream)) return System.out;
-        Object s = OUTPUT_STREAMS.get(currentOutputStream);
-        return (s instanceof java.io.PrintStream) ? (java.io.PrintStream) s : System.out;
+        // START_CHANGE: ISS-2025-0375 - openStream stores a raw FileOutputStream, which the previous
+        // "instanceof PrintStream" check rejected, silently falling back to System.out and making
+        // set_output/1 a no-op. Wrap non-PrintStream output streams in a cached PrintStream instead.
+        OutputStream s = OUTPUT_STREAMS.get(currentOutputStream);
+        if (s == null) return System.out;
+        if (s instanceof java.io.PrintStream) return (java.io.PrintStream) s;
+        return printWrapper(currentOutputStream, s);
+        // END_CHANGE: ISS-2025-0375
     }
     // END_CHANGE: ISS-2025-0327
+
+    // START_CHANGE: ISS-2025-0375 - cached PrintStream wrappers around raw file OutputStreams.
+    // OUTPUT_STREAMS keeps the raw FileOutputStream (seek/4, stream positioning and reposition
+    // detection rely on "instanceof FileOutputStream"); writers obtain a per-alias PrintStream view.
+    private static final Map<String, java.io.PrintStream> PRINT_WRAPPERS = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static java.io.PrintStream printWrapper(String alias, OutputStream os) {
+        java.io.PrintStream cached = PRINT_WRAPPERS.get(alias);
+        if (cached != null) return cached;
+        java.io.PrintStream ps = new java.io.PrintStream(os, true);
+        PRINT_WRAPPERS.put(alias, ps);
+        return ps;
+    }
+    // END_CHANGE: ISS-2025-0375
+
+    // START_CHANGE: ISS-2025-0373 - shared stream-argument dispatch for the output predicates
+    // (write/2, writeln/2, nl/1, put_char/2, tab/2, write_term/3, print/2, format/3).
+    /**
+     * Resolve a stream alias to a writable PrintStream.
+     * {@code current_output} (or null) follows the current output stream; {@code user_output} and
+     * {@code user_error} map to the live System streams (honouring the thread-local override);
+     * any other alias is looked up in the open output streams.
+     *
+     * @param alias the stream alias, or null for the current output
+     * @return the PrintStream, or null if the alias names no open output stream
+     */
+    public static java.io.PrintStream resolveOutput(String alias) {
+        if (alias == null || "current_output".equals(alias)) return out();
+        if ("user_output".equals(alias)) {
+            java.io.PrintStream tl = THREAD_OUTPUT.get();
+            return (tl != null) ? tl : System.out;
+        }
+        if ("user_error".equals(alias)) return System.err;
+        OutputStream s = OUTPUT_STREAMS.get(alias);
+        if (s == null) return null;
+        if (s instanceof java.io.PrintStream) return (java.io.PrintStream) s;
+        return printWrapper(alias, s);
+    }
+    // END_CHANGE: ISS-2025-0373
 
     static {
         // Initialize standard streams
@@ -167,7 +216,19 @@ public class StreamManager {
             STREAM_PROPS.remove(a);
             INPUT_STREAMS.remove(a);
             OUTPUT_STREAMS.remove(a);
+            // START_CHANGE: ISS-2025-0375 - flush and drop the cached PrintStream wrapper
+            java.io.PrintStream wrapper = PRINT_WRAPPERS.remove(a);
+            if (wrapper != null) wrapper.flush();
+            // END_CHANGE: ISS-2025-0375
         }
+        // START_CHANGE: ISS-2025-0375 - closing the current output/input stream reverts to the user streams
+        if (tos != null && aliases.contains(currentOutputStream)) {
+            currentOutputStream = "user_output";
+        }
+        if (tis != null && aliases.contains(currentInputStream)) {
+            currentInputStream = "user_input";
+        }
+        // END_CHANGE: ISS-2025-0375
         boolean closed = false;
         try {
             if (tis != null && tis != System.in) { tis.close(); closed = true; }
@@ -195,6 +256,9 @@ public class StreamManager {
     // START_CHANGE: Round5 final - allow temp replace of output stream (for portray hook capture)
     public static void setOutputStreamRaw(String streamAlias, OutputStream stream) {
         OUTPUT_STREAMS.put(streamAlias, stream);
+        // START_CHANGE: ISS-2025-0375 - drop any stale PrintStream wrapper over the replaced stream
+        PRINT_WRAPPERS.remove(streamAlias);
+        // END_CHANGE: ISS-2025-0375
     }
     // END_CHANGE: Round5 final
     

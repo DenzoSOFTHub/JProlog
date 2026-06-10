@@ -80,7 +80,20 @@ public final class TermFormatter {
                             int prec = op.getPrecedence();
                             String l = format(args.get(0), quoted, ignoreOps, numbervars, op.getLeftPrecedence(), opTable);
                             String r = format(args.get(1), quoted, ignoreOps, numbervars, op.getRightPrecedence(), opTable);
-                            String body = l + opSpace(name) + atomOrName(name, quoted) + opSpace(name) + r;
+                            // START_CHANGE: ISS-2025-0387 - insert a space where adjacent symbolic
+                            // tokens would merge on re-read (1 - -1 must not print as 1--1); the
+                            // ','/2 control operator stays a bare comma (never quoted/spaced).
+                            String body;
+                            if (",".equals(name)) {
+                                body = l + "," + r;
+                            } else {
+                                String opTok = atomOrName(name, quoted);
+                                String sep = opSpace(name);
+                                String sepL = !sep.isEmpty() ? sep : (needsTokenSep(l, opTok) ? " " : "");
+                                String sepR = !sep.isEmpty() ? sep : (needsTokenSep(opTok, r) ? " " : "");
+                                body = l + sepL + opTok + sepR + r;
+                            }
+                            // END_CHANGE: ISS-2025-0387
                             return prec > contextPrec ? "(" + body + ")" : body;
                         }
                     } else if (args.size() == 1) {
@@ -88,14 +101,30 @@ public final class TermFormatter {
                         if (pre != null) {
                             int prec = pre.getPrecedence();
                             String inner = format(args.get(0), quoted, ignoreOps, numbervars, pre.getRightPrecedence(), opTable);
-                            String body = atomOrName(name, quoted) + opSpace(name) + inner;
+                            // START_CHANGE: ISS-2025-0387 - a symbolic prefix operator must not glue
+                            // to its operand: -(1) is "- 1" (plain -1 re-reads as the integer) and
+                            // - -a is "- -a" (--a is one symbolic token under maximal munch).
+                            String opTok = atomOrName(name, quoted);
+                            String sep = opSpace(name);
+                            if (sep.isEmpty()
+                                    && (needsTokenSep(opTok, inner)
+                                        || (args.get(0) instanceof Number && endsSymbolic(opTok)))) {
+                                sep = " ";
+                            }
+                            String body = opTok + sep + inner;
+                            // END_CHANGE: ISS-2025-0387
                             return prec > contextPrec ? "(" + body + ")" : body;
                         }
                         Operator post = opTable.getPostfixOperator(name);
                         if (post != null) {
                             int prec = post.getPrecedence();
                             String inner = format(args.get(0), quoted, ignoreOps, numbervars, post.getLeftPrecedence(), opTable);
-                            String body = inner + opSpace(name) + atomOrName(name, quoted);
+                            // START_CHANGE: ISS-2025-0387 - same adjacency guard for postfix
+                            String opTok = atomOrName(name, quoted);
+                            String sep = opSpace(name);
+                            if (sep.isEmpty() && needsTokenSep(inner, opTok)) sep = " ";
+                            String body = inner + sep + opTok;
+                            // END_CHANGE: ISS-2025-0387
                             return prec > contextPrec ? "(" + body + ")" : body;
                         }
                     }
@@ -145,6 +174,18 @@ public final class TermFormatter {
         return "";
     }
 
+    // START_CHANGE: ISS-2025-0387 - token-adjacency helpers: two consecutive symbolic runs would be
+    // re-tokenized as a single symbolic atom (maximal munch), so a separating space is required.
+    private static boolean needsTokenSep(String left, String right) {
+        if (left.isEmpty() || right.isEmpty()) return false;
+        return isSymbolic(left.charAt(left.length() - 1)) && isSymbolic(right.charAt(0));
+    }
+
+    private static boolean endsSymbolic(String tok) {
+        return !tok.isEmpty() && isSymbolic(tok.charAt(tok.length() - 1));
+    }
+    // END_CHANGE: ISS-2025-0387
+
     private static String atomOrName(String name, boolean quoted) {
         if (!quoted) return name;
         return needsQuoting(name) ? quoteAtom(name) : name;
@@ -153,7 +194,12 @@ public final class TermFormatter {
     /** Atom needs quoting if not simple lowercase identifier and not a recognized symbolic operator atom. */
     public static boolean needsQuoting(String name) {
         if (name == null || name.isEmpty()) return true;
-        if ("[]".equals(name) || "{}".equals(name) || ",".equals(name) || ";".equals(name) || "!".equals(name)) return false;
+        // START_CHANGE: ISS-2025-0388 - ',' is a solo char (not an atom token) and a solo '.' forms
+        // the end token before layout, so both must be quoted; the ','/2 operator rendering carves
+        // out the bare comma explicitly in the infix path.
+        if ("[]".equals(name) || "{}".equals(name) || ";".equals(name) || "!".equals(name)) return false;
+        if (",".equals(name) || ".".equals(name)) return true;
+        // END_CHANGE: ISS-2025-0388
         char c = name.charAt(0);
         // Lowercase identifier
         if (Character.isLowerCase(c) || c == '_') {
@@ -168,7 +214,10 @@ public final class TermFormatter {
         for (int i = 0; i < name.length(); i++) {
             if (!isSymbolic(name.charAt(i))) { allSym = false; break; }
         }
-        if (allSym) return false;
+        // START_CHANGE: ISS-2025-0388 - an unquoted '/*' opens a block comment: quote any symbolic
+        // atom containing the comment opener so the output stays parseable.
+        if (allSym) return name.contains("/*");
+        // END_CHANGE: ISS-2025-0388
         return true;
     }
 

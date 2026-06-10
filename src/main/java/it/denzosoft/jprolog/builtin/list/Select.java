@@ -62,6 +62,27 @@ public class Select implements BuiltIn {
             
             return found;
         } else {
+            // START_CHANGE: ISS-2025-0386 - insertion mode select(?Elem, -List, +Rest): when the
+            // remainder is a proper list, enumerate the |Rest|+1 positions where Elem can be
+            // inserted to rebuild List (standard SWI/GNU behavior, e.g. select(2,L,[1,3])).
+            Term resolvedRemainder = remainderList.resolveBindings(bindings);
+            if (ListUtils.isProperList(resolvedRemainder)) {
+                List<Term> restElements = ListUtils.extractElements(resolvedRemainder);
+                boolean found = false;
+                for (int i = 0; i <= restElements.size(); i++) {
+                    List<Term> withElement = new ArrayList<>(restElements.size() + 1);
+                    withElement.addAll(restElements.subList(0, i));
+                    withElement.add(element);
+                    withElement.addAll(restElements.subList(i, restElements.size()));
+                    Map<String, Term> newBindings = new HashMap<>(bindings);
+                    if (inputList.unify(ListUtils.createList(withElement), newBindings)) {
+                        solutions.add(newBindings);
+                        found = true;
+                    }
+                }
+                return found;
+            }
+            // END_CHANGE: ISS-2025-0386
             // START_CHANGE: ISS-2025-0079 - Return false instead of throwing for normal failure
             return false;
             // END_CHANGE: ISS-2025-0079

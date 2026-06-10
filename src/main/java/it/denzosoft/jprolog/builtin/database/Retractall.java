@@ -43,7 +43,18 @@ public class Retractall implements BuiltInWithContext {
         if (clauseHead instanceof Variable) {
             throw new PrologException(createInstantiationError("retractall/1: clause head must be instantiated"));
         }
-        
+
+        // START_CHANGE: ISS-2025-0371 - ISO (corr. 2, 8.9.5): a non-callable Head raises
+        // type_error(callable, Head) instead of succeeding silently.
+        if (!(clauseHead instanceof Atom) && !(clauseHead instanceof CompoundTerm)) {
+            throw new PrologException(createTypeError("callable", clauseHead, "retractall/1"));
+        }
+        // END_CHANGE: ISS-2025-0371
+        // START_CHANGE: ISS-2025-0367 - a built-in procedure is static, raise
+        // permission_error(modify, static_procedure, Name/Arity) instead of silently succeeding.
+        DatabaseValidation.checkProcedureAccess(solver, clauseHead, "modify", "static_procedure", "retractall/1");
+        // END_CHANGE: ISS-2025-0367
+
         try {
             // Remove all clauses that match the head
             it.denzosoft.jprolog.core.engine.Prolog prolog = solver.getPrologContext();

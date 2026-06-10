@@ -1,5 +1,9 @@
 package it.denzosoft.jprolog.core.dcg.v2;
 
+// START_CHANGE: ISS-2025-0393 - ISO error terms for invalid terminal sequences
+import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
+// END_CHANGE: ISS-2025-0393
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
@@ -32,7 +36,24 @@ public final class DCGTranslator {
 
     private int counter = 0;
 
-    private Variable fresh() { return new Variable("_S" + (counter++)); }
+    // START_CHANGE: ISS-2025-0391 - configurable fresh-variable prefix so phrase/2,3 can expand
+    // grammar bodies at runtime without the generated names colliding with caller variables.
+    private final String varPrefix;
+
+    public DCGTranslator() { this("_S"); }
+
+    public DCGTranslator(String varPrefix) { this.varPrefix = varPrefix; }
+
+    private Variable fresh() { return new Variable(varPrefix + (counter++)); }
+
+    /**
+     * Translate a grammar BODY threading the difference list {@code s0 -> s}. Public entry point
+     * for phrase/2,3 (and call_dcg/3 style callers), which must apply the FULL body translation
+     * (control constructs, terminal lists, strings, {}/1, !, \+) rather than blindly appending
+     * the two list arguments to any compound.
+     */
+    public Term body(Term b, Term s0, Term s) { return translateBody(b, s0, s); }
+    // END_CHANGE: ISS-2025-0391
 
     /** Is {@code t} a {@code -->/2} grammar rule? */
     public static boolean isDCGRule(Term t) {
@@ -52,6 +73,13 @@ public final class DCGTranslator {
             CompoundTerm h = (CompoundTerm) head;
             Term nt = h.getArguments().get(0);
             Term pushback = h.getArguments().get(1);
+            // START_CHANGE: ISS-2025-0392 - the push-back must be a terminal sequence: convert a
+            // string to its code list (mirroring the body path); a variable or non-list push-back
+            // is rejected inside terminal() instead of silently discarding the body's rest var.
+            if (pushback instanceof PrologString) {
+                pushback = stringToCodes((PrologString) pushback);
+            }
+            // END_CHANGE: ISS-2025-0392
             Variable s1 = fresh();
             Term newHead = addArgs(nt, s0, s);
             Term goal = translateBody(body, s0, s1);
@@ -138,10 +166,21 @@ public final class DCGTranslator {
             elems.add(((CompoundTerm) cur).getArguments().get(0));
             cur = ((CompoundTerm) cur).getArguments().get(1);
         }
-        // cur is the tail; for a proper list it is []. A partial list keeps its tail var.
+        // cur is the tail; for a proper list it is [].
         boolean proper = cur instanceof Atom && "[]".equals(((Atom) cur).getName());
+        // START_CHANGE: ISS-2025-0393 - a terminal sequence must be a PROPER list (ISO 13211-3):
+        // a partial list like [a|T] used to silently drop the tail (the rule then meant [a]) and
+        // a variable/non-list push-back (ISS-2025-0392) discarded the body's rest variable.
+        // Raise instantiation_error / type_error(list, T) at translation time instead.
+        if (!proper) {
+            if (cur instanceof Variable) {
+                throw new PrologException(ISOErrorTerms.instantiationError("dcg_terminal_sequence"));
+            }
+            throw new PrologException(ISOErrorTerms.typeError("list", listTerm, "dcg_terminal_sequence"));
+        }
+        // END_CHANGE: ISS-2025-0393
         if (elems.isEmpty()) {
-            return proper ? unify(s0, s) : unify(s0, cur); // [] -> S0=S ; partial var -> S0=Tail (degenerate)
+            return unify(s0, s);
         }
         Term listWithTail = s;                            // build elems ++ S right-to-left
         for (int i = elems.size() - 1; i >= 0; i--) {

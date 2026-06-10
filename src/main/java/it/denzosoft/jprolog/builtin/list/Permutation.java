@@ -32,7 +32,26 @@ public class Permutation implements BuiltIn {
         // START_CHANGE: ISS-2025-0349 - a list need only be PROPER (closed spine), not ground;
         // unbound elements are valid: permutation([X,b],P) must give two solutions
         if (!ListUtils.isProperList(inputList)) {
-            return false;
+            // START_CHANGE: ISS-2025-0386 - inverse mode permutation(-List, +Permutation): when
+            // the first argument is open but the second is a proper list, permute the second
+            // and unify each permutation with the first (permutation/2 is a pure relation).
+            Term resolvedPerm = permList.resolveBindings(bindings);
+            if (!ListUtils.isProperList(resolvedPerm)) {
+                return false;
+            }
+            List<Term> permElements = ListUtils.extractElements(resolvedPerm);
+            List<List<Term>> permutations = new ArrayList<>();
+            generatePermutations(permElements, 0, permutations);
+            boolean found = false;
+            for (List<Term> perm : permutations) {
+                Map<String, Term> newBindings = new HashMap<>(bindings);
+                if (inputList.unify(ListUtils.createList(perm), newBindings)) {
+                    solutions.add(newBindings);
+                    found = true;
+                }
+            }
+            return found;
+            // END_CHANGE: ISS-2025-0386
         }
         // END_CHANGE: ISS-2025-0349
 

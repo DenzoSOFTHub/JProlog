@@ -45,7 +45,16 @@ public class Retract implements BuiltInWithContext {
         if (clauseHead instanceof Variable) {
             throw new PrologException(createInstantiationError("retract/1: clause head must be instantiated"));
         }
-        
+
+        // START_CHANGE: ISS-2025-0366 - ISO 8.9.3.3: a non-callable clause/head raises
+        // type_error(callable, T); an unbound head inside (Head :- Body) raises instantiation_error.
+        Term checkedHead = DatabaseValidation.checkClauseTerm(clauseHead, "retract/1", false);
+        // END_CHANGE: ISS-2025-0366
+        // START_CHANGE: ISS-2025-0367 - ISO 8.9.3.3: a built-in procedure is static, raise
+        // permission_error(modify, static_procedure, Name/Arity) instead of silently failing.
+        DatabaseValidation.checkProcedureAccess(solver, checkedHead, "modify", "static_procedure", "retract/1");
+        // END_CHANGE: ISS-2025-0367
+
         try {
             // START_CHANGE: ISS-2025-0164 - Non-deterministic retract/1
             // Retract all matching clauses and return each as a separate solution

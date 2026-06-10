@@ -59,11 +59,13 @@ public class NumberCodes implements BuiltIn {
         if (!(numberTerm instanceof Number)) {
             return false; // First argument must be a number
         }
-        
-        double numberValue = ((Number) numberTerm).getValue();
-        String numberStr = formatNumber(numberValue);
+
+        // START_CHANGE: ISS-2025-0365 - format via the Number term (BigInteger-exact for
+        // integers); the old double->(long) cast silently saturated past 64 bits
+        String numberStr = AtomNumber.formatNumberExact((Number) numberTerm);
+        // END_CHANGE: ISS-2025-0365
         Term codesList = buildCodesList(numberStr);
-        
+
         Map<String, Term> newBindings = new HashMap<>(bindings);
         if (codesTerm.unify(codesList, newBindings)) {
             solutions.add(newBindings);
@@ -89,16 +91,22 @@ public class NumberCodes implements BuiltIn {
         }
         
         try {
-            double value = Double.parseDouble(sb.toString());
+            // START_CHANGE: ISS-2025-0365 - all-digit text parses via BigInteger so integers
+            // beyond 64 bits stay exact; floats keep the double path
+            Number value = AtomNumber.parseExactInteger(sb.toString());
+            if (value == null) {
+                value = new Number(Double.parseDouble(sb.toString()));
+            }
             Map<String, Term> newBindings = new HashMap<>(bindings);
-            if (numberTerm.unify(new Number(value), newBindings)) {
+            if (numberTerm.unify(value, newBindings)) {
+            // END_CHANGE: ISS-2025-0365
                 solutions.add(newBindings);
                 return true;
             }
         } catch (NumberFormatException e) {
             return false; // Codes don't form a valid number
         }
-        
+
         return false;
     }
     
@@ -107,15 +115,12 @@ public class NumberCodes implements BuiltIn {
         if (!(numberTerm instanceof Number)) {
             return false;
         }
-        
-        double numberValue = ((Number) numberTerm).getValue();
-        String numberStr = formatNumber(numberValue);
-        
+
         List<Integer> codes = extractCodes(codesTerm);
         if (codes == null) {
             return false;
         }
-        
+
         // Convert codes to string and compare with number string
         StringBuilder sb = new StringBuilder();
         for (int code : codes) {
@@ -125,28 +130,37 @@ public class NumberCodes implements BuiltIn {
             }
             sb.append((char) code);
         }
-        
+
         try {
+            // START_CHANGE: ISS-2025-0365 - compare exactly (BigInteger) when both sides are
+            // integers, so big values are not collapsed through double precision
+            if (AtomNumber.formatNumberExact((Number) numberTerm).equals(sb.toString())) {
+                solutions.add(new HashMap<>(bindings));
+                return true;
+            }
             double codesAsNumber = Double.parseDouble(sb.toString());
+            Number exact = AtomNumber.parseExactInteger(sb.toString());
+            if (exact != null && ((Number) numberTerm).isInteger()) {
+                if (exact.bigIntegerValue().equals(((Number) numberTerm).bigIntegerValue())) {
+                    solutions.add(new HashMap<>(bindings));
+                    return true;
+                }
+                return false;
+            }
+            double numberValue = ((Number) numberTerm).getValue();
             if (Math.abs(numberValue - codesAsNumber) < 1e-10) {
                 solutions.add(new HashMap<>(bindings));
                 return true;
             }
+            // END_CHANGE: ISS-2025-0365
         } catch (NumberFormatException e) {
             return false;
         }
-        
+
         return false;
     }
-    
-    private String formatNumber(double value) {
-        if (value == Math.floor(value) && !Double.isInfinite(value)) {
-            return String.valueOf((long) value);
-        } else {
-            return String.valueOf(value);
-        }
-    }
-    
+
+
     private Term buildCodesList(String str) {
         Term result = new Atom("[]");
         for (int i = str.length() - 1; i >= 0; i--) {

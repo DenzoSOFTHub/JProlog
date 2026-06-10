@@ -14,17 +14,23 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * maplist/2, maplist/3, maplist/4
+ * maplist/2, maplist/3, maplist/4, maplist/5
  *
  * maplist(Goal, List)           - call(Goal, Elem) for each Elem in List
  * maplist(Goal, List1, List2)   - call(Goal, E1, E2) for each pair
  * maplist(Goal, L1, L2, L3)    - call(Goal, E1, E2, E3) for each triple
+ * maplist(Goal, L1, L2, L3, L4) - call(Goal, E1, E2, E3, E4) for each quadruple
  */
 public class MapList implements BuiltInWithContext {
 
     private final QuerySolver querySolver;
+
+    // START_CHANGE: ISS-2025-0381 - Collision-free fresh-variable naming across nested maplist calls
+    private static final AtomicInteger FRESH = new AtomicInteger();
+    // END_CHANGE: ISS-2025-0381
 
     public MapList(QuerySolver querySolver) {
         this.querySolver = querySolver;
@@ -41,165 +47,85 @@ public class MapList implements BuiltInWithContext {
         }
         // END_CHANGE: ISS-2025-0222
 
+        // START_CHANGE: ISS-2025-0381 - Translate maplist/2..5 into ONE conjunction of call/N
+        // goals and solve it once, so that (a) alternative solutions of the mapped goal are
+        // enumerated instead of committing to the first one per element, and (b) the shared
+        // length is derived from ANY proper list argument (fixes maplist(succ, X, [2,3])).
+        // Partial lists are closed soundly ([a,b|T] -> T = []) instead of being silently
+        // truncated to their prefix (ISS-2025-0380).
         Term goal = query.getArguments().get(0).resolveBindings(bindings);
-        Term list1 = query.getArguments().get(1).resolveBindings(bindings);
-
-        if (arity == 2) {
-            return maplist2(solver, goal, list1, bindings, solutions);
-        } else if (arity == 3) {
-            Term list2 = query.getArguments().get(2);
-            return maplist3(solver, goal, list1, list2, bindings, solutions);
-        } else if (arity == 4) {
-            Term list2 = query.getArguments().get(2);
-            Term list3 = query.getArguments().get(3);
-            return maplist4(solver, goal, list1, list2, list3, bindings, solutions);
-        } else {
-            // START_CHANGE: ISS-2025-0222 - maplist/5: Goal applied to 4 lists
-            Term list2 = query.getArguments().get(2);
-            Term list3 = query.getArguments().get(3);
-            Term list4 = query.getArguments().get(4);
-            return maplist5(solver, goal, list1, list2, list3, list4, bindings, solutions);
-            // END_CHANGE: ISS-2025-0222
+        int nLists = arity - 1;
+        Term[] lists = new Term[nLists];
+        for (int k = 0; k < nLists; k++) {
+            lists[k] = query.getArguments().get(k + 1).resolveBindings(bindings);
         }
-    }
 
-    // START_CHANGE: ISS-2025-0222 - maplist/5
-    private boolean maplist5(QuerySolver solver, Term goal, Term list1, Term list2Raw, Term list3Raw, Term list4Raw,
-                             Map<String, Term> bindings,
-                             List<Map<String, Term>> solutions) {
-        List<Term> elems1 = ListUtils.extractElements(list1);
-        List<Term> result2 = new ArrayList<>();
-        List<Term> result3 = new ArrayList<>();
-        List<Term> result4 = new ArrayList<>();
-        Map<String, Term> currentBindings = new HashMap<>(bindings);
+        // Determine the shared length n from the proper list arguments (they must agree).
+        int n = -1;
+        int maxPrefix = 0;
+        for (int k = 0; k < nLists; k++) {
+            List<Term> prefix = new ArrayList<>();
+            Term tail = ListSpine.tail(lists[k], prefix);
+            if (ListUtils.isEmptyList(tail)) {
+                if (n >= 0 && n != prefix.size()) return false;   // proper lists of differing lengths
+                n = prefix.size();
+            } else if (tail instanceof Variable) {
+                maxPrefix = Math.max(maxPrefix, prefix.size());
+            } else {
+                return false;   // improper list, e.g. [a|b]
+            }
+        }
+        if (n == -1) {
+            // No proper list argument: close every open tail at the minimal consistent
+            // length (the first standard solution; longer lists are not enumerable in
+            // the eager builtin protocol).
+            n = maxPrefix;
+        } else if (maxPrefix > n) {
+            return false;   // a partial list is already longer than the proper lists
+        }
 
-        for (int i = 0; i < elems1.size(); i++) {
-            Variable o2 = new Variable("_MapOut2_" + i);
-            Variable o3 = new Variable("_MapOut3_" + i);
-            Variable o4 = new Variable("_MapOut4_" + i);
-            Term callGoal = buildCall(goal, elems1.get(i), o2, o3, o4);
-            List<Map<String, Term>> temp = new ArrayList<>();
-            if (!solver.solve(callGoal, new HashMap<>(currentBindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
+        // Unify every list argument with a template of fresh variables [Vk1,...,Vkn];
+        // this picks up the known elements and closes open tails with [].
+        Map<String, Term> current = new HashMap<>(bindings);
+        Variable[][] vars = new Variable[nLists][n];
+        int id = FRESH.getAndIncrement();
+        for (int k = 0; k < nLists; k++) {
+            List<Term> templateVars = new ArrayList<>(n);
+            for (int i = 0; i < n; i++) {
+                vars[k][i] = new Variable("_ML" + id + "_" + k + "_" + i);
+                templateVars.add(vars[k][i]);
+            }
+            if (!lists[k].unify(ListUtils.createList(templateVars), current)) {
                 return false;
             }
-            currentBindings = new HashMap<>(temp.get(0));
-            result2.add(o2.resolveBindings(currentBindings));
-            result3.add(o3.resolveBindings(currentBindings));
-            result4.add(o4.resolveBindings(currentBindings));
         }
 
-        Map<String, Term> newBindings = new HashMap<>(currentBindings);
-        if (list2Raw.unify(ListUtils.createList(result2), newBindings) &&
-            list3Raw.unify(ListUtils.createList(result3), newBindings) &&
-            list4Raw.unify(ListUtils.createList(result4), newBindings)) {
-            solutions.add(newBindings);
+        if (n == 0) {
+            solutions.add(current);
             return true;
         }
-        return false;
-    }
-    // END_CHANGE: ISS-2025-0222
 
-    private boolean maplist2(QuerySolver solver, Term goal, Term list,
-                             Map<String, Term> bindings,
-                             List<Map<String, Term>> solutions) {
-        List<Term> elements = ListUtils.extractElements(list);
-        Map<String, Term> currentBindings = new HashMap<>(bindings);
-
-        // START_CHANGE: ISS-2025-0184 - Accumulate bindings through iterations
-        for (Term elem : elements) {
-            Term callGoal = buildCall(goal, elem);
-            List<Map<String, Term>> tempSolutions = new ArrayList<>();
-            boolean ok = solver.solve(callGoal, new HashMap<>(currentBindings), tempSolutions, CutStatus.notOccurred());
-            if (!ok || tempSolutions.isEmpty()) {
-                return false;
-            }
-            currentBindings = new HashMap<>(tempSolutions.get(0));
+        // Build call(Goal, V1i, ..., Vki) for each index and chain them with ','/2.
+        Term conjunction = null;
+        for (int i = n - 1; i >= 0; i--) {
+            Term[] extra = new Term[nLists];
+            for (int k = 0; k < nLists; k++) extra[k] = vars[k][i];
+            Term callGoal = buildCall(goal, extra);
+            conjunction = (conjunction == null)
+                    ? callGoal
+                    : new CompoundTerm(new Atom(","), Arrays.asList(callGoal, conjunction));
         }
 
-        solutions.add(currentBindings);
-        return true;
-        // END_CHANGE: ISS-2025-0184
-    }
-
-    private boolean maplist3(QuerySolver solver, Term goal, Term list1, Term list2Raw,
-                             Map<String, Term> bindings,
-                             List<Map<String, Term>> solutions) {
-        List<Term> elems1 = ListUtils.extractElements(list1);
-        Term list2 = list2Raw.resolveBindings(bindings);
-        boolean list2Ground = list2.isGround();
-
-        if (list2Ground) {
-            // START_CHANGE: ISS-2025-0188 - Accumulate bindings through iterations
-            List<Term> elems2 = ListUtils.extractElements(list2);
-            if (elems1.size() != elems2.size()) return false;
-            Map<String, Term> currentBindings = new HashMap<>(bindings);
-            for (int i = 0; i < elems1.size(); i++) {
-                Term callGoal = buildCall(goal, elems1.get(i), elems2.get(i));
-                List<Map<String, Term>> temp = new ArrayList<>();
-                if (!solver.solve(callGoal, new HashMap<>(currentBindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
-                    return false;
-                }
-                currentBindings = new HashMap<>(temp.get(0));
-            }
-            solutions.add(currentBindings);
-            return true;
-            // END_CHANGE: ISS-2025-0188
-        } else {
-            // Generate output list
-            // START_CHANGE: ISS-2025-0188 - Accumulate bindings in non-ground branch
-            List<Term> resultElems = new ArrayList<>();
-            Map<String, Term> currentBindings3 = new HashMap<>(bindings);
-            for (int i = 0; i < elems1.size(); i++) {
-                Variable outVar = new Variable("_MapOut_" + i);
-                Term callGoal = buildCall(goal, elems1.get(i), outVar);
-                List<Map<String, Term>> temp = new ArrayList<>();
-                if (!solver.solve(callGoal, new HashMap<>(currentBindings3), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
-                    return false;
-                }
-                currentBindings3 = new HashMap<>(temp.get(0));
-                resultElems.add(outVar.resolveBindings(currentBindings3));
-            }
-            // END_CHANGE: ISS-2025-0188
-            Term resultList = ListUtils.createList(resultElems);
-            Map<String, Term> newBindings = new HashMap<>(currentBindings3);
-            if (list2Raw.unify(resultList, newBindings)) {
-                solutions.add(newBindings);
-                return true;
-            }
+        List<Map<String, Term>> temp = new ArrayList<>();
+        boolean ok = solver.solve(conjunction, new HashMap<>(current), temp, CutStatus.notOccurred());
+        if (!ok || temp.isEmpty()) {
             return false;
         }
-    }
-
-    private boolean maplist4(QuerySolver solver, Term goal, Term list1, Term list2Raw, Term list3Raw,
-                             Map<String, Term> bindings,
-                             List<Map<String, Term>> solutions) {
-        List<Term> elems1 = ListUtils.extractElements(list1);
-        List<Term> result2 = new ArrayList<>();
-        List<Term> result3 = new ArrayList<>();
-        // START_CHANGE: ISS-2025-0190 - Accumulate bindings through iterations
-        Map<String, Term> currentBindings = new HashMap<>(bindings);
-
-        for (int i = 0; i < elems1.size(); i++) {
-            Variable outVar2 = new Variable("_MapOut2_" + i);
-            Variable outVar3 = new Variable("_MapOut3_" + i);
-            Term callGoal = buildCall(goal, elems1.get(i), outVar2, outVar3);
-            List<Map<String, Term>> temp = new ArrayList<>();
-            if (!solver.solve(callGoal, new HashMap<>(currentBindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
-                return false;
-            }
-            currentBindings = new HashMap<>(temp.get(0));
-            result2.add(outVar2.resolveBindings(currentBindings));
-            result3.add(outVar3.resolveBindings(currentBindings));
+        for (Map<String, Term> sol : temp) {
+            solutions.add(new HashMap<>(sol));
         }
-        // END_CHANGE: ISS-2025-0190
-
-        Map<String, Term> newBindings = new HashMap<>(currentBindings);
-        if (list2Raw.unify(ListUtils.createList(result2), newBindings) &&
-            list3Raw.unify(ListUtils.createList(result3), newBindings)) {
-            solutions.add(newBindings);
-            return true;
-        }
-        return false;
+        return true;
+        // END_CHANGE: ISS-2025-0381
     }
 
     private Term buildCall(Term goal, Term... extraArgs) {

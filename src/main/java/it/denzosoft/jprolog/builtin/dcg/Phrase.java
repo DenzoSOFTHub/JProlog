@@ -57,12 +57,14 @@ public class Phrase extends AbstractBuiltInWithContext {
         // committed to solutionList.get(0), so phrase behaved like once(phrase(...)) and could
         // not enumerate alternative parses / Rest splittings on backtracking. Mirror call/N:
         // solve the expanded DCG goal and propagate every solution to the caller.
-        Term goal;
-        try {
-            goal = createDCGGoal(ruleSet.resolveBindings(bindings), list, rest);
-        } catch (IllegalArgumentException e) {
-            return false;
-        }
+        // START_CHANGE: ISS-2025-0394 - ISO 13211-3 error clauses: type_error(list, L) for a
+        // non-list input/rest, type_error(callable, B) for a non-callable body (raised inside
+        // createDCGGoal) — instead of silently failing / swallowing IllegalArgumentException.
+        String indicator = qargs.size() == 2 ? "phrase/2" : "phrase/3";
+        checkListArgument(list.resolveBindings(bindings), indicator);
+        checkListArgument(rest.resolveBindings(bindings), indicator);
+        Term goal = createDCGGoal(ruleSet.resolveBindings(bindings), list, rest, indicator);
+        // END_CHANGE: ISS-2025-0394
         List<Map<String, Term>> goalSolutions = new ArrayList<>();
         boolean success = solver.solve(goal, new HashMap<>(bindings), goalSolutions, CutStatus.notOccurred());
         if (success) {
@@ -100,8 +102,12 @@ public class Phrase extends AbstractBuiltInWithContext {
     // START_CHANGE: ISS-2025-0190 - Fix destructive bindings modification and exception masking
     private boolean phrase3(Term ruleSet, Term list, Term rest, Map<String, Term> bindings) {
         try {
+            // START_CHANGE: ISS-2025-0394 - same ISO error clauses on the legacy path
+            checkListArgument(list.resolveBindings(bindings), "phrase/3");
+            checkListArgument(rest.resolveBindings(bindings), "phrase/3");
+            // END_CHANGE: ISS-2025-0394
             // Create a goal: RuleSet(List, Rest)
-            Term goal = createDCGGoal(ruleSet, list, rest);
+            Term goal = createDCGGoal(ruleSet, list, rest, "phrase/3");
 
             // Solve the DCG goal using a copy of bindings to avoid destructive modification
             Map<String, Term> solveBindings = new HashMap<>(bindings);
@@ -127,41 +133,58 @@ public class Phrase extends AbstractBuiltInWithContext {
     }
     // END_CHANGE: ISS-2025-0190
     
+    // START_CHANGE: ISS-2025-0391 - phrase/2,3 must apply the FULL grammar-body translation to
+    // its first argument. The old code blindly appended (List, Rest) to ANY compound, producing
+    // nonsense goals like ','(a, b, [a,b], []) — so (A,B), (A;B), (A->B), \+A, !, {G}, terminal
+    // lists [a,b] / [] and strings all silently failed. Route the body through the same
+    // DCGTranslator machinery used for --> rules (a plain atom/compound non-terminal degenerates
+    // to the previous nt(List, Rest) shape).
+    /** Sequence for fresh-variable prefixes so runtime translations never collide with caller variables. */
+    private static final java.util.concurrent.atomic.AtomicLong PHRASE_VAR_SEQ =
+        new java.util.concurrent.atomic.AtomicLong();
+
     /**
-     * Create a DCG goal from the rule set and arguments.
-     * 
-     * @param ruleSet The DCG rule set (non-terminal)
+     * Create a DCG goal from the grammar body and arguments.
+     *
+     * @param ruleSet The DCG grammar body
      * @param list The input list
      * @param rest The rest list
+     * @param indicator The predicate indicator for error contexts (phrase/2 or phrase/3)
      * @return The created goal term
      */
-    private Term createDCGGoal(Term ruleSet, Term list, Term rest) {
-        if (ruleSet instanceof Atom) {
-            // Simple non-terminal: nt --> nt(List, Rest)
-            String functor = ((Atom) ruleSet).getName();
-            return TermUtils.createCompound(functor, list, rest);
-        } else if (ruleSet instanceof CompoundTerm) {
-            // Complex non-terminal: nt(Args) --> nt(Args, List, Rest)
-            CompoundTerm compound = (CompoundTerm) ruleSet;
-            List<Term> newArgs = new ArrayList<>();
-            
-            // Add original arguments
-            for (int i = 0; i < TermUtils.getArity(compound); i++) {
-                newArgs.add(TermUtils.getArgument(compound, i));
-            }
-            
-            // Add difference list arguments
-            newArgs.add(list);
-            newArgs.add(rest);
-            
-            return TermUtils.createCompound(TermUtils.getFunctorName(compound), newArgs);
-        } else if (ruleSet instanceof Variable) {
-            // Variable rule set: call the variable with difference list
+    private Term createDCGGoal(Term ruleSet, Term list, Term rest, String indicator) {
+        // START_CHANGE: ISS-2025-0394 - a number or string is not a grammar body
+        if (ruleSet instanceof it.denzosoft.jprolog.core.terms.Number || ruleSet instanceof PrologString) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("callable", ruleSet, indicator));
+        }
+        // END_CHANGE: ISS-2025-0394
+        if (ruleSet instanceof Variable) {
+            // Unbound body: route through call/3, which raises instantiation_error when still
+            // unbound (must NOT go through translateBody -> phrase/3, which would loop).
             return TermUtils.createCompound("call", ruleSet, list, rest);
         }
-        
-        throw new IllegalArgumentException("Invalid DCG rule set: " + ruleSet);
+        it.denzosoft.jprolog.core.dcg.v2.DCGTranslator translator =
+            new it.denzosoft.jprolog.core.dcg.v2.DCGTranslator("_PhraseS" + PHRASE_VAR_SEQ.getAndIncrement() + "_");
+        return translator.body(ruleSet, list, rest);
     }
+    // END_CHANGE: ISS-2025-0391
+
+    // START_CHANGE: ISS-2025-0394 - input/rest must be a variable, a proper list or a partial
+    // list; otherwise type_error(list, Arg) per ISO 13211-3 (strings are tolerated for backward
+    // compatibility with code-list inputs written as "...").
+    private static void checkListArgument(Term t, String indicator) {
+        Term cur = t;
+        while (cur instanceof CompoundTerm && ".".equals(TermUtils.getFunctorName(cur)) && TermUtils.getArity(cur) == 2) {
+            cur = TermUtils.getArgument((CompoundTerm) cur, 1);
+        }
+        if (cur instanceof Variable) return;                                    // variable / partial list
+        if (cur instanceof Atom && "[]".equals(((Atom) cur).getName())) return; // proper list
+        if (cur instanceof PrologString) return;                                // legacy string input
+        throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+            it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("list", t, indicator));
+    }
+    // END_CHANGE: ISS-2025-0394
     
     /**
      * Validate that a term is a proper list.

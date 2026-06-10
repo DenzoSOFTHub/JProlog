@@ -7,6 +7,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.5.0] - 2026-06-10
+
+### ISO-conformance sweep — 53 confirmed defects fixed (ISS-2025-0342..0394)
+
+Driven by a multi-agent empirical audit: 13 domain finders ran ISO-conformance queries against the
+build (111 unique findings), every finding adversarially verified (98 confirmed, 13 rejected).
+53 fixed below; the 30 still-open confirmed findings are rolled up as ISS-2025-0395 in
+`docs/tracking/track-issues.md`. Baseline: **866/866 JUnit tests, 20/20 example programs.**
+
+**Engine (v2 + legacy)**
+- **ISS-2025-0342**: a cut inside the condition of `(->)/2`, `(*->)/2`, `\+/1`, `not/1` no longer
+  destroys the construct's else/true branch (ISO 7.8.8/8.15.1) — silent wrong answers in the
+  default engine.
+- **ISS-2025-0343**: a `catch/3` frame is disarmed when its goal exits (and re-armed on
+  backtracking into it) — later exceptions are no longer swallowed by stale frames.
+- **ISS-2025-0344**: `KnowledgeBase.retract` removes exactly one clause and keeps all indexes in
+  sync (duplicate clauses are no longer immortal); index misses now degrade to the full clause
+  list, removing the ISS-2025-0340 silent-drop hazard.
+- **ISS-2025-0345**: `Prolog.solve(Term)` now runs the v2 engine with the inference budget (was:
+  silent legacy, no budget).
+- **ISS-2025-0346**: `halt/0`, `halt/1` actually terminate the CLI with the exit code; `:- halt`
+  aborts a consult; the IDE ends the session gracefully.
+- **ISS-2025-0347**: calling an undefined procedure raises `existence_error(procedure, PI)` per
+  the `unknown` flag (error/fail/warning), with dynamic-procedure tracking (`:- dynamic`
+  directive — previously a no-op — plus assert/retractall implying dynamic).
+- **ISS-2025-0363**: `throw(X)` with `X` unbound raises `instantiation_error` instead of throwing
+  a fresh variable that any catcher traps.
+
+**Term order, sorting, strings**
+- **ISS-2025-0348**: `PrologString` identity and standard order fixed everywhere: `"abc" == "abc"`,
+  `compare/3`, `@</2`-family, `atomic/1`; strings rank Var < Number < Atom < String < Compound,
+  consistently with `sort/2`.
+- **ISS-2025-0349**: `length/2`, `reverse/2`, `select/3`, `permutation/2` accept proper lists with
+  unbound elements (deep groundness guards removed).
+- **ISS-2025-0350**: `keysort/2` accepts non-ground pairs (its primary use case), is stable by key
+  only, and raises ISO errors on non-lists/partial lists/non-pairs.
+- **ISS-2025-0351**: `sort/2`, `sort/4`, `msort/2` raise `instantiation_error`/`type_error(list,_)`
+  instead of failing silently.
+
+**Arithmetic**
+- **ISS-2025-0359/0360**: computed float overflow → `evaluation_error(float_overflow)`; NaN
+  results → `evaluation_error(undefined)` (the `inf`/`nan` constants and propagation still work).
+- **ISS-2025-0361**: huge `^`/`<<`/`>>` operands raise a catchable ISO error instead of a raw Java
+  `ArithmeticException` that pierced `catch/3`.
+- **ISS-2025-0362**: `0 ^ -1` → `evaluation_error(zero_divisor)`.
+- **ISS-2025-0364**: `functor(T, f(a), 2)` → `type_error(atomic, f(a))`.
+- **ISS-2025-0365**: `number_chars/2`, `number_codes/2`, `atom_number/2` round-trip arbitrary
+  big integers exactly (no more silent 64-bit corruption).
+
+**Clause database**
+- **ISS-2025-0366**: `retract/1` validates its argument (no more raw `ClassCastException`).
+- **ISS-2025-0367**: assert/retract/abolish/retractall on a built-in →
+  `permission_error(modify, static_procedure, PI)`.
+- **ISS-2025-0368**: assert validates clauses (unbound → `instantiation_error`; `1`, `(1:-true)`,
+  `(foo:-7)` → `type_error(callable, _)`).
+- **ISS-2025-0369**: `dynamic/1` is callable as a goal (PI, comma-sequences, lists).
+- **ISS-2025-0370/0371/0372**: ISO errors for `clause/2` on built-ins
+  (`permission_error(access, private_procedure, _)`), `retractall/1` and `current_predicate/1`
+  on invalid arguments.
+
+**All-solutions predicates**
+- **ISS-2025-0382**: `bagof/3`/`setof/3` collect renamed-apart copies (result lists no longer
+  alias caller variables).
+- **ISS-2025-0383/0384**: `aggregate_all/3` propagates ISO error balls unchanged; bagof/setof/
+  aggregate_all raise `instantiation_error`/`type_error(callable,_)` on bad goals.
+
+**Lists**
+- **ISS-2025-0379**: `append/3` no longer throws on open modes (`append([1],X,Z)` → `Z=[1|X]`).
+- **ISS-2025-0380**: no more unsound success on partial lists (`last([a|T],X)`,
+  `maplist(atom,[a,b|T])` close the tail instead of succeeding with it unconstrained).
+- **ISS-2025-0381**: `maplist/2..5` is re-satisfiable (inner-goal alternatives no longer dropped)
+  and derives the length from any proper list.
+- **ISS-2025-0385**: `numlist/3` raises ISO errors on unbound/non-integer bounds.
+- **ISS-2025-0386**: inverse modes: `reverse(X,[1,2,3])`, `select(2,L,[1,3])`,
+  `permutation(P,[1,2])`.
+
+**I/O & format**
+- **ISS-2025-0352**: `format/2,3`, `write_term/2`, `read_term/2` succeed as goals (side effects
+  used to happen with the goal then failing, killing every conjunction containing them).
+- **ISS-2025-0353**: `format` accepts double-quoted (string) format strings — the spelling
+  produced by the default `double_quotes=string`.
+- **ISS-2025-0354**: `read_term/3` (Stream, Term, Options) implemented (regression vs the
+  ISS-2025-0202 resolution claim).
+- **ISS-2025-0373**: stream-argument output forms added: `write/2`, `writeln/2`, `nl/1`,
+  `put_char/2`, `tab/2`, `write_term/3`.
+- **ISS-2025-0374**: `format/3` honours its stream argument.
+- **ISS-2025-0375**: `set_input/1`/`set_output/1` actually redirect (arity-1 input predicates
+  honour the current input; output streams wrapped so `StreamManager.out()` honours them).
+- **ISS-2025-0376**: `peek_char/2`, `peek_code/2`, `get_code/2` implemented.
+- **ISS-2025-0377**: `open/3,4`/`close/1` raise ISO `error/2` terms
+  (`existence_error(source_sink,_)`, `domain_error(stream_or_alias,_)`, ...) instead of
+  plain-atom balls.
+- **ISS-2025-0378**: `print/1`, `print/2` implemented.
+
+**Writer & DCG**
+- **ISS-2025-0387**: `writeq` no longer emits token-merging operator sequences (`writeq(-(1))`
+  prints `- 1`, which re-reads as the same compound — it used to print `-1`, a number).
+- **ISS-2025-0388**: `writeq` quotes `','`, `'.'` and comment-opening symbolic atoms (`'/*'`).
+- **ISS-2025-0389**: `write/1`, `writeln/1`, `writeq/1`, `~w`/`~q` imply `numbervars(true)`:
+  `'$VAR'(0)` prints as `A` (ISO 8.14.2).
+- **ISS-2025-0390**: floats print with lowercase exponent (`1.0e10`) and `inf`/`-inf`/`nan`
+  spellings — output re-reads as the same term (Java's `1.0E10`/`Infinity`/`NaN` did not).
+- **ISS-2025-0391**: `phrase/2,3` applies full DCG body translation to its first argument:
+  `(A,B)`, `(A;B)`, `(A->B)`, `\+A`, `!`, `{G}`, `[a,b]`, `[]` all work as bodies.
+- **ISS-2025-0392/0393**: DCG push-back and terminal lists validated (variable push-back and
+  `[a|Var]` terminals raise load errors instead of silently corrupting the grammar; string
+  push-back becomes its code list).
+- **ISS-2025-0394**: `phrase/2,3` raises `type_error(list,_)`/`type_error(callable,_)` instead of
+  failing silently.
+
+**CLP(FD) v2**
+- **ISS-2025-0355**: unification respects domains — `X in 1..3, X = 5` now fails (soundness).
+- **ISS-2025-0356**: constraint posts are undone on backtracking (disjunction no longer loses
+  solutions; failed branches no longer poison the store).
+- **ISS-2025-0357**: singleton domains bind the variable (`X #= 2` gives `X = 2`).
+- **ISS-2025-0358**: multi-variable `#\=` expressions work (`X #\= Y + 1`); `X #\= X` fails.
+
+**Behavior changes embedders may notice**: undefined procedures now throw
+`existence_error` by default on both engines (set the `unknown` flag to `fail` for the old
+behavior); `halt/1` exits the CLI JVM; sort/keysort/msort raise errors instead of failing on
+invalid inputs; floats and `'$VAR'(N)` print differently (ISO-correct).
+
+New limitations recorded: LIM-026..LIM-030 (`docs/tracking/track-limitations.md`). Open audit
+findings rolled up as ISS-2025-0395.
+
+---
+
 ## [3.4.0] - 2026-06-09
 
 ### Production hardening (sandbox, resource budget, robustness, correctness)

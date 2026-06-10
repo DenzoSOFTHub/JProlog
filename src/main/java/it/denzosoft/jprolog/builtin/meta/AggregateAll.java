@@ -1,14 +1,23 @@
 package it.denzosoft.jprolog.builtin.meta;
 
 // START_CHANGE: ISS-2025-0122 - aggregate_all/3 built-in predicate
+// START_CHANGE: ISS-2025-0383/ISS-2025-0384 - ISO error propagation + callable checks
+import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
+// END_CHANGE: ISS-2025-0383/ISS-2025-0384
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.CutStatus;
 import it.denzosoft.jprolog.core.engine.QuerySolver;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+// START_CHANGE: ISS-2025-0383 - re-throw Prolog error balls unchanged
+import it.denzosoft.jprolog.core.exceptions.PrologException;
+// END_CHANGE: ISS-2025-0383
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+// START_CHANGE: ISS-2025-0384 - detect unbound goals
+import it.denzosoft.jprolog.core.terms.Variable;
+// END_CHANGE: ISS-2025-0384
 import it.denzosoft.jprolog.core.utils.CollectionUtils;
 
 import java.util.*;
@@ -52,10 +61,26 @@ public class AggregateAll implements BuiltInWithContext {
         Term goal = args.get(1).resolveBindings(bindings);
         Term resultVar = args.get(2);
 
+        // START_CHANGE: ISS-2025-0384 - ISO callable check on Goal: instantiation_error when
+        // unbound, type_error(callable) when neither atom nor compound (never N = 0 silently).
+        if (goal instanceof Variable) {
+            throw new PrologException(ISOErrorTerms.instantiationError("aggregate_all/3"));
+        }
+        if (!(goal instanceof Atom) && !(goal instanceof CompoundTerm)) {
+            throw new PrologException(ISOErrorTerms.typeError("callable", goal, "aggregate_all/3"));
+        }
+        // END_CHANGE: ISS-2025-0384
+
         // Solve the goal
         List<Map<String, Term>> goalSolutions = new ArrayList<>();
         try {
             qs.solve(goal, bindings, goalSolutions, CutStatus.notOccurred());
+        // START_CHANGE: ISS-2025-0383 - let ISO error balls from the goal propagate unchanged
+        // (mirrors CollectionUtils.genericListCollector) instead of flattening the error term
+        // into an uncatchable message string.
+        } catch (PrologException e) {
+            throw e;
+        // END_CHANGE: ISS-2025-0383
         } catch (Exception e) {
             throw new PrologEvaluationException("aggregate_all/3: error solving goal: " + e.getMessage());
         }

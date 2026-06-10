@@ -3,7 +3,39 @@
 This document describes current limitations in JProlog implementation.
 When an issue is resolved, the corresponding limitation should be removed from this file.
 
-**Last updated**: 2026-06-07 (v3.0.0)
+**Last updated**: 2026-06-10 (v3.5.0)
+
+---
+
+## LIM-026: retract/1 is semi-deterministic
+
+`retract/1` removes the first matching clause and is not re-executable on backtracking (ISO
+requires re-satisfaction, one clause per redo). A `retract(p(X)), fail` purge loop removes only
+one clause per outer attempt. Workaround: `retractall/1` or an explicit repeat loop. Root cause:
+the eager built-in protocol produces one solution per call (audit 2026-06-10, findings 55/89).
+
+## LIM-027: open-tail generative list modes are bounded
+
+Fully-open `append(X, Y, Z)` and open-tail `last([a|T], X)` / `maplist(G, [a|T])` produce only the
+FIRST standard solution (open tails are closed with `[]`) instead of enumerating infinitely.
+Sound but incomplete; consequence of the eager built-in protocol (ISS-2025-0379/0380).
+
+## LIM-028: legacy-engine gaps vs the default v2 engine
+
+Under `-Djprolog.engine=legacy`: CLP(FD) constraint posts are not undone on backtracking (the
+legacy solver never rolls the Trail back at choice points), the four-port `trace/0` output is not
+emitted, and the inference budget (`Prolog.setInferenceBudget`) is not enforced.
+
+## LIM-029: read/1,2 is line-based
+
+A term spanning multiple lines raises a spurious syntax error and two terms on one line break
+parsing: `read` consumes whole lines instead of reading up to the end token (audit finding 109;
+`Read.readLineFromStream` uses `BufferedReader.readLine()`).
+
+## LIM-030: maplist on very long lists
+
+`maplist/2..5` translates to one right-nested conjunction; lists of ~10k+ elements may hit
+recursion depth in the legacy sub-solver used for built-in bodies.
 
 ---
 

@@ -46,9 +46,11 @@ public class AtomNumber implements BuiltIn {
             if (!(numberTerm instanceof Number)) {
                 return false; // Second argument must be a number
             }
-            
-            double numberValue = ((Number) numberTerm).getValue();
-            String atomValue = formatNumber(numberValue);
+
+            // START_CHANGE: ISS-2025-0365 - format via the Number term (BigInteger-exact for
+            // integers); the old double->(long) cast silently saturated past 64 bits
+            String atomValue = formatNumberExact((Number) numberTerm);
+            // END_CHANGE: ISS-2025-0365
             Map<String, Term> newBindings = new HashMap<>(bindings);
             if (atomTerm.unify(new Atom(atomValue), newBindings)) {
                 solutions.add(new HashMap<>(newBindings));
@@ -59,20 +61,28 @@ public class AtomNumber implements BuiltIn {
             if (!(atomTerm instanceof Atom) || !(numberTerm instanceof Number)) {
                 return false;
             }
-            
+
             String atomValue = ((Atom) atomTerm).getName();
-            double numberValue = ((Number) numberTerm).getValue();
-            
-            try {
-                double atomAsNumber = Double.parseDouble(atomValue);
-                if (Math.abs(atomAsNumber - numberValue) < 1e-10) {
-                    solutions.add(new HashMap<>(bindings));
-                    return true;
-                }
-                return false;
-            } catch (NumberFormatException e) {
+
+            // START_CHANGE: ISS-2025-0365 - compare exactly (BigInteger) when both sides are
+            // integers, so big values are not collapsed through double precision
+            Number atomAsNumber = parsePrologNumber(atomValue);
+            if (atomAsNumber == null) {
                 return false; // Atom is not a valid number
             }
+            Number numberValue = (Number) numberTerm;
+            boolean same;
+            if (atomAsNumber.isInteger() && numberValue.isInteger()) {
+                same = atomAsNumber.bigIntegerValue().equals(numberValue.bigIntegerValue());
+            } else {
+                same = Math.abs(atomAsNumber.doubleValue() - numberValue.doubleValue()) < 1e-10;
+            }
+            if (same) {
+                solutions.add(new HashMap<>(bindings));
+                return true;
+            }
+            return false;
+            // END_CHANGE: ISS-2025-0365
         } else {
             // START_CHANGE: ISS-2025-0084 - Return false instead of throwing for normal failure
             return false;
@@ -82,16 +92,40 @@ public class AtomNumber implements BuiltIn {
         return false;
     }
     
-    private String formatNumber(double value) {
-        if (value == Math.floor(value) && !Double.isInfinite(value)) {
-            return String.valueOf((long) value);
-        } else {
-            return String.valueOf(value);
+    // START_CHANGE: ISS-2025-0365 - exact text<->number helpers shared with NumberChars/NumberCodes
+    /** Format a Number exactly: BigInteger digits for integers, double syntax for floats.
+     *  Integral floats within long range keep the historical digits-only form (123.0 -> "123");
+     *  beyond long range the (long) cast would corrupt, so the double syntax is used instead. */
+    static String formatNumberExact(Number n) {
+        if (n.isInteger()) {
+            return n.bigIntegerValue().toString();
         }
+        double v = n.doubleValue();
+        if (v == Math.floor(v) && !Double.isInfinite(v) && Math.abs(v) < 9.223372036854776E18) {
+            return String.valueOf((long) v);
+        }
+        return String.valueOf(v);
     }
 
+    /** Parse optionally-signed all-digit text as an exact (arbitrary precision) integer; null if not. */
+    static Number parseExactInteger(String s) {
+        if (s == null || s.isEmpty()) return null;
+        int i = 0;
+        char c0 = s.charAt(0);
+        boolean neg = (c0 == '-');
+        if (neg || c0 == '+') i = 1;
+        if (i >= s.length()) return null;
+        for (int j = i; j < s.length(); j++) {
+            char c = s.charAt(j);
+            if (c < '0' || c > '9') return null;
+        }
+        java.math.BigInteger bi = new java.math.BigInteger(s.substring(i));
+        return new Number(neg ? bi.negate() : bi);
+    }
+    // END_CHANGE: ISS-2025-0365
+
     // START_CHANGE: ISS-2025-0235 - parse Prolog number syntax: decimals, floats, hex, binary, octal
-    private static Number parsePrologNumber(String s) {
+    static Number parsePrologNumber(String s) {
         if (s == null || s.isEmpty()) return null;
         String t = s.trim();
         boolean neg = false;
@@ -115,13 +149,15 @@ public class AtomNumber implements BuiltIn {
                 if (neg) bi = bi.negate();
                 return new Number(bi);
             }
+            // START_CHANGE: ISS-2025-0365 - all-digit decimals parse via BigInteger so integers
+            // beyond 64 bits stay exact (the old Double.parseDouble + (long) cast saturated)
+            Number exact = parseExactInteger(t);
+            if (exact != null) {
+                return exact;
+            }
+            // END_CHANGE: ISS-2025-0365
             // Default: try double
             double d = Double.parseDouble(t);
-            // Preserve integer type if value has no fractional part and was without exponent/decimal
-            boolean hasFraction = t.contains(".") || t.toLowerCase().contains("e");
-            if (!hasFraction && d == Math.floor(d) && !Double.isInfinite(d)) {
-                return new Number((long) d);
-            }
             return new Number(d, false);
         } catch (NumberFormatException e) {
             return null;

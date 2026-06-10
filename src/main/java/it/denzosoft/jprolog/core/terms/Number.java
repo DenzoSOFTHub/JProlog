@@ -191,7 +191,14 @@ public class Number extends Term {
             }
             return Long.toString(longValue);
         }
-        return Double.toString(doubleValue);
+        // START_CHANGE: ISS-2025-0390 - ISO float syntax (6.4.5): lowercase exponent 'e' instead
+        // of Java's 'E', and SWI-style inf/-inf/nan instead of 'Infinity'/'NaN' (which re-read
+        // as fresh VARIABLES). Java's Double.toString only emits 'E' as the exponent marker,
+        // so the blanket replace is safe.
+        if (Double.isNaN(doubleValue)) return "nan";
+        if (Double.isInfinite(doubleValue)) return doubleValue > 0 ? "inf" : "-inf";
+        return Double.toString(doubleValue).replace('E', 'e');
+        // END_CHANGE: ISS-2025-0390
     }
 
     @Override

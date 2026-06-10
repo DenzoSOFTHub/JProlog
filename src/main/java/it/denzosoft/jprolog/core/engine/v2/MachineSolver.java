@@ -409,8 +409,17 @@ public final class MachineSolver {
                     continue;
                 }
                 if ("throw".equals(f) && a.size() == 1) {            // raised as a Java exception,
+                    // START_CHANGE: ISS-2025-0363 - throw(Ball) with Ball unbound must raise
+                    // instantiation_error (ISO 7.8.10.3), not throw the fresh variable as the ball
+                    // (which would unify with ANY catcher). Matches the legacy Throw builtin.
+                    Term ball = resolve(a.get(0));
+                    if (ball instanceof Variable) {
+                        throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                            it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError("throw/1"));
+                    }
                     throw new it.denzosoft.jprolog.core.exceptions.PrologException(   // caught by drive()
-                        rename(resolve(a.get(0)), renameCounter++, new HashMap<>()));
+                        rename(ball, renameCounter++, new HashMap<>()));
+                    // END_CHANGE: ISS-2025-0363
                 }
                 if (("assertz".equals(f) || "assert".equals(f)) && a.size() == 1) { assertClause(a.get(0), false); continue; }
                 if ("asserta".equals(f) && a.size() == 1) { assertClause(a.get(0), true); continue; }
@@ -680,8 +689,85 @@ public final class MachineSolver {
     }
 
     // ----------------------------------------------------------------- database (assert/retract)
+
+    // START_CHANGE: ISS-2025-0366 - shared ISO validation for assert/retract Clause arguments
+    // (8.9.1.3/8.9.2.3/8.9.3.3): an unbound Clause or head -> instantiation_error; a head that is
+    // not callable (number, string) -> type_error(callable, Head). Previously retract(X)/retract(1)
+    // reached clausesFor()'s unchecked (CompoundTerm) cast and the raw ClassCastException escaped
+    // catch/3 entirely. Returns the dereferenced head for further checks.
+    private Term checkClauseArgument(Term clause, String context, boolean checkBody) {
+        Term q = deref(clause);
+        if (q instanceof Variable) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError(context));
+        }
+        Term head = q;
+        if (q instanceof CompoundTerm && ":-".equals(((CompoundTerm) q).getName())
+                && ((CompoundTerm) q).getArguments().size() == 2) {
+            head = deref(((CompoundTerm) q).getArguments().get(0));
+            if (head instanceof Variable) {
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError(context));
+            }
+            if (checkBody) checkBodyGoals(((CompoundTerm) q).getArguments().get(1), context);
+        }
+        if (!(head instanceof Atom) && !(head instanceof CompoundTerm)) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("callable", head, context));
+        }
+        return head;
+    }
+    // END_CHANGE: ISS-2025-0366
+
+    // START_CHANGE: ISS-2025-0368 - walk a clause body through ','/2, ';'/2 and '->'/2: a number or
+    // string in goal position raises type_error(callable, G) at assert time (ISO 7.6.2); an unbound
+    // goal is legal (converted to call/1 at call time), as is any atom/compound.
+    private void checkBodyGoals(Term body, String context) {
+        Term b = deref(body);
+        if (b instanceof CompoundTerm && ((CompoundTerm) b).getArguments().size() == 2) {
+            String f = ((CompoundTerm) b).getName();
+            if (",".equals(f) || ";".equals(f) || "->".equals(f)) {
+                checkBodyGoals(((CompoundTerm) b).getArguments().get(0), context);
+                checkBodyGoals(((CompoundTerm) b).getArguments().get(1), context);
+                return;
+            }
+        }
+        if (b instanceof Number || b instanceof PrologString) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("callable", b, context));
+        }
+    }
+    // END_CHANGE: ISS-2025-0368
+
+    // START_CHANGE: ISS-2025-0367 - ISO 8.9.1.3/8.9.2.3/8.9.3.3: assert/retract on a procedure the
+    // BuiltInRegistry claims as a built-in (a static procedure) raises
+    // permission_error(modify, static_procedure, Name/Arity) instead of silently corrupting it.
+    private void checkModifiable(Term head, String context) {
+        if (registry == null) return;
+        String f; int ar;
+        if (head instanceof Atom) { f = ((Atom) head).getName(); ar = 0; }
+        else if (head instanceof CompoundTerm) {
+            f = ((CompoundTerm) head).getName(); ar = ((CompoundTerm) head).getArguments().size();
+        } else return;
+        if (registry.isBuiltIn(f, ar)) {
+            Term pi = new CompoundTerm(new Atom("/"), Arrays.asList(new Atom(f), new Number((long) ar)));
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.permissionError(
+                    "modify", "static_procedure", pi, context));
+        }
+    }
+    // END_CHANGE: ISS-2025-0367
+
     /** assert a (copied) clause at the front (asserta) or back (assertz) of its predicate. */
     private void assertClause(Term clause, boolean front) {
+        // START_CHANGE: ISS-2025-0368 - ISO 8.9.1.3/8.9.2.3: validate Clause before storing it
+        // (previously assertz(X), assertz(1), assertz((1:-true)), assertz((foo:-7)) all succeeded,
+        // inserting garbage rules keyed "unknown/0" into the KB).
+        Term checkedHead = checkClauseArgument(clause, front ? "asserta/1" : "assertz/1", true);
+        // END_CHANGE: ISS-2025-0368
+        // START_CHANGE: ISS-2025-0367 - built-in procedures are static: refuse to modify them
+        checkModifiable(checkedHead, front ? "asserta/1" : "assertz/1");
+        // END_CHANGE: ISS-2025-0367
         Rule r = toRule(rename(resolve(clause), renameCounter++, new HashMap<>()));   // copy_term
         if (liveKb != null) {
             // START_CHANGE: ISS-2025-0347 - assert implies the procedure is dynamic (ISO 8.9.1),
@@ -703,6 +789,14 @@ public final class MachineSolver {
      *  either {@code retract(Head)} or {@code retract((Head :- true))} (ISS-2025-0310). */
     private boolean retractClause(Term clause) {
         Term q = deref(clause);
+        // START_CHANGE: ISS-2025-0366 - ISO 8.9.3.3: retract(X) -> instantiation_error and
+        // retract(1) -> type_error(callable, 1) as catchable Prolog errors (previously a raw
+        // ClassCastException escaped catch/3).
+        Term checkedHead = checkClauseArgument(q, "retract/1", false);
+        // END_CHANGE: ISS-2025-0366
+        // START_CHANGE: ISS-2025-0367 - built-in procedures are static: refuse to modify them
+        checkModifiable(checkedHead, "retract/1");
+        // END_CHANGE: ISS-2025-0367
         Term head;
         Term queryClause;
         if (q instanceof CompoundTerm && ":-".equals(((CompoundTerm) q).getName())

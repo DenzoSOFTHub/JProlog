@@ -31,11 +31,13 @@ public class NumberChars implements BuiltIn {
             if (!(numberTerm instanceof Number)) {
                 return false; // First argument must be a number
             }
-            
-            double numberValue = ((Number) numberTerm).getValue();
-            String numberStr = formatNumber(numberValue);
+
+            // START_CHANGE: ISS-2025-0365 - format via the Number term (BigInteger-exact for
+            // integers); the old double->(long) cast silently saturated past 64 bits
+            String numberStr = AtomNumber.formatNumberExact((Number) numberTerm);
+            // END_CHANGE: ISS-2025-0365
             Term charList = buildCharList(numberStr);
-            
+
             Map<String, Term> newBindings = new HashMap<>(bindings);
             if (charsTerm.unify(charList, newBindings)) {
                 solutions.add(new HashMap<>(newBindings));
@@ -49,11 +51,17 @@ public class NumberChars implements BuiltIn {
                 for (String ch : chars) {
                     sb.append(ch);
                 }
-                
+
                 try {
-                    double value = Double.parseDouble(sb.toString());
+                    // START_CHANGE: ISS-2025-0365 - all-digit text parses via BigInteger so
+                    // integers beyond 64 bits stay exact; floats keep the double path
+                    Number value = AtomNumber.parseExactInteger(sb.toString());
+                    if (value == null) {
+                        value = new Number(Double.parseDouble(sb.toString()));
+                    }
                     Map<String, Term> newBindings = new HashMap<>(bindings);
-                    if (numberTerm.unify(new Number(value), newBindings)) {
+                    if (numberTerm.unify(value, newBindings)) {
+                    // END_CHANGE: ISS-2025-0365
                         solutions.add(new HashMap<>(newBindings));
                         return true;
                     }
@@ -66,23 +74,38 @@ public class NumberChars implements BuiltIn {
             if (!(numberTerm instanceof Number)) {
                 return false;
             }
-            
-            double numberValue = ((Number) numberTerm).getValue();
-            String numberStr = formatNumber(numberValue);
+
             List<String> chars = extractChars(charsTerm.resolveBindings(bindings));
-            
+
             if (chars != null) {
                 StringBuilder sb = new StringBuilder();
                 for (String ch : chars) {
                     sb.append(ch);
                 }
-                
+
+                // START_CHANGE: ISS-2025-0365 - compare exactly (text of the exact value), so big
+                // integers are not collapsed through double precision
+                String numberStr = AtomNumber.formatNumberExact((Number) numberTerm);
+                if (numberStr.equals(sb.toString())) {
+                    solutions.add(new HashMap<>(bindings));
+                    return true;
+                }
                 try {
                     double charListAsNumber = Double.parseDouble(sb.toString());
+                    Number exact = AtomNumber.parseExactInteger(sb.toString());
+                    if (exact != null && ((Number) numberTerm).isInteger()) {
+                        if (exact.bigIntegerValue().equals(((Number) numberTerm).bigIntegerValue())) {
+                            solutions.add(new HashMap<>(bindings));
+                            return true;
+                        }
+                        return false;
+                    }
+                    double numberValue = ((Number) numberTerm).getValue();
                     if (Math.abs(numberValue - charListAsNumber) < 1e-10) {
                         solutions.add(new HashMap<>(bindings));
                         return true;
                     }
+                // END_CHANGE: ISS-2025-0365
                 } catch (NumberFormatException e) {
                     return false; // Character list is not a valid number
                 }
@@ -95,14 +118,6 @@ public class NumberChars implements BuiltIn {
         }
         
         return false;
-    }
-    
-    private String formatNumber(double value) {
-        if (value == Math.floor(value) && !Double.isInfinite(value)) {
-            return String.valueOf((long) value);
-        } else {
-            return String.valueOf(value);
-        }
     }
     
     private Term buildCharList(String str) {

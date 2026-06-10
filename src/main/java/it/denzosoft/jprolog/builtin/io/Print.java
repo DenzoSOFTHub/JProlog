@@ -7,14 +7,20 @@ import it.denzosoft.jprolog.core.terms.Term;
 import java.util.List;
 import java.util.Map;
 
-public class Write implements BuiltIn {
+// START_CHANGE: ISS-2025-0378 - print/1,2 (universal SWI/GNU/SICStus practice)
+/**
+ * print(+Term) - write Term to the current output with numbervars(true) semantics.
+ * print(+Stream, +Term) - write Term to Stream.
+ *
+ * Equivalent to write_term(Term, [numbervars(true)]) (the portray/1 hook is not supported).
+ */
+public class Print implements BuiltIn {
 
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        // START_CHANGE: ISS-2025-0373 - write/2 (ISO 8.14.2): write to the given stream
-        int arity = query.getArguments().size();
+        int arity = (query.getArguments() == null) ? 0 : query.getArguments().size();
         if (arity != 1 && arity != 2) {
-            throw new PrologEvaluationException("write/1 or write/2 expected.");
+            throw new PrologEvaluationException("print/1 or print/2 expected.");
         }
 
         java.io.PrintStream out;
@@ -23,20 +29,16 @@ public class Write implements BuiltIn {
             out = StreamManager.out();
             termToWrite = query.getArguments().get(0);
         } else {
-            out = IOStreamUtils.resolveOutputStream(query.getArguments().get(0), bindings, "write/2");
+            out = IOStreamUtils.resolveOutputStream(query.getArguments().get(0), bindings, "print/2");
             termToWrite = query.getArguments().get(1);
         }
         Term resolvedTerm = termToWrite.resolveBindings(bindings);
-        // START_CHANGE: ISS-2025-0242 - operator-aware formatting
-        // START_CHANGE: ISS-2025-0389 - ISO 8.14.2: write/1 = write_term(T,[numbervars(true)])
+        // write semantics (unquoted, operators honoured) with numbervars(true)
         out.print(it.denzosoft.jprolog.core.util.TermFormatter.format(resolvedTerm, false, false, true, 1200));
         out.flush();
-        // END_CHANGE: ISS-2025-0389
-        // END_CHANGE: ISS-2025-0242
-        // END_CHANGE: ISS-2025-0373
 
-        // As it's a side-effect, it always succeeds if argument is valid.
-        solutions.add(bindings); // Add the unmodified bindings.
+        solutions.add(bindings);
         return true;
     }
 }
+// END_CHANGE: ISS-2025-0378

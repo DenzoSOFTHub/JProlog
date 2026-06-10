@@ -30,30 +30,42 @@ public class PutChar implements BuiltIn {
     
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        if (query.getArguments() == null || query.getArguments().size() != 1) {
-            throw new PrologEvaluationException("put_char/1 requires exactly 1 argument");
+        // START_CHANGE: ISS-2025-0373 - put_char/2 (ISO 8.12.3): write the char to the given stream
+        int arity = (query.getArguments() == null) ? 0 : query.getArguments().size();
+        if (arity != 1 && arity != 2) {
+            throw new PrologEvaluationException("put_char/1 or put_char/2 expected");
         }
-        
-        Term charTerm = query.getArguments().get(0).resolveBindings(bindings);
-        
+
+        java.io.PrintStream out;
+        Term charTerm;
+        if (arity == 1) {
+            out = StreamManager.out();
+            charTerm = query.getArguments().get(0).resolveBindings(bindings);
+        } else {
+            out = IOStreamUtils.resolveOutputStream(query.getArguments().get(0), bindings, "put_char/2");
+            charTerm = query.getArguments().get(1).resolveBindings(bindings);
+        }
+        // END_CHANGE: ISS-2025-0373
+
         if (charTerm instanceof Variable) {
             return false; // Fail silently for unbound variables
         }
-        
+
         if (!(charTerm instanceof Atom)) {
             return false; // Fail silently for non-atoms
         }
-        
+
         String charString = ((Atom) charTerm).getName();
-        
+
         if (charString.length() != 1) {
             return false; // Fail silently for multi-character atoms
         }
-        
-        // Write the character to standard output
-        StreamManager.out().print(charString);
-        StreamManager.out().flush();
-        
+
+        // START_CHANGE: ISS-2025-0373 - write to the resolved stream
+        out.print(charString);
+        out.flush();
+        // END_CHANGE: ISS-2025-0373
+
         solutions.add(bindings);
         return true;
     }

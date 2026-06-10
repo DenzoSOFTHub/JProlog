@@ -55,6 +55,14 @@ public class GetChar implements BuiltIn {
             charTerm = query.getArguments().get(1);
         }
         // END_CHANGE: R3
+        // START_CHANGE: ISS-2025-0375 - honour set_input/1: get_char/1 (and an explicit current_input)
+        // must read from the CURRENT input stream, not always from System.in. Only when the current
+        // input is user_input do we fall back to the cached stdin reader below.
+        if (streamAlias == null || "current_input".equals(streamAlias)) {
+            String cur = StreamManager.getCurrentInput();
+            streamAlias = (cur == null || "user_input".equals(cur)) ? null : cur;
+        }
+        // END_CHANGE: ISS-2025-0375
 
         try {
             int charCode;

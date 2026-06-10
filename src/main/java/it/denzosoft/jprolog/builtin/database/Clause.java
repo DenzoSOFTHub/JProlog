@@ -67,8 +67,20 @@ public class Clause implements BuiltInWithContext {
             functor = ct.getName();
             arity = ct.getArguments().size();
         }
-        List<Rule> rules = solver.getKnowledgeBase().getRulesForPredicate(functor, arity);
         // END_CHANGE: ISS-2025-0270
+
+        // START_CHANGE: ISS-2025-0370 - ISO 8.8.1.3: clause/2 on a built-in (private) procedure
+        // raises permission_error(access, private_procedure, Name/Arity) instead of failing; a
+        // Body that is neither a variable nor callable raises type_error(callable, Body).
+        DatabaseValidation.checkProcedureAccess(solver, functor, arity, "access", "private_procedure", "clause/2");
+        Term resolvedBody = bodyPattern.resolveBindings(bindings);
+        if (!(resolvedBody instanceof Variable) && !(resolvedBody instanceof Atom)
+                && !(resolvedBody instanceof CompoundTerm)) {
+            throw new PrologException(ISOErrorTerms.typeError("callable", resolvedBody, "clause/2"));
+        }
+        // END_CHANGE: ISS-2025-0370
+
+        List<Rule> rules = solver.getKnowledgeBase().getRulesForPredicate(functor, arity);
 
         for (Rule rule : rules) {
             Term ruleHead = rule.getHead();

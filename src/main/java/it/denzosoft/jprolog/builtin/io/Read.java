@@ -93,6 +93,14 @@ public class Read implements BuiltInWithContext {
 
     // START_CHANGE: ISS-2025-0203 - read a line from named stream or stdin
     private String readLineFromStream(String alias) {
+        // START_CHANGE: ISS-2025-0375 - honour set_input/1: read/1 (and an explicit current_input)
+        // must read from the CURRENT input stream; only user_input falls through to the
+        // interactive stdin path below.
+        if (alias == null || "current_input".equals(alias)) {
+            String cur = StreamManager.getCurrentInput();
+            alias = (cur == null) ? "user_input" : cur;
+        }
+        // END_CHANGE: ISS-2025-0375
         if (alias == null || "current_input".equals(alias) || "user_input".equals(alias)) {
             System.out.print("?- ");
             Scanner scanner = new Scanner(System.in);

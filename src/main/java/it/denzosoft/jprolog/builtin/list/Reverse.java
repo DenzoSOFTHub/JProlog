@@ -47,6 +47,20 @@ public class Reverse implements BuiltIn {
             }
             return false;
         } else {
+            // START_CHANGE: ISS-2025-0386 - inverse mode reverse(-List, +Reversed): when the
+            // first argument is open but the second is a proper list, reverse the second
+            // and unify with the first (reverse/2 is a pure relation in SWI/GNU).
+            Term resolvedReversed = reversedList.resolveBindings(bindings);
+            if (ListUtils.isProperList(resolvedReversed)) {
+                List<Term> elements = ListUtils.extractElements(resolvedReversed);
+                Collections.reverse(elements);
+                Map<String, Term> newBindings = new HashMap<>(bindings);
+                if (inputList.unify(ListUtils.createList(elements), newBindings)) {
+                    solutions.add(newBindings);
+                    return true;
+                }
+            }
+            // END_CHANGE: ISS-2025-0386
             // START_CHANGE: ISS-2025-0079 - Return false instead of throwing for normal failure
             return false;
             // END_CHANGE: ISS-2025-0079

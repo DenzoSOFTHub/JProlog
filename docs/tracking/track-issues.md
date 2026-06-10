@@ -2,6 +2,260 @@
 
 ## Active and Resolved Issues
 
+## Audit 2026-06-10 (multi-agent empirical audit, v3.5.0)
+
+Full-system empirical audit: 13 domain finders ran ISO-conformance queries against the build; 111 unique findings, 98 confirmed by adversarial verification, 13 rejected. 53 issues fixed in v3.5.0 (ISS-2025-0342..0394, below); 30 confirmed findings remain open (roll-up at the end of this section).
+
+### ISS-2025-0342: Cut inside \+/1, not/1, (->)/2 condition, and (*->)/2 condition destroys the construct's else/true branch in the default v2 engine
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: MachineSolver.ite(): condition goal's cut barrier changed from `barrier` to `barrier + 1` (the internal commit CUT keeps `barrier`), and softCut(): cond barrier `cps.size()` -> `cps.size() + 1`. A user '!' inside the condition of (->)/2, (*->)/2, \+/1, not/1 is now local (ISO 7.8.8/8.15.1) and can no longer cut away the ITE/soft-cut choice point holding the Else alternative. Verified: \+((!,fail)) -> true, ((!,fail)->T;E) -> else, ((!,fail)*->T;E) -> E, clause-body t11 yields both solutions; commit semantics and top-level disjunction cut unchanged. Also tightened testISS0194_cutDoesNotEscapeNegation from size()>=1 to exactly 2 solutions (a then b) per the verdict.
+
+### ISS-2025-0343: v2 engine: catch/3 frame stays armed after Goal exits — later exceptions are swallowed and the recovery goal runs spuriously
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Catch frames are now disarmed exactly when their Goal's extent exits and re-armed when backtracking re-enters it: CP gains an `active` flag; the catch dispatch pushes a disarm action goal between Goal and the continuation which sets active=false and trails a Runnable undo; the v2 trail was generalized from ArrayList<String> to ArrayList<Object> (String = remove binding, Runnable = run to undo) so advance()/handleBall's undo() automatically re-arms frames; handleBall pops inactive frames without matching. Verified all fixPlan cases plus nested catch, catch-inside-recovery, throw-from-recovery (escapes/caught-by-outer), nondeterministic recovery, user-clause and builtin CP re-arm, findall transparency. DEVIATION from fixPlan test (c): `catch(member(X,[1,2]),e,R=c), (X==2 -> throw(e) ; fail)` now yields an UNHANDLED exception, not R=c — the throw is raised in the continuation AFTER the goal's (second) exit, outside Goal's extent, exactly like the verifier's own repro 2 which SWI reports as unhandled; the two cases are structurally identical so R=c would be inconsistent. Real re-execution protection (throw DURING the redo, inside the goal) is tested instead and works.
+
+### ISS-2025-0344: KnowledgeBase.retract desyncs rules-list from ruleIndex/firstArgIndex — duplicate clauses become immortal phantoms (root cause blocking ISS-2025-0340 re-land)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: KnowledgeBase.retract(Rule) now removes exactly ONE clause (ISO 8.9.3): identity match first (MachineSolver passes the stored Rule object), first-equals fallback (Prolog.retract(String) passes a parsed Rule), and removeFromIndex is called with the actually-removed object. All index removals (ruleIndex, firstArgIndex, multiArgIndex) go through a new identity-preferring removeOneOccurrence() so duplicate-equal clauses are never conflated. getRulesWithFirstArgIndex now degrades to getRulesForPredicate on an index miss instead of silently dropping clauses (the ISS-2025-0340 hazard). First-arg indexing was NOT re-enabled, per instructions. Repro now gives true,true,true,false,false,false and rules/ruleIndex stay in sync at every step (asserted via reflection in the test).
+
+### ISS-2025-0345: Prolog.solve(Term) overload silently runs the LEGACY engine and bypasses the v3.4.0 inference budget
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Prolog.solve(Term) now mirrors solve(String): after resetTransientQueryState() it splices attributed session vars and, when USE_V2_ENGINE, routes through solveWithV2Engine (fresh MachineSolver, inference budget applied, StackOverflowError -> resource_error, attribute-unify hook). Verified with the finding's harness: solve(Term) now raises InferenceLimitException with budget 2000 like solve(String). Internal caller check: Interpreter.query only tests emptiness (unaffected); Main.java:242 already used the String overload. Legacy path (-Djprolog.engine=legacy) keeps the old querySolver.solve(query) return contract.
+
+### ISS-2025-0346: halt/0 and halt/1 do not terminate the processor: CLI prints 'Error: halt(N)' and continues; exit status is always 0
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Engine unchanged (still throws PrologException with isHalt()/getExitCode(), untrappable by catch/3 — pinned by new test). Consumers fixed: PrologCLI.processInput and consultFile catch PrologException first and System.exit(getExitCode()) on halt (verified: `halt(3).` exits the JVM with status 3 before the next query; `:- halt(7).` in a consulted file exits with 7); Prolog.executeGoalDirective rethrows halt instead of logging it as a directive warning, and the consult()/consultV2() error-collection catch chains rethrow halt so a load aborts; IDE RunPanel/DebugPanel end the run/debug session gracefully with a 'halt: session ended (exit code N)' message instead of swallowing it or killing the IDE JVM.
+
+### ISS-2025-0347: Calling an undefined procedure fails silently although the unknown flag is 'error' — no existence_error
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Full plan implemented. (1) KnowledgeBase tracks dynamic procedures (markDynamic/isDynamic, Set<String> of name/arity) — populated by the ':- dynamic' directive (Prolog.processDynamicDirective parses Name/Arity, ','-sequences and lists; was a logged no-op), by assert in BOTH engines (MachineSolver.assertClause; KnowledgeBase.addClauseFirst/addClauseLast which are the legacy assert builtins' only path; Prolog.asserta(String)), and by retractall (SWI semantics: creates the procedure as dynamic) — the mark survives retract-to-empty. (2) MachineSolver.callUser raises error(existence_error(procedure, Name/Arity), _) via raiseUnknownIfRequired when no clauses exist, honoring unknown=error/warning/fail; Module:Goal calls and multi-module programs keep the established visibility-failure semantics (guarded, documented). (3) Legacy QuerySolver.solveAgainstKnowledgeBase mirrors the check, with a control-construct whitelist (fail/true/!/;/->/...) because the legacy solver resolves fail/0 via a KB miss. Verified on both engines; unknown=fail/warning honored; retract-to-empty still fails silently. 4 pre-existing tests needed justified adjustments (see notes) — exactly the retract-to-empty/probe-predicate pattern the verifier warned about.
+
+### ISS-2025-0348: ==/\== violate identity for strings: "abc" == "abc" is false on the default engine, "abc" == "abd" is true on legacy
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Fixed everything in my ownership: (1) StandardTermOrdering now ranks PrologString between Atom and CompoundTerm (Var=1 < Number=2 < Atom=3 < String=4 < Compound=5, matching Sort.termRank/SWI) and compares strings by content — this fixes compare/3 and @</@>/@=</@>= on BOTH engines (they route through the builtin bridge) and ==/\== on the LEGACY engine (TermComparison delegates to StandardTermOrdering.identical). (2) Sort.compareTerms string branch now compares getStringValue() instead of the escaped quoted toString(), so sort/msort and compare/3 use one identical total order (previously they could disagree on strings containing escape chars). (3) AtomicCheck (legacy atomic/1) now treats PrologString as atomic. PARTIAL because the default v2 engine inlines ==/\== (structuralEqual) and atomic natively in core/engine/v2/MachineSolver.java, which I was forbidden to touch: on the default engine "abc" == "abc" is STILL false and atomic("abc") STILL false. Exact patch for the engine owner is in notes. compare/3, @-operators, sort consistency, and the trichotomy violation ARE fixed on the default engine.
+
+### ISS-2025-0349: length/2 fails on any proper list containing unbound variables
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: length/2 now counts via the existing cycle-safe countElements() spine walk directly (returns -1 for partial/non-lists) instead of the deep isGround() gate — length([A,B],N) gives N=2, generative mode length([a|T],3) preserved, length(foo,N) still fails as before. Reverse, Select, Permutation switched from isGround() to ListUtils.isProperList() (closed-spine structural test, mirrors the ISS-2025-0245 append fix): reverse([X,b],R) -> R=[b,X]; select(E,[X,b],R) -> 2 solutions; permutation([X,b],P) -> 2 solutions. Verified on both engines.
+
+### ISS-2025-0350: keysort/2 fails on any non-ground input — the primary keysort use case (variable values) is broken
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: KeySort: replaced the isGround()-then-blind-extractElements flow with ListUtils.isProperList() validation plus ISO errors via the new shared Sort.notAProperList() helper. Now: keysort([b-Y,a-X],L) -> [a-X,b-Y] (unbound keys/values accepted — the canonical idiom); sort is stable by key only (TimSort via List.sort, verified keysort([b-2,a-1,b-1]) -> [a-1,b-2,b-1]); keysort(a,L) and keysort([a-1|b],L) raise type_error(list,Culprit) instead of fabricating L=[]/truncating; keysort(_,L) and keysort([a-1|_T],L) raise instantiation_error; a Variable element raises instantiation_error and a non -/2 element raises catchable error(type_error(pair,E), keysort/2) replacing the old generic PrologEvaluationException message.
+
+### ISS-2025-0351: sort/2 and msort/2 fail silently on partial lists and non-lists instead of raising instantiation_error / type_error(list, _)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: sort/2, sort/4 and msort/2 non-proper-list branches now throw via the new static helper Sort.notAProperList(list, context): a cycle-safe './2' spine walk that yields PrologException(instantiation_error) when the tail is a Variable (partial list, including a plain unbound var) and PrologException(type_error(list, Culprit)) otherwise — per ISO 8.4.3.3, replacing the ISS-2025-0079-era silent 'return false'. Verified catchable as error(instantiation_error,_)/error(type_error(list,foo),_) on both engines; valid sorts unchanged.
+
+### ISS-2025-0352: read_term/2, write_term/2, format/2,3 always fail as goals (side effects happen, then false)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Root cause: AbstractBuiltInWithContext.executeWithContext returned solve()'s boolean but never appended bindings to the solutions list, and both engines (MachineSolver line 566 and the legacy QuerySolver conjunction machinery) treat an empty solutions list as failure. Fixed in the base class: on success it now does solutions.add(new HashMap<>(bindings)) — the exact pattern Phrase/Statistics already used in their own overrides. Additionally, the trivial execute() overrides in Format/ReadTerm/WriteTerm (used when MachineSolver has no contextSolver) ignored the query term, so arguments were never extracted on that path; they now delegate to executeWithContext(solver, term, bindings, solutions), fixing both argument extraction and success reporting there. Also resolved read_term/2's first argument through bindings so read_term(S, T) with a variable-bound stream routes to the stream branch instead of silently falling into the (Term, Options) branch and reading stdin. Verified: format/2,3, write_term/2 and read_term/2 now succeed as goals and conjunctions after them run (format('a~n',[]), X = done binds X) on BOTH the default v2 engine and -Djprolog.engine=legacy.
+
+### ISS-2025-0353: format/2 with a double-quoted format string fails entirely under the default double_quotes=string flag
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Format.getFormatString returned null for PrologString, so format("test~n", []) — the spelling produced by the project's own default double_quotes=string — always failed. Added a PrologString branch returning getStringValue() in getFormatString and in formatString (the ~s argument handler, so ~s accepts a PrologString argument too). Also made format3 resolve the format string and the argument list through bindings (formatTerm.resolveBindings / argumentsTerm.resolveBindings) — without this, S = "x~n", format(S, []) (and F = 'x~n', format(F, [])) still failed because the raw unresolved Variable reached getFormatString. Verified: format("test~n",[]), format("~s",["abc"]), and variable-bound atom/string format strings all print and succeed on both engines.
+
+### ISS-2025-0354: read_term/3 — the standard ISO form read_term(Stream, Term, Options) — always fails
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: ReadTerm.solve only handled args.length == 2 and fell through to 'return false' for arity 3, so the primary ISO 8.14.1 form read_term(Stream, Term, Options) always failed. Added an args.length == 3 branch that parses options via the existing parseReadOptions(args[2].resolveBindings(bindings), bindings) and calls readTermFromStream(args[0].resolveBindings(bindings), args[1], options, bindings). No BuiltInRegistry change was needed: format/read_term/write_term have no BUILTIN_ARITIES entries, so isBuiltIn accepts any arity and arity-3 goals were already dispatched to the builtin. NOTE for the tracker: ISS-2025-0202 ('read_term/3 honors stream argument', RESOLVED v2.8.0) and ISS-2025-0204 (syntax_errors option for read_term/2,3) claim this already worked — this was a regression/false resolution; the arity-3 entry point was simply dead. The existing ISS-0202/0204 plumbing (resolveReader, syntax_errors handling) was reused unchanged and works once the branch exists. Verified: open/3 + read_term(S, T, []) binds T = foo(bar), and read_term(S, T, [variable_names(V)]) reports the Name=Var pairs, on both engines.
+
+### ISS-2025-0355: Unification ignores CLP(FD) domains: X in 1..3, X = 5 succeeds (soundness violation)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Unification now respects CLP(FD) domains: FD variables carry a clpfd attribute; binding an integer narrows the domain to a singleton (fails outside), non-integers fail, var-var aliasing intersects domains (ClpfdV2Bridge.onBind/onAlias + MachineSolver var-var hook).
+
+### ISS-2025-0356: Posted constraints are never undone on engine backtracking: disjunction loses solutions and failed branches poison the store
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: CLP(FD) constraint posts are rolled back on engine backtracking: ClpStore.rollbackTo(domainMark, constraintMark) registered on the Trail that the v2 engine unwinds at choice points; failed posts self-undo.
+
+### ISS-2025-0357: Singleton domains never bind the Prolog variable: X #= 2 leaves X unbound (instantiation_error downstream)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Singleton FD domains now bind the Prolog variable (X #= 2 gives X = 2): ClpfdV2Bridge.exportSingletons after each post and per labeling solution.
+
+### ISS-2025-0358: #\= with a multi-variable expression silently fails: X #\= Y + 1 reports false though satisfiable
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: X #\= Y + 1 and other multi-variable disequalities solved via auxiliary difference variable D = L - R with Cmp(D, NE, 0); X #\= X now correctly fails.
+
+### ISS-2025-0359: Float overflow yields Infinity instead of evaluation_error(float_overflow) (regression vs legacy engine)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: core/arith/v2/ArithEvaluator: added checked float-result helper fc(double, ctx, ops...) that raises evaluation_error(float_overflow) when a COMPUTED float result is infinite but all operands were finite (integer operands count as finite even when their double image saturates, so float(10^400) also raises). Routed through fc: binary + - * / ** ^(float branch) log/2 and unary sin/cos/tan/exp/sinh/cosh/asinh/acosh/float. The inf constant still builds directly in constant(), and an already-infinite operand propagates (inf+1 stays Infinity, matching SWI). Verified: 1.0e308*10.0, exp(1000), 2.0**10000, 2.0^10000 all raise float_overflow; X is inf and X is inf+1 still succeed.
+
+### ISS-2025-0360: Undefined float operations return NaN instead of evaluation_error(undefined)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Same fc() helper raises evaluation_error(undefined) when the computed float is NaN and no operand was NaN. (-2.0)**0.5, -2^0.5, inf-inf, inf/inf now raise undefined; the nan constant and NaN propagation (nan+1) still work, keeping the existing nan =:= nan test green.
+
+### ISS-2025-0361: Huge integer exponent / shift count raises raw Java ArithmeticException that catch/3 cannot catch
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: ArithEvaluator (^)/2, (<<)/2, (>>)/2: exponent/shift counts with bitLength>31 no longer reach BigInteger.intValueExact() (whose raw java.lang.ArithmeticException pierced catch/3); they raise catchable error(resource_error(memory), Ctx). Exactly-computable degenerate cases still evaluate: bases in {-1,0,1} for ^ at any exponent size, 0<<huge = 0, and >> with a huge count returns the mathematical sign extension (0 or -1). Negative-exponent branch reordered so it never calls intValueExact at all. Verified catch/3 binds E for 2^10000000000 and 1<<10000000000.
+
+### ISS-2025-0362: 0 ^ -1 raises type_error(float, 0) instead of evaluation_error(zero_divisor)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: ArithEvaluator (^)/2 negative-exponent integer branch: 0 ^ negative now raises evaluation_error(zero_divisor) (ISO 9.3.10.3, matches legacy engine) instead of type_error(float, 0); |base|==1 special case kept; (**)/2 left at evaluation_error(undefined) per reviewer verdict (ISO 9.3.1.3, deliberate ISS-2025-0229 behavior).
+
+### ISS-2025-0363: throw/1 with an unbound ball throws the fresh variable instead of instantiation_error — any catcher catches it (v2 engine regression)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: core/engine/v2/MachineSolver throw/1 fast path: resolves the ball first and raises error(instantiation_error, throw/1) when it is an unbound Variable, instead of throwing the renamed fresh variable as a ball that unified with ANY catcher (and leaked _R1__R0_ rename prefixes). Legacy engine's builtin/exception/Throw already had the identical check — verified correct via CLI with -Djprolog.engine=legacy and via prolog.solveLegacy in the test. catch(throw(_), foo, R=wrongly_caught) no longer succeeds on either engine.
+
+### ISS-2025-0364: functor(T, f(a), 2) raises type_error(atom, f(a)) instead of type_error(atomic, f(a))
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: builtin/term/TermConstruction handleFunctor arity>0 branch: non-atomic Names (compounds) now raise type_error(atomic, Name) per ISO 8.5.1.3; atomic-but-not-atom Names (Number, PrologString) keep type_error(atom, Name), preserving the existing functor(T,1.5,2)->type_error(atom,1.5) behavior pinned by AuditRound5Test.
+
+### ISS-2025-0365: Integers beyond 64-bit silently corrupted by number_chars/number_codes/atom_number (both directions) even though the engine itself supports bigints
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: AtomNumber/NumberChars/NumberCodes: all-digit (optionally signed) decimal text now parses via BigInteger (shared AtomNumber.parseExactInteger), output formats via the Number term (shared AtomNumber.formatNumberExact: BigInteger digits for integers), and both-ground compare modes compare BigInteger-exactly — so 9223372036854775808 (2^63) round-trips exactly in both directions and 20-digit input no longer collapses to the float 1.0E19. I additionally fixed a regression in the predecessor's formatNumberExact: it formatted ALL floats via String.valueOf(double), changing atom_number(A,123.0) from '123' to '123.0' and breaking ConversionBuiltinsTest; restored the historical integral-float digits-only form for values within long range (where the (long) cast is exact), keeping double syntax only beyond long range where the old cast corrupted.
+
+### ISS-2025-0366: retract/1 with an unbound or non-callable argument throws a raw Java ClassCastException that even catch/3 cannot intercept
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: retract/1 now validates its argument on both engines: unbound Clause or unbound head inside (Head :- Body) -> instantiation_error; non-callable (number/string) -> type_error(callable, T), both as catchable PrologExceptions. v2: new MachineSolver.checkClauseArgument() called at the top of retractClause(), preventing the raw ClassCastException from clausesFor()'s unchecked (CompoundTerm) cast from ever escaping catch/3. Legacy: shared DatabaseValidation.checkClauseTerm() in builtin/database/Retract.java. Verified at the CLI and via 4 JUnit tests (default v2 + solveLegacy).
+
+### ISS-2025-0367: Built-in procedures are not protected: assertz/asserta/retract/abolish/retractall on a built-in succeed silently instead of permission_error (asserted clauses are silently unreachable)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: asserta/assertz/retract/retractall/abolish on a procedure that BuiltInRegistry.isBuiltIn(Name, Arity) claims now raise permission_error(modify, static_procedure, Name/Arity) instead of silently succeeding/corrupting. v2 native assert/retract path: MachineSolver.checkModifiable() (no-ops when registry == null, so MachineSolverTest's registry-less machines are unaffected); legacy + bridge path (abolish/retractall route through the legacy classes on both engines): DatabaseValidation.checkProcedureAccess() in Asserta/Assertz/Retract/Retractall/Abolish. User predicates sharing a library name at a different arity stay modifiable (verified atom_length/3 asserts/retracts fine; the check is exact Name/Arity). atom_length/2 itself still answers queries after the refused abolish. Full suite + 20/20 examples confirm no collateral (no test or example asserts a built-in-colliding name).
+
+### ISS-2025-0368: asserta/assertz perform no ISO argument validation: assertz(X) (unbound), assertz(1), assertz((1:-true)), assertz((foo:-1)) all succeed
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: asserta/assertz validate the clause at assert time on both engines: unbound Clause or head -> instantiation_error; number/string head (assertz(1), assertz((1:-true))) -> type_error(callable, Head); number/string leaf in the body, walking ','/2, ';'/2, '->'/2 (assertz((foo:-7))) -> type_error(callable, 7); a variable body goal remains legal per ISO 7.6.2 (assertz((foo :- X)) still succeeds). This also eliminates the corrupt "unknown/0" KB entries (verified: current_predicate(unknown/0) stays empty after a rejected assertz(_X)). Validation runs BEFORE the wave-1 ISS-2025-0347 markDynamic call, so the two compose: only successfully asserted clauses mark the procedure dynamic. v2: checkClauseArgument + checkBodyGoals in MachineSolver.assertClause(); legacy: DatabaseValidation.checkClauseTerm(..., checkBody=true) in Asserta/Assertz.
+
+### ISS-2025-0369: dynamic/1 is not callable as a goal — it fails silently (and the :- dynamic directive is a no-op), so portable initialization code breaks
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: dynamic/1 is now callable as a runtime goal: new builtin/database/Dynamic.java (BuiltInWithContext) registered as "dynamic" in BuiltInFactory.FACTORY_MAP with putArity("dynamic", 1) in BuiltInRegistry (the arity entry is required, otherwise registration would claim every arity of 'dynamic'). Accepts Name/Arity, ','-sequences, lists ('.'/2 cells with [] terminator), and bare atoms (SWI-style Name/0, matching the directive), reusing the wave-1 ISS-2025-0347 machinery (KnowledgeBase.markDynamic) that both engines already consult before raising existence_error — so dynamic(counter/1), assertz(counter(0)), counter(X) works mid-conjunction and an empty dynamic predicate fails silently. Errors: unbound spec or unbound Name/Arity -> instantiation_error; malformed (foo/bar) -> type_error(predicate_indicator, ...). The ':- dynamic' consult directive continues through Prolog.processDynamicDirective (unchanged).
+
+### ISS-2025-0370: clause/2 on a built-in fails instead of raising permission_error(access, private_procedure); non-callable Body also fails instead of type_error
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: clause/2 on a built-in procedure now raises permission_error(access, private_procedure, Name/Arity) instead of failing (DatabaseValidation.checkProcedureAccess after the existing ISS-2025-0270 head checks in builtin/database/Clause.java, used by both engines via the bridge), and a Body argument that is neither a variable nor callable raises type_error(callable, Body). clause/2 on user predicates is unchanged (verified: clause(g(x), B) gives B = true).
+
+### ISS-2025-0371: retractall/1 with a non-callable argument succeeds instead of raising type_error(callable, ...)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: retractall/1 with a non-variable, non-callable head (retractall(1)) now raises type_error(callable, 1) instead of succeeding silently — guard added after the existing instantiation check in builtin/database/Retractall.java (one class covers both engines via the bridge), using the class's existing createTypeError helper.
+
+### ISS-2025-0372: current_predicate/1 fails silently on non-predicate-indicator arguments instead of raising type_error(predicate_indicator, ...)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: current_predicate/1 with a non-variable argument that is not a valid predicate indicator (current_predicate(foo), current_predicate(foo/bar), bound non-atom Name or bound non-integer/negative Arity) now raises type_error(predicate_indicator, PI). The validation runs BEFORE the try block whose catch(Exception) would have mangled it into system_error, per the reviewer's fixPlan. Enumeration modes (exact PI, Name/Var, Var/Arity, Var/Var) are unchanged (verified: current_predicate(p/A) gives A = 1) and built-ins remain excluded.
+
+### ISS-2025-0373: ISO stream-argument output predicates are missing: write/2, nl/1, put_char/2, tab/2, write_term/3 all fail silently without writing
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Added stream-argument forms write/2, writeln/2, nl/1, put_char/2, tab/2, write_term/3 (kept/finished predecessor's edits; write_term's stream form now actually resolves the stream via the new shared IOStreamUtils.resolveOutputStream + StreamManager.resolveOutput helper, with ISO instantiation/domain/existence errors for bad stream args) plus format/1 == format(F, []). Registered the new arities in BuiltInRegistry (write 1,2; writeln 1,2; nl 0,1; put_char 1,2). Verified via CLI: all forms write to file streams and to user_output.
+
+### ISS-2025-0374: format/3 ignores the stream/sink argument entirely — writes to current output instead of the given stream; format(atom(A),...) also unsupported
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: format/3 now honours its stream argument: the sink is resolved via IOStreamUtils/StreamManager (file 'hello file' lands in the file, console stays clean). The atom(A)/string(S)/codes(C)/chars(C) capture sinks were implemented too (not deferred): output is rendered to a string and unified with the sink argument. Removed the old getOutputStream(Term) that ignored its parameter.
+
+### ISS-2025-0375: set_input/1 and set_output/1 succeed but do not actually redirect: get_char/1 always reads System.in, write/1 to a file stream silently goes to stdout
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: set_output/1 now redirects: StreamManager.out() wraps raw FileOutputStreams in cached PrintStream wrappers (raw streams stay in OUTPUT_STREAMS for seek/4 reposition checks); wrappers are flushed/dropped on close and closing the current input/output reverts to user_input/user_output (predecessor's design, kept). set_input/1 now redirects: get_char/1, get_code/1 and read/1 (and explicit current_input args) resolve StreamManager.getCurrentInput() and read via the per-stream Reader, falling back to the static stdin reader only for user_input. CLI interactive behaviour verified manually: prompts, write/nl, format, read/1 stdin path unchanged (piped read/1 EOF quirk is pre-existing and identical on baseline).
+
+### ISS-2025-0376: Stream variants of input character predicates missing: peek_char/2, peek_code/2, get_code/2 raise 'requires exactly 1 argument'
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Added peek_char/2, peek_code/2, get_code/2 (and registry arities peek_char/peek_code 1,2). StreamManager.getReader now hands out PushbackReader-wrapped readers (predecessor change, kept), and peek_char/peek_code on named streams peek through the SAME reader get_char/get_code consume from, so peek+get stay consistent; surrogate pairs are combined into codepoints. The legacy PushbackInputStream path is kept only for user_input. Verified: peek twice = 'a','a', then get = 'a','b'; peek_code/get_code = 97/97/98.
+
+### ISS-2025-0377: Stream I/O errors are thrown as plain-atom balls, not ISO error/2 terms (existence_error(source_sink,...), existence_error(stream,...))
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: open/3,4 now raises error(existence_error(source_sink, F), _) for a missing read file, error(permission_error(open, source_sink, F), _) for other open failures, and error(domain_error(io_mode, M), _) for an invalid mode (pre-validated, replacing an uncaught IllegalArgumentException). close/1,2 raises instantiation_error for unbound, domain_error(stream_or_alias, S) for non-stream terms (now also accepts stream(A) wrappers), existence_error(stream, S) for unknown aliases. All built via ISOErrorTerms + PrologException so catch/3 with ISO patterns traps them. Narrow leftover: close of a system stream (user_output) still throws the legacy free-text message.
+
+### ISS-2025-0378: print/1 and print/2 are not implemented — goal fails silently without printing
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: New builtin.io.Print registered as print in FACTORY_MAP with putArity(print, 1, 2): print/1 writes to current output, print/2 resolves its stream argument via IOStreamUtils; write semantics with numbervars(true) ('$VAR'(0) prints as A, verified). portray/1 hook not supported (noted in javadoc), matching the reviewer's fixPlan.
+
+### ISS-2025-0379: append/3 throws an exception instead of solving when the third argument is unbound and an input is var/partial (append([1],X,Z), append(X,Y,Z))
+**Status**: RESOLVED (v3.5.0) (open-tail generative modes remain bounded — see LIM-027)
+**Resolution**: append/3 no longer throws 'unsupported mode'. (+,?,?) builds Result=[e1..en|List2] directly (append([1],X,Z) -> Z=[1|X]); (?,?,+) split enumeration kept; (open,?,open) closes List1's open tail with [] and yields the first standard solution (append(X,Y,Z) -> X=[], Z=Y) instead of throwing. Remaining generative gap (honest): the fully-open and partial-List1/open-Result modes are bounded to ONE solution instead of infinite enumeration — architecturally blocked by the eager all-solutions builtin protocol. Predecessor's implementation verified and kept.
+
+### ISS-2025-0380: Unsound success on partial lists: last([a|T],X) and maplist(atom,[a,b|T]) succeed leaving T unbound
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Unsound success on partial lists eliminated: last([a|T],X) now binds T=[],X=a (SWI's first answer) instead of leaving T unconstrained; maplist(atom,[a,b|T]) binds T=[]; improper lists (last([a|b],X)) now fail instead of being silently truncated. Implemented via new tail-aware spine walker ListSpine.tail() (predecessor's, verified and kept) — ListUtils.extractElements untouched (many callers). Note: enumeration of longer tails (T=[X],...) on backtracking is not representable in the eager protocol; only the first standard solution is produced, which is sound.
+
+### ISS-2025-0381: maplist/2..5 is deterministic (drops alternative solutions of the goal) and fails when the first list is unbound
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: maplist/2..5 rewritten (predecessor's design, verified and kept): translates to ONE conjunction of call/N goals solved once, so all inner-goal solutions are enumerated — maplist(member,[X,Y],[[1,2],[3,4]]) gives all 4 solutions, and the previously UNSOUND failure maplist(member,[X,X],[[1,2],[2]]) now succeeds with X=2. Length is derived from any proper list argument: maplist(succ,X,[2,3]) -> X=[1,2]. Partial lists' open tails closed with [] (ties into 0380). Edge note: when NO list argument has a closed spine, all lists are closed at the minimal consistent length (single solution) rather than enumerating lengths — same eager-protocol bound as 0379.
+
+### ISS-2025-0382: bagof/3 and setof/3 result lists share unbound template variables with the caller (no fresh copies per solution)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: bagof/setof (CollectionUtils.genericListCollector, all three collect sites incl. the legacy-engine findall path) now rename remaining free variables apart per collected instance (fresh '_C<n>_' names via AtomicInteger, mirroring MachineSolver's native findall). bagof(f(X,W),member(X,[1,2]),L), L=[f(1,a),f(2,b)] now succeeds; binding list elements no longer aliases the caller's W; binding Y after setof no longer rewrites the result list. Witness-variable binding (ISS-0196 grouping) untouched and still green.
+
+### ISS-2025-0383: aggregate_all/3 swallows ISO exceptions from the goal and rethrows an uncatchable text-wrapped exception
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: aggregate_all/3 now re-throws PrologException unchanged (catch clause inserted before the generic Exception flattener, mirroring CollectionUtils), so ISO error balls from the goal propagate: catch(aggregate_all(count,(member(X,[1,2]),X>a),N),error(type_error(T,_),_),true) now binds T=evaluable instead of aborting with an uncatchable text-wrapped exception.
+
+### ISS-2025-0384: bagof/3, setof/3 and aggregate_all/3 with an unbound or non-callable Goal fail/succeed silently instead of raising instantiation_error / type_error(callable, G)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: bagof/setof (after ^-stripping, so bagof(X,Y^G,L) is covered) and aggregate_all now raise instantiation_error for an unbound Goal and type_error(callable,G) for a non-callable one, per ISO 8.10.2.3/8.10.3.3. aggregate_all(count,G,N) no longer silently answers N=0. Check also covers the legacy-path findall for consistency with the native v2 findall.
+
+### ISS-2025-0385: numlist/3 silently fails on uninstantiated or non-integer bounds instead of raising ISO errors
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: numlist/3 raises instantiation_error when Low/High is unbound and type_error(integer,Culprit) for non-integer bounds (float or atom), matching SWI must_be and the project's ISS-0277 conventions. numlist(1,0,L) still fails quietly (correct).
+
+### ISS-2025-0386: Inverse/result-driven modes missing: reverse(X,[1,2,3]), select(2,L,[1,3]) and permutation(P,[1,2]) all fail
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Inverse/result-driven finite modes added: reverse(X,[1,2,3]) -> X=[3,2,1]; select(2,L,[1,3]) -> 3 insertion solutions L=[2,1,3];[1,2,3];[1,3,2]; permutation(P,[1,2]) -> P=[1,2];[2,1]. All purely additive else-branches; forward modes untouched.
+
+### ISS-2025-0387: writeq emits token-merging operator sequences: writeq(-(1)) gives -1 (re-reads as a different term), writeq(1 - -1) gives 1--1 (unparseable, even by JProlog itself)
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Predecessor's TermFormatter adjacency-space logic kept and verified: writeq(-(1)) -> '- 1', 1 - -1 -> '1- -1', - -a -> '- -a', 2^ -1 -> '2^ -1', -(-,-) -> '- - -'; all round-trip through JProlog's own parser to the same term. Added a companion WriteQ fix: writeq/1 now writes via the thread-local-aware StreamManager.out() for user_output (per project output discipline) instead of the class-load-time static map entry that bypassed all redirections.
+
+### ISS-2025-0388: writeq does not quote the atoms ',' '.' and comment-opening symbolic atoms like '/*' — output is unparseable
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Predecessor's needsQuoting changes kept and verified: ',' and '.' are quoted, symbolic atoms containing '/*' are quoted; the genuine ','/2 operator still renders as a bare comma (writeq((a,b)) -> a,b, f(',') -> f(',')). v2 TermWriter (IDE-only source formatter, not wired to writeq) deliberately not mirrored — narrow scope.
+
+### ISS-2025-0389: writeq/1 and write/1 ignore numbervars: '$VAR'(0) is printed literally instead of A
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: numbervars=true at the TermFormatter.format call sites of write/1, writeln/1, writeq/1-2 and format's ~w/~q, per ISO 8.14.2. '$VAR'(0) -> A, '$VAR'(51) -> Z1. write_canonical verified unchanged (still prints '$VAR'(0) literally).
+
+### ISS-2025-0390: Floats are written with Java's uppercase exponent 'E' (1.0E10) instead of standard lowercase 'e'
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Number.toString() float branch: nan / inf / -inf instead of Java's 'NaN'/'Infinity' (which re-read as variables), and lowercase exponent via replace('E','e'). Propagates to writeq, answer display, v2 TermWriter (numberText delegates) and format ~w. writeq(1.0e10) -> 1.0e10, X is inf -> inf.
+
+### ISS-2025-0391: phrase/2,3 does not translate DCG control constructs or terminal lists as the body — (A,B), (A;B), \+, !, {G}, [a,b], [] all silently fail
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: Phrase.createDCGGoal now routes every non-variable body through the full DCG body translation: new public DCGTranslator.body(Term,Term,Term) + a DCGTranslator(varPrefix) constructor so runtime-generated fresh variables ('_PhraseS<n>_<k>') cannot collide with caller variables. (A,B), (A;B), (A->B), \+A, !, {G}, [a,b], [] and strings all work as phrase/2,3 bodies; plain atom/compound non-terminals degenerate to the previous nt(List,Rest) shape; Variable bodies keep the call/3 route (instantiation_error, no loop).
+
+### ISS-2025-0392: Non-list head pushback (variable or string) silently discards input tokens / produces a non-list rest
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: DCGTranslator.translate pushback path: PrologString pushback converts to its code list (sp, "x" --> [a] now gives Rest=[120]); variable/non-list pushback is rejected by the shared terminal() validation (instantiation_error / type_error(list,_)) instead of silently discarding the body's rest variable — consultWithDiagnostics surfaces it as a load error.
+
+### ISS-2025-0393: Partial terminal list in a DCG body silently drops the tail variable — [a|T] is translated as if it were [a]
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: DCGTranslator.terminal() now requires a PROPER list: [a|_X] raises instantiation_error and [a|b] raises type_error(list,_) at translation time, instead of silently dropping the tail (the rule no longer mutates into pt --> [a]).
+
+### ISS-2025-0394: phrase/2,3 fails silently instead of raising type_error(list, ...) for a non-list input and type_error(callable, ...) for a non-callable body
+**Status**: RESOLVED (v3.5.0)
+**Resolution**: phrase/2,3: non-list input/rest raises type_error(list, Arg) and a Number/PrologString body raises type_error(callable, Body) (the swallowing catch(IllegalArgumentException){return false} removed); applied on both the executeWithContext and legacy phrase3 paths. Variables, partial lists and PrologString inputs remain accepted (generation mode unaffected).
+
+### ISS-2025-0395: Open audit findings 2026-06-10 (roll-up)
+**Status**: TO_ANALYZE
+Confirmed by adversarial verification, not yet fixed (severity in brackets; full repro/evidence retained in the audit record):
+
+- [high] Float text <-> term conversion collapses integral floats to integers in number_chars/2, number_codes/2, number_string/2, atom_number/2
+- [high] retract/1 is semi-deterministic: not re-executable on backtracking, so retract-fail purge loops leave clauses behind
+- [high] read/1,2 is single-line based: multi-line terms, leading % comments, and multiple terms per line all raise spurious syntax errors
+- [high] Unsupported arithmetic in constraints fails silently: X*X #= 16 reports false though satisfiable (also abs/min/max)
+- [high] v2 engine: retract/1 is semi-deterministic — no backtracking into further matching clauses (ISO requires re-executable retract)
+- [medium] float_integer_part/1 and float_fractional_part/1 silently wrong for |x| >= 2^63
+- [medium] predsort/3 fails on non-ground lists, and silently sorts with default '<' (garbage order, no dedup) when the comparison predicate fails
+- [medium] string/1 type-check predicate does not exist — string("abc") fails silently
+- [medium] number_chars/2 and number_codes/2 reject ISO 0x/0o/0b/0'c notation but accept Java-only syntax (Infinity, NaN, '.5', '3.', trailing space)
+- [medium] term_to_atom/2 fails on any non-ground term
+- [medium] char_code/2 silently fails instead of raising ISO errors (instantiation_error, type_error(character), representation_error)
+- [medium] string_to_atom(S, foo) binds the string side to an ATOM, not a string
+- [medium] Atom/code predicates reject double-quoted strings and string predicates reject atoms — SWI text-interop missing despite SWI-style default flag
+- [medium] Conversion/concat predicates return plain false or non-ISO error balls where ISO mandates typed errors
+- [medium] aggregate_all(max/min) returns -Infinity/+Infinity for non-numeric solutions and throws a non-ISO exception instead of failing when there are no solutions
+- [medium] aggregate_all(sum(X)) silently skips non-numeric solutions, loses big-integer precision, and turns float sums into integers
+- [medium] setof/3 enumerates multiple witness groups in lexicographic string order, not standard order of terms
+- [medium] bagof/3 and setof/3 do not merge variant witnesses (unbound witness variables produce separate groups instead of being unified)
+- [medium] labeling/2 ignores all options: down/max enumerate ascending, invalid options accepted, label([a]) succeeds
+- [medium] Widespread silent failure instead of mandated ISO errors: arg/3, =../2, char_code/2, atom_length/2 (Length non-integer), sort/2, msort/2, number_codes/2, number_chars/2, atom_codes/atom_chars on numbers
+- [medium] Several built-ins throw plain message atoms as exception balls instead of error/2 terms — error(...) catchers cannot trap them
+- [medium] read/2 is line-based: a term spanning multiple lines errors out, and two terms on one line break parsing
+- [low] once/1, ignore/1 and forall/2 silently fail/succeed on non-callable goals instead of raising type_error(callable, _)
+- [low] compare/3 with an invalid Order argument fails instead of raising domain_error(order, _) / type_error(atom, _)
+- [low] sort/4 silently uses the whole element as key when Key > 0 and the element is not a compound with enough arguments; bad Key/Order raise non-ISO generic errors
+- [low] forall/2 with a non-callable condition silently succeeds instead of raising type_error(callable, _)
+- [low] ^/2 is not callable as an ordinary goal (Y^Goal fails instead of calling Goal)
+- [low] findall/3 does not type-check its third argument (findall(X,fail,a) fails instead of type_error(list,a)); findall/4 is missing and fails silently
+- [low] Non-callable DCG head (e.g. a number) yields the misleading consult error "Cannot redefine built-in predicate call/3" instead of type_error(callable, 123); non-callable body defers the error to runtime
+- [low] format/2 argument mismatches are silently absorbed: missing args print '0'/'', wrong types are coerced, unknown directives echo literally, and the empty list [] is treated as one atom argument
+
+---
+
+
 ### ISS-2025-0194: Cut Semantics Fixes & DCG Unicode
 
 **Title**: Fix cut propagation in handleBuiltIn, LCO prefix goals, compound body goals; Fix DCG Unicode supplementary character handling

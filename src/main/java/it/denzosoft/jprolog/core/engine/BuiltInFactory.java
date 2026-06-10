@@ -197,6 +197,9 @@ public class BuiltInFactory {
         // I/O
         registerFactory("write", Write::new);
         registerFactory("writeln", Writeln::new);
+        // START_CHANGE: ISS-2025-0378 - print/1,2 (write semantics + numbervars(true))
+        registerFactory("print", it.denzosoft.jprolog.builtin.io.Print::new);
+        // END_CHANGE: ISS-2025-0378
         registerFactory("nl", Nl::new);
         registerFactory("read", Read::new);
         registerFactory("tab", it.denzosoft.jprolog.builtin.io.Tab::new);
@@ -299,7 +302,10 @@ public class BuiltInFactory {
         registerFactory("abolish", () -> new Abolish(null)); // QuerySolver will be injected
         registerFactory("current_predicate", () -> new CurrentPredicate(null)); // QuerySolver will be injected
         registerFactory("clause", () -> new it.denzosoft.jprolog.builtin.database.Clause(null)); // QuerySolver will be injected
-        
+        // START_CHANGE: ISS-2025-0369 - dynamic/1 callable as a runtime goal (was silently failing)
+        registerFactory("dynamic", () -> new it.denzosoft.jprolog.builtin.database.Dynamic(null)); // QuerySolver will be injected
+        // END_CHANGE: ISS-2025-0369
+
         // Debugging predicates (ISO Prolog)
         registerFactory("trace", Trace::new);
         registerFactory("notrace", NoTrace::new);

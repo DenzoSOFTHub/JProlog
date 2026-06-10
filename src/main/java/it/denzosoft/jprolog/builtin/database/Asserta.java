@@ -45,7 +45,16 @@ public class Asserta implements BuiltInWithContext {
         if (clauseTerm instanceof Variable) {
             throw new PrologException(createInstantiationError("asserta/1: clause must be instantiated"));
         }
-        
+
+        // START_CHANGE: ISS-2025-0368 - ISO 8.9.1.3: validate the clause (head and body callable,
+        // head instantiated) at assert time instead of silently storing garbage.
+        Term checkedHead = DatabaseValidation.checkClauseTerm(clauseTerm, "asserta/1", true);
+        // END_CHANGE: ISS-2025-0368
+        // START_CHANGE: ISS-2025-0367 - ISO 8.9.1.3: a built-in procedure is static, raise
+        // permission_error(modify, static_procedure, Name/Arity) instead of silently accepting.
+        DatabaseValidation.checkProcedureAccess(solver, checkedHead, "modify", "static_procedure", "asserta/1");
+        // END_CHANGE: ISS-2025-0367
+
         try {
             Clause clause = parseClause(clauseTerm);
             

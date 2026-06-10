@@ -35,7 +35,12 @@ public class Format extends AbstractBuiltInWithContext {
     @Override
     public boolean solve(QuerySolver solver, Map<String, Term> bindings) {
         Term[] args = getArguments();
-        
+
+        // START_CHANGE: ISS-2025-0373 - format/1: format(F) == format(F, [])
+        if (args.length == 1) {
+            return format2(args[0], new Atom("[]"), bindings);
+        }
+        // END_CHANGE: ISS-2025-0373
         if (args.length == 2) {
             // format(+Format, +Arguments)
             return format2(args[0], args[1], bindings);
@@ -43,7 +48,7 @@ public class Format extends AbstractBuiltInWithContext {
             // format(+Stream, +Format, +Arguments)
             return format3(args[0], args[1], args[2], bindings);
         }
-        
+
         return false;
     }
     
@@ -58,34 +63,67 @@ public class Format extends AbstractBuiltInWithContext {
      * format/3 implementation.
      */
     private boolean format3(Term streamTerm, Term formatTerm, Term argumentsTerm, Map<String, Term> bindings) {
+        // START_CHANGE: ISS-2025-0374 - honour the stream/sink argument (it was previously ignored and
+        // all output went to the current output stream). Supports stream aliases/handles via
+        // StreamManager and the SWI-style atom(A)/string(S)/codes(C)/chars(C) capture sinks.
+        Term sink = streamTerm.resolveBindings(bindings);
+
+        // Get format string
+        // ISS-2025-0353 - resolve through bindings so variable-bound format strings/arguments work
+        String formatString = getFormatString(formatTerm.resolveBindings(bindings));
+        if (formatString == null) {
+            return false;
+        }
+
+        // Get arguments
+        List<Term> arguments = getArgumentList(argumentsTerm.resolveBindings(bindings));
+
+        // Process format string
+        String output;
         try {
-            // Get output writer
-            PrintWriter writer = getOutputStream(streamTerm);
-
-            // Get format string
-            // START_CHANGE: ISS-2025-0353 - resolve through bindings so variable-bound format strings/arguments work
-            String formatString = getFormatString(formatTerm.resolveBindings(bindings));
-            if (formatString == null) {
-                return false;
-            }
-
-            // Get arguments
-            List<Term> arguments = getArgumentList(argumentsTerm.resolveBindings(bindings));
-            // END_CHANGE: ISS-2025-0353
-            
-            // Process format string
-            String output = processFormat(formatString, arguments, bindings);
-            
-            // Write output
-            writer.print(output);
-            writer.flush();
-            
-            return true;
-            
+            output = processFormat(formatString, arguments, bindings);
         } catch (Exception e) {
             return false;
         }
+
+        // Capture sinks: format(atom(A), ...) / format(string(S), ...) / format(codes(C), ...) / format(chars(C), ...)
+        if (sink instanceof CompoundTerm && sink.getArguments() != null && sink.getArguments().size() == 1) {
+            String functor = TermUtils.getFunctorName(sink);
+            Term target = sink.getArguments().get(0);
+            switch (functor) {
+                case "atom":
+                    return target.unify(new Atom(output), bindings);
+                case "string":
+                    return target.unify(new PrologString(output), bindings);
+                case "codes":
+                    return target.unify(textToList(output, true), bindings);
+                case "chars":
+                    return target.unify(textToList(output, false), bindings);
+                default:
+                    break;
+            }
+        }
+
+        // Stream output: resolve the alias/handle through StreamManager (ISO stream errors on failure)
+        java.io.PrintStream out = IOStreamUtils.resolveOutputStream(sink, bindings, "format/3");
+        out.print(output);
+        out.flush();
+        return true;
+        // END_CHANGE: ISS-2025-0374
     }
+
+    // START_CHANGE: ISS-2025-0374 - build a code list (codes=true) or char list (codes=false) from text
+    private static Term textToList(String text, boolean codes) {
+        Term list = new Atom("[]");
+        for (int i = text.length() - 1; i >= 0; i--) {
+            Term head = codes
+                ? new it.denzosoft.jprolog.core.terms.Number((double) text.charAt(i))
+                : new Atom(String.valueOf(text.charAt(i)));
+            list = new CompoundTerm(new Atom("."), Arrays.asList(head, list));
+        }
+        return list;
+    }
+    // END_CHANGE: ISS-2025-0374
     
     /**
      * Process format string with arguments.
@@ -479,7 +517,9 @@ public class Format extends AbstractBuiltInWithContext {
      */
     private String formatTerm(Term term) {
         // START_CHANGE: ISS-2025-0242 - operator-aware
-        return it.denzosoft.jprolog.core.util.TermFormatter.format(term, false, false, false, 1200);
+        // START_CHANGE: ISS-2025-0389 - ~w follows write/1: numbervars(true)
+        return it.denzosoft.jprolog.core.util.TermFormatter.format(term, false, false, true, 1200);
+        // END_CHANGE: ISS-2025-0389
         // END_CHANGE: ISS-2025-0242
     }
 
@@ -488,7 +528,9 @@ public class Format extends AbstractBuiltInWithContext {
      */
     private String formatQuoted(Term term) {
         // START_CHANGE: ISS-2025-0242 - operator-aware quoted
-        return it.denzosoft.jprolog.core.util.TermFormatter.format(term, true, false, false, 1200);
+        // START_CHANGE: ISS-2025-0389 - ~q follows writeq/1: numbervars(true)
+        return it.denzosoft.jprolog.core.util.TermFormatter.format(term, true, false, true, 1200);
+        // END_CHANGE: ISS-2025-0389
         // END_CHANGE: ISS-2025-0242
     }
     
@@ -562,14 +604,10 @@ public class Format extends AbstractBuiltInWithContext {
         }
     }
     
-    /**
-     * Get output stream.
-     */
-    private PrintWriter getOutputStream(Term streamTerm) {
-        // ISS-2025-0327: honour the thread-local / current output stream instead of raw System.out.
-        return new PrintWriter(StreamManager.out());
-    }
-    
+    // START_CHANGE: ISS-2025-0374 - removed getOutputStream(Term): it ignored its stream argument and
+    // always returned the current output; format3 now resolves the sink via IOStreamUtils/StreamManager.
+    // END_CHANGE: ISS-2025-0374
+
     /**
      * Extract elements from a Prolog list.
      */

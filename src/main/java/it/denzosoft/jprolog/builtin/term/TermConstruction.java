@@ -126,6 +126,15 @@ public class TermConstruction implements BuiltIn {
                 throw new it.denzosoft.jprolog.core.exceptions.PrologException(
                     it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("atomic", resolvedFunctor, "functor/3"));
             } else {
+                // START_CHANGE: ISS-2025-0364 - ISO 8.5.1.3: a non-atomic Name (compound) raises
+                // type_error(atomic, Name); type_error(atom, Name) is only for atomic-but-not-atom
+                // Names (numbers, strings) with Arity > 0.
+                if (!(resolvedFunctor instanceof Atom || resolvedFunctor instanceof Number
+                        || resolvedFunctor instanceof it.denzosoft.jprolog.core.terms.PrologString)) {
+                    throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                        it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("atomic", resolvedFunctor, "functor/3"));
+                }
+                // END_CHANGE: ISS-2025-0364
                 if (!(resolvedFunctor instanceof Atom)) {
                     throw new it.denzosoft.jprolog.core.exceptions.PrologException(
                         it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("atom", resolvedFunctor, "functor/3"));

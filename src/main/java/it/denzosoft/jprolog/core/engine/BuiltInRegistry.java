@@ -50,6 +50,19 @@ public class BuiltInRegistry {
         putArity("get_char", 1, 2);
         putArity("get_code", 1, 2);
         // END_CHANGE: R3
+        // START_CHANGE: ISS-2025-0373 - stream-argument arities: write/2, writeln/2, nl/1, put_char/2
+        putArity("write", 1, 2);
+        putArity("writeln", 1, 2);
+        putArity("nl", 0, 1);
+        putArity("put_char", 1, 2);
+        // END_CHANGE: ISS-2025-0373
+        // START_CHANGE: ISS-2025-0376 - peek_char/1,2 peek_code/1,2 with stream argument
+        putArity("peek_char", 1, 2);
+        putArity("peek_code", 1, 2);
+        // END_CHANGE: ISS-2025-0376
+        // START_CHANGE: ISS-2025-0378 - print/1,2
+        putArity("print", 1, 2);
+        // END_CHANGE: ISS-2025-0378
         // START_CHANGE: ISS-2025-0253 - close/1,2
         putArity("close", 1, 2);
         // END_CHANGE: ISS-2025-0253
@@ -123,6 +136,11 @@ public class BuiltInRegistry {
         putArity("when", 2);
         putArity("dif", 2);
         // END_CHANGE: LIM-001
+
+        // START_CHANGE: ISS-2025-0369 - dynamic/1 is a goal-callable built-in at arity 1 ONLY
+        // (without this entry, registering it would claim every arity of 'dynamic')
+        putArity("dynamic", 1);
+        // END_CHANGE: ISS-2025-0369
     }
 
     private static void putArity(String name, int... arities) {

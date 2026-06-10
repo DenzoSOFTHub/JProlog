@@ -40,6 +40,17 @@ public class WriteQ implements BuiltIn {
     private boolean writeQuotedToCurrentOutput(Term term, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         try {
             String currentOutputAlias = StreamManager.getCurrentOutput();
+            // START_CHANGE: ISS-2025-0387 - write through the thread-local-aware StreamManager.out()
+            // for the default output (the static user_output map entry captures System.out at
+            // class-load, bypassing per-thread/test redirections; output discipline requires out()).
+            if ("user_output".equals(currentOutputAlias)) {
+                java.io.PrintStream ps = StreamManager.out();
+                ps.print(getQuotedRepresentation(term));
+                ps.flush();
+                solutions.add(bindings);
+                return true;
+            }
+            // END_CHANGE: ISS-2025-0387
             OutputStream outputStream = StreamManager.getOutputStream(currentOutputAlias);
             
             if (outputStream != null) {
@@ -87,7 +98,9 @@ public class WriteQ implements BuiltIn {
      */
     private String getQuotedRepresentation(Term term) {
         // START_CHANGE: ISS-2025-0242 - delegate to operator-aware formatter with quoted=true
-        return it.denzosoft.jprolog.core.util.TermFormatter.format(term, true, false, false, 1200);
+        // START_CHANGE: ISS-2025-0389 - ISO 8.14.2: writeq/1 = write_term(T,[quoted(true),numbervars(true)])
+        return it.denzosoft.jprolog.core.util.TermFormatter.format(term, true, false, true, 1200);
+        // END_CHANGE: ISS-2025-0389
         // END_CHANGE: ISS-2025-0242
     }
 
