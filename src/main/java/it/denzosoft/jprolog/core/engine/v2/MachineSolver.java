@@ -42,9 +42,11 @@ import java.util.Map;
  *       and dies with {@code StackOverflowError}).</li>
  * </ol>
  *
- * <p>This is a focused prototype (true / fail / {@code ,}/2 / {@code ;}/2 / {@code =}/2 / {@code !} /
- * {@code call/1} / user clauses) — enough to demonstrate the model end-to-end. It is NOT wired into
- * the engine; full builtin coverage + integration is the multi-step v3-engine effort.
+ * <p>Since v3.1.0 this is the DEFAULT resolution engine ({@code -Djprolog.engine=legacy} falls back
+ * to the recursive {@code QuerySolver}): {@code Prolog.solve} builds a fresh MachineSolver per query
+ * over the live KnowledgeBase/BuiltInRegistry, with native dispatch for the control constructs and
+ * frequent built-ins, registry delegation for the rest, four-port debug events (ISS-2025-0331),
+ * the inference budget (ISS-2025-0339), and CLP(FD)/attribute hooks.
  */
 public final class MachineSolver {
 
@@ -60,7 +62,8 @@ public final class MachineSolver {
     private long steps = 0;
     private int renameCounter = 0;
 
-    /** Abort the query with resource_error after this many resolution steps (0 = unlimited). */
+    /** Abort the query by throwing {@link it.denzosoft.jprolog.core.engine.InferenceLimitException}
+     *  (uncatchable by {@code catch/3}) after this many resolution steps (0 = unlimited). */
     public void setInferenceBudget(long budget) { this.inferenceBudget = budget; }
 
     public MachineSolver(List<Rule> rules) { this(rules, null); }
@@ -109,9 +112,10 @@ public final class MachineSolver {
             String f; int ar;
             if (lookup instanceof Atom) { f = ((Atom) lookup).getName(); ar = 0; }
             else { CompoundTerm c = (CompoundTerm) lookup; f = c.getName(); ar = c.getArguments().size(); }
-            // ISS-2025-0340: first-arg indexing was reverted — KnowledgeBase.getRulesWithFirstArgIndex
-            // returns empty for predicates whose first-arg index was never built, which silently drops
-            // all their clauses. Needs the KB index made reliably-populated first (tracked, not done).
+            // ISS-2025-0340: first-arg indexing was reverted (silent clause drops on index misses).
+            // ISS-2025-0344 has since fixed index maintenance and made getRulesWithFirstArgIndex
+            // degrade to the full clause list on a miss, so re-landing indexing here is now feasible
+            // (perf opportunity, not done yet).
             return liveKb.getRulesForPredicate(f, ar);
         }
         return kb.get(key(lookup));

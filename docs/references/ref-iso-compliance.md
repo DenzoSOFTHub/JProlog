@@ -4,7 +4,7 @@
 
 **Current Compliance Level: 100%** (Full ISO 13211-1 Compliance)
 
-JProlog v3.0.0 achieves 100% compliance with ISO 13211-1 core built-in predicates (111/111 tested predicates pass). All sections of the standard are fully implemented: control, unification, type testing, term comparison, term creation/decomposition, arithmetic (30+ functions and 6 comparators), clause retrieval/manipulation, all-solutions, stream I/O, logic & control, atom processing, implementation hooks, and exception handling.
+JProlog v3.6.0 achieves 100% compliance with ISO 13211-1 core built-in predicates (111/111 tested predicates pass). All sections of the standard are fully implemented: control, unification, type testing, term comparison, term creation/decomposition, arithmetic (30+ functions and 6 comparators), clause retrieval/manipulation, all-solutions, stream I/O, logic & control, atom processing, implementation hooks, and exception handling.
 
 ## Detailed Compliance Assessment
 

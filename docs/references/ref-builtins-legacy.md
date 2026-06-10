@@ -1,6 +1,6 @@
 # JProlog Built-in Predicates Reference
 
-**Version**: JProlog v3.0.0
+**Version**: JProlog v3.6.0
 **Last Updated**: 2026-03-22
 **Total Built-ins**: 93+ predicates + 20+ arithmetic functions
 

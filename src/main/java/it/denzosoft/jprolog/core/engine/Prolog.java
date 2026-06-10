@@ -956,8 +956,10 @@ public class Prolog {
     // buffering every solution of a high-/infinite-solution query. Mirrors the solve(String) setup.
     /**
      * Solve a query through the LEGACY recursive engine regardless of the {@code -Djprolog.engine}
-     * default. The legacy {@code QuerySolver} carries the four-port {@code DebugController} hooks that
-     * the v2 engine does not, so the IDE debugger must use this entry point (ISS-2025-0328).
+     * default. Since v3.3.0 (ISS-2025-0331) the default v2 engine fires the four-port
+     * {@code DebugController} events itself, so the IDE debugger runs on plain {@link #solve(String)};
+     * this entry point remains for detached sub-solves (e.g. breakpoint-condition evaluation,
+     * ISS-2025-0333) and for explicitly exercising the legacy solver.
      */
     public List<Map<String, Term>> solveLegacy(String queryString) {
         resetTransientQueryState();
@@ -1485,8 +1487,10 @@ public class Prolog {
 
     // ISS-2025-0339: per-query inference (step) budget for the default v2 engine; 0 = unlimited.
     private long inferenceBudget = 0;
-    /** Abort any subsequent query with error(resource_error(inference_limit_exceeded),_) after this many
-     *  resolution steps. Bounds CPU on untrusted/runaway queries (v2 engine only). 0 disables it. */
+    /** Abort any subsequent query by throwing {@link InferenceLimitException} after this many
+     *  resolution steps. Deliberately NOT a PrologException, so an untrusted {@code catch/3}
+     *  cannot trap it — the Java embedder must catch it. Bounds CPU on untrusted/runaway
+     *  queries (v2 engine only). 0 disables it. */
     public void setInferenceBudget(long steps) { this.inferenceBudget = steps; }
     public long getInferenceBudget() { return inferenceBudget; }
     // END_CHANGE: ISS-2025-0338

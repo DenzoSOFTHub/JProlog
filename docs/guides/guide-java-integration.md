@@ -16,7 +16,7 @@
 
 JProlog provides a comprehensive Java API for integrating Prolog reasoning capabilities into Java applications. This guide shows simple, complete examples that actually work with the current codebase structure.
 
-### Current Features (v3.0.0)
+### Current Features (v3.6.0)
 - **Full Prolog Engine**: Complete ISO Prolog implementation
 - **Built-in Predicates**: 200+ standard and extended-library predicates available
 - **Robust Parser**: Clean-room single-pass parser (`core.parser.v2`, default; `-Djprolog.parser=legacy` to fall back) with operator-precedence/Pratt parsing and dynamic `op/3` support
@@ -33,7 +33,7 @@ JProlog provides a comprehensive Java API for integrating Prolog reasoning capab
 <dependency>
     <groupId>it.denzosoft</groupId>
     <artifactId>jprolog</artifactId>
-    <version>3.0.0</version>
+    <version>3.6.0</version>
 </dependency>
 ```
 
@@ -667,7 +667,7 @@ The `.jpc` binary format features:
 
 ## Notes
 
-- **Current Version**: This guide is updated for JProlog v3.0.0
+- **Current Version**: This guide is updated for JProlog v3.6.0
 - **Package Structure**: All classes use the `it.denzosoft.jprolog.core.*` package structure
 - **Built-in Predicates**: Over 90 standard Prolog predicates are available
 - **Testing**: All examples have been verified to work with the current codebase

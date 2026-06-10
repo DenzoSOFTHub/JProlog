@@ -1,6 +1,6 @@
 # JProlog Built-in Operators Reference
 
-**Version**: JProlog v3.0.0
+**Version**: JProlog v3.6.0
 **Last Updated**: 2026-03-22
 **Total Operators**: 25+ operators with comprehensive precedence rules, plus dynamic `op/3` support
 

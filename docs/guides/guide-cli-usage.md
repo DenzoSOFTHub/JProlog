@@ -77,6 +77,7 @@ All special commands start with a colon (`:`) and are case-insensitive:
 | `:help` | `:h` | Show help information |
 | `:listing` | `:l` | Display all loaded rules and facts |
 | `:clear` | | Clear knowledge base and reload examples |
+| `:trace [on\|off]` | | Toggle four-port call tracing (Call/Exit/Fail/Redo); `trace.`/`notrace.` also work (v3.3.0+) |
 | `:consult <file>` | `:c <file>` | Load facts/rules from a file |
 | `:save <file>` | `:s <file>` | Save current knowledge base to file |
 | `:compile <file>` | | Compile `.pl` file to binary `.jpc` format |
@@ -296,16 +297,14 @@ JProlog CLI implements approximately 95% of ISO Prolog standard features:
 - String/atom conversion
 - Stream I/O management
 - System flags
+- Exception handling (`catch/3`, `throw/1`, ISO error terms)
+- DCG (Definite Clause Grammars) — complete ISO translator (v3.0.0+)
 
 ### ⚠️ Partially Implemented
-- Exception handling (basic support)
-- DCG (Definite Clause Grammar) - 85% success rate
 - Module system - basic module-qualified calls supported (`Module:Goal`)
 
 ### 📋 Known Limitations
-- Rule resolution in QuerySolver may have issues with complex clause structures
-- Some advanced I/O predicates may not be fully ISO-compliant
-- Cut operator (!) behavior may differ slightly from standard
+- See [docs/tracking/track-limitations.md](../tracking/track-limitations.md) for the current list (legacy-engine-only gaps, threading isolation, `with_output_to/2` stream handling)
 
 ## Troubleshooting
 
@@ -373,7 +372,7 @@ For more information about Prolog programming and ISO standard compliance, consu
 
 ## Version Information
 
-This guide is current as of **JProlog v3.0.0**. All CLI functionality and examples described have been tested with this version.
+This guide is current as of **JProlog v3.6.0**. All CLI functionality and examples described have been tested with this version.
 
 **Launch Command:**
 ```bash

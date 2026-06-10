@@ -561,11 +561,13 @@ verb(v(chases)) --> [chases].
 
 ---
 
-## DCG Status in JProlog v3.0.0
+## DCG Status in JProlog v3.6.0
 
 ### Working DCG Features (complete)
 
-JProlog v3.0.0 ships a clean-room single-pass ISO DCG translator (`core.dcg.v2.DCGTranslator`, the default; fall back with `-Djprolog.dcg=legacy`). It supports the full standard construct set, including head push-back, alternation `|`, `\+`, `call//N`, `{}` escapes, `!`, and `->`. The earlier 85% limitation (LIM-021) is resolved:
+Since v3.0.0 JProlog ships a clean-room single-pass ISO DCG translator (`core.dcg.v2.DCGTranslator`, the default; fall back with `-Djprolog.dcg=legacy`). It supports the full standard construct set, including head push-back, alternation `|`, `\+`, `call//N`, `{}` escapes, `!`, and `->`. The earlier 85% limitation (LIM-021) is resolved.
+
+The v3.5.0/v3.6.0 ISO-conformance audit hardened it further: `phrase/2,3` now applies full DCG body translation to its first argument (`(A,B)`, `(A;B)`, `(A->B)`, `\+A`, `!`, `{G}`, `[a,b]`, `[]` all work as bodies — ISS-2025-0391) and raises ISO `type_error`s instead of failing silently (ISS-2025-0394); variable push-backs and `[a|Var]` terminal lists are validated at load time instead of silently corrupting the grammar (ISS-2025-0392/0393); a non-callable DCG head (`123 --> [a]`) raises `type_error(callable, 123)` at load time (ISS-2025-0410).
 
 #### **Core Features (100% Working)**
 - ✅ **Basic DCG rule translation**: `rule --> body.` syntax
@@ -613,6 +615,8 @@ uppercase --> [C], { C >= 65, C =< 90 }.  % uppercase letters
 ### Resolved Limitations
 
 The three DCG limitations documented for v2.5.5 (ISS-2025-0040 operator terms in list heads, ISS-2025-0041 special-character terminals, ISS-2025-0042 complex arithmetic in `{}` constraints) are all resolved in v3.0.0 by the clean-room parser (`core.parser.v2`) and DCG translator (`core.dcg.v2`). The patterns that previously required workarounds now parse and run directly, e.g. `json_object([K-V|Pairs]) --> [123], json_pair(K-V), json_object_rest(Pairs), [125].`
+
+For historical reference, the old failure modes and their workarounds were:
 ```prolog
 % ❌ FAILS: Compound operator terms in list heads
 json_object([K-V|Pairs]) --> [123], ws, json_pair(K-V), json_object_rest(Pairs), ws, [125].
@@ -657,7 +661,7 @@ max_depth(D1, D2, D) :- D1 < D2, D is D2 + 1.
 
 ### Test Results
 
-Under v3.0.0 the DCG example programs pass in full, including the three categories that were limited in v2.5.5: JSON parsing with operator terms in heads, grammars using punctuation terminals, and rules with complex arithmetic in `{}` constraints.
+As of v3.6.0 the DCG example programs pass in full, including the three categories that were limited in v2.5.5: JSON parsing with operator terms in heads, grammars using punctuation terminals, and rules with complex arithmetic in `{}` constraints.
 
 ### Testing Your DCG Rules
 
@@ -677,6 +681,6 @@ Under v3.0.0 the DCG example programs pass in full, including the three categori
 
 **JProlog DCG Guide** - Master Definite Clause Grammars for parsing and language processing
 
-*Version 3.0.0 | DenzoSOFT | https://denzosoft.it*
+*Version 3.6.0 | DenzoSOFT | https://denzosoft.it*
 
-*This guide covers DCG implementation in JProlog v3.0.0. For additional parsing examples, see the comprehensive test programs in the `examples/` directory.*
+*This guide covers DCG implementation in JProlog v3.6.0. For additional parsing examples, see the comprehensive test programs in the `examples/` directory.*

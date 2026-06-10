@@ -370,7 +370,7 @@ JProlog IDE supports approximately **95% of ISO Prolog standard**, including:
 
 ## Version Information
 
-This guide is current as of **JProlog v3.0.0**. The IDE features described are fully functional and tested with this version.
+This guide is current as of **JProlog v3.6.0**. The IDE features described are fully functional and tested with this version.
 
 ### Key Improvements in v3.0.0
 - Enhanced list representation with ISO-compliant formatting
@@ -420,6 +420,6 @@ java -cp target/classes it.denzosoft.jprolog.editor.PrologIDE
 
 **JProlog IDE from DenzoSOFT** - Complete Integrated Development Environment for Prolog Programming
 
-*Version 3.0.0 | DenzoSOFT | https://denzosoft.it*
+*Version 3.6.0 | DenzoSOFT | https://denzosoft.it*
 
 *For additional support and documentation, visit the DenzoSOFT website or consult the comprehensive user manual.*

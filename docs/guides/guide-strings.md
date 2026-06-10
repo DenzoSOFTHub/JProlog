@@ -986,9 +986,9 @@ safe_substring(String, Start, Length, SubString) :-
 
 ## Version Information
 
-This guide is current as of **JProlog v3.0.0**. All string operations and built-in predicates described are fully functional and tested.
+This guide is current as of **JProlog v3.6.0**. All string operations and built-in predicates described are fully functional and tested.
 
-### String Features in v3.0.0:
+### String Features in v3.6.0:
 - ✅ **Complete String Library**: string_concat/3, string_length/2, sub_string/5
 - ✅ **Character Operations**: string_chars/2, string_codes/2 fully operational  
 - ✅ **Type Conversions**: atom_string/2, number_string/2, atom_number/2
@@ -1017,6 +1017,6 @@ This guide is current as of **JProlog v3.0.0**. All string operations and built-
 
 **JProlog String Operations Guide** - Master text processing and string manipulation in Prolog
 
-*Version 3.0.0 | DenzoSOFT | https://denzosoft.it*
+*Version 3.6.0 | DenzoSOFT | https://denzosoft.it*
 
-*This comprehensive guide covers all string and atom operations available in JProlog v3.0.0. For additional text processing examples and algorithms, see the programs in the `examples/` directory.*
+*This comprehensive guide covers all string and atom operations available in JProlog v3.6.0. For additional text processing examples and algorithms, see the programs in the `examples/` directory.*
