@@ -621,12 +621,27 @@ operators, an `op/3` inside a module file is local to that module for `current_o
 `op/3` executed in a branch that later fails is undone — `(op(700, xfx, tmp), fail ; true)` leaves
 no `tmp` operator.
 
+Since 4.4.0 both raise the ISO 13211-1 8.14.3.3 / 8.14.4.3 error terms (ISS-2025-0504): an unbound
+argument is `instantiation_error`; a non-integer priority `type_error(integer, P)`; a non-atom
+specifier `type_error(atom, T)`; a name that is neither an atom nor a list of atoms
+`type_error(list, N)` (a non-atom element is `type_error(atom, E)`); a priority outside 0..1200
+`domain_error(operator_priority, P)`; an unknown specifier `domain_error(operator_specifier, T)`;
+`','` `permission_error(modify, operator, ',')`; and `'|'` outside its ISO window (priority 0, or
+an infix specifier with priority >= 1001) `permission_error(create, operator, '|')`. `current_op/3`
+raises the type and domain errors for a bound argument of the wrong shape instead of failing.
+
 ```prolog
 ?- op(700, xfx, is_bigger), X =.. [is_bigger, elephant, mouse].
 X = elephant is_bigger mouse.
 
 ?- findall(P-T, current_op(P, T, mod), L).
 L = [400-yfx].
+
+?- catch(op(1300, xfx, too_big), E, true).
+E = error(domain_error(operator_priority, 1300), op/3).
+
+?- catch(op(700, xfx, ','), E, true).
+E = error(permission_error(modify, operator, ','), op/3).
 ```
 
 ### char_conversion/2, current_char_conversion/2
@@ -636,9 +651,15 @@ ones first, then the identity mapping of every other printable ASCII character. 
 the `Prolog` instance, and a conversion declared in a branch that later fails is undone.
 `char_conversion(C, C)` removes the mapping for `C`.
 
+Since 4.4.0 both raise ISO 8.14.5.3: an unbound argument is `instantiation_error` and anything that
+is not a one-character atom is `representation_error(character)` (ISS-2025-0504).
+
 ```prolog
 ?- char_conversion(a, b), current_char_conversion(a, X).
 X = b.
+
+?- catch(char_conversion(ab, a), E, true).
+E = error(representation_error(character), char_conversion/2).
 ```
 
 ### code_type/2, char_type/2

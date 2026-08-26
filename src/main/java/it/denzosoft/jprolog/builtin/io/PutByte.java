@@ -28,16 +28,23 @@ public class PutByte implements BuiltIn {
         Term byteTerm = query.getArguments().get(arity - 1).resolveBindings(bindings);
         Term streamArg = (arity == 2) ? query.getArguments().get(0) : null;
 
+        // START_CHANGE: ISS-2025-0505 - 4.3 wave D: ISO 8.13.3.3 — instantiation_error,
+        // type_error(byte, B) and representation_error(byte) instead of three message atoms that
+        // catch/3 could only match with a bare variable catcher.
         if (byteTerm instanceof Variable) {
-            throw new PrologEvaluationException("put_byte: byte argument must be instantiated");
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError(ctx));
         }
-        if (!(byteTerm instanceof Number)) {
-            throw new PrologEvaluationException("put_byte: byte argument must be an integer");
+        if (!(byteTerm instanceof Number) || !((Number) byteTerm).isInteger()) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("byte", byteTerm, ctx));
         }
         int byteValue = ((Number) byteTerm).getValue().intValue();
         if (byteValue < 0 || byteValue > 255) {
-            throw new PrologEvaluationException("put_byte: byte value must be 0-255, got " + byteValue);
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("byte", byteTerm, ctx));
         }
+        // END_CHANGE: ISS-2025-0505
 
         // START_CHANGE: ISS-2025-0472 - write through the engine's stream (counted, per engine)
         PrologStream s = IOStreamUtils.outputStream(streamArg, bindings, ctx);

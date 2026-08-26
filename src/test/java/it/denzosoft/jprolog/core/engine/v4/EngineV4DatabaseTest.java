@@ -165,7 +165,9 @@ public class EngineV4DatabaseTest {
         String out = buffer.toString();
         assertTrue("listing/1 must print the clause, got: " + out, out.contains("baz :- true"));
         assertTrue("listing/1 must name the predicate, got: " + out, out.contains("baz/0"));
-        assertEquals("eval:listing/1: Argument must be ground.", err("listing(X)"));
+        // START_CHANGE: ISS-2025-0508 - 4.3 wave D: a real instantiation_error.
+        assertEquals("error(instantiation_error,'listing/1')", err("listing(X)"));
+        // END_CHANGE: ISS-2025-0508
     }
 
     /** A bare name lists every arity, as the reference has always documented. */
@@ -222,17 +224,31 @@ public class EngineV4DatabaseTest {
 
     @Test
     public void testISS0499_PrologFlags() {
-        assertEquals("true", all("current_prolog_flag(bounded, X)", "X"));
-        assertEquals("false", yn("current_prolog_flag(nosuchflag, _)"));
-        assertEquals("eval:current_prolog_flag/2: Flag must be a variable or atom.",
+        // START_CHANGE: ISS-2025-0512 - bounded is FALSE: JProlog's integers are unbounded.
+        assertEquals("false", all("current_prolog_flag(bounded, X)", "X"));
+        assertEquals("1000000000000000000000000000000",
+            all("X is 10^30", "X"));                      // and that is why
+        // END_CHANGE: ISS-2025-0512
+        // START_CHANGE: ISS-2025-0508 - ISO 8.17.2.3: type_error(atom, F) / domain_error.
+        assertEquals("error(domain_error(prolog_flag,nosuchflag),'current_prolog_flag/2')",
+            err("current_prolog_flag(nosuchflag, _)"));
+        assertEquals("error(type_error(atom,3),'current_prolog_flag/2')",
             err("current_prolog_flag(3, _)"));
+        // END_CHANGE: ISS-2025-0508
         assertTrue(prolog.solve("current_prolog_flag(_, _).").size() > 10);
         assertEquals(1, prolog.solve("once(current_prolog_flag(_, _)).").size());
         assertEquals("codes",
             all("set_prolog_flag(double_quotes, codes), current_prolog_flag(double_quotes, X)", "X"));
-        assertEquals("eval:set_prolog_flag/2: Flag must be an atom.", err("set_prolog_flag(X, 1)"));
-        assertEquals("eval:set_prolog_flag/2: Cannot set flag 'bounded' (read-only or invalid value).",
+        // START_CHANGE: ISS-2025-0508 - ISO 8.17.1.3, all five clauses.
+        assertEquals("error(instantiation_error,'set_prolog_flag/2')", err("set_prolog_flag(X, 1)"));
+        assertEquals("error(type_error(atom,5),'set_prolog_flag/2')", err("set_prolog_flag(5, off)"));
+        assertEquals("error(permission_error(modify,flag,bounded),'set_prolog_flag/2')",
             err("set_prolog_flag(bounded, junk)"));
+        assertEquals("error(domain_error(prolog_flag,nosuchflag),'set_prolog_flag/2')",
+            err("set_prolog_flag(nosuchflag, off)"));
+        assertEquals("error(domain_error(flag_value,unknown+5),'set_prolog_flag/2')",
+            err("set_prolog_flag(unknown, 5)"));
+        // END_CHANGE: ISS-2025-0508
     }
 
     // ================================================================ halt/0,1

@@ -183,6 +183,13 @@ final class NativeDb {
             }
             Term ft = m.deref(((CompoundTerm) pi).getArguments().get(0));
             Term at = m.deref(((CompoundTerm) pi).getArguments().get(1));
+            // START_CHANGE: ISS-2025-0508 - ISO 8.9.4.3 (a): an UNBOUND half of the indicator is
+            // instantiation_error, not type_error(atom, _G17)/type_error(integer, _G17) — the old
+            // culprit was a fresh variable, which no catcher can usefully match.
+            if (ft instanceof Variable || at instanceof Variable) {
+                throw Errors.instantiation("abolish/1");
+            }
+            // END_CHANGE: ISS-2025-0508
             if (!(ft instanceof Atom)) {
                 throw new PrologException(ISOErrorTerms.typeError("atom", m.resolve(ft),
                     "abolish/1: functor must be an atom"));
@@ -269,9 +276,9 @@ final class NativeDb {
                 return Outcome.SUCCESS;
             }
             Term spec = m.deref(args[0]);
-            if (!Unify.isGround(spec, m.guard())) {
-                throw new PrologEvaluationException("listing/1: Argument must be ground.");
-            }
+            // START_CHANGE: ISS-2025-0508
+            if (!Unify.isGround(spec, m.guard())) throw Errors.instantiation("listing/1");
+            // END_CHANGE: ISS-2025-0508
             // A bare name lists EVERY arity, as the reference has always documented
             // (`listing(parent)`); Name/Arity lists exactly one.
             if (spec instanceof Atom) {
@@ -386,14 +393,18 @@ final class NativeDb {
         public Outcome call(Machine m, final Term[] args) {
             Term flagT = m.deref(args[0]);
             if (flagT instanceof Atom) {
+                // START_CHANGE: ISS-2025-0508 - ISO 8.17.2.3 (b): an atom that is not a flag of
+                // this implementation is domain_error(prolog_flag, F), not a silent failure.
                 Term v = PrologFlags.getFlag(((Atom) flagT).getName());
-                if (v == null) return Outcome.FAILURE;
+                if (v == null) throw Errors.domain("prolog_flag", flagT, "current_prolog_flag/2");
+                // END_CHANGE: ISS-2025-0508
                 return m.unify(args[1], v) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
+            // START_CHANGE: ISS-2025-0508 - ISO 8.17.2.3 (a): type_error(atom, F).
             if (!(flagT instanceof Variable)) {
-                throw new PrologEvaluationException(
-                    "current_prolog_flag/2: Flag must be a variable or atom.");
+                throw Errors.type("atom", m.resolve(flagT), "current_prolog_flag/2");
             }
+            // END_CHANGE: ISS-2025-0508
             final List<String> names = new ArrayList<String>(PrologFlags.getAllFlagNames());
             final int max = names.size();
             final int[] i = {0};
@@ -427,14 +438,28 @@ final class NativeDb {
     private static final class SetFlagB implements Builtin {
         @Override
         public Outcome call(Machine m, Term[] args) {
+            // START_CHANGE: ISS-2025-0508 - ISO 8.17.1.3, all five clauses.
             Term flagT = m.deref(args[0]);
+            Term valT = m.deref(args[1]);
+            if (flagT instanceof Variable || valT instanceof Variable) {
+                throw Errors.instantiation("set_prolog_flag/2");
+            }
             if (!(flagT instanceof Atom)) {
-                throw new PrologEvaluationException("set_prolog_flag/2: Flag must be an atom.");
+                throw Errors.type("atom", m.resolve(flagT), "set_prolog_flag/2");
             }
             String name = ((Atom) flagT).getName();
-            if (PrologFlags.setFlag(name, m.resolve(args[1]))) return Outcome.SUCCESS;
-            throw new PrologEvaluationException("set_prolog_flag/2: Cannot set flag '"
-                + name + "' (read-only or invalid value).");
+            if (!PrologFlags.hasFlag(name)) {
+                throw Errors.domain("prolog_flag", flagT, "set_prolog_flag/2");
+            }
+            if (PrologFlags.isReadOnly(name)) {
+                throw Errors.permission("modify", "flag", flagT, "set_prolog_flag/2");
+            }
+            Term value = m.resolve(args[1]);
+            if (PrologFlags.setFlag(name, value)) return Outcome.SUCCESS;
+            throw Errors.domain("flag_value",
+                new CompoundTerm(new Atom("+"), java.util.Arrays.asList(flagT, value)),
+                "set_prolog_flag/2");
+            // END_CHANGE: ISS-2025-0508
         }
     }
 

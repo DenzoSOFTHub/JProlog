@@ -2,7 +2,6 @@ package it.denzosoft.jprolog.core.engine.v4;
 
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.engine.ControlFlow;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
@@ -222,9 +221,13 @@ final class NativeTerm {
         @Override
         public Outcome call(Machine m, Term[] args) {
             Term a = m.deref(args[0]);
-            if (!(a instanceof Atom)) {
-                throw new PrologEvaluationException("type_error(atom, " + m.resolve(a) + ")");
-            }
+            // START_CHANGE: ISS-2025-0507 - 4.3 wave D: a real error(...) term. The two throws in
+            // this class used to build the FORMAL as a Java string and hand it to
+            // PrologEvaluationException, so catch/3 saw the atom 'type_error(atom, X)' and
+            // error(type_error(atom, _), _) never matched it.
+            if (a instanceof Variable) throw Errors.instantiation("atom_to_term/3");
+            if (!(a instanceof Atom)) throw Errors.type("atom", m.resolve(a), "atom_to_term/3");
+            // END_CHANGE: ISS-2025-0507
             Term parsed;
             try {
                 parsed = new it.denzosoft.jprolog.core.parser.Parser().parseTerm(((Atom) a).getName());
@@ -234,7 +237,9 @@ final class NativeTerm {
                 throw new PrologException(ISOErrorTerms.resourceError("parser_nesting", "atom_to_term/3"));
             } catch (RuntimeException e) {
                 ControlFlow.rethrowIfControl(e);
-                throw new PrologEvaluationException("syntax_error(" + e.getMessage() + ")");
+                // START_CHANGE: ISS-2025-0507
+                throw Errors.syntax(String.valueOf(e.getMessage()), "atom_to_term/3");
+                // END_CHANGE: ISS-2025-0507
             }
             if (parsed == null) return Outcome.FAILURE;
             Map<String, Variable> named = new LinkedHashMap<String, Variable>();
@@ -271,9 +276,12 @@ final class NativeTerm {
         public Outcome call(Machine m, Term[] args) {
             Term a = m.deref(args[0]), b = m.deref(args[1]);
             boolean av = a instanceof Variable, bv = b instanceof Variable;
-            if (av && bv) {
-                throw new PrologEvaluationException("succ/2: at least one argument must be instantiated");
-            }
+            // START_CHANGE: ISS-2025-0507 - SWI's succ/2 contract as ISO error terms:
+            // instantiation_error, type_error(integer, N), type_error(not_less_than_zero, N).
+            if (av && bv) throw Errors.instantiation("succ/2");
+            if (!av) checkNatural(m, a, "succ/2");
+            if (!bv) checkNatural(m, b, "succ/2");
+            // END_CHANGE: ISS-2025-0507
             if (!av && !bv) {
                 if (!(a instanceof Number) || !(b instanceof Number)) return Outcome.FAILURE;
                 double v1 = ((Number) a).getValue(), v2 = ((Number) b).getValue();
@@ -293,15 +301,30 @@ final class NativeTerm {
         }
     }
 
+    // START_CHANGE: ISS-2025-0507 - succ/2's argument contract in one place.
+    /** A succ/2 argument must be a non-negative integer once it is bound. */
+    private static void checkNatural(Machine m, Term t, String ctx) {
+        if (!(t instanceof Number) || !((Number) t).isInteger()) {
+            throw Errors.type("integer", m.resolve(t), ctx);
+        }
+        if (((Number) t).longValue() < 0) {
+            throw Errors.type("not_less_than_zero", m.resolve(t), ctx);
+        }
+    }
+    // END_CHANGE: ISS-2025-0507
+
     private static final class PlusB implements Builtin {
         @Override
         public Outcome call(Machine m, Term[] args) {
             Term a = m.deref(args[0]), b = m.deref(args[1]), c = m.deref(args[2]);
             boolean av = a instanceof Variable, bv = b instanceof Variable, cv = c instanceof Variable;
             int vars = (av ? 1 : 0) + (bv ? 1 : 0) + (cv ? 1 : 0);
-            if (vars > 1) {
-                throw new PrologEvaluationException("plus/3: at most one argument can be uninstantiated");
-            }
+            // START_CHANGE: ISS-2025-0507
+            if (vars > 1) throw Errors.instantiation("plus/3");
+            if (!av && !(a instanceof Number)) throw Errors.type("integer", m.resolve(a), "plus/3");
+            if (!bv && !(b instanceof Number)) throw Errors.type("integer", m.resolve(b), "plus/3");
+            if (!cv && !(c instanceof Number)) throw Errors.type("integer", m.resolve(c), "plus/3");
+            // END_CHANGE: ISS-2025-0507
             if (vars == 0) {
                 if (!(a instanceof Number) || !(b instanceof Number) || !(c instanceof Number)) {
                     return Outcome.FAILURE;

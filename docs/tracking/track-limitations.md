@@ -3,7 +3,50 @@
 This document describes current limitations in JProlog implementation.
 When an issue is resolved, the corresponding limitation should be removed from this file.
 
-**Last updated**: 2026-08-26 (v4.3.0, 4.2 wave C)
+**Last updated**: 2026-08-26 (v4.4.0, 4.3 wave D)
+
+---
+
+## LIM-038: the EXTENDED LIBRARIES still raise message atoms, not ISO `error/2` terms
+
+**Found in v4.4.0 (4.3 wave D, ISS-2025-0504..0512).** The ISO-core families that waves B and C
+made native now raise `error(Formal, Context)` for every argument fault (see section 62 of
+`docs/references/BUILTIN_PREDICATES_REFERENCE.md` and `EngineV4IsoErrorsTest`). The **bridged
+extended libraries do not**: they throw a `PrologEvaluationException` whose error term is a bare
+atom carrying an English sentence, e.g. `'xml_parse: argument must be an atom.'`. Such an exception
+IS catchable, but only by a bare-variable catcher — `catch(G, error(type_error(atom, _), _), R)`
+never matches one.
+
+**Measured** by `scratchpad/43d/ErrProbe.java`, which calls every registered indicator at arities
+1..4 with (a) every argument unbound and (b) a wrong-type first argument, and classifies what comes
+back. Of 2 326 probed goals: 275 raise a proper `error/2`, 1 170 are wrong-arity complaints (see
+below), and **315 raise a message atom**. By family:
+
+| family | goals | family | goals | family | goals |
+|---|---:|---|---:|---|---:|
+| jdbc | 88 | filesystem | 28 | crypto | 26 |
+| network | 26 | http | 22 | io (bridged half) | 22 |
+| persistence | 18 | datetime | 14 | threading | 14 |
+| logging | 12 | regex | 12 | csv | 8 |
+| dcg (extension predicates) | 8 | json | 8 | os | 4 |
+| xml | 4 | exception | 1 | | |
+
+The single `exception` row is a false positive: `throw(foo)` throws `foo`, which is not an
+`error/2` term by design. The 22 `io` ones are all in the still-bridged stream/parser half
+(LIM-037): the arity guards of `writeq`, `write_canonical`, `flush_output`, `portray_clause` and
+the remaining byte I/O. `put_byte/1,2` was fixed in this wave; `read/1,2`, `read_term/2,3`,
+`close/1,2` and the stream-property predicates were not swept.
+
+**Separately**, `BuiltInRegistry.isBuiltIn(Name, Arity)` answers true for arities the built-in does
+not implement, so `char_code(X)` reaches `builtin.character.CharCode` and gets
+`'char_code/2 requires exactly 2 arguments'` where ISO asks for
+`existence_error(procedure, char_code/1)`. That is 1 170 of the 2 326 probed goals and is a
+registry design question, not an error-term one; it is unchanged since 3.x.
+
+**Workaround**: catch with a variable catcher and inspect the atom, or wrap the library call.
+
+**Fix**: convert each library's argument validation to `Errors.instantiation/type/domain`. It is
+mechanical but touches ~200 files; do it per family, driven by `ErrProbe`.
 
 ---
 

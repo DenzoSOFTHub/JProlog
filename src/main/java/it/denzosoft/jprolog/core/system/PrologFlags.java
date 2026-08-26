@@ -105,14 +105,22 @@ public class PrologFlags {
     // END_CHANGE: ISS-2025-0437
 
     private static void initializeStandardFlags(Map<String, Term> FLAGS) {
-        // bounded/1 - Whether integers are bounded
-        FLAGS.put("bounded", new Atom("true"));
-        
-        // max_integer/1 - Maximum integer value (if bounded)
+        // START_CHANGE: ISS-2025-0512 - 4.3 wave D: bounded is FALSE. JProlog's integers are
+        // arbitrary precision (core.terms.Number carries a BigInteger; `X is 10^30` and
+        // `X is 2**200` both answer exactly), so ISO 7.11.1.1's `bounded = true` was simply wrong
+        // and contradicted Appendix A of the reference manual. With bounded = false ISO 7.11.1.2/3
+        // do not require max_integer/min_integer at all; they are kept because programs read them,
+        // and they now mean what SWI's mean: the range of the machine-word (long) representation
+        // an integer uses before it is promoted to BigInteger, NOT a limit on arithmetic.
+        FLAGS.put("bounded", new Atom("false"));
+
+        // max_integer/1 - the largest integer held in the machine-word representation.
+        // NOT an upper bound on integer arithmetic (bounded is false).
         FLAGS.put("max_integer", new Number(Long.MAX_VALUE));
-        
-        // min_integer/1 - Minimum integer value (if bounded)
+
+        // min_integer/1 - the smallest integer held in the machine-word representation.
         FLAGS.put("min_integer", new Number(Long.MIN_VALUE));
+        // END_CHANGE: ISS-2025-0512
         
         // integer_rounding_function/1 - How integer division rounds
         FLAGS.put("integer_rounding_function", new Atom("toward_zero"));
@@ -263,6 +271,15 @@ public class PrologFlags {
     /**
      * Check if a flag is read-only.
      */
+    // START_CHANGE: ISS-2025-0508 - 4.3 wave D: set_prolog_flag/2 must tell a read-only flag
+    // (permission_error) from an unknown one (domain_error(prolog_flag, F)) from a bad value
+    // (domain_error(flag_value, F+V)). It used to collapse all three into one boolean.
+    /** True when the flag exists but may not be modified (ISO 7.11.1: the implementation flags). */
+    public static boolean isReadOnly(String flagName) {
+        return isReadOnlyFlag(flagName);
+    }
+    // END_CHANGE: ISS-2025-0508
+
     private static boolean isReadOnlyFlag(String flagName) {
         switch (flagName) {
             // Core system flags (read-only)

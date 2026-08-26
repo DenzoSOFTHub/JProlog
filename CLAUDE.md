@@ -19,14 +19,14 @@ clean-room rewrites of the parser, the DCG translator, the CLP(FD) solver, the a
 and the IDE source formatter, and they are all current.
 
 **Repository**: https://github.com/DenzoSOFTHub/JProlog
-**Current version**: `<version>` in pom.xml (4.3.0). pom.xml and CHANGELOG.md are the source of
+**Current version**: `<version>` in pom.xml (4.4.0). pom.xml and CHANGELOG.md are the source of
 truth; README.md is refreshed at release time and may lag between releases.
 
 ## Build & Run
 
 ```bash
 mvn compile                  # Build
-mvn test                     # the whole suite — ONE engine, one leg (4.3.0 baseline: 1301/1301)
+mvn test                     # the whole suite — ONE engine, one leg (4.4.0 baseline: 1313/1313)
 mvn test -Dtest=BugFixVerificationTest                                  # one test class
 mvn test -Dtest=BugFixVerificationTest#testISS0188_ModNegativeDivisor   # one method
 mvn clean compile            # Clean rebuild
@@ -191,11 +191,12 @@ The clean-room core designed in `docs/reports/report-engine-v4-design-2026-08-25
 waves are done (v3.9.0: ISS-2025-0438..0449; v3.10.0: 0450..0456; v3.11.0: 0457..0462;
 v3.12.0: 0463..0465; v3.13.0: 0466..0471; v3.14.0: 0472..0477; **v4.0.0: 0478..0488**), and so are
 the two 4.1 waves (**v4.1.0**, one engine: 0491..0495; **v4.2.0**, the L-08 built-in migration:
-0496..0501) and **v4.3.0** (4.2 wave C — indexing on every selection path, `op/3` and
-`char_conversion/2` native, `char_type/2`/`code_type/2` generators: 0500, 0502, 0503). Progress,
-the 63 invariants, the benchmarks and what remains live in
-`docs/reports/report-engine-v4-progress.md` — **read it before touching `core.engine.v4`**;
-sections 9–18 are the wave records.
+0496..0501), **v4.3.0** (4.2 wave C — indexing on every selection path, `op/3` and
+`char_conversion/2` native, `char_type/2`/`code_type/2` generators: 0500, 0502, 0503) and
+**v4.4.0** (4.3 wave D — ISO error conformance across the natives, `retractall/1` through the
+index, `bounded = false`, the cleanup catch escape: 0504..0513). Progress, the 68 invariants, the benchmarks and what remains
+live in `docs/reports/report-engine-v4-progress.md` — **read it before touching `core.engine.v4`**;
+sections 9–19 are the wave records.
 
 **Package `core.engine.v4`**:
 - `Machine` — the drive loop: goal stack, choice points, cut, catch/throw, findall, cleanup frames,
@@ -314,8 +315,36 @@ inference budget, the trust model, the IDE debugger contract, and the four-port 
   - A **new selection site** must call `p.select(Clause.argKey1(goal))`, not `p.all()`. The three
     that exist are `Machine.selectClauses` (calls), `Machine.retractClause` and
     `NativeLibrary.ClauseB` (`clause/2`); `p.all()` survives only where the whole predicate really
-    is wanted (`Machine.hasQualifiedHook`). `EngineV4IndexingTest` pins the property with a
-    randomised equivalence against an independent "could the first arguments unify?" oracle.
+    is wanted (`Machine.hasQualifiedHook`). A fourth lives on the KB side:
+    `KnowledgeBase.retractAllClauses` selects through `getRulesWithFirstArgIndex` when the head's
+    first argument is bound (ISS-2025-0511), and deliberately keeps the historical full scan when
+    it is not — every clause matches there, so the candidate list is pure overhead.
+    `EngineV4IndexingTest` pins the property with a randomised equivalence against an independent
+    "could the first arguments unify?" oracle, plus the partial-structure key (`f(g(X), _)` keys on
+    `g/1`) on all four paths.
+- **A built-in raises `error(Formal, Context)`, never a message atom** (invariant 64,
+  ISS-2025-0504..0510). Build it with `core.engine.v4.Errors` —
+  `instantiation`/`type`/`domain`/`existence`/`permission`/`representation`/`resource`/
+  `evaluation`/`syntax`, plus `Errors.pi(name, arity)` for the `Name/Arity` culprit ISO asks for.
+  **Never** `new PrologEvaluationException("some sentence")` and never a formal built as a Java
+  string: both produce an error term that is a bare ATOM, which `catch(G, error(E, _), R)` cannot
+  match, so only a bare-variable catcher sees it. And an argument fault **raises**, it does not
+  fail silently (invariant 65). `EngineV4IsoErrorsTest` is the net — a 249-row
+  `Goal -> expected error term` table asserted on the whole `error(Formal, _)` shape, with the
+  deliberate deviations listed in its class comment; a new built-in with an argument contract
+  belongs in it. The bridged extended libraries are the known exception (LIM-038).
+- **A goal argument is checked before anything runs** (invariant 66). `setup_call_cleanup/3`
+  validates Setup, Goal and Cleanup up front, so an argument fault is raised inside the enclosing
+  catch scope (ISS-2025-0509).
+- **A cleanup runs at the moment its frame is popped, never after the search that popped it**
+  (invariant 68, ISS-2025-0513). `Machine.handleBall` used to collect the CLEANUP frames it unwound
+  past and run them after the matching CATCH frame had been popped and its recovery installed — and
+  `handleBall` is called from inside `drive`'s `catch` clause, so a `PrologException` the cleanup
+  threw was outside the loop that routes exceptions and escaped to the Java embedder. It now runs
+  each cleanup at pop time (as `backtrack` always has) and lets the cleanup's ball REPLACE the one
+  being unwound, continuing the search from the same position; when nothing catches the replacement
+  it throws it itself, because `drive` rethrows the ORIGINAL exception object when `handleBall`
+  answers false. Any new construct that runs user code while a ball is unwinding must do the same.
 - **Protection is a question about three stores, not one.** `Machine.isProtectedProcedure` asks
   `BuiltInRegistry.isBuiltIn`, `BuiltinTable.isNativeKey` and `Modules.isLibraryIndicatorKey`;
   `checkModifiable` (assert/retract), `NativeLibrary.ClauseB` (`clause/2`) and
@@ -548,7 +577,7 @@ Every bug or feature request must be documented before implementation:
 - **Release Notes**: `docs/tracking/track-release-notes.md`
 
 Before allocating a new ISS number, grep **CHANGELOG.md** and `src/` (`START_CHANGE` tags) for the
-highest used one (**ISS-2025-0503** as of 4.3.0) — track-issues.md lags behind recent releases.
+highest used one (**ISS-2025-0512** as of 4.4.0) — track-issues.md lags behind recent releases.
 Its internal ordering and header levels are inconsistent; grep for an ID rather than assuming
 position. Some tracking content is in Italian — match surrounding style rather than rewriting.
 
@@ -576,15 +605,17 @@ its own `core/engine/v4/EngineV4*Test`:
 `EngineV4WriterTest` (21, W7), `EngineV4ThreadsTest` (15, W8), `EngineV4TraceTest` (25, W8 — 16
 line-for-line pinned trace oracles), `EngineV4RetirementTest` (17, W9),
 `EngineV41RetirementTest` (21, 4.1 wave A), `EngineV4IoTest` (19), `EngineV4TextTest` (16),
-`EngineV4TermTest` (13), `EngineV4DatabaseTest` (17) — 4.1 wave B — and **`EngineV4IndexingTest`
-(10), `EngineV4OpsTest` (16), `EngineV4CharTypeTest` (14) — 4.2 wave C**, plus
+`EngineV4TermTest` (13), `EngineV4DatabaseTest` (17) — 4.1 wave B — `EngineV4IndexingTest`
+(14), `EngineV4OpsTest` (16), `EngineV4CharTypeTest` (14) — 4.2 wave C — and
+**`EngineV4IsoErrorsTest` (1 method, 249 table rows) and `EngineV4CleanupTest` (7) — 4.3 wave
+D**, plus
 `test/cli/PrologCliBatchTest` (6). A wave-B class opens with a `test*IsNative` method that fails
 the moment one of the migrated indicators is not in the `BuiltinTable`; the rest pin the modes and
 the ISO error terms so a migration cannot quietly change one.
 - Add a `@Test` method named after the issue and fix (e.g. `testISS0188_ModNegativeDivisor`)
 - The test must fail without the fix and pass with it
 - Use `prolog.solve()` for query-level assertions, direct Java assertions for internal fixes
-- Every wave must keep the full suite green (4.3.0 baseline: **1301/1301**). There is one engine
+- Every wave must keep the full suite green (4.4.0 baseline: **1313/1313**). There is one engine
   and one leg, so a test never selects an engine (ISS-2025-0491 removed the `setUp`/`tearDown`
   toggles the v4 classes used to carry).
 

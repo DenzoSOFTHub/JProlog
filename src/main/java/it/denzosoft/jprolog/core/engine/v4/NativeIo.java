@@ -254,11 +254,18 @@ final class NativeIo {
 
         @Override
         public Outcome call(Machine m, Term[] args) {
-            PrintStream ps = out(m, streamArg ? args[0] : null, "put_char/2");
+            String ctx = "put_char/" + (streamArg ? 2 : 1);
+            PrintStream ps = out(m, streamArg ? args[0] : null, ctx);
             Term ct = m.deref(streamArg ? args[1] : args[0]);
-            if (!(ct instanceof Atom)) return Outcome.FAILURE;      // includes the unbound case
+            // START_CHANGE: ISS-2025-0505 - ISO 8.12.3.3: an unbound character is
+            // instantiation_error and anything that is not a one-character atom is
+            // type_error(character, C). Both used to fail silently.
+            if (ct instanceof Variable) throw Errors.instantiation(ctx);
+            if (!(ct instanceof Atom) || ((Atom) ct).getName().length() != 1) {
+                throw Errors.type("character", m.resolve(ct), ctx);
+            }
+            // END_CHANGE: ISS-2025-0505
             String s = ((Atom) ct).getName();
-            if (s.length() != 1) return Outcome.FAILURE;
             ps.print(s);
             ps.flush();
             return Outcome.SUCCESS;
@@ -271,11 +278,20 @@ final class NativeIo {
 
         @Override
         public Outcome call(Machine m, Term[] args) {
-            PrintStream ps = out(m, streamArg ? args[0] : null, "put_code/2");
+            String ctx = "put_code/" + (streamArg ? 2 : 1);
+            PrintStream ps = out(m, streamArg ? args[0] : null, ctx);
             Term ct = m.deref(streamArg ? args[1] : args[0]);
-            if (!(ct instanceof Number)) return Outcome.FAILURE;
+            // START_CHANGE: ISS-2025-0505 - ISO 8.12.3.3 / 7.12.2: instantiation_error,
+            // type_error(integer, C), representation_error(character_code).
+            if (ct instanceof Variable) throw Errors.instantiation(ctx);
+            if (!(ct instanceof Number) || !((Number) ct).isInteger()) {
+                throw Errors.type("integer", m.resolve(ct), ctx);
+            }
             double v = ((Number) ct).getValue();
-            if (v != Math.floor(v) || v < 0 || v > 1114111) return Outcome.FAILURE;
+            if (v != Math.floor(v) || v < 0 || v > 1114111) {
+                throw Errors.representation("character_code", ctx);
+            }
+            // END_CHANGE: ISS-2025-0505
             ps.print(new String(Character.toChars((int) v)));
             ps.flush();
             return Outcome.SUCCESS;
@@ -356,6 +372,14 @@ final class NativeIo {
 
         @Override
         public Outcome call(Machine m, Term[] args) {
+            // START_CHANGE: ISS-2025-0505 - ISO 8.11.1.3 / 8.11.2.3: an argument that is neither a
+            // variable nor a stream is domain_error(stream, S), not a silent failure.
+            Term a0 = m.deref(args[0]);
+            if (!(a0 instanceof Variable) && !IOStreamUtils.isStreamTerm(a0)) {
+                throw Errors.domain("stream", m.resolve(a0),
+                                    input ? "current_input/1" : "current_output/1");
+            }
+            // END_CHANGE: ISS-2025-0505
             Streams st = StreamManager.streams();
             PrologStream s = input ? st.currentInput() : st.currentOutput();
             Term value = (s == (input ? st.userInput() : st.userOutput()))
@@ -405,6 +429,10 @@ final class NativeIo {
             Term fmtT = m.deref(args[arity == 3 ? 1 : 0]);
             Term argsT = (arity == 1) ? NIL : m.deref(args[arity == 3 ? 2 : 1]);
 
+            // START_CHANGE: ISS-2025-0505 - an unbound format string is instantiation_error
+            // (ISO 7.12.2 a); every other shape keeps the historical silent failure.
+            if (fmtT instanceof Variable) throw Errors.instantiation("format/" + arity);
+            // END_CHANGE: ISS-2025-0505
             String fmt = formatString(fmtT, m);
             if (fmt == null) return Outcome.FAILURE;
             List<Term> list = argumentList(argsT, m);

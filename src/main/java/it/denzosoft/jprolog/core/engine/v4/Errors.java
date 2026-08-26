@@ -48,5 +48,31 @@ public final class Errors {
     public static PrologException system(String what, String context) {
         return new PrologException(ISOErrorTerms.systemError(what, context));
     }
+
+    // START_CHANGE: ISS-2025-0504 - 4.3 wave D: the three formals the natives still had to build
+    // by hand (or, worse, raise as a PrologEvaluationException carrying a message atom), plus the
+    // one culprit shape ISO asks for over and over: a predicate indicator Name/Arity.
+    /** {@code error(evaluation_error(What), Context)} — ISO 7.12.2 h. */
+    public static PrologException evaluation(String what, String context) {
+        return new PrologException(ISOErrorTerms.evaluationError(what, context));
+    }
+
+    /** {@code error(syntax_error(What), Context)} — ISO 7.12.2 j. */
+    public static PrologException syntax(String what, String context) {
+        return new PrologException(ISOErrorTerms.syntaxError(what, context));
+    }
+
+    /**
+     * The ISO culprit for a procedure: {@code Name/Arity}. Built here rather than in five natives
+     * so that {@code existence_error(procedure, foo/1)} and
+     * {@code permission_error(modify, static_procedure, foo/1)} can never disagree on the shape.
+     */
+    public static Term pi(String name, int arity) {
+        return new it.denzosoft.jprolog.core.terms.CompoundTerm(
+            new it.denzosoft.jprolog.core.terms.Atom("/"),
+            java.util.Arrays.<Term>asList(new it.denzosoft.jprolog.core.terms.Atom(name),
+                                          it.denzosoft.jprolog.core.terms.Number.valueOf(arity)));
+    }
+    // END_CHANGE: ISS-2025-0504
 }
 // END_CHANGE: ISS-2025-0442

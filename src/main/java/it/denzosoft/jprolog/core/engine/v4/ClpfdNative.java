@@ -92,13 +92,23 @@ final class ClpfdNative {
     private static final class In implements Builtin {
         @Override public Outcome call(Machine m, Term[] args) {
             Term dom = m.deref(args[1]);
+            // START_CHANGE: ISS-2025-0510 - X in a used to fail silently; the domain argument has
+            // a shape and a wrong one is a type/domain error (clpfd's own vocabulary).
+            if (dom instanceof Variable) throw Errors.instantiation("in/2");
             if (!(dom instanceof CompoundTerm) || !"..".equals(((CompoundTerm) dom).getName())
                     || ((CompoundTerm) dom).getArguments().size() != 2) {
-                return Outcome.FAILURE;
+                throw Errors.type("clpfd_domain", m.resolve(dom), "in/2");
             }
             Term loT = m.deref(((CompoundTerm) dom).getArguments().get(0));
             Term hiT = m.deref(((CompoundTerm) dom).getArguments().get(1));
-            if (!(loT instanceof Number) || !(hiT instanceof Number)) return Outcome.FAILURE;
+            if (loT instanceof Variable || hiT instanceof Variable) throw Errors.instantiation("in/2");
+            if (!(loT instanceof Number) || !((Number) loT).isInteger()) {
+                throw Errors.type("integer", m.resolve(loT), "in/2");
+            }
+            if (!(hiT instanceof Number) || !((Number) hiT).isInteger()) {
+                throw Errors.type("integer", m.resolve(hiT), "in/2");
+            }
+            // END_CHANGE: ISS-2025-0510
             if (!ClpfdV2Bridge.postIn(m.resolve(args[0]), ((Number) loT).longValue(),
                                       ((Number) hiT).longValue(), NO_BINDINGS)) {
                 return Outcome.FAILURE;
@@ -175,7 +185,14 @@ final class ClpfdNative {
             }
             Term listArg = m.deref(args[withOptions ? 1 : 0]);
             List<Term> vars = list(m, listArg);
-            if (vars == null) return Outcome.FAILURE;
+            // START_CHANGE: ISS-2025-0510 - 4.3 wave D: label(a) / labeling(_, a) is
+            // instantiation_error or type_error(list, a), the same contract labeling/2's OPTION
+            // list already had; the variable list used to fail silently.
+            if (vars == null) {
+                throw (listArg instanceof Variable) ? Errors.instantiation(ind)
+                                                    : Errors.type("list", m.resolve(listArg), ind);
+            }
+            // END_CHANGE: ISS-2025-0510
             for (int i = 0; i < vars.size(); i++) vars.set(i, m.deref(vars.get(i)));
 
             final List<Map<Variable, Long>> sols = ClpfdV2Bridge.labelCells(vars, varSel, valOrder);

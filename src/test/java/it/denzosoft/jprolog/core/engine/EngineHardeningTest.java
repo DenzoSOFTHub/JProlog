@@ -143,7 +143,11 @@ public class EngineHardeningTest {
     public void testISS0425_LengthDeterministicModesUnchanged() {
         assertEquals("3", first("length([a,b,c], N)", "N").toString());
         assertTrue(succeeds("length(L, 3), L = [_,_,_]"));
-        assertFalse("a non-list tail still fails", succeeds("length([a|b], _)"));
+        // START_CHANGE: ISS-2025-0509 - 4.3 wave D: an improper list is type_error(list, L)
+        // (SWI's behaviour), where length/2 used to fail silently.
+        assertTrue("a non-list tail is type_error(list, [a|b])",
+            succeeds("catch(length([a|b], _), error(type_error(list, [a|b]), _), true)"));
+        // END_CHANGE: ISS-2025-0509
         assertEquals("0", first("length([], N)", "N").toString());
     }
 

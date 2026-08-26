@@ -1003,6 +1003,16 @@ public final class Machine {
      * cut away, or when an exception unwinds past it.
      */
     private boolean setupCallCleanup(Term setup, Term goal, Term cleanup, int cutBarrier) {
+        // START_CHANGE: ISS-2025-0509 - 4.3 wave D: the three arguments are checked BEFORE Setup
+        // runs. Without this, `catch(call_cleanup(A, B), E, true)` with B unbound escaped catch/3
+        // entirely: Goal's instantiation_error unwound past the (now consumed) CATCH frame and the
+        // cleanup's own instantiation_error was then raised with no frame left to catch it, so the
+        // Java embedder saw a PrologException where the Prolog program had asked for a catch.
+        // Validating up front puts the error inside the catch scope, which is also what SWI does.
+        checkCallable(setup, "setup_call_cleanup/3");
+        checkCallable(goal, "setup_call_cleanup/3");
+        checkCallable(cleanup, "setup_call_cleanup/3");
+        // END_CHANGE: ISS-2025-0509
         if (!runOnce(setup)) return false;
         final CP frame = new CP(CP.CLEANUP, B.mark());
         frame.cleanup = cleanup;
@@ -1021,6 +1031,17 @@ public final class Machine {
         }, cont));
         return true;
     }
+
+    // START_CHANGE: ISS-2025-0509
+    /** ISO 7.8.x: a goal argument must be bound and callable. */
+    private void checkCallable(Term t, String ctx) {
+        Term d = Unify.deref(t);
+        if (d instanceof Variable) throw Errors.instantiation(ctx);
+        if (!(d instanceof Atom) && !(d instanceof CompoundTerm)) {
+            throw Errors.type("callable", resolve(d), ctx);
+        }
+    }
+    // END_CHANGE: ISS-2025-0509
 
     /** Run a cleanup goal as {@code once(Cleanup)}; a failure is ignored, an exception propagates. */
     private void runCleanup(Term cleanup) {
@@ -1096,6 +1117,23 @@ public final class Machine {
     /** {@code between(+Low, +High, -Value)} as a lazy choice point. 1 ok / 0 fail / -1 not handled. */
     private int betweenNative(Term goal, List<Term> a) {
         Term lo = Unify.deref(a.get(0)), hi = Unify.deref(a.get(1)), v = Unify.deref(a.get(2));
+        // START_CHANGE: ISS-2025-0509 - 4.3 wave D: between/3's argument contract, checked in the
+        // ONE place every mode passes through. An unbound bound is instantiation_error and a
+        // non-integer bound (or a non-integer third argument) is type_error(integer, N); all of
+        // them used to fall through to the registry version, which failed silently.
+        if (lo instanceof Variable || hi instanceof Variable) throw Errors.instantiation("between/3");
+        if (!(lo instanceof Number) || !((Number) lo).isInteger()) {
+            throw Errors.type("integer", resolve(lo), "between/3");
+        }
+        if (!(hi instanceof Number) || !((Number) hi).isInteger()) {
+            boolean inf = (hi instanceof Atom)
+                && ("inf".equals(((Atom) hi).getName()) || "infinite".equals(((Atom) hi).getName()));
+            if (!inf) throw Errors.type("integer", resolve(hi), "between/3");
+        }
+        if (!(v instanceof Variable) && (!(v instanceof Number) || !((Number) v).isInteger())) {
+            throw Errors.type("integer", resolve(v), "between/3");
+        }
+        // END_CHANGE: ISS-2025-0509
         if (!(v instanceof Variable)) return -1;
         if (!(lo instanceof Number) || !((Number) lo).isInteger() || !((Number) lo).fitsInLong()) return -1;
         long low = ((Number) lo).longValue();
@@ -1316,16 +1354,41 @@ public final class Machine {
         return results;
     }
 
-    /** Route a thrown ball to the nearest armed catch frame at or above {@code floor}. */
+    /**
+     * Route a thrown ball to the nearest armed catch frame at or above {@code floor}.
+     *
+     * <p>START_CHANGE: ISS-2025-0513 - a cleanup collected while a ball unwinds is run AT THE
+     * POINT ITS FRAME IS POPPED, not after the search has finished. It used to be collected into a
+     * list and run once a matching CATCH frame had been found, popped and its recovery installed —
+     * so the cleanup executed with the frame that should have caught it already consumed, and its
+     * own exception propagated out of {@code handleBall}, which {@link #drive} calls from inside
+     * its {@code catch} clause and therefore cannot route. {@code catch(call_cleanup(throw(a),
+     * throw(b)), E, true)} reached the Java embedder as an uncaught `PrologException: b`.
+     *
+     * <p>Running it here fixes that for free: the enclosing frames are still on the stack, so a
+     * ball the cleanup throws simply <b>replaces</b> the one being unwound and the search
+     * continues from the same position. That is SWI's answer (the cleanup's exception wins, and it
+     * is tested against the catchers that enclose the {@code setup_call_cleanup/3}, not against
+     * the one that matched the original ball), and it makes this path agree with
+     * {@link #backtrack}, which has always run a cleanup at pop time.
+     *
+     * <p>Two consequences worth naming. A later cleanup still runs when an earlier one throws
+     * (nested {@code setup_call_cleanup/3}: the outermost cleanup's ball is the one that survives).
+     * And when no catcher matches, a REPLACED ball has to be thrown from here — {@code drive}
+     * rethrows the original exception object when this method answers false, which would report
+     * the goal's ball rather than the cleanup's. END_CHANGE: ISS-2025-0513
+     */
     private boolean handleBall(Term ball, int floor) {
-        ArrayList<Term> cleanups = null;
+        boolean replaced = false;                              // ISS-2025-0513
         while (cps.size() > floor) {
             CP top = popCP();
             if (top.tframe != null) top.tframe.discard();      // ISS-2025-0463
             if (top.kind == CP.CLEANUP && !top.cleanupDone) {
                 top.cleanupDone = true;
-                if (cleanups == null) cleanups = new ArrayList<Term>();
-                cleanups.add(top.cleanup);
+                // START_CHANGE: ISS-2025-0513
+                Term thrown = runCleanupWhileUnwinding(top.cleanup);
+                if (thrown != null) { ball = thrown; replaced = true; }
+                // END_CHANGE: ISS-2025-0513
                 continue;
             }
             if (top.kind != CP.CATCH || !top.active) continue;
@@ -1343,13 +1406,38 @@ public final class Machine {
             }
             if (matched) {
                 goalStack = mg(top.recovery, top.cutBarrier, top.cont, top.module);
-                if (cleanups != null) for (int i = 0; i < cleanups.size(); i++) runCleanup(cleanups.get(i));
                 return true;
             }
         }
-        if (cleanups != null) for (int i = 0; i < cleanups.size(); i++) runCleanup(cleanups.get(i));
+        // START_CHANGE: ISS-2025-0513 - nothing caught it. If a cleanup replaced the ball the
+        // caller must see the NEW one, and drive() would otherwise rethrow the original object.
+        if (replaced) throw new PrologException(ball);
+        // END_CHANGE: ISS-2025-0513
         return false;
     }
+
+    // START_CHANGE: ISS-2025-0513
+    /**
+     * Run a cleanup goal that was reached by an unwinding ball. Answers the cleanup's OWN ball when
+     * it throws one — the caller then unwinds that instead — and null when it does not.
+     *
+     * <p>The trust model is preserved: {@code InferenceLimitException}, {@code QueryCancelledException}
+     * and {@code DebugStopException} are not {@code PrologException}s and are not caught here, so a
+     * budget abort or a Stop during a cleanup still tears the query down and stays invisible to
+     * {@code catch/3}. Neither is {@code halt/0,1}, whose {@code PrologException} carries no ball.
+     */
+    private Term runCleanupWhileUnwinding(Term cleanup) {
+        try {
+            runCleanup(cleanup);
+            return null;
+        } catch (PrologException pe) {
+            ControlFlow.rethrowIfControl(pe);
+            Term b = pe.getErrorTerm();
+            if (b == null || pe.isHalt()) throw pe;            // halt/1 is not a ball
+            return Unify.copy(b, new IdentityHashMap<Variable, Variable>(), guard);
+        }
+    }
+    // END_CHANGE: ISS-2025-0513
 
     static Term makeList(List<Term> elems) {
         Term list = NIL;

@@ -751,6 +751,8 @@ Match = person(john, _, _).
 
 *v3.6.0*: works on non-ground terms — `term_to_atom(foo(X, bar), A)` formats the variable (`A = 'foo(_G1, bar)'`) instead of failing; a bound atom side keeps parse-and-unify semantics (`term_to_atom(foo(Z), 'foo(bar)')` binds `Z = bar`).
 
+*v4.4.0* (ISS-2025-0506): both arguments unbound is `instantiation_error`.
+
 ```prolog
 ?- term_to_atom(f(a, b), X).
 X = 'f(a, b)'.
@@ -780,6 +782,8 @@ The string side also accepts an atom, so `term_string(T, 'f(a)')` parses; the te
 
 ### atom_to_term/3
 **Purpose**: Parse an atom as a Prolog term, returning the term plus a list of variable bindings (`Name=Var` pairs). *(v2.8.2+)*
+
+*v4.4.0* (ISS-2025-0507): a real `error/2` term — `instantiation_error`, `type_error(atom, A)`, `syntax_error(Message)`. It used to throw the FORMAL as a bare atom, so `catch(..., error(type_error(atom, _), _), ...)` never matched.
 
 ```prolog
 ?- atom_to_term('foo(X, Y)', T, B).
@@ -901,6 +905,8 @@ validate_option(Option, ValidOptions) :-
 *v3.5.0*: accepts proper lists containing unbound elements (e.g. `length([A, B, C], N)` gives `N = 3`) — only the list skeleton must be proper.
 
 *v3.6.1* (ISS-2025-0425): the **generative** mode works. When the length is unbound and the list's spine ends in an unbound tail, `length/2` enumerates `N = Prefix, Prefix+1, …` on backtracking instead of failing, so `length(L, N), N >= 3, !` gives `N = 3, L = [_,_,_]` and `length([a|T], N)` enumerates `N = 1, 2, 3, …`. Like SWI-Prolog, an **unguarded** `length(L, N)` with both arguments unbound is therefore a non-terminating generator — bound it with a cut, a comparison, or a known length.
+
+*v4.4.0* (ISS-2025-0509): the argument contract raises instead of failing silently — `length(foo, N)` and `length([a|b], N)` are `type_error(list, L)`, `length([a], a)` is `type_error(integer, a)` and `length(L, -1)` is `domain_error(not_less_than_zero, -1)`.
 
 ```prolog
 % Mode 1: Find length of a list
@@ -1499,6 +1505,8 @@ max_of_three(A, B, C, Max) :-
 
 *v3.7.0* (ISS-2025-0432): the generative mode is **lazy** on the default engine — one integer per backtrack instead of materialising the whole range up front, so `between(1, 2000000, X), X >= 2000000, !` runs in constant memory. `between(Low, inf, X)` / `between(Low, infinite, X)` genuinely enumerate without an upper bound (they were silently capped at a million solutions).
 
+*v4.4.0* (ISS-2025-0509): an unbound bound is `instantiation_error` and a non-integer argument is `type_error(integer, N)`; `between(1, 2, a)` used to fail.
+
 ```prolog
 % Mode 1: Check if number is in range
 ?- between(1, 10, 5).
@@ -1547,6 +1555,8 @@ S = [1, 4, 9, 16].
 
 **When to use**: Use for increment/decrement operations or defining natural number sequences.
 
+*v4.4.0* (ISS-2025-0507): ISO error terms — `succ(_, _)` is `instantiation_error`, `succ(a, X)` is `type_error(integer, a)` and `succ(-1, X)` is `type_error(not_less_than_zero, -1)`. `succ(X, 0)` still fails (0 has no predecessor).
+
 ```prolog
 % Find successor
 ?- succ(5, X).
@@ -1580,6 +1590,8 @@ true.
 **Purpose**: Relates three integers where the third is the sum of the first two.
 
 **When to use**: Use for addition with multiple unknown values.
+
+*v4.4.0* (ISS-2025-0507): more than one unbound argument is `instantiation_error` and a non-integer bound argument is `type_error(integer, N)`.
 
 ```prolog
 % Normal addition
@@ -1918,6 +1930,23 @@ initialize :-
 **Purpose**: `setup_call_cleanup(:Setup, :Goal, :Cleanup)` — runs `Setup` once, then `Goal`, and runs `Cleanup` exactly once when `Goal` finishes (all solutions exhausted, failure, or an exception). If `Setup` fails or raises, `Cleanup` is not run.
 
 **When to use**: Guaranteed resource cleanup (closing files/streams/connections) regardless of how the goal terminates.
+
+*v4.4.0* (ISS-2025-0509): Setup, Goal and Cleanup are checked BEFORE Setup runs — an unbound one is `instantiation_error`, a non-callable one `type_error(callable, G)`.
+
+*v4.4.0* (ISS-2025-0513): **an exception thrown by Cleanup now reaches the enclosing `catch/3`**, whatever Goal did. It used to escape to the Java embedder whenever Goal had also thrown, because the cleanup ran after the matching catch frame had been consumed. The cleanup's ball **replaces** the goal's (SWI's semantics), so it is matched against the catchers that enclose the `setup_call_cleanup/3`, not against the one that matched the goal's ball:
+
+```prolog
+?- catch(call_cleanup(throw(a), throw(b)), E, true).
+E = b.
+
+?- catch(catch(call_cleanup(throw(a), throw(b)), a, r1), E2, true).
+E2 = b.                        % the inner catcher matches only a, so it does not swallow b
+
+?- catch(setup_call_cleanup(true, setup_call_cleanup(true, throw(a), throw(b)), throw(c)), E, true).
+E = c.                         % every cleanup runs; the outermost ball survives
+```
+
+A cleanup reached by an unwinding ball also runs with the bindings Goal made before it threw, so `catch(setup_call_cleanup(true, (X = bound, throw(a)), throw(saw(X))), E, true)` gives `E = saw(bound)`. Resource-limit and cancellation aborts are unaffected: an inference-budget abort or an IDE Stop inside a cleanup is not a `PrologException` and stays uncatchable by `catch/3`.
 
 ```prolog
 % Cleanup runs whether the goal succeeds, fails, or raises:
@@ -2927,6 +2956,8 @@ with_temp_fact(Fact, Goal) :-
 
 *v3.5.0*: abolishing a built-in raises `permission_error(modify, static_procedure, Name/Arity)`.
 
+*v4.4.0* (ISS-2025-0508): an unbound half of the indicator (`abolish(a/A)`, `abolish(A/1)`) is `instantiation_error` — it used to be a `type_error` whose culprit was a fresh variable.
+
 ```prolog
 % Remove entire predicate
 ?- assertz(test(1)), assertz(test(2)), assertz((test(X) :- X > 10)).
@@ -3155,6 +3186,8 @@ candidate per redo instead of the full O(n^2) cross-product materialised up fron
 `String.indexOf("", Idx)` stops advancing past the end of the atom; on v4 the four positions are
 enumerated once.
 
+*v4.4.0* (ISS-2025-0509): ISO 8.16.3.3 — `instantiation_error`, `type_error(atom, A)` for the atom and the sub-atom, `type_error(integer, N)` for Before/Length/After.
+
 ```prolog
 % Syntax: sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom)
 % Before: characters before the subatom
@@ -3272,6 +3305,8 @@ Codes = [50, 53, 53].
 
 *v3.6.0*: float syntax is preserved in the number→atom direction — `atom_number(A, 123.0)` gives `A = '123.0'` (previously `'123'`); the atom→number direction is type-faithful (`atom_number('1.0', X)` gives the float `1.0`) and rejects Java-only spellings (`'Infinity'`, `'NaN'`, `'1f'`) with `syntax_error(illegal_number)`.
 
+*v4.4.0* (ISS-2025-0506): neither argument bound is `instantiation_error`; a bound first argument that is not text is `type_error(atom, A)`. An atom that is not a number still FAILS.
+
 ```prolog
 % Convert atom to number
 ?- atom_number('42', N).
@@ -3327,6 +3362,8 @@ F = '$42.35'.
 
 **When to use**: Use for parsing CSV, processing user input, or tokenization.
 
+*v4.4.0* (ISS-2025-0506): `instantiation_error` for an unbound argument and `type_error(string, S)` for a non-string one.
+
 ```prolog
 % Syntax: split_string(+String, +Separators, +PadChars, -SubStrings)
 
@@ -3366,6 +3403,9 @@ T = ['Hello', 'world', 'How', 'are', 'you'].
 
 ### atomic_list_concat/2, atomic_list_concat/3
 **Purpose**: Joins atoms (optionally with separator) or splits by separator.
+
+*v4.4.0* (ISS-2025-0506): an unbound or partial list, an unbound separator, or neither list nor atom bound is `instantiation_error`; a non-atom separator or atom argument is `type_error(atom, A)`.
+
 
 - `atomic_list_concat/2` (v2.8.2+): joins without separator
 - `atomic_list_concat/3`: joins with separator; reverse mode splits
@@ -3598,6 +3638,8 @@ C = helloworld.
 **Purpose**: Convert atom case.
 
 **When to use**: Use for normalization, case-insensitive comparisons, or formatting.
+
+*v4.4.0* (ISS-2025-0506): `instantiation_error` for an unbound argument and `type_error(atom, A)` for a non-atom, in place of a message atom.
 
 ```prolog
 % Convert to uppercase
@@ -4101,11 +4143,14 @@ System predicates provide access to Prolog system features and configuration.
 V = '2.0.15'.
 
 ?- current_prolog_flag(bounded, B).
-B = true.  % Integers are bounded
+B = false.  % integers are arbitrary precision (ISS-2025-0512, since 4.4.0)
+
+?- X is 10^30.
+X = 1000000000000000000000000000000.
 
 % Enumerate all flags
 ?- current_prolog_flag(Flag, Value).
-Flag = bounded, Value = true ;
+Flag = bounded, Value = false ;
 Flag = max_integer, Value = 9223372036854775807 ;
 Flag = min_integer, Value = -9223372036854775808 ;
 ...
@@ -4118,7 +4163,9 @@ check_unicode_support :-
     ;   writeln('Limited character support')
     ).
 
-% Practical example: Adjust behavior based on flags
+% Practical example: Adjust behavior based on flags. In JProlog `bounded` is `false`, so this
+% answers Max = inf: `max_integer`/`min_integer` are reported (SWI does the same) but they are
+% the limits of the fast 64-bit representation, NOT a limit on integer arithmetic.
 get_max_int(Max) :-
     (   current_prolog_flag(bounded, true)
     ->  current_prolog_flag(max_integer, Max)
@@ -4151,6 +4198,8 @@ rational tree.
 *v3.8.0* (ISS-2025-0437): flags are **per engine**. `set_prolog_flag/2` now changes only the `Prolog` instance that runs the goal — previously the flag store was a process-wide static, so `set_prolog_flag(unknown, fail)` (or `double_quotes`, or `occurs_check`) in one engine silently reconfigured every other engine in the JVM. The same applies to `trace/0` / `notrace/0`. Embedders can reach a specific engine's store with `Prolog.getFlags()` and toggle tracing from another thread with `Prolog.setTracing(boolean)`.
 
 *v3.14.0* (ISS-2025-0472/0474/0477): the last of the process-global state follows. The **stream table**, the **operator store** (`op/3` / `current_op/3`), the **spy points** and the **profiler counters** belong to the `Prolog` instance, reached with `Prolog.getStreams()`, `Prolog.getOps()` and `Prolog.getEngineState()`. Two engines in one JVM no longer see each other's streams, aliases, operators, spy points or profile numbers. LIM-034 is closed.
+
+*v4.4.0* (ISS-2025-0508): ISO 8.17.1.3 — `instantiation_error`, `type_error(atom, F)`, `domain_error(prolog_flag, F)` for an unknown flag (setting an unknown flag no longer creates it), `permission_error(modify, flag, F)` for a read-only one and `domain_error(flag_value, F+V)` for a value the flag does not accept.
 
 ```prolog
 % Enable debug mode
@@ -8028,6 +8077,77 @@ runs. The two are observationally identical.
 - `memberchk/2` and `current_module/1` do not exist at all on the default engine.
 
 <!-- END_CHANGE: ISS-2025-0466..0471 -->
+
+---
+
+## 62. ISO error terms (v4.4.0)
+
+Release 4.4.0 (4.3 wave D, ISS-2025-0504..0512) swept the built-ins for places where a
+`PrologEvaluationException` carrying an English sentence — or a silent failure — stood where ISO
+13211-1 section 8 asks for `error(Formal, Context)`. A message-atom exception is *catchable*, but
+only by a bare-variable catcher: `catch(G, error(type_error(atom, _), _), R)` never matched one.
+Every entry below now raises a real `error/2` term whose second argument is the predicate
+indicator.
+
+`EngineV4IsoErrorsTest` is the conformance oracle: 249 `Goal -> expected error term` rows taken
+from ISO section 8 (and, where the standard is silent, from the SWI-Prolog contract this reference
+documents), asserted on the whole `error(Formal, _)` shape. 4.3.0 answered 161 of them; 4.4.0
+answers all 249.
+
+| Predicate | 4.3.0 | 4.4.0 |
+|---|---|---|
+| `op(P, T, N)` unbound argument | `'op/3: First argument must be an integer (precedence).'` | `instantiation_error` |
+| `op(a, xfx, f)` | same message atom | `type_error(integer, a)` |
+| `op(700, 700, f)` | `'op/3: Second argument must be an atom (type).'` | `type_error(atom, 700)` |
+| `op(700, xfx, 1)` | `'op/3: Third argument must be an atom or a list of atoms (name).'` | `type_error(list, 1)` |
+| `op(700, xfx, [a\|1])` | same | `type_error(list, [a\|1])` |
+| `op(1300, xfx, f)` / `op(-1, xfx, f)` | `'op/3: Precedence must be between 0 and 1200.'` | `domain_error(operator_priority, P)` |
+| `op(700, xfy_, f)` | `'op/3: Invalid operator type: xfy_'` | `domain_error(operator_specifier, xfy_)` |
+| `op(_, xfx, ',')` | succeeded | `permission_error(modify, operator, ',')` |
+| `op(700, xfx, '\|')` | succeeded | `permission_error(create, operator, '\|')` (priority 0 or an infix specifier with priority >= 1001 is still allowed) |
+| `current_op(a, xfx, f)` / `current_op(100, foo, b)` / `current_op(100, xfx, 1)` | failed | `type_error(integer, a)` / `domain_error(operator_specifier, foo)` / `type_error(atom, 1)` |
+| `char_conversion(X, a)` | one message atom for every fault | `instantiation_error` |
+| `char_conversion(ab, a)` | same | `representation_error(character)` |
+| `current_char_conversion(ab, X)` | failed | `representation_error(character)` |
+| `put_char(X)` / `put_char(ab)` / `put_char(1)` | failed | `instantiation_error` / `type_error(character, C)` |
+| `put_code(X)` / `put_code(a)` / `put_code(-1)` | failed | `instantiation_error` / `type_error(integer, a)` / `representation_error(character_code)` |
+| `put_byte(X)` / `put_byte(a)` / `put_byte(300)` | message atoms | `instantiation_error` / `type_error(byte, B)` |
+| `current_input(foo)` / `current_output(foo)` | failed | `domain_error(stream, foo)` |
+| `write_term(a, foo)` / `write_term(a, [quoted(true)\|_])` | wrote with default options | `type_error(list, foo)` / `instantiation_error` |
+| `format(X)` / `format(X, [])` | failed | `instantiation_error` |
+| `open(F, read, S, [])` / `open(f, M, S, [])` | `'open: File must be an atom.'` | `instantiation_error` (a non-atom source is `domain_error(source_sink, F)`, a non-atom mode `type_error(atom, M)`) |
+| `upcase_atom(X, Y)` / `upcase_atom(123, Y)` | message atom | `instantiation_error` / `type_error(atom, 123)` |
+| `atom_string(A, S)` | the bare atom `instantiation_error` | `error(instantiation_error, atom_string/2)` |
+| `atom_number(A, N)` / `atom_number(1, N)` | failed | `instantiation_error` / `type_error(atom, 1)` |
+| `number_string(N, S)`, `string_chars(S, L)`, `string_length(S, L)`, `string_code(I, S, C)` | failed or message atom | `instantiation_error` |
+| `string_codes(S, [a])` / `string_codes(S, [-1])` | message atoms | `type_error(integer, a)` / `representation_error(character_code)` |
+| `split_string(abc, ",", "", L)` | message atom | `type_error(string, abc)` |
+| `atomic_list_concat(L, X)` / `atomic_list_concat([a], 1, X)` | failed / message atom | `instantiation_error` / `type_error(atom, 1)` |
+| `term_to_atom(T, A)` both unbound | succeeded (wrote `_G17`) | `instantiation_error` |
+| `atom_to_term(3, T, B)` | the bare atom `'type_error(atom, 3)'` | `error(type_error(atom, 3), atom_to_term/3)` |
+| `sub_atom(A, B, L, Af, S)` and friends | message atoms | `instantiation_error`, `type_error(atom, A)`, `type_error(integer, N)` |
+| `succ(a, X)` / `succ(-1, X)` / `succ(_, _)` | failed / message atom | `type_error(integer, a)` / `type_error(not_less_than_zero, -1)` / `instantiation_error` |
+| `plus(a, 1, X)` / `plus(_, _, _)` | failed / message atom | `type_error(integer, a)` / `instantiation_error` |
+| `between(1, 2, a)` / `between(X, 2, 1)` | failed | `type_error(integer, a)` / `instantiation_error` |
+| `length(foo, N)` / `length([a], a)` / `length(L, -1)` | failed | `type_error(list, foo)` / `type_error(integer, a)` / `domain_error(not_less_than_zero, -1)` |
+| `set_prolog_flag/2`, `current_prolog_flag/2` | message atoms; an unknown flag was created / failed | the five ISO clauses (see Appendix A) |
+| `abolish(a/A)` / `abolish(A/1)` | `type_error` with a fresh variable as the culprit | `instantiation_error` |
+| `listing(X)` | `'listing/1: Argument must be ground.'` | `instantiation_error` |
+| `setup_call_cleanup(S, G, C)` with an unbound or non-callable argument | the error escaped the enclosing `catch/3` | `instantiation_error` / `type_error(callable, G)`, raised before Setup runs |
+| `X in a` / `label(a)` (CLP(FD)) | failed | `type_error(clpfd_domain, a)` / `type_error(list, a)` |
+
+**Deliberate deviations** (documented in `EngineV4IsoErrorsTest` and the 4.3-D wave record):
+`arg(N, T, A)` with N unbound enumerates rather than raising; a stream alias that names no open
+stream is `existence_error(stream, A)` rather than `domain_error(stream_or_alias, A)`;
+`atom_concat/3` requires atoms, so its type error names `atom` and not `atomic`;
+`call((fail, 1))` fails; `format("~w", X)` treats a non-list second argument as one argument;
+`string_concat(X, Y, Z)` with nothing bound fails (ISS-2025-0188) where `atom_concat/3` raises;
+`tab/1,2` still fails on a bad count.
+
+**What is NOT ISO-ified**: the extended libraries that stay bridged (LIM-037) — jdbc, filesystem,
+network, http, crypto, csv, datetime, json, logging, os, persistence, regex, threading, xml, and
+the DCG extension predicates — still raise message atoms for their argument faults. A generated
+probe over every registered indicator (`scratchpad/43d/ErrProbe.java`) counts them; see LIM-038.
 
 ---
 

@@ -35,8 +35,23 @@ public final class WriteOptions {
         o.numbervars = false;                    // ISO default for write_term/2,3
         Term t = (optionsTerm == null) ? new Atom("[]") : optionsTerm.resolveBindings(bindings);
         if (t instanceof Variable) throw new PrologException(ISOErrorTerms.instantiationError(context));
-        List<Term> opts = ListUtils.extractElements(t);
-        if (opts == null) throw new PrologException(ISOErrorTerms.typeError("list", t, context));
+        // START_CHANGE: ISS-2025-0505 - 4.3 wave D. ListUtils.extractElements never returns null:
+        // it stops at the first non-cons and hands back what it has, so the type_error(list, T)
+        // below was dead code and write_term(a, foo) / write_term(a, [quoted(true)|_]) silently
+        // wrote with default options. ISO 8.14.2.3 (b)/(c): a partial list is instantiation_error,
+        // anything that is neither a partial list nor a list is type_error(list, Options).
+        List<Term> opts = new java.util.ArrayList<Term>();
+        Term cur = t;
+        while (cur instanceof CompoundTerm && ".".equals(cur.getName())
+                && cur.getArguments() != null && cur.getArguments().size() == 2) {
+            opts.add(cur.getArguments().get(0));
+            cur = cur.getArguments().get(1).resolveBindings(bindings);
+        }
+        if (cur instanceof Variable) throw new PrologException(ISOErrorTerms.instantiationError(context));
+        if (!(cur instanceof Atom) || !"[]".equals(((Atom) cur).getName())) {
+            throw new PrologException(ISOErrorTerms.typeError("list", t, context));
+        }
+        // END_CHANGE: ISS-2025-0505
         for (Term raw : opts) {
             Term opt = raw.resolveBindings(bindings);
             if (opt instanceof Variable) throw new PrologException(ISOErrorTerms.instantiationError(context));

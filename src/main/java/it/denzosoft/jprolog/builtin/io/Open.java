@@ -41,12 +41,22 @@ public class Open implements BuiltIn {
         Term modeTerm = query.getArguments().get(1).resolveBindings(bindings);
         Term streamTerm = query.getArguments().get(2);
 
+        // START_CHANGE: ISS-2025-0505 - 4.3 wave D: ISO 8.11.5.3 (a)/(c)/(e). An unbound source
+        // or mode is instantiation_error and a non-atom one is a type/domain error; both used to
+        // raise a PrologEvaluationException carrying an English sentence, which catch/3 could only
+        // match with a bare variable catcher.
+        String ctx0 = "open/" + arity;
+        if (fileTerm instanceof it.denzosoft.jprolog.core.terms.Variable
+                || modeTerm instanceof it.denzosoft.jprolog.core.terms.Variable) {
+            throw new PrologException(ISOErrorTerms.instantiationError(ctx0));
+        }
         if (!(fileTerm instanceof Atom)) {
-            throw new PrologEvaluationException("open: File must be an atom.");
+            throw new PrologException(ISOErrorTerms.domainError("source_sink", fileTerm, ctx0));
         }
         if (!(modeTerm instanceof Atom)) {
-            throw new PrologEvaluationException("open: Mode must be an atom.");
+            throw new PrologException(ISOErrorTerms.typeError("atom", modeTerm, ctx0));
         }
+        // END_CHANGE: ISS-2025-0505
 
         String filename = ((Atom) fileTerm).getName();
         String mode = ((Atom) modeTerm).getName();

@@ -88,36 +88,30 @@ public class CharacterIOTest {
     
     @Test
     public void testPutCharErrorHandling() {
-        // Test with unbound variable
-        List<Map<String, Term>> solutions = prolog.solve("put_char(X)");
-        assertTrue("put_char with unbound variable should fail", solutions.isEmpty());
-        
-        // Test with multi-character atom
-        solutions = prolog.solve("put_char(hello)");
-        assertTrue("put_char with multi-character atom should fail", solutions.isEmpty());
-        
-        // Test with number
-        solutions = prolog.solve("put_char(123)");
-        assertTrue("put_char with number should fail", solutions.isEmpty());
+        // START_CHANGE: ISS-2025-0505 - 4.3 wave D: ISO 8.12.3.3 — instantiation_error and
+        // type_error(character, C) where put_char/1 used to fail silently.
+        assertFalse("put_char(X) must raise instantiation_error", prolog.solve(
+            "catch(put_char(X), error(instantiation_error, _), true)").isEmpty());
+        assertFalse("put_char(hello) must raise type_error(character, hello)", prolog.solve(
+            "catch(put_char(hello), error(type_error(character, hello), _), true)").isEmpty());
+        assertFalse("put_char(123) must raise type_error(character, 123)", prolog.solve(
+            "catch(put_char(123), error(type_error(character, 123), _), true)").isEmpty());
+        // END_CHANGE: ISS-2025-0505
     }
     
     @Test
     public void testPutCodeErrorHandling() {
-        // Test with unbound variable
-        List<Map<String, Term>> solutions = prolog.solve("put_code(X)");
-        assertTrue("put_code with unbound variable should fail", solutions.isEmpty());
-        
-        // Test with atom
-        solutions = prolog.solve("put_code(hello)");
-        assertTrue("put_code with atom should fail", solutions.isEmpty());
-        
-        // Test with invalid code (negative)
-        solutions = prolog.solve("put_code(-1)");
-        assertTrue("put_code with negative code should fail", solutions.isEmpty());
-        
-        // Test with invalid code (too large)
-        solutions = prolog.solve("put_code(2000000)");
-        assertTrue("put_code with too large code should fail", solutions.isEmpty());
+        // START_CHANGE: ISS-2025-0505 - ISO 8.12.3.3 / 7.12.2: instantiation_error,
+        // type_error(integer, C), representation_error(character_code).
+        assertFalse("put_code(X) must raise instantiation_error", prolog.solve(
+            "catch(put_code(X), error(instantiation_error, _), true)").isEmpty());
+        assertFalse("put_code(hello) must raise type_error(integer, hello)", prolog.solve(
+            "catch(put_code(hello), error(type_error(integer, hello), _), true)").isEmpty());
+        assertFalse("put_code(-1) must raise representation_error(character_code)", prolog.solve(
+            "catch(put_code(-1), error(representation_error(character_code), _), true)").isEmpty());
+        assertFalse("put_code(2000000) must raise representation_error(character_code)", prolog.solve(
+            "catch(put_code(2000000), error(representation_error(character_code), _), true)").isEmpty());
+        // END_CHANGE: ISS-2025-0505
     }
     
     @Test

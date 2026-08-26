@@ -1,5 +1,94 @@
 # JProlog - Release Notes
 
+## Release 4.4.0 - 2026-08-26
+
+### Wave D of 4.3: ISO error conformance, indexed `retractall/1`, `bounded = false`, the cleanup catch escape
+
+The four items the 4.3.0 wave record named, plus one defect independent verification found.
+ISS-2025-0504 .. ISS-2025-0513. Wave record:
+`docs/reports/report-engine-v4-progress.md` section 19.
+
+**1313/1313 JUnit tests**, **20/20 example programs** with unchanged per-program counts, and the
+generated Reference Manual's worked examples unchanged apart from a timestamp and two gensym
+numbers. The new conformance oracle, `EngineV4IsoErrorsTest`, drives 249 `Goal -> expected error
+term` rows: **4.3.0 answered 161 of them (64.7%), 4.4.0 answers all 249**.
+
+#### Upgrading — READ THIS, it is a behaviour change
+
+Most of the wave replaces an exception carrying an English sentence with a real
+`error(Formal, Context)` term, which only makes `catch/3` more useful. Six things a program can
+actually notice:
+
+```
+current_prolog_flag(bounded, B)   NOW B = false. JProlog's integers are arbitrary precision
+                                  (X is 10^30 is exact), so `true` was wrong and contradicted
+                                  Appendix A of the manual. A program that branches on the flag
+                                  now takes the other — correct — branch. max_integer/min_integer
+                                  are unchanged in value; they mean the limits of the fast 64-bit
+                                  representation, not a limit on arithmetic.
+
+put_char(X), put_code(a),         NOW RAISE where they used to FAIL. Also current_input(foo),
+atom_number(A, N), succ(a, X),    format(X), number_string(N, S), string_chars(S, L),
+between(1, 2, a), length(foo, N)  string_length(S, L), atomic_list_concat(L, A),
+                                  term_to_atom(T, A) with both unbound, plus(a, 1, X),
+                                  succ(-1, X), length([a|b], N), length([a], a), length(L, -1),
+                                  current_prolog_flag(nosuchflag, V),
+                                  current_char_conversion(ab, X), X in a, label(a).
+                                  Wrap in catch(G, _, fail) if you relied on the failure.
+
+write_term(a, foo)                NOW type_error(list, foo); write_term(a, [quoted(true)|_]) is
+                                  instantiation_error. Both used to write the term with DEFAULT
+                                  options, silently ignoring the malformed list.
+
+set_prolog_flag(foo, bar)         NOW domain_error(prolog_flag, foo) — an unknown flag is no
+                                  longer created. A read-only flag is
+                                  permission_error(modify, flag, F) and a rejected value is
+                                  domain_error(flag_value, F+V).
+
+op(_, xfx, ','), op(700, xfx, '|') NOW REFUSED (permission_error). Both used to succeed and could
+                                  leave the reader unable to parse ordinary terms. '|' is still
+                                  accepted at priority 0 or as an infix operator of priority
+                                  >= 1001, which is the ISO window.
+
+setup_call_cleanup/3,             NOW check Setup, Goal and Cleanup BEFORE Setup runs, so an
+call_cleanup/2                    argument fault is raised inside the enclosing catch scope.
+
+a cleanup that THROWS             NOW REACHES catch/3. catch(call_cleanup(throw(a), throw(b)),
+                                  E, true) binds E = b; it used to reach the Java embedder as an
+                                  uncaught PrologException (on 4.3.0 too — pre-existing).
+                                  The CLEANUP's ball replaces the goal's, so a catcher written
+                                  for the goal's ball no longer matches it:
+                                  catch(catch(call_cleanup(throw(a), throw(b)), a, r1), E2, true)
+                                  gives E2 = b, not r1. Nested cleanups all run and the OUTERMOST
+                                  ball survives. A cleanup reached by an unwinding ball also now
+                                  sees the goal's bindings instead of finding them undone.
+                                  The trust model is untouched: a budget abort or a Stop inside a
+                                  cleanup is still NOT catchable by catch/3.
+```
+
+Section 62 of `docs/references/BUILTIN_PREDICATES_REFERENCE.md` is the full before/after table,
+including the 21 rows where JProlog deliberately differs from ISO and why.
+
+#### Faster
+
+```
+retractall(f(Key, _))             -82% over a 20 000-clause table (188 -> 33 ms for 200 calls):
+                                  it selects through the first-argument index instead of walking
+                                  the whole knowledge base with a Term.unify per clause.
+                                  Bulk retractall(f(_, _)) and abolish/1 are unchanged — both
+                                  were benchmarked and are already single passes.
+```
+
+No benchmark is more than 5% slower than 4.3.0 (18 interleaved A/B control pairs).
+
+#### New limitation
+
+**LIM-038**: the bridged extended libraries (jdbc, filesystem, crypto, network, http, persistence,
+datetime, threading, regex, logging, csv, dcg, json, os, xml and the stream half of io) still raise
+message atoms rather than ISO `error/2` terms — 315 goals out of 2 326 probed.
+
+---
+
 ## Release 4.3.0 - 2026-08-26
 
 ### Wave C of 4.2: indexing everywhere, `op/3` native, `char_type/2` generators

@@ -4,7 +4,6 @@ import it.denzosoft.jprolog.builtin.conversion.AtomNumber;
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.builtin.string.TextTerm;
 import it.denzosoft.jprolog.core.engine.ControlFlow;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
@@ -252,8 +251,13 @@ final class NativeText {
                 if (s1 == null || s2 == null || s3 == null) return Outcome.FAILURE;
                 return (s1 + s2).equals(s3) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
+            // START_CHANGE: ISS-2025-0506 - atom_concat/3 raises instantiation_error with nothing
+            // bound; string_concat/3 keeps FAILING, because ISS-2025-0188 decided that explicitly
+            // ("string_concat should fail gracefully, not throw") and its test pins it. Recorded
+            // as a deliberate deviation in EngineV4IsoErrorsTest.
             if (atoms) throw new PrologException(ISOErrorTerms.instantiationError(ctx));
-            return Outcome.FAILURE;                    // string_concat/3 fails, as it always did
+            return Outcome.FAILURE;
+            // END_CHANGE: ISS-2025-0506
         }
 
         private Term make(String s) { return atoms ? (Term) new Atom(s) : (Term) new PrologString(s); }
@@ -351,10 +355,11 @@ final class NativeText {
         public Outcome call(Machine m, Term[] args) {
             String ind = up ? "upcase_atom/2" : "downcase_atom/2";
             Term in = m.deref(args[0]);
-            if (!(in instanceof Atom)) {
-                throw new PrologEvaluationException(
-                    ind + " error: " + ind + ": first argument must be an atom");
-            }
+            // START_CHANGE: ISS-2025-0506 - instantiation_error / type_error(atom, A), not one
+            // message atom for both.
+            if (in instanceof Variable) throw Errors.instantiation(ind);
+            if (!(in instanceof Atom)) throw Errors.type("atom", m.resolve(in), ind);
+            // END_CHANGE: ISS-2025-0506
             String s = ((Atom) in).getName();
             String r = up ? s.toUpperCase(java.util.Locale.ROOT) : s.toLowerCase(java.util.Locale.ROOT);
             return m.unify(args[1], new Atom(r)) ? Outcome.SUCCESS : Outcome.FAILURE;
@@ -393,6 +398,13 @@ final class NativeText {
         public Outcome call(Machine m, Term[] args) {
             Term a = m.deref(args[0]), n = m.deref(args[1]);
             boolean ga = ground(m, a), gn = ground(m, n);
+            // START_CHANGE: ISS-2025-0506 - ISO 7.12.2: neither argument bound is
+            // instantiation_error; a bound first argument that is not text is type_error(atom, A).
+            if (!ga && !gn) throw Errors.instantiation("atom_number/2");
+            if (ga && !(a instanceof Atom) && !(a instanceof PrologString)) {
+                throw Errors.type("atom", m.resolve(a), "atom_number/2");
+            }
+            // END_CHANGE: ISS-2025-0506
             if (ga && !gn) {
                 if (!(a instanceof Atom)) return Outcome.FAILURE;
                 Number v = AtomNumber.parsePrologNumber(((Atom) a).getName());
@@ -435,7 +447,10 @@ final class NativeText {
                 return ((Atom) a).getName().equals(((PrologString) s).getStringValue())
                     ? Outcome.SUCCESS : Outcome.FAILURE;
             }
-            throw new PrologEvaluationException("instantiation_error");
+            // START_CHANGE: ISS-2025-0506 - a real error(instantiation_error, atom_string/2),
+            // not the bare atom 'instantiation_error' that catch/3 could not match on.
+            throw Errors.instantiation("atom_string/2");
+            // END_CHANGE: ISS-2025-0506
         }
     }
 
@@ -462,7 +477,9 @@ final class NativeText {
                 Number v = AtomNumber.parsePrologNumber(((PrologString) s).getStringValue());
                 return (v != null && v.equals(n)) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
-            return Outcome.FAILURE;
+            // START_CHANGE: ISS-2025-0506 - neither argument bound is instantiation_error.
+            throw Errors.instantiation("number_string/2");
+            // END_CHANGE: ISS-2025-0506
         }
     }
 
@@ -516,7 +533,9 @@ final class NativeText {
                 String w = charsTextLoose(m, l);
                 return (w != null && v.equals(w)) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
-            return Outcome.FAILURE;
+            // START_CHANGE: ISS-2025-0506 - neither argument bound is instantiation_error.
+            throw Errors.instantiation("string_chars/2");
+            // END_CHANGE: ISS-2025-0506
         }
 
         /** string_chars/2 FAILS on a malformed char list where atom_chars/2 raises. */
@@ -554,24 +573,26 @@ final class NativeText {
                 int n = 0;
                 while (NativeLibrary.isCons(cur)) {
                     Term e = m.deref(NativeLibrary.head(cur));
+                    // START_CHANGE: ISS-2025-0506
                     if (!(e instanceof Number)) {
-                        throw new PrologEvaluationException(
-                            "string_codes/2: codes list must contain only numbers");
+                        throw Errors.type("integer", m.resolve(e), "string_codes/2");
                     }
                     double v = ((Number) e).getValue();
                     if (v != Math.floor(v) || v < 0 || v > 1114111) {
-                        throw new PrologEvaluationException("string_codes/2: invalid character code: " + v);
+                        throw Errors.representation("character_code", "string_codes/2");
                     }
+                    // END_CHANGE: ISS-2025-0506
                     sb.append(Character.toChars((int) v));
                     cur = m.deref(NativeLibrary.tail(cur));
                     if ((++n & 0x3FF) == 0) m.guard().step();
                 }
                 return m.unify(args[0], new PrologString(sb.toString())) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
+            // START_CHANGE: ISS-2025-0506
             if (s instanceof Variable && l instanceof Variable) {
-                throw new PrologEvaluationException(
-                    "string_codes/2: at least one argument must be instantiated");
+                throw Errors.instantiation("string_codes/2");
             }
+            // END_CHANGE: ISS-2025-0506
             return Outcome.FAILURE;
         }
 
@@ -592,10 +613,9 @@ final class NativeText {
         @Override
         public Outcome call(Machine m, Term[] args) {
             Term s = m.deref(args[0]);
-            if (s instanceof Variable) {
-                throw new PrologEvaluationException(
-                    "string_length/2: first argument must be instantiated to a string.");
-            }
+            // START_CHANGE: ISS-2025-0506
+            if (s instanceof Variable) throw Errors.instantiation("string_length/2");
+            // END_CHANGE: ISS-2025-0506
             String v = TextTerm.textOf(s);
             if (v == null) return Outcome.FAILURE;
             return m.unify(args[1], Number.valueOf((long) v.codePointCount(0, v.length())))
@@ -607,7 +627,14 @@ final class NativeText {
         @Override
         public Outcome call(Machine m, Term[] args) {
             Term i = m.deref(args[0]), s = m.deref(args[1]);
-            if (!(i instanceof Number)) return Outcome.FAILURE;
+            // START_CHANGE: ISS-2025-0506
+            if (i instanceof Variable || s instanceof Variable) {
+                throw Errors.instantiation("string_code/3");
+            }
+            if (!(i instanceof Number) || !((Number) i).isInteger()) {
+                throw Errors.type("integer", m.resolve(i), "string_code/3");
+            }
+            // END_CHANGE: ISS-2025-0506
             String str = TextTerm.textOf(s);
             if (str == null) return Outcome.FAILURE;
             int idx = ((Number) i).getValue().intValue();
@@ -623,18 +650,15 @@ final class NativeText {
         @Override
         public Outcome call(Machine m, Term[] args) {
             Term s = m.deref(args[0]), sep = m.deref(args[1]), pad = m.deref(args[2]);
-            if (!(s instanceof PrologString)) {
-                throw new PrologEvaluationException(
-                    "split_string/4 error: split_string/4: first argument must be a string");
+            // START_CHANGE: ISS-2025-0506 - instantiation_error for an unbound argument,
+            // type_error(string, T) for a bound one that is not a string.
+            if (s instanceof Variable || sep instanceof Variable || pad instanceof Variable) {
+                throw Errors.instantiation("split_string/4");
             }
-            if (!(sep instanceof PrologString)) {
-                throw new PrologEvaluationException(
-                    "split_string/4 error: split_string/4: second argument must be a string");
-            }
-            if (!(pad instanceof PrologString)) {
-                throw new PrologEvaluationException(
-                    "split_string/4 error: split_string/4: third argument must be a string");
-            }
+            if (!(s instanceof PrologString))   throw Errors.type("string", m.resolve(s), "split_string/4");
+            if (!(sep instanceof PrologString)) throw Errors.type("string", m.resolve(sep), "split_string/4");
+            if (!(pad instanceof PrologString)) throw Errors.type("string", m.resolve(pad), "split_string/4");
+            // END_CHANGE: ISS-2025-0506
             List<String> parts = split(((PrologString) s).getStringValue(),
                                        ((PrologString) sep).getStringValue(),
                                        ((PrologString) pad).getStringValue());
@@ -712,6 +736,9 @@ final class NativeText {
         @Override
         public Outcome call(Machine m, Term[] args) {
             if (arity == 2) {
+                // START_CHANGE: ISS-2025-0506 - an unbound or partial list is instantiation_error.
+                requireProperListOrRaise(m, args[0], "atomic_list_concat/2");
+                // END_CHANGE: ISS-2025-0506
                 List<String> parts = atomics(m, args[0]);
                 if (parts == null) return Outcome.FAILURE;
                 StringBuilder sb = new StringBuilder();
@@ -721,16 +748,19 @@ final class NativeText {
             Term listT = m.deref(args[0]);
             Term sepT = m.deref(args[1]);
             Term atomT = m.deref(args[2]);
+            // START_CHANGE: ISS-2025-0506
+            if (sepT instanceof Variable) throw Errors.instantiation("atomic_list_concat/3");
             if (!(sepT instanceof Atom)) {
-                throw new PrologEvaluationException(
-                    "atomic_list_concat/3 error: atomic_list_concat/3: separator must be an atom");
+                throw Errors.type("atom", m.resolve(sepT), "atomic_list_concat/3");
             }
+            // END_CHANGE: ISS-2025-0506
             String sep = ((Atom) sepT).getName();
             if (listT instanceof Variable && !(atomT instanceof Variable)) {
+                // START_CHANGE: ISS-2025-0506
                 if (!(atomT instanceof Atom)) {
-                    throw new PrologEvaluationException("atomic_list_concat/3 error: "
-                        + "atomic_list_concat/3: atom argument must be an atom");
+                    throw Errors.type("atom", m.resolve(atomT), "atomic_list_concat/3");
                 }
+                // END_CHANGE: ISS-2025-0506
                 String value = ((Atom) atomT).getName();
                 List<Term> out = new ArrayList<Term>();
                 if (sep.isEmpty()) {
@@ -747,6 +777,9 @@ final class NativeText {
                 return m.unify(args[0], listOf(out)) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
             if (!(listT instanceof Variable)) {
+                // START_CHANGE: ISS-2025-0506
+                requireProperListOrRaise(m, listT, "atomic_list_concat/3");
+                // END_CHANGE: ISS-2025-0506
                 List<String> parts = atomics(m, listT);
                 if (parts == null) return Outcome.FAILURE;
                 StringBuilder sb = new StringBuilder();
@@ -760,9 +793,26 @@ final class NativeText {
                 if (!(atomT instanceof Atom)) return Outcome.FAILURE;
                 return sb.toString().equals(((Atom) atomT).getName()) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
-            throw new PrologEvaluationException("atomic_list_concat/3 error: "
-                + "atomic_list_concat/3: either List or Atom must be instantiated");
+            // START_CHANGE: ISS-2025-0506
+            throw Errors.instantiation("atomic_list_concat/3");
+            // END_CHANGE: ISS-2025-0506
         }
+
+        // START_CHANGE: ISS-2025-0506 - ISO 7.12.2 (a): an unbound or PARTIAL list is
+        // instantiation_error, not a silent failure. A variable ELEMENT is deliberately left
+        // alone: atomic_list_concat([a,X], '-', 'a-b') still fails (the split-with-holes mode
+        // JProlog does not implement), which EngineV4TextTest pins.
+        private static void requireProperListOrRaise(Machine m, Term list, String ctx) {
+            Term cur = m.deref(list);
+            int n = 0;
+            while (cur instanceof CompoundTerm && ".".equals(cur.getName())
+                    && cur.getArguments().size() == 2) {
+                cur = m.deref(cur.getArguments().get(1));
+                if ((++n & 0x3FF) == 0) m.guard().step();
+            }
+            if (cur instanceof Variable) throw Errors.instantiation(ctx);
+        }
+        // END_CHANGE: ISS-2025-0506
 
         /** The atomic texts of a proper list; null when it is not one or holds a var/compound. */
         private List<String> atomics(Machine m, Term list) {
@@ -814,6 +864,10 @@ final class NativeText {
                 if (parsed == null) return Outcome.FAILURE;
                 return m.unify(args[0], parsed) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
+            // START_CHANGE: ISS-2025-0506 - with NEITHER argument bound there is nothing to write
+            // and nothing to read: ISO 7.12.2 (a).
+            if (term instanceof Variable && text instanceof Variable) throw Errors.instantiation(ctx);
+            // END_CHANGE: ISS-2025-0506
             if (!ground(m, text)) {
                 Writer.Options o = new Writer.Options();
                 o.quoted = true;

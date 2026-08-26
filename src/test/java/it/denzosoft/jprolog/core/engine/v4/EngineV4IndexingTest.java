@@ -310,5 +310,92 @@ public class EngineV4IndexingTest {
         assertEquals(1, prolog.solve("p(_, _).").size());
         assertEquals(1, prolog.solve("p(k99, _).").size());
     }
+
+    // START_CHANGE: ISS-2025-0511 - 4.3 wave D: retractall/1 joins the indexed selection paths,
+    // and the partial-structure key question the wave brief asked about.
+    // ------------------------------------------------------------------ retractall through the index
+
+    /**
+     * {@code retractall/1} with a bound first argument selects through the first-argument index
+     * and must remove EXACTLY the matching clauses — no more (an over-approximating bucket must
+     * still be filtered by unifiability) and no fewer (an index miss must degrade to the whole
+     * predicate, the ISS-2025-0340 hazard).
+     */
+    @Test
+    public void testRetractallThroughTheIndexRemovesExactlyTheMatchingClauses() {
+        prolog.consult(":- dynamic ra/2.\n");
+        for (int i = 0; i < 200; i++) prolog.solve("assertz(ra(" + i + ", v" + i + ")).");
+        prolog.solve("assertz(ra(X, varhead)).");        // a variable-headed clause: matches ANY key
+        prolog.solve("assertz(ra(7, second7)).");
+        assertEquals("202", one("findall(K-V, ra(K, V), L), length(L, N)", "N"));
+        // retractall(ra(7, _)) removes ra(7, v7), ra(7, second7) AND the variable-headed clause.
+        assertEquals(1, prolog.solve("retractall(ra(7, _)).").size());
+        assertEquals("199", one("findall(K, ra(K, _), L), length(L, N)", "N"));
+        assertEquals(0, prolog.solve("ra(7, _).").size());
+        assertEquals(1, prolog.solve("ra(8, v8).").size());
+        // and a key that matches nothing leaves the predicate alone
+        assertEquals(1, prolog.solve("retractall(ra(9999, _)).").size());
+        assertEquals("199", one("findall(K, ra(K, _), L), length(L, N)", "N"));
+    }
+
+    /** The bulk mode (unbound first argument) still removes every clause. */
+    @Test
+    public void testRetractallWithAnUnboundKeyRemovesEverything() {
+        prolog.consult(":- dynamic rb/2.\n");
+        for (int i = 0; i < 50; i++) prolog.solve("assertz(rb(" + i + ", " + i + ")).");
+        prolog.solve("assertz(rb(_, any)).");
+        assertEquals(1, prolog.solve("retractall(rb(_, _)).").size());
+        assertEquals(0, prolog.solve("rb(_, _).").size());
+        // retractall/1 creates the procedure as dynamic (ISS-2025-0347), so a later call FAILS
+        assertEquals(0, prolog.solve("rb(1, _).").size());
+    }
+
+    /**
+     * A <b>partial structure</b> as the first argument keys on the functor alone
+     * ({@code Clause.FunctorKey}), so {@code f(g(X), _)} must still see every {@code f(g(...), _)}
+     * clause — on all three indexed paths. This is the degradation question the 4.3-D brief asked:
+     * the key is an over-approximation (it ignores {@code g}'s own arguments), which is safe.
+     */
+    @Test
+    public void testPartialStructureKeyDegradesOnEveryIndexedPath() {
+        prolog.consult(":- dynamic ps/2.\n"
+            + "ps(g(1), a).\nps(g(2), b).\nps(g(3), c).\nps(h(1), d).\nps(Z, e).\n");
+        // 1. calls
+        assertEquals(4, prolog.solve("ps(g(_), V).").size());       // three g/1 + the var-headed one
+        assertEquals(2, prolog.solve("ps(h(_), V).").size());       // one h/1 + the var-headed one
+        assertEquals(2, prolog.solve("ps(g(2), V).").size());
+        // 2. clause/2
+        assertEquals("4", one("findall(H, clause(ps(g(H), _), _), L), length(L, N)", "N"));
+        // 3. retract/1
+        assertEquals(1, prolog.solve("once(retract(ps(g(X), _))).").size());
+        assertEquals(3, prolog.solve("ps(g(_), V).").size());
+        // 4. retractall/1 — the new one
+        assertEquals(1, prolog.solve("retractall(ps(g(_), _)).").size());
+        assertEquals(0, prolog.solve("ps(g(1), _).").size());
+        assertEquals(1, prolog.solve("ps(h(1), _).").size());       // h/1 untouched...
+        assertEquals(0, prolog.solve("ps(zz, _).").size());         // ...but the var-headed clause went
+    }
+
+    /** The key is type-faithful for retractall too: 1, 1.0, '1' and "1" are four different keys. */
+    @Test
+    public void testRetractallKeyIsTypeFaithful() {
+        prolog.consult(":- dynamic tf/1.\n");
+        prolog.solve("assertz(tf(1)).");
+        prolog.solve("assertz(tf(1.0)).");
+        prolog.solve("assertz(tf('1')).");
+        prolog.solve("assertz(tf(\"1\")).");
+        assertEquals(1, prolog.solve("retractall(tf(1)).").size());
+        assertEquals("3", one("findall(X, tf(X), L), length(L, N)", "N"));
+        assertEquals(0, prolog.solve("tf(1), integer(1).").size());
+        assertEquals(1, prolog.solve("tf(1.0).").size());
+        assertEquals(1, prolog.solve("tf('1').").size());
+    }
+
+    private String one(String goal, String var) {
+        List<Map<String, Term>> s = prolog.solve(goal + ".");
+        assertFalse("goal failed: " + goal, s.isEmpty());
+        return s.get(0).get(var).toString();
+    }
+    // END_CHANGE: ISS-2025-0511
 }
 // END_CHANGE: ISS-2025-0502

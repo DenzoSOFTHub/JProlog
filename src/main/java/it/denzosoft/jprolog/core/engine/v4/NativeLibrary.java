@@ -481,14 +481,32 @@ final class NativeLibrary {
             long[] len = new long[1];
             Term tail = spineTailCounting(args[0], g, len);
             if (tail == null) return Outcome.FAILURE;                    // cyclic spine
+            // START_CHANGE: ISS-2025-0509 - the length argument is checked whatever the list is,
+            // so length([a], a) is type_error(integer, a) and not a silent failure.
+            Term lenArg = Unify.deref(args[1]);
+            if (!(lenArg instanceof Variable)
+                    && (!(lenArg instanceof Number) || !((Number) lenArg).isInteger())) {
+                throw Errors.type("integer", m.resolve(lenArg), "length/2");
+            }
+            // END_CHANGE: ISS-2025-0509
             if (isNil(tail)) {
                 return m.unify(args[1], Number.valueOf(len[0])) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
-            if (!(tail instanceof Variable)) return Outcome.FAILURE;     // improper list
+            // START_CHANGE: ISS-2025-0509 - 4.3 wave D: the SWI/ISO-de-facto error terms.
+            // length(a, N) is type_error(list, a), length([a], a) is type_error(integer, a) and
+            // length(_, -1) is domain_error(not_less_than_zero, -1); all three used to fail
+            // silently, which hides the caller's bug behind a false "no solution".
+            if (!(tail instanceof Variable)) {
+                throw Errors.type("list", m.resolve(args[0]), "length/2");
+            }
             Term want = Unify.deref(args[1]);
-            if (!(want instanceof Number) || !((Number) want).isInteger()) return Outcome.FAILURE;
+            if (!(want instanceof Number) || !((Number) want).isInteger()) {
+                throw Errors.type("integer", m.resolve(want), "length/2");
+            }
             long n = ((Number) want).longValue();
-            if (n < 0 || n < len[0]) return Outcome.FAILURE;
+            if (n < 0) throw Errors.domain("not_less_than_zero", m.resolve(want), "length/2");
+            if (n < len[0]) return Outcome.FAILURE;
+            // END_CHANGE: ISS-2025-0509
             long extra = n - len[0];
             if (extra > Integer.MAX_VALUE) return Outcome.FAILURE;
             List<Term> fresh = new ArrayList<Term>((int) extra);
@@ -699,17 +717,16 @@ final class NativeLibrary {
             final String ind = atoms ? "sub_atom/5" : "sub_string/5";
             Term src = m.deref(args[0]);
             final String text;
+            // START_CHANGE: ISS-2025-0509 - 4.3 wave D: ISO 8.16.3.3 error terms
+            // (instantiation_error, type_error(atom, A), type_error(integer, N)) instead of a
+            // PrologEvaluationException carrying an English sentence.
             if (atoms) {
-                if (!(src instanceof Atom)) {
-                    throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
-                        "sub_atom/5: first argument must be an atom");
-                }
+                if (src instanceof Variable) throw Errors.instantiation(ind);
+                if (!(src instanceof Atom)) throw Errors.type("atom", m.resolve(src), ind);
                 text = ((Atom) src).getName();
             } else {
-                if (src instanceof Variable) {
-                    throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
-                        "sub_string/5: first argument must be instantiated to a string.");
-                }
+                if (src instanceof Variable) throw Errors.instantiation(ind);
+                // END_CHANGE: ISS-2025-0509
                 if (!(src instanceof PrologString)) return Outcome.FAILURE;
                 text = ((PrologString) src).getStringValue();
             }
@@ -729,16 +746,14 @@ final class NativeLibrary {
             if (x instanceof Number) {
                 Number num = (Number) x;
                 if (num.isInteger() && num.longValue() >= 0) return Integer.valueOf((int) num.longValue());
-                if (atoms) {
-                    throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
-                        "sub_atom/5: numeric arguments must be non-negative integers");
-                }
+                // START_CHANGE: ISS-2025-0509
+                if (atoms) throw Errors.type("integer", m.resolve(x), ind);
+                // END_CHANGE: ISS-2025-0509
                 return null;                                   // sub_string/5 is permissive here
             }
-            if (atoms) {
-                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
-                    "sub_atom/5: before, length, and after arguments must be integers or variables");
-            }
+            // START_CHANGE: ISS-2025-0509
+            if (atoms) throw Errors.type("integer", m.resolve(x), ind);
+            // END_CHANGE: ISS-2025-0509
             return null;
         }
 
@@ -747,8 +762,9 @@ final class NativeLibrary {
             if (x instanceof Variable) return null;
             if (atoms) {
                 if (x instanceof Atom) return ((Atom) x).getName();
-                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
-                    "sub_atom/5: sub-atom argument must be an atom or variable");
+                // START_CHANGE: ISS-2025-0509
+                throw Errors.type("atom", m.resolve(x), ind);
+                // END_CHANGE: ISS-2025-0509
             }
             return (x instanceof PrologString) ? ((PrologString) x).getStringValue() : null;
         }

@@ -7,6 +7,213 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.4.0] - 2026-08-26
+
+### Wave D of 4.3: ISO error conformance, `retractall/1` through the index, `bounded = false`
+
+The four items §18.7 named. Wave record, invariants and the starting point for the next wave are in
+`docs/reports/report-engine-v4-progress.md` (new section 19).
+ISS-2025-0504 .. ISS-2025-0513.
+
+Suite **1313/1313**; **20/20 example programs** with every per-program "Successful queries" count
+unchanged (2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 0, 0).
+
+#### Behaviour changes (read this first)
+
+These change what a program SEES. Each is a case where JProlog answered something the ISO standard
+(or, for the non-ISO predicates, SWI-Prolog and JProlog's own documentation) says is wrong.
+
+1. **`current_prolog_flag(bounded, B)` now answers `false`** (ISS-2025-0512). JProlog's integers
+   are arbitrary precision — `X is 10^30` is exact — so `bounded = true` was simply wrong, and it
+   contradicted Appendix A of the reference manual, which has always documented `false`. A program
+   that branches on the flag (`current_prolog_flag(bounded, true) -> Max = ... ; Max = inf`) now
+   takes the other branch, which is the correct one.
+   `max_integer` / `min_integer` are unchanged in value and are still reported (ISO does not
+   require them when `bounded` is `false`; SWI reports them too), but they now MEAN the limits of
+   the fast 64-bit representation an integer uses before it is promoted to a big integer — not a
+   limit on arithmetic. Documented in the reference and in Appendix A.
+2. **Argument faults that used to FAIL now raise.** `put_char(X)`, `put_char(ab)`, `put_code(a)`,
+   `current_input(foo)`, `format(X)`, `atom_number(A, N)`, `number_string(N, S)`,
+   `string_chars(S, L)`, `string_length(S, L)`, `atomic_list_concat(L, A)`, `term_to_atom(T, A)`
+   (both unbound), `succ(a, X)`, `succ(-1, X)`, `plus(a, 1, X)`, `between(1, 2, a)`,
+   `length(foo, N)`, `length([a|b], N)`, `length([a], a)`, `length(L, -1)`,
+   `current_prolog_flag(nosuchflag, V)`, `current_char_conversion(ab, X)`, `X in a`, `label(a)`.
+   A program that relied on one of these failing must be rewritten (or wrap the call in
+   `catch(G, _, fail)`).
+3. **`write_term/2,3` no longer ignores a malformed option list.** `write_term(a, foo)` is
+   `type_error(list, foo)` and `write_term(a, [quoted(true)|_])` is `instantiation_error`; both
+   used to write the term with default options, because `ListUtils.extractElements` never returns
+   null and the `type_error` in `WriteOptions.parse` was dead code.
+4. **`set_prolog_flag/2` no longer creates an unknown flag.** `set_prolog_flag(foo, bar)` is
+   `domain_error(prolog_flag, foo)`; setting a read-only flag is
+   `permission_error(modify, flag, F)` and a rejected value is `domain_error(flag_value, F+V)`.
+5. **`op(_, xfx, ',')` and `op(700, xfx, '|')` are refused**, with
+   `permission_error(modify, operator, ',')` and `permission_error(create, operator, '|')`. Both
+   used to succeed and could make the reader unable to parse ordinary terms. `'|'` is still
+   accepted at priority 0 or as an infix operator of priority >= 1001, which is the ISO window.
+6. **`setup_call_cleanup/3` and `call_cleanup/2` check their goal arguments before Setup runs.**
+   An unbound or non-callable Setup, Goal or Cleanup is now an error raised inside the enclosing
+   `catch/3` scope.
+7. **A cleanup's own exception now reaches `catch/3`** (ISS-2025-0513, see below).
+   `catch(call_cleanup(throw(a), throw(b)), E, true)` binds `E = b` where it used to escape to the
+   Java embedder. The cleanup's ball REPLACES the goal's, so a catcher written for the goal's ball
+   no longer matches: `catch(catch(call_cleanup(throw(a), throw(b)), a, r1), E2, true)` gives
+   `E2 = b`, not `r1`. A cleanup reached by an unwinding ball also now runs with the goal's
+   bindings still in place instead of with them undone.
+
+Everything else in the wave replaces a `PrologEvaluationException` carrying an English sentence
+with a real `error(Formal, Context)` term. Such an exception was always catchable, but only by a
+bare-variable catcher: `catch(G, error(type_error(atom, _), _), R)` never matched one.
+**Section 62 of `docs/references/BUILTIN_PREDICATES_REFERENCE.md` is the full before/after table.**
+
+#### ISS-2025-0504 .. ISS-2025-0510 — ISO error terms across the natives
+
+A sweep of every `core/engine/v4/Native*.java`, `ClpfdNative`, `Machine` and the bridged built-ins
+they reach, for `PrologEvaluationException` used where ISO 13211-1 §8 prescribes
+`error(Formal, Context)`, for missing instantiation/type/domain/existence/permission/
+representation errors, for wrong culprits and for a missing `Name/Arity` context.
+
+| ISS | Scope | Files |
+|---|---|---|
+| 0504 | `op/3` (the headline: the standard's own ten error clauses, in the standard's own order), `current_op/3`, `char_conversion/2`, `current_char_conversion/2` | `core/engine/v4/NativeMisc.java`, `Errors.java` (new `evaluation`, `syntax`, `pi`) |
+| 0505 | the `io` family: `put_char/1,2`, `put_code/1,2`, `put_byte/1,2`, `current_input/1`, `current_output/1`, the `write_term/2,3` option list, `format/1,2,3`, `open/3,4` | `core/engine/v4/NativeIo.java`, `builtin/io/WriteOptions.java`, `builtin/io/Open.java`, `builtin/io/PutByte.java` |
+| 0506 | the text family: `upcase_atom/2`, `downcase_atom/2`, `atom_string/2`, `atom_number/2`, `number_string/2`, `string_chars/2`, `string_codes/2`, `string_length/2`, `string_code/3`, `split_string/4`, `atomic_list_concat/2,3`, `term_to_atom/2`, `term_string/2` | `core/engine/v4/NativeText.java` |
+| 0507 | `atom_to_term/3` (it threw the FORMAL as a bare atom), `succ/2`, `plus/3` | `core/engine/v4/NativeTerm.java` |
+| 0508 | `set_prolog_flag/2`, `current_prolog_flag/2`, `listing/1`, `abolish/1` with an unbound half of the indicator | `core/engine/v4/NativeDb.java`, `core/system/PrologFlags.java` |
+| 0509 | `sub_atom/5`, `sub_string/5`, `length/2`, `between/3`, `setup_call_cleanup/3`, `call_cleanup/2` | `core/engine/v4/NativeLibrary.java`, `Machine.java` |
+| 0510 | CLP(FD): `in/2`, `label/1`, `labeling/2` | `core/engine/v4/ClpfdNative.java` |
+
+**The conformance oracle** is new: `EngineV4IsoErrorsTest` drives a table of 249
+`Goal -> expected error term` rows — taken from ISO §8's error clauses and, where the standard is
+silent, from the SWI contract the reference documents — and asserts the WHOLE `error(Formal, _)`
+shape, not just the formal's functor. The point of one table rather than 249 hand-written
+assertions is that the pass RATE is reportable:
+
+| | rows | pass | rate |
+|---|---:|---:|---:|
+| v4.3.0 | 249 | 161 | 64.7% |
+| v4.4.0 | 249 | **249** | **100%** |
+
+Twenty-one of the rows record a **deliberate deviation** and carry JProlog's answer as the
+expectation, with the reason in the test's class comment, so a future change to any of them fails
+here instead of passing silently: `arg/3` with an unbound index enumerates (SWI) rather than
+raising; an atom naming no open stream is `existence_error(stream, A)` rather than
+`domain_error(stream_or_alias, A)` (ISO 8.11.5.3 (c) supports it, GNU Prolog agrees, ISS-2025-0377
+pinned it); `atom_concat/3` requires atoms, so its type error names `atom`, not `atomic`;
+`call((fail, 1))` fails; `format("~w", X)` treats a non-list second argument as one argument;
+`string_concat(X, Y, Z)` with nothing bound fails (ISS-2025-0188 decided that explicitly) where
+`atom_concat/3` raises; `tab/1,2` still fails on a bad count.
+
+#### ISS-2025-0511 — `retractall/1` through the first-argument index
+
+`retractall/1` walked the WHOLE knowledge base and called `Term.unify` — allocating a `HashMap`
+each time — on every clause of every predicate. `retractall(f(K, _))` with a bound key over a
+20 000-clause table was therefore one full-database walk with 20 000 unifications per call: the
+quadratic shape `retract/1` had before ISS-2025-0502. It now selects candidates through the
+`KnowledgeBase`'s existing first-argument index (whose miss already degrades to the full predicate
+list, ISS-2025-0344), collects the matches into an identity set and makes one positional pass.
+
+The bulk mode — arity 0, or an unbound first argument — deliberately keeps the historical single
+scan: with every clause matching, building a candidate list and an identity set costs
+112 -> 154 ms over 20 000 clauses and buys nothing.
+
+Measured (interleaved A/B against the v4.3.0 classes, two rounds with the order reversed,
+54 samples per side, median over runs; the noise floor on this VM is ~5%):
+
+| benchmark | 4.3.0 (median / min) | 4.4.0 (median / min) | change |
+|---|---|---|---|
+| 200 x `retractall(f(K, _))` into a 20 000-clause table | 188 / 126 ms | 33 / 20 ms | **-82%** |
+| bulk `retractall(g(_, _))` over 20 000 clauses | 46 / 33 ms | 47 / 37 ms | +2% (noise) |
+| `abolish(h/2)` over 20 000 clauses | 5 / 2 ms | 5 / 2 ms | 0% (**not changed**) |
+
+`abolish/1` was benchmarked and left alone: it is already a single backwards pass over the clause
+list and costs 5 ms for 20 000 clauses, so the §16.6 rule ("<= 5% = no change") applies.
+
+Controls, same method (18 interleaved pairs, `scratchpad/42c/WaveC.java`): `loop(1000000)` +0.1%,
+`nrev` +1.5%, `db` -1.9%, `dsp` -3.8%, `lk` -3.2%, `cl` 0%, `rr` 0%. Nothing is more than 5%
+slower. (ISS-2025-0513 was re-measured afterwards in two further reversed rounds; they disagree on
+the sign for three of four benchmarks under external load, B's minimum wins all four, and the
+changed code is only reachable while an exception unwinds — see progress report §19.5.)
+
+#### ISS-2025-0512 — `bounded` is `false`
+
+See "Behaviour changes" above.
+
+#### ISS-2025-0513 — a cleanup's own exception now reaches `catch/3`
+
+Found by independent verification of the wave. **Pre-existing since the cleanup frames were
+introduced — it reproduces identically on 4.3.0 — and NOT closed by ISS-2025-0509**, which only
+fixed the argument-validation shape:
+
+```prolog
+?- catch(call_cleanup(throw(a), throw(b)), E, true).              % PrologException: b, uncaught
+?- catch(setup_call_cleanup(true, throw(a), throw(b)), E, true).  % same
+```
+
+Both reached the Java embedder as an uncaught `PrologException` instead of binding `E = b`.
+
+**Root cause.** `Machine.handleBall` — the routine that routes a thrown ball to the nearest armed
+`catch/3` frame — collected every CLEANUP frame it unwound past into a list and ran the cleanups
+*after* the search had finished: after the matching CATCH frame had been popped and its recovery
+installed. The cleanup therefore executed with the frame that should have caught it already
+consumed, and `handleBall` is called from inside `drive`'s `catch` clause, so a `PrologException`
+thrown there is outside the loop that routes exceptions and escapes the machine entirely. The
+other three cleanup paths (deterministic exit, failure, cut) all run their cleanup *inside* the
+drive loop and were already correct.
+
+**Fix**: run each cleanup at the point its frame is popped, while the enclosing frames are still on
+the stack, and let a ball it throws **replace** the one being unwound; the search then continues
+from the same position. This also makes `handleBall` agree with `backtrack`, which has always run a
+cleanup at pop time. When nothing catches the replaced ball, `handleBall` throws it itself, because
+`drive` would otherwise rethrow the original exception object and report the goal's ball.
+
+**Semantics chosen — the cleanup's ball wins**, matching SWI-Prolog and JProlog's own already-correct
+`setup_call_cleanup(true, true, throw(b))` case. Consequences, all pinned:
+
+| goal | before | after |
+|---|---|---|
+| `catch(call_cleanup(throw(a), throw(b)), E, true)` | escaped to the embedder | `E = b` |
+| `catch(call_cleanup(throw(a), throw(b)), b, true)` | escaped | succeeds — the catcher is matched against the CLEANUP's ball |
+| `catch(catch(call_cleanup(throw(a), throw(b)), a, r1), E2, true)` | escaped | `E2 = b` — the inner catcher matches only the goal's ball, so it does NOT swallow the cleanup's |
+| nested: `setup_call_cleanup(true, setup_call_cleanup(true, throw(a), throw(b)), throw(c))` | escaped with `b` | `E = c` — every cleanup runs, the outermost ball survives |
+| `setup_call_cleanup(true, throw(a), throw(b))` with no `catch/3` | `b` | `b` (unchanged) |
+| a cleanup during unwinding | ran with the catch frame's bindings undone | runs with the goal's bindings still in place, as SWI does, so `catch(setup_call_cleanup(true, (X = bound, throw(a)), throw(saw(X))), E, true)` gives `E = saw(bound)` |
+
+**The trust model is untouched** (invariant 9): `InferenceLimitException`, `QueryCancelledException`
+and `DebugStopException` are not `PrologException`s, so a budget abort or a Stop inside a cleanup
+still tears the query down and stays invisible to `catch/3`; `halt/1`, whose `PrologException`
+carries no ball, is rethrown unchanged.
+
+Files: `core/engine/v4/Machine.java` (`handleBall`, new `runCleanupWhileUnwinding`).
+Tests: `core/engine/v4/EngineV4CleanupTest` (new, 7 methods — four of them fail on 4.3.0) plus
+eight rows in the conformance table.
+
+#### New limitation
+
+**LIM-038**: the bridged extended libraries still raise message atoms rather than ISO `error/2`
+terms. A generated probe over every registered indicator
+(`scratchpad/43d/ErrProbe.java`: 2 326 goals, each indicator at arities 1..4 with every argument
+unbound and with a wrong-type first argument) counts **315** such goals, in jdbc (88), filesystem
+(28), crypto (26), network (26), http (22), the bridged half of io (22), persistence (18),
+datetime (14), threading (14), logging (12), regex (12), csv (8), the dcg extension predicates (8),
+json (8), os (4) and xml (4). Separately, `BuiltInRegistry.isBuiltIn(Name, Arity)` answers true for
+arities a built-in does not implement, so 1 170 of the probed goals get an arity complaint where
+ISO asks for `existence_error(procedure, Name/Arity)`; that is a registry design question,
+unchanged since 3.x.
+
+#### Documentation
+
+- `docs/references/BUILTIN_PREDICATES_REFERENCE.md`: **new section 62** with the full before/after
+  error table and the deviation list, plus a `*v4.4.0*` note on each of the 14 affected entries and
+  the corrected `bounded` examples.
+- `tools/manual/supplement.md`: the `op/3`/`current_op/3` and `char_conversion/2` entries carry
+  their ISO error terms; `tools/manual/appendix.md`: the flag table says what
+  `max_integer`/`min_integer` mean and which errors the two flag predicates raise. Manual
+  regenerated (`tools/build-manual.sh`): 170 pages, 349 indexed predicate headings.
+- `docs/tracking/track-limitations.md`: LIM-038 added.
+
+---
+
 ## [4.3.0] - 2026-08-26
 
 ### Wave C of 4.2: first-argument indexing everywhere, `op/3` native, `char_type/2` generators

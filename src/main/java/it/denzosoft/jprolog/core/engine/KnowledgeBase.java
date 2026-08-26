@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -325,6 +326,35 @@ public class KnowledgeBase {
      * Atoms use their name, Numbers use their string value,
      * CompoundTerms use functor/arity, Variables use VAR_KEY.
      */
+    // START_CHANGE: ISS-2025-0511 - the candidate set of retractall(Head): the first-argument
+    // index bucket for Head's own first argument, merged with the variable-headed clauses. Returns
+    // null when there is nothing to index on (an atom head), in which case the caller keeps the
+    // historical full scan.
+    private List<Rule> retractallCandidates(Term term) {
+        String functor;
+        int arity;
+        Term firstArg = null;
+        if (term instanceof Atom) {
+            functor = ((Atom) term).getName();
+            arity = 0;
+        } else if (term instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) term;
+            functor = c.getName();
+            List<Term> as = c.getArguments();
+            arity = (as == null) ? 0 : as.size();
+            if (arity > 0) firstArg = as.get(0).resolveBindings(Collections.<String, Term>emptyMap());
+        } else {
+            return null;
+        }
+        // An arity-0 head, or a head whose first argument is unbound, selects EVERY clause of the
+        // predicate: building a candidate list and an identity set for it is pure overhead on top
+        // of the positional pass that has to happen anyway (measured: retractall(g(_,_)) over
+        // 20 000 clauses 112 ms -> 154 ms). Those two keep the historical single scan.
+        if (arity == 0 || firstArg == null || firstArg instanceof Variable) return null;
+        return getRulesWithFirstArgIndex(functor, arity, firstArg);
+    }
+    // END_CHANGE: ISS-2025-0511
+
     private static String getFirstArgKey(Term arg) {
         if (arg instanceof Variable) {
             return VAR_KEY;
@@ -677,19 +707,46 @@ public class KnowledgeBase {
             // existence_error under unknown=error.
             dynamicPredicates.add(getPredicateIndicator(term));
             // END_CHANGE: ISS-2025-0347
+            // START_CHANGE: ISS-2025-0511 - 4.3 wave D: retractall/1 selects its candidates through
+            // the first-argument index instead of calling unifiable() on EVERY clause of the whole
+            // knowledge base. `retractall(f(K, _))` with a bound key over a 20 000-clause table was
+            // one full-database walk with 20 000 Term.unify() calls (each allocating a HashMap) per
+            // call; it is now one index lookup plus a single positional pass that only asks an
+            // identity-set membership question. An index miss still degrades to the full predicate
+            // list (getRulesWithFirstArgIndex, ISS-2025-0344) and an unbound first argument still
+            // yields every clause, so no clause can ever be dropped — the ISS-2025-0340 hazard.
+            List<Rule> candidates = retractallCandidates(term);
+            if (candidates == null) {                    // arity-0 / unindexable: historical scan
+                int scanned = 0;
+                for (int i = rules.size() - 1; i >= 0; i--) {
+                    Rule rule = rules.get(i);
+                    if (unifiable(rule.getHead(), term)) {
+                        rules.remove(i);
+                        removeFromIndex(rule);
+                        scanned++;
+                    }
+                }
+                return scanned;
+            }
+            Set<Rule> doomed = Collections.newSetFromMap(new IdentityHashMap<Rule, Boolean>());
+            for (int i = 0; i < candidates.size(); i++) {
+                Rule r = candidates.get(i);
+                if (unifiable(r.getHead(), term)) doomed.add(r);
+            }
+            if (doomed.isEmpty()) return 0;
             int count = 0;
             for (int i = rules.size() - 1; i >= 0; i--) {
                 Rule rule = rules.get(i);
-                if (unifiable(rule.getHead(), term)) {
+                if (doomed.contains(rule)) {
                     rules.remove(i);
                     // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
                     removeFromIndex(rule);
                     // END_CHANGE: ISS-2025-0075
                     count++;
-                    LOGGER.fine("Retracted clause: " + rule);
                 }
             }
             return count;
+            // END_CHANGE: ISS-2025-0511
         }
     }
     // END_CHANGE: ISS-2025-0164

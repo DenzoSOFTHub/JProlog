@@ -99,12 +99,16 @@ public class AdvancedArithmeticTest {
         List<Map<String, Term>> solutions = prolog.solve("succ(0, 1)");
         assertFalse("succ(0, 1) should succeed", solutions.isEmpty());
         
-        // Test negative numbers (should fail)
-        solutions = prolog.solve("succ(-1, 0)");
-        assertTrue("succ(-1, 0) should fail", solutions.isEmpty());
-        
-        solutions = prolog.solve("succ(1, -1)");
-        assertTrue("succ(1, -1) should fail", solutions.isEmpty());
+        // START_CHANGE: ISS-2025-0507 - 4.3 wave D: a negative argument is
+        // type_error(not_less_than_zero, N) (SWI's term), where succ/2 used to fail silently.
+        solutions = prolog.solve(
+            "catch(succ(-1, 0), error(type_error(not_less_than_zero, -1), _), true)");
+        assertFalse("succ(-1, 0) must raise type_error(not_less_than_zero, -1)", solutions.isEmpty());
+
+        solutions = prolog.solve(
+            "catch(succ(1, -1), error(type_error(not_less_than_zero, -1), _), true)");
+        assertFalse("succ(1, -1) must raise type_error(not_less_than_zero, -1)", solutions.isEmpty());
+        // END_CHANGE: ISS-2025-0507
         
         // Test getting predecessor of 0 (should fail)
         solutions = prolog.solve("succ(X, 0)");

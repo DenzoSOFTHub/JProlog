@@ -1,6 +1,6 @@
 # Engine v4 — implementation progress and handoff
 
-**Date**: 2026-08-26 · **Version**: 4.3.0 · **Design**:
+**Date**: 2026-08-26 · **Version**: 4.4.0 · **Design**:
 `docs/reports/report-engine-v4-design-2026-08-25.md` (part B) ·
 **Background**: `docs/reports/report-engine-deep-analysis-2026-08-24.md`
 
@@ -8,19 +8,21 @@
 meta-calls), W4 (coroutining), W5 (tabling), W6 (modules & prelude), W7 (engine state: streams,
 operators, writer), W8 (default switch, threads, debugger) and **W9 (retirement)** are implemented.
 **v4 is the DEFAULT engine since v4.0.0 and the recursive `QuerySolver` is deleted.**
-**Section 18 is the 4.2 wave C record** (first-argument indexing on every clause-selection path,
-`op/3` and `char_conversion/2` native, `char_type/2`/`code_type/2` generators, and the closed
-assert/retract question); section 17 is 4.1 wave B (the L-08 built-in migration); section 16 is
+**Section 19 is the 4.3 wave D record** (ISO error conformance across the natives, `retractall/1`
+through the index, `bounded = false`); section 18 is the 4.2 wave C record (first-argument indexing
+on every clause-selection path, `op/3` and `char_conversion/2` native,
+`char_type/2`/`code_type/2` generators, and the closed assert/retract question);
+section 17 is 4.1 wave B (the L-08 built-in migration); section 16 is
 4.1 wave A (the v2 machine is deleted); section 15 is W9; section 14 is W8; section 13 is W7;
 section 12 is W6; section 11 is W5; section 10 is W4; section 9 is W3; sections 1–8 describe W1/W2
-and are still accurate except where sections 9 to 18 say otherwise.
+and are still accurate except where sections 9 to 19 say otherwise.
 
 **Since 4.1.0 there is ONE engine.** The v2 `MachineSolver` stayed selectable for one release
 (`-Djprolog.engine=v2`), as design decision 1 (B.17) required; wave A of 4.1 deletes it, with the
 `engine-v2` profile, the engine-selection API and `core.engine.Trail`. Anywhere below that says
 "on both engines" or "the v2 fallback", read it as history.
 
-**Suite**: 1301/1301 JUnit tests, one engine, one leg; 20/20 example programs.
+**Suite**: 1306/1306 JUnit tests, one engine, one leg; 20/20 example programs.
 
 **Post-review**: an independent verification of W1/W2 found two v4-only regressions, both fixed
 before W3 — `findall/3` was not opaque (**ISS-2025-0448**) and retract/assert loops were superlinear
@@ -2745,3 +2747,317 @@ was identical modulo fresh-variable serial numbers, which is exactly the assuran
 cannot give); measure with a control benchmark in the same table; and when a change is only
 worthwhile *combined* with a second one, measure the intermediate state too — that is what
 distinguished "indexing does not pay" from "the key does not pay".
+
+---
+
+## 19. Release 4.4, wave D of 4.3 — ISO error conformance, indexed `retractall/1`, `bounded = false`, the cleanup catch escape (v4.4.0, ISS-2025-0504..0513)
+
+**Status**: done, all four items of §18.7 that this wave was scoped to (items 1, 2 and 4 of that
+list plus the `bounded` defect found in verification; item 3 — the remaining `io` predicates — is
+still benchmark-gated and untouched, and item 5 — multi-argument indexing — is still not
+recommended), plus ISS-2025-0513, which independent verification of the wave found.
+Suite **1313/1313** (1301 + 1 table-driven test carrying 249 rows + 4 indexing tests + 7
+cleanup/catch tests); **20/20 example
+programs** with every per-program "Successful queries" count unchanged
+(2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 0, 0); the generated Reference Manual's
+worked examples byte-identical apart from a timestamp and two fresh-variable serial numbers.
+Names that can still reach `LegacyBuiltinAdapter`: **229**, unchanged (this wave migrated nothing).
+
+### 19.1 What changed
+
+| ISS | Change | Files |
+|---|---|---|
+| 0504 | **`op/3`'s ISO error terms** — the headline. The standard's ten error clauses (8.14.3.3) in the standard's order, plus `current_op/3` (8.14.4.3), `char_conversion/2` (8.14.5.3) and `current_char_conversion/2` (8.14.6.3). Closes deviation 3 of §18.4. | `core/engine/v4/NativeMisc.java`, `Errors.java` |
+| 0505 | the `io` family: `put_char/1,2`, `put_code/1,2`, `put_byte/1,2`, `current_input/1`, `current_output/1`, the `write_term/2,3` option list, `format/1,2,3`'s unbound format, `open/3,4` | `core/engine/v4/NativeIo.java`, `builtin/io/{WriteOptions,Open,PutByte}.java` |
+| 0506 | the text family, 13 message-atom sites plus 5 silent failures | `core/engine/v4/NativeText.java` |
+| 0507 | `atom_to_term/3` (it threw the FORMAL as a bare atom), `succ/2`, `plus/3` | `core/engine/v4/NativeTerm.java` |
+| 0508 | `set_prolog_flag/2`, `current_prolog_flag/2`, `listing/1`, `abolish/1` | `core/engine/v4/NativeDb.java`, `core/system/PrologFlags.java` |
+| 0509 | `sub_atom/5`, `sub_string/5`, `length/2`, `between/3`, and the `setup_call_cleanup/3` catch escape | `core/engine/v4/NativeLibrary.java`, `Machine.java` |
+| 0510 | CLP(FD) `in/2`, `label/1`, `labeling/2` | `core/engine/v4/ClpfdNative.java` |
+| 0511 | **`retractall/1` through the first-argument index** | `core/engine/KnowledgeBase.java` |
+| 0512 | **`bounded` is `false`** | `core/system/PrologFlags.java` |
+| 0513 | **a cleanup's own exception now reaches `catch/3`** (found in verification; pre-existing, reproduces on 4.3.0) | `core/engine/v4/Machine.java`, `EngineV4CleanupTest.java` (new) |
+
+New tests: `core/engine/v4/EngineV4IsoErrorsTest` — the conformance oracle, one table of 249
+`Goal -> expected error term` rows — and `core/engine/v4/EngineV4CleanupTest` (7 methods, four of
+which fail on 4.3.0) for the cleanup/catch contract. Four new methods in `EngineV4IndexingTest` for
+`retractall/1` and the partial-structure key. The wave-B/C classes (`EngineV4TextTest`, `EngineV4TermTest`,
+`EngineV4IoTest`, `EngineV4DatabaseTest`), `EngineHardeningTest`, `BugFixVerificationTest`,
+`CharacterIOTest`, `AdvancedArithmeticTest` and `ISOPrologFeaturesTest` had assertions that pinned
+the OLD non-ISO message atoms or the old silent failures; each was tightened to pin the new ISO
+term, never loosened.
+
+### 19.2 How it works, in one page
+
+**The oracle is the deliverable, not the individual fixes.** `EngineV4IsoErrorsTest` runs every row
+as `catch((Goal), IsoErrCaught, true)`, renders the caught term through the engine's own writer
+(`TermFormatter.format(t, quoted, …)`, so `atom/1` prints as `atom/1` and not as `/(atom, 1)`) and
+compares it to the expectation after whitespace normalisation. An expectation ending in `*` is a
+prefix match, which is how the *formal* is pinned exactly while the *context* half of
+`error(Formal, Context)` is left free. Rows are `SUCCESS`, `FAIL`, or an error term; a goal that
+escapes as a Java exception is reported as `UNCAUGHT`, which is how the
+`setup_call_cleanup/3` escape (ISS-2025-0509) was found.
+
+It is ONE `@Test` method on purpose. A per-row method would stop at the first failure and hide the
+pass RATE, and the rate is the number this wave exists to move: **4.3.0 answered 161 of the 249
+rows, this tree answers 249**.
+
+**`Errors` gained three members** (`evaluation`, `syntax`, `pi`) so that no native has to build a
+formal by hand any more. `Errors.pi(name, arity)` is the `Name/Arity` culprit ISO asks for over and
+over; building it in one place is what stops `existence_error(procedure, foo/1)` and
+`permission_error(modify, static_procedure, foo/1)` from disagreeing on the shape.
+
+**`op/3` follows the standard's own check order** — instantiation (a–d), then type (e priority,
+f name-shape, g specifier, h element), then domain (i priority, j specifier), then permission
+(k/l `','`, m `'|'`). The order matters when a goal has two faults: `op(700, 1, 2)` is
+`type_error(list, 2)`, not `type_error(atom, 1)`, because ISO tests the name's shape before the
+specifier's type.
+
+**`retractall/1`'s index path.** `KnowledgeBase.retractAllClauses` asks
+`getRulesWithFirstArgIndex(functor, arity, firstArg)` for its candidates — the same accessor whose
+miss has degraded to the full predicate list since ISS-2025-0344 — filters them with `unifiable`,
+collects the survivors into an **identity** set, and makes ONE backwards positional pass over
+`rules` removing the members. Three properties:
+
+- an index miss still yields the whole predicate, so no clause can be dropped (ISS-2025-0340);
+- a variable-headed clause is in the `_VAR` bucket, which every keyed lookup merges in, so
+  `retractall(f(7, _))` still removes `f(X, varhead)`;
+- the bulk mode (arity 0, or an unbound first argument) takes an early `return null` and keeps the
+  historical single scan, because there every clause matches and the candidate list plus identity
+  set are pure overhead — measured, 112 -> 154 ms over 20 000 clauses.
+
+**The `setup_call_cleanup/3` escape, in two halves.** The generated probe (not a test) found that
+`catch(call_cleanup(A, B), E, true)` with both arguments unbound reached the Java embedder as an
+uncaught `PrologException`. ISS-2025-0509 fixed the *argument-validation* half: validating Setup,
+Goal and Cleanup **before Setup runs** puts an instantiation/type error back inside the catch
+scope, which is what SWI does.
+
+That left the *general* half, which independent verification of the wave then reported and which
+**ISS-2025-0513** fixes: whenever Goal and Cleanup BOTH throw, the cleanup's exception escaped.
+`catch(call_cleanup(throw(a), throw(b)), E, true)` reached the embedder as `PrologException: b`,
+on this tree and identically on 4.3.0 — a pre-existing defect, not a wave-D regression.
+
+The root cause is where `handleBall` ran the cleanups. It collected every CLEANUP frame it unwound
+past into a list and ran them **after** the search had finished — after the matching CATCH frame
+had been popped and its recovery installed. So the cleanup executed with the frame that should have
+caught it already consumed, and `handleBall` is called from inside `drive`'s `catch` clause, i.e.
+outside the loop that routes exceptions, so anything it throws escapes the machine. The other three
+cleanup paths were never affected, because all three run their cleanup INSIDE the drive loop: the
+deterministic exit runs it from a goal-stack `Runnable`, failure runs it in `backtrack` at the
+moment the frame is popped, and `cut` runs it from `step0`/`stepN`.
+
+The fix makes `handleBall` do what `backtrack` always did — run the cleanup at the point its frame
+is popped, while the enclosing frames are still on the stack — and lets a ball the cleanup throws
+**replace** the one being unwound, with the search continuing from the same position. Three things
+fall out of that and are all pinned:
+
+- the cleanup's ball is matched against the catchers that ENCLOSE the `setup_call_cleanup/3`, not
+  against the one that matched the goal's ball, so
+  `catch(catch(call_cleanup(throw(a), throw(b)), a, r1), E2, true)` gives `E2 = b` and the inner
+  catcher does not swallow it;
+- a later cleanup still runs when an earlier one throws, so nested `setup_call_cleanup/3` gives the
+  OUTERMOST ball (`E = c` for `scc(true, scc(true, throw(a), throw(b)), throw(c))`);
+- when nothing catches the replaced ball, `handleBall` throws it itself — `drive` rethrows the
+  original exception OBJECT when `handleBall` answers false, which would report the goal's `a`
+  instead of the cleanup's `b`.
+
+**Which ball wins** was the one semantic choice: the cleanup's. That is SWI's answer, and it is the
+only one consistent with JProlog's already-correct `setup_call_cleanup(true, true, throw(b))`,
+which has always given `E = b`. One further consequence, deliberate: a cleanup reached by an
+unwinding ball now runs BEFORE the trail is undone to the catch frame's mark, so it sees the
+bindings the goal made before it threw (`catch(setup_call_cleanup(true, (X = bound, throw(a)),
+throw(saw(X))), E, true)` gives `E = saw(bound)`). SWI behaves the same way, and the `backtrack`
+path in this machine always has.
+
+**The trust model is untouched** (invariant 9). `runCleanupWhileUnwinding` catches
+`PrologException` only, and opens with `ControlFlow.rethrowIfControl`:
+`InferenceLimitException`, `QueryCancelledException` and `DebugStopException` are plain
+`RuntimeException`s, so a budget abort or an IDE Stop inside a cleanup still tears the query down
+and stays invisible to `catch/3`; `halt/1`, whose `PrologException` carries no ball, is rethrown
+unchanged.
+
+### 19.3 New invariants (add to section 3)
+
+64. **A built-in raises `error(Formal, Context)`, never a message atom.** Use
+    `core.engine.v4.Errors` (`instantiation`, `type`, `domain`, `existence`, `permission`,
+    `representation`, `resource`, `evaluation`, `syntax`, and `pi` for a `Name/Arity` culprit);
+    never `new PrologEvaluationException("...")` and never a formal built as a Java string. A
+    message atom IS catchable, but only by a bare-variable catcher, which is the same as not being
+    catchable at all for a program that discriminates on the error. `EngineV4IsoErrorsTest` is the
+    net: a new built-in with an argument contract belongs in its table.
+65. **An argument fault raises; it does not fail.** Silent failure on a wrong-type or unbound
+    argument turns the caller's bug into a wrong answer. The exceptions are the ones the table
+    records as deliberate (§19.4) and they are all pinned there.
+66. **A goal argument is checked before anything runs.** `setup_call_cleanup/3` validates Setup,
+    Goal and Cleanup up front (ISS-2025-0509), so an argument fault is raised inside the enclosing
+    catch scope.
+67. **`retractall/1` is a selection site like the other four.** `Machine.selectClauses`,
+    `Machine.retractClause`, `NativeLibrary.ClauseB` and now
+    `KnowledgeBase.retractAllClauses` all go through a first-argument index, and all four degrade
+    to the full clause list on a miss. A new bulk database operation must either use the index or
+    document why the full scan is cheaper — `retractall` with an unbound key and `abolish/1` both
+    measured cheaper with the scan.
+68. **A cleanup runs at the moment its frame is popped, never after the search that popped it.**
+    `backtrack` always did; `handleBall` does since ISS-2025-0513. Anything a construct runs from
+    OUTSIDE `drive`'s try block — and `handleBall` is called from inside its `catch` clause — has
+    no way to route an exception it raises, so it escapes to the Java embedder. If a new construct
+    must run user code while a ball is unwinding, run it while the enclosing frames are still on
+    the stack and let its ball replace the one being unwound (and throw the replacement yourself
+    if nothing catches it: `drive` rethrows the ORIGINAL exception object when `handleBall`
+    answers false).
+
+### 19.4 Deviations from the 4.3-D brief, and why
+
+1. **`op/3`'s priority range is 0..1200, not the brief's 1..1200.** Priority 0 REMOVES an operator
+   (ISO 8.14.3.1) and `EngineV4OpsTest.testOpAcceptsAListOfNamesAndPrecedenceZeroRemoves` pins it,
+   so `op(0, xfx, f)` must keep succeeding. Out of range is `< 0 || > 1200`.
+2. **`op(700, xfx, [])` stays an error**, now `domain_error(non_empty_list, [])`. In ISO `[]` is an
+   atom and the goal would define an operator named `[]`; the registry version rejected it and
+   nothing in the tree wants that operator, so the rejection is kept with an ISO-shaped term rather
+   than changed into a silent new operator.
+3. **The stream-alias error is `existence_error(stream, A)`, not `domain_error(stream_or_alias, A)`.**
+   SWI answers the latter for `close(foo)`; ISO 8.11.5.3 (c) supports the former for an atom that is
+   not associated with an open stream, GNU Prolog agrees, and ISS-2025-0377 pinned it deliberately
+   with a test. Changing it would have broken two existing tests to swap one defensible reading for
+   another. Recorded as a deviation row in the oracle instead.
+4. **`atom_concat/3` keeps `type_error(atom, C)` where ISO says `type_error(atomic, C)`**, because
+   JProlog's `atom_concat/3` requires atoms: `atom_concat(a, 1, R)` raises rather than answering
+   `R = a1`, which ISS-2025-0278 pinned. Making the error say `atomic` while the predicate still
+   refuses atomics would be worse than either alternative. Left as a deviation row; making
+   `atom_concat/3` accept atomics is a separate, larger change.
+5. **`string_concat(X, Y, Z)` with nothing bound still fails** where `atom_concat/3` raises
+   `instantiation_error`. ISS-2025-0188 decided that explicitly and its test is titled
+   `testISS0188_stringConcatGracefulFailure`; the change was made, the test caught it, and it was
+   reverted rather than overruled.
+6. **`arg/3` with an unbound index still enumerates**, and `call((fail, 1))` still fails. Both are
+   ISO error clauses that every modern system ignores in favour of the more useful behaviour.
+7. **`abolish/1` was benchmarked and NOT changed.** 20 000 clauses in 5 ms; it is already one
+   backwards pass, and §16.6's rule ("<= 5% = no change") applies. The brief asked for the
+   benchmark first, and this is what it said.
+8. **`length/2` now raises where it used to fail, and that broke two existing assertions.**
+   `length(foo, N)` (ISS-2025-0349) and `length([a|b], _)` (ISS-2025-0425) were pinned as failing.
+   They were tightened to pin `type_error(list, L)` — SWI's answer — rather than left alone,
+   because a silent failure on a non-list is exactly the class of defect this wave exists to
+   remove. Both are recorded as behaviour changes in CHANGELOG.
+9. **ISS-2025-0513 was not in the brief.** Independent verification of the wave found it after
+   §19 was first written; it is pre-existing (it reproduces on 4.3.0), it is NOT what
+   ISS-2025-0509 closed, and it is folded into this wave rather than deferred because it is an
+   exception escaping `catch/3` — the same class of defect the wave exists to remove.
+10. **The bridged extended libraries were NOT swept.** The brief's item 4 said "fix the ones in the
+   ISO core (the families migrated in waves B and C), list the rest as a tracked limitation with
+   counts by family". LIM-038 is that list: 315 goals over 16 families, counted by
+   `scratchpad/43d/ErrProbe.java`.
+
+### 19.5 A/B evidence
+
+Same shell session, alternating JVMs, `java -Xss4m -Xmx2g`. **A** = the v4.3.0 classes exported
+with `git archive v4.3.0` and compiled to `scratchpad/v430`, **B** = this tree. Two harnesses:
+`scratchpad/42c/WaveC.java` (the established control set, one warm-up then best of 6–8 warm
+iterations per figure) and `scratchpad/43d/RaBench.java` (the retractall/abolish set, a fresh
+20 000-clause table per iteration). Order reversed between rounds, median over pooled samples,
+min over all iterations. The noise floor on this VM is ~5%.
+
+**`retractall`/`abolish` (RaBench, 54 samples per side over two rounds):**
+
+| benchmark | A (median / min) | B (median / min) | round 1 | round 2 | pooled |
+|---|---|---|---|---|---|
+| 200 x `retractall(f(K, _))` into 20 000 clauses | 188 / 126 ms | 33 / 20 ms | -82.0% | -83.5% | **-82.4%** |
+| bulk `retractall(g(_, _))` over 20 000 clauses | 46 / 33 ms | 47 / 37 ms | +4.4% | -3.1% | **+2.2%** |
+| `abolish(h/2)` over 20 000 clauses | 5 / 2 ms | 5 / 2 ms | 0% | +10% | **0%** |
+
+**Controls (WaveC, 12–18 samples per side over three rounds):**
+
+| benchmark | A (median / min) | B (median / min) | pooled change |
+|---|---|---|---|
+| `db`: `assertz(z(N)), retract(z(N))` x100 000 | 183.0 / 142 ms | 179.5 / 140 ms | **-1.9%** |
+| `loop(1000000)` | 399.0 / 348 ms | 399.5 / 333 ms | **+0.1%** |
+| `nrev` of 30 elements x2 000 | 339.5 / 285 ms | 344.5 / 281 ms | **+1.5%** |
+| `dsp`: 3 lookups into a 200-clause predicate x20 000 | 26.0 / 21 ms | 25.0 / 22 ms | **-3.8%** |
+| `lk`: `tbl(N, _)` x20 000 into a 20 000-fact table | 15.5 / 12 ms | 15.0 / 13 ms | **-3.2%** |
+| `cl`: `clause(tbl(K, _), _)` x4 000 | 4.0 / 3 ms | 4.0 / 3 ms | **0.0%** |
+| `rr`: `retract(rt(K, _))` over 4 000 clauses | 21.0 / 17 ms | 21.0 / 18 ms | **0.0%** |
+
+(`loop` and `nrev` are quoted from rounds 1+2, which measured the whole set; a third round
+dedicated to the controls, best of 8, read `loop +0.9%`, `nrev -1.5%`, `dsp -4.5%`. The RaBench
+harness reports `loop +10%` in the same session, which is GC contamination from the four
+20 000-clause tables it builds per iteration and not a real signal — its own minima put B ahead of
+A, and the two harnesses disagree on the sign. The dedicated harness is the one to trust; it is the
+one §18.5 used.)
+
+**Nothing is more than 5% slower.** The ISO-error work adds two or three `instanceof` tests to the
+entry of a built-in that is about to do real work; none of it is on a resolution hot path, and the
+control numbers say so.
+
+**ISS-2025-0513 was measured separately**, after `Machine.handleBall` changed, in two more
+interleaved rounds with the order reversed (6 pairs each, best of 8). The box was under external
+load for both — the absolute figures are 2–3x the quiet-box numbers above — and the two rounds
+**disagree on the sign** for three of the four benchmarks, which is what noise looks like:
+
+| benchmark | round 4 (A first) | round 5 (B first) | pooled min, A -> B |
+|---|---|---|---|
+| `db` | +2.0% | +4.8% | 363 -> 163 ms |
+| `loop` | -2.6% | -10.3% | 662 -> 408 ms |
+| `nrev` | +6.6% | -7.8% | 569 -> 354 ms |
+| `dsp` | +4.5% | -5.9% | 42 -> 29 ms |
+
+B's **minimum** is better than A's on all four, in both rounds. The mechanism argument settles it
+anyway: the changed code runs only while an exception is unwinding, and none of `loop`, `nrev`,
+`dsp` or `db` throws — `handleBall` is never entered. The quiet-box rounds 1–3 above remain the
+control evidence for the wave.
+
+### 19.6 The conformance table, before and after
+
+| | rows | pass | rate |
+|---|---:|---:|---:|
+| v4.3.0 classes, same table | 249 | 161 | **64.7%** |
+| v4.4.0 (this tree) | 249 | **249** | **100%** |
+
+Against the *pre-deviation* table — the one written straight from ISO §8, before the 21 rows that
+record a deliberate JProlog answer were adjusted — v4.3.0 scored 126/225 (56.0%). Both numbers are
+worth keeping: the first says how far the implementation was from its own documented contract, the
+second how far it was from the letter of the standard.
+
+The residual non-ISO surface, from `scratchpad/43d/ErrProbe.java` (2 326 goals: every registered
+indicator at arities 1..4, once with every argument unbound and once with a wrong-type first
+argument):
+
+| | goals |
+|---|---:|
+| raise a proper `error/2` | 275 |
+| wrong-arity complaint (a `BuiltInRegistry.isBuiltIn` design wart, not an error-term one) | 1 170 |
+| **raise a message atom** — LIM-038 | **315** |
+
+By family: jdbc 88, filesystem 28, crypto 26, network 26, http 22, io (bridged half) 22,
+persistence 18, datetime 14, threading 14, logging 12, regex 12, csv 8, dcg 8, json 8, os 4,
+xml 4, and one false positive (`throw(foo)` throws `foo`, which is not an `error/2` by design).
+Every one of the rest is in a bridged extended library (LIM-037); the ISO core is clean.
+
+### 19.7 What remains, and where the next wave starts
+
+1. **LIM-038: the extended libraries' error terms.** Mechanical, ~200 files, driven by `ErrProbe`.
+   Do it one family at a time and re-run the probe as the diff. The families with a plausible
+   embedder audience first: `filesystem`, `os`, `regex`, `json`, `csv`, `datetime`.
+2. **`BuiltInRegistry.isBuiltIn(Name, Arity)` answers true for arities the built-in does not
+   implement**, so `char_code(X)` reaches `builtin.character.CharCode` and gets an English
+   sentence where ISO asks for `existence_error(procedure, char_code/1)`. 1 170 of the probed
+   goals. Fixing it means giving the registry a real arity table — a bigger change than it looks,
+   because `isBuiltIn` is also what makes `assertz` raise `permission_error` (§"Protection is a
+   question about three stores").
+3. **The remaining `io` predicates**, still only if a benchmark asks (§17.6 item 3, §18.7 item 3,
+   unchanged). `read_term/2,3` is 442 lines of parser integration; write the benchmark first.
+4. **`statistics/2`, `table/1` and the 11 debug predicates** — the last non-library bridged names.
+   No hot-path claim (§18.7 item 4, unchanged).
+5. **A second-argument or multi-argument index is still NOT recommended** without a benchmark that
+   shows the first-argument one failing (§18.7 item 5, unchanged).
+6. **`atom_concat/3` accepting atomics** (deviation 4) would close the last ISO type-error
+   deviation in the text family, but it changes what `atom_concat(a, 1, R)` DOES, not just what it
+   raises. Needs its own issue and its own behaviour-change note.
+
+**Rules a wave-D-style change must follow**: build the oracle FIRST and record the "before" rate
+against the *same* table you will ship — the number is worthless otherwise, and running the old
+classes against the final table is the only honest way to get it (`git archive` the tag, compile it
+to a scratch directory, run the same harness). Put every deliberate deviation in the table with
+JProlog's own answer as the expectation and the reason in the test's comment, so it fails loudly if
+someone changes it. And when a fix breaks an existing assertion, decide explicitly whether the
+assertion was pinning a defect (tighten it) or a decision (revert the fix): this wave did both —
+`length(foo, N)` was a defect, `string_concat(X, Y, Z)` was a decision.

@@ -1,12 +1,15 @@
 # Appendix A — Prolog flags
 
 `current_prolog_flag(?Flag, ?Value)` reads and `set_prolog_flag(+Flag, +Value)` sets the flags
-below. Flags marked *read-only* raise `permission_error(modify, flag, Flag)` when set.
+below. Flags marked *read-only* raise `permission_error(modify, flag, Flag)` when set; a flag that
+is not one of these raises `domain_error(prolog_flag, Flag)` on either predicate, and a value the
+flag does not accept raises `domain_error(flag_value, Flag+Value)` (ISO 8.17.1.3 / 8.17.2.3, exact
+since 4.4.0 — ISS-2025-0508).
 
 | Flag | Values | Notes |
 |---|---|---|
-| `bounded` | `false` | read-only; integers are unbounded |
-| `max_integer`, `min_integer` | integer | read-only; limits of the fast 64-bit representation |
+| `bounded` | `false` | read-only; integers are arbitrary precision (`X is 10^30` is exact) |
+| `max_integer`, `min_integer` | integer | read-only; the limits of the fast 64-bit representation an integer uses before it is promoted to a big integer — **not** a limit on arithmetic. ISO does not require them when `bounded` is `false`; they are kept because programs read them, as SWI-Prolog does. |
 | `integer_rounding_function` | `toward_zero` | read-only |
 | `max_arity` | `unbounded` | read-only |
 | `double_quotes` | `codes`, `chars`, `atom`, `string` | how `"text"` is read (default `string`) |

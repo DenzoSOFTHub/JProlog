@@ -2,6 +2,180 @@
 
 ## Active and Resolved Issues
 
+## 4.3 wave D 2026-08-26 (v4.4.0) — ISO ERROR CONFORMANCE, INDEXED `retractall/1`, `bounded = false`, THE CLEANUP CATCH ESCAPE
+
+The four items section 18.7 named. Wave record:
+`docs/reports/report-engine-v4-progress.md` section 19.
+Suite: **1313/1313** (1301 + 1 new table-driven test carrying 249 rows + 4 new indexing tests
++ 7 new cleanup/catch tests); 20/20 example programs with every
+per-program "Successful queries" count unchanged
+(2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 0, 0).
+New test: `core/engine/v4/EngineV4IsoErrorsTest` — a 249-row `Goal -> expected error term`
+conformance table; 4.3.0 answered **161/249 (64.7%)**, this tree answers **249/249 (100%)**.
+Eleven new tests in `EngineV4IndexingTest` and `EngineV4CleanupTest`, plus tightened assertions
+in the wave-B classes, pin the individual terms and the cleanup/catch contract.
+Acceptance: no benchmark more than 5% slower than v4.3.0 (interleaved A/B, 18 pairs of controls);
+`retractall(f(K, _))` over a 20 000-clause table **-82%**.
+
+### ISS-2025-0504
+**Status**: RESOLVED (v4.4.0)
+**Problem**: `op/3`, `current_op/3`, `char_conversion/2` and `current_char_conversion/2` raised a
+`PrologEvaluationException` whose error term is a bare atom carrying an English sentence
+(`'op/3: Precedence must be between 0 and 1200.'`), or failed silently, where ISO 13211-1 8.14.3.3
+/ 8.14.4.3 / 8.14.5.3 / 8.14.6.3 prescribe `error(Formal, Context)`. Recorded as deviation 3 of
+section 18.4 when `op/3` went native in 4.3.0.
+**Fix**: `core.engine.v4.NativeMisc` raises the standard's own terms, in the standard's own order
+(instantiation, type, domain, permission): `instantiation_error`, `type_error(integer, P)`,
+`type_error(list, N)` / `type_error(atom, E)`, `type_error(atom, T)`,
+`domain_error(operator_priority, P)`, `domain_error(operator_specifier, T)`,
+`permission_error(modify, operator, ',')` and `permission_error(create, operator, '|')` (the last
+one honours the ISO window: priority 0, or an infix specifier with priority >= 1001).
+`current_op/3` raises rather than failing on a bound argument of the wrong shape, and the
+character-conversion pair distinguishes `instantiation_error` from
+`representation_error(character)`. `core.engine.v4.Errors` gains `evaluation`, `syntax` and `pi`.
+**Test**: `EngineV4IsoErrorsTest` (the op/current_op/char_conversion block), `EngineV4OpsTest`.
+
+### ISS-2025-0505
+**Status**: RESOLVED (v4.4.0)
+**Problem**: the `io` family swallowed argument faults. `put_char(X)`, `put_char(ab)`,
+`put_code(X)`, `put_code(a)`, `current_input(foo)` and `current_output(foo)` FAILED;
+`write_term(a, foo)` and `write_term(a, [quoted(true)|_])` wrote the term with default options
+because `ListUtils.extractElements` never returns null, which made the `type_error(list, Options)`
+in `WriteOptions.parse` dead code; `format(X)` failed; `open/3,4` and `put_byte/1,2` threw message
+atoms.
+**Fix**: ISO 8.12.3.3 / 8.11.1.3 / 8.14.2.3 / 8.11.5.3 / 8.13.3.3 terms in
+`core.engine.v4.NativeIo`, `builtin.io.WriteOptions` (a strict proper-list walk),
+`builtin.io.Open` and `builtin.io.PutByte`.
+**Test**: `EngineV4IsoErrorsTest`, `EngineV4IoTest`, `CharacterIOTest`.
+
+### ISS-2025-0506
+**Status**: RESOLVED (v4.4.0)
+**Problem**: thirteen `PrologEvaluationException` sites in `core.engine.v4.NativeText`
+(`upcase_atom/2`, `downcase_atom/2`, `atom_string/2`, `string_codes/2`, `string_length/2`,
+`string_code/3`, `split_string/4`, `atomic_list_concat/2,3`), plus five predicates that failed
+silently with nothing bound (`atom_number/2`, `number_string/2`, `string_chars/2`,
+`term_to_atom/2`, `term_string/2`).
+**Fix**: ISO terms throughout. `atomic_list_concat/2,3` raises `instantiation_error` for an
+unbound or PARTIAL list (a variable ELEMENT is deliberately left alone, so
+`atomic_list_concat([a,X], '-', 'a-b')` still fails). `string_concat/3` deliberately keeps its
+silent failure — ISS-2025-0188 decided that explicitly.
+**Test**: `EngineV4IsoErrorsTest`, `EngineV4TextTest`.
+
+### ISS-2025-0507
+**Status**: RESOLVED (v4.4.0)
+**Problem**: `core.engine.v4.NativeTerm` built the FORMAL as a Java string and handed it to
+`PrologEvaluationException`, so `atom_to_term(3, T, B)` threw the ATOM `'type_error(atom, 3)'` and
+`catch(..., error(type_error(atom, _), _), R)` never matched it. `succ/2` and `plus/3` failed
+silently on a non-integer or negative argument.
+**Fix**: `Errors.type`/`Errors.syntax`/`Errors.instantiation`; `succ/2` gets SWI's
+`type_error(not_less_than_zero, N)`; `plus/3` gets `type_error(integer, N)`.
+**Test**: `EngineV4IsoErrorsTest`, `EngineV4TermTest`, `AdvancedArithmeticTest`.
+
+### ISS-2025-0508
+**Status**: RESOLVED (v4.4.0)
+**Problem**: `set_prolog_flag/2` collapsed "read-only flag", "unknown flag" and "bad value" into
+one boolean and one message atom, and setting an unknown flag CREATED it; `current_prolog_flag/2`
+failed on an unknown flag and threw a message atom on a non-atom one; `listing/1` and `abolish/1`
+(with an unbound half of the indicator) likewise.
+**Fix**: ISO 8.17.1.3 / 8.17.2.3, all five clauses, in `core.engine.v4.NativeDb`;
+`PrologFlags.isReadOnly(String)` is the new public discriminator.
+`abolish(a/A)` / `abolish(A/1)` are `instantiation_error` instead of a `type_error` whose culprit
+was a fresh variable.
+**Test**: `EngineV4IsoErrorsTest`, `EngineV4DatabaseTest`, `ISOPrologFeaturesTest`.
+
+### ISS-2025-0509
+**Status**: RESOLVED (v4.4.0)
+**Problem**: `sub_atom/5` / `sub_string/5` threw message atoms; `length/2` and `between/3` failed
+silently on a wrong-type argument; and `setup_call_cleanup/3` / `call_cleanup/2` did not check
+their goal arguments, so `catch(call_cleanup(A, B), E, true)` ESCAPED the catch — Goal's
+`instantiation_error` unwound past the (already consumed) CATCH frame and Cleanup's own
+`instantiation_error` was then raised with no frame left to catch it, reaching the Java embedder.
+**Fix**: ISO 8.16.3.3 terms in `NativeLibrary.SubAtomB`; the SWI contract for `length/2`
+(`type_error(list, L)`, `type_error(integer, N)`, `domain_error(not_less_than_zero, N)`) and
+`between/3`; and `Machine.checkCallable` on Setup, Goal and Cleanup **before Setup runs**, which
+puts the error back inside the catch scope, as SWI does.
+**Test**: `EngineV4IsoErrorsTest`, `EngineHardeningTest`, `BugFixVerificationTest`.
+
+### ISS-2025-0510
+**Status**: RESOLVED (v4.4.0)
+**Problem**: `X in a` and `label(a)` failed silently; only `labeling/2`'s OPTION list had a
+contract.
+**Fix**: `core.engine.v4.ClpfdNative` — `instantiation_error`,
+`type_error(clpfd_domain, D)` and `type_error(integer, N)` for `in/2`, and
+`instantiation_error` / `type_error(list, L)` for the variable list of `label/1` and `labeling/2`.
+**Test**: `EngineV4IsoErrorsTest`.
+
+### ISS-2025-0511
+**Status**: RESOLVED (v4.4.0)
+**Problem**: `retractall/1` walked the WHOLE knowledge base and called `Term.unify` (allocating a
+`HashMap`) on every clause of every predicate, so `retractall(f(K, _))` with a bound key over a
+20 000-clause table cost one full-database walk with 20 000 unifications per call —
+the quadratic shape `retract/1` had before ISS-2025-0502.
+**Fix**: `KnowledgeBase.retractAllClauses` selects its candidates through the existing
+first-argument index (`getRulesWithFirstArgIndex`, whose miss already degrades to the full
+predicate list, ISS-2025-0344), collects the matches into an IDENTITY set and makes one positional
+pass to remove them. The bulk mode (arity 0, or an unbound first argument) keeps the historical
+single scan: measured, the candidate machinery costs it 112 -> 154 ms and buys nothing, because
+every clause matches anyway.
+**Measured** (interleaved A/B against the v4.3.0 classes, two rounds with the order reversed,
+54 samples per side): 200 `retractall(f(K, _))` calls into a 20 000-clause table
+**188 -> 33 ms median (-82%)**; bulk `retractall(g(_, _))` over 20 000 clauses 46 -> 47 ms
+(+2%, inside the ~5% noise floor); `abolish(h/2)` over 20 000 clauses 5 -> 5 ms (**not changed** —
+it is already a single backwards pass and no benchmark asked for more).
+**Test**: `EngineV4IndexingTest` (four new methods, including the partial-structure key
+`f(g(X), _)` on all four indexed paths and the type-faithfulness of the key).
+
+### ISS-2025-0512
+**Status**: RESOLVED (v4.4.0) — **user-visible behaviour change**
+**Problem**: `current_prolog_flag(bounded, B)` answered `true` while JProlog's integers are
+arbitrary precision (`X is 10^30` is exact), and Appendix A of the reference manual documented
+`bounded = false`. A conforming program that branches on `bounded` took the wrong branch.
+**Fix**: `PrologFlags` initialises `bounded` to `false`. ISO 7.11.1.2/3 do not require
+`max_integer`/`min_integer` when `bounded` is `false`; they are kept, because programs read them,
+and both the reference and Appendix A now say what they mean — the limits of the fast 64-bit
+representation an integer uses before it is promoted to a big integer, NOT a limit on arithmetic.
+SWI-Prolog reports them the same way.
+**Test**: `EngineV4DatabaseTest.testISS0499_PrologFlags`, `ISOPrologFeaturesTest.testSystemFlags`.
+
+### ISS-2025-0513
+**Status**: RESOLVED (v4.4.0) — found by independent verification of wave D; **pre-existing**, it
+reproduces identically on v4.3.0, and it is **not** what ISS-2025-0509 fixed (that was the
+argument-validation shape only).
+**Problem**: a Prolog exception escaped `catch/3` to the Java embedder whenever Goal AND Cleanup
+both threw. `catch(call_cleanup(throw(a), throw(b)), E, true)` and
+`catch(setup_call_cleanup(true, throw(a), throw(b)), E, true)` both reached the embedder as an
+uncaught `PrologException: b` instead of binding `E = b`.
+**Root cause**: `Machine.handleBall` collected every CLEANUP frame it unwound past into a list and
+ran the cleanups AFTER the search finished — after the matching CATCH frame had been popped and its
+recovery installed. The cleanup therefore executed with the frame that should have caught it
+already consumed, and `handleBall` is called from inside `drive`'s `catch` clause, i.e. outside the
+loop that routes exceptions, so its `PrologException` escaped the machine. The other three cleanup
+paths (deterministic exit via the goal-stack Runnable, failure via `backtrack`, cut via `cut`) all
+run their cleanup INSIDE the drive loop and were already correct.
+**Fix**: run each cleanup at the point its frame is popped, while the enclosing frames are still on
+the stack, and let a ball it throws REPLACE the one being unwound; the search continues from the
+same position, so the cleanup's ball is matched against the catchers that enclose the
+`setup_call_cleanup/3` and not against the one that matched the goal's ball. When nothing catches
+the replaced ball, `handleBall` throws it itself — `drive` would otherwise rethrow the original
+exception object and report the goal's ball. New private `Machine.runCleanupWhileUnwinding`.
+**Semantics**: the cleanup's ball wins (SWI's answer, and consistent with JProlog's already-correct
+`setup_call_cleanup(true, true, throw(b))`). Nested cleanups all run and the OUTERMOST ball
+survives (`… (true, scc(true, throw(a), throw(b)), throw(c))` gives `E = c`). A cleanup reached by
+an unwinding ball now runs before the trail is undone to the catch frame's mark, so it sees the
+goal's bindings — as SWI does, and as the `backtrack` path always has.
+**Trust model unchanged** (invariant 9): `InferenceLimitException`, `QueryCancelledException` and
+`DebugStopException` are not `PrologException`s and are not caught, so a budget abort or a Stop
+inside a cleanup still stays invisible to `catch/3`; `halt/1` carries no ball and is rethrown.
+**Files**: `core/engine/v4/Machine.java`.
+**Test**: `core/engine/v4/EngineV4CleanupTest` (new) — seven methods
+(`testISS0513_CleanupExceptionIsCaughtWhenGoalAlsoThrew`,
+`…TheCleanupsBallReplacesTheGoalsAndIsRematched`, `…NestedCleanupsAllRunAndTheOutermostBallSurvives`,
+`…UncaughtReportsTheCleanupsBall`, `…EveryOtherCleanupPathIsCatchableToo`,
+`…CleanupRunsOnceAndSeesTheGoalsBindings`, `…ControlExceptionsInACleanupStayUncatchable`);
+four of them fail on the v4.3.0 classes. Plus eight rows in `EngineV4IsoErrorsTest`.
+
+---
+
 ## 4.2 wave C 2026-08-26 (v4.3.0) — INDEXING, `op/3` NATIVE, `char_type/2` GENERATORS
 
 The three items section 17.6 recommended ("the recommended next wave is performance, not more

@@ -76,42 +76,61 @@ final class NativeMisc {
      *       operator to the module currently in context, and {@code current_op/3} filters by it.</li>
      * </ul>
      *
-     * <p>Modes, validation and error terms are the registry version's, unchanged and characterised:
-     * a non-integer precedence is {@code type_error(integer, P)} (ISS-2025-0278), a precedence
-     * outside 0..1200 or an unknown specifier is a {@code PrologEvaluationException}, and the name
-     * may be an atom or a proper list of atoms (ISS-2025-0283).
+     * <p>Modes are the registry version's (the name may be an atom or a proper list of atoms,
+     * ISS-2025-0283); the <b>error terms are ISO 8.14.3.3</b> since 4.4.0 (ISS-2025-0504) — an
+     * unbound argument is {@code instantiation_error}, a non-integer priority
+     * {@code type_error(integer, P)} (ISS-2025-0278), a non-atom specifier
+     * {@code type_error(atom, T)}, a name that is neither an atom nor a list
+     * {@code type_error(list, N)}, a priority outside 0..1200
+     * {@code domain_error(operator_priority, P)}, an unknown specifier
+     * {@code domain_error(operator_specifier, T)}, {@code ','} (whatever the priority)
+     * {@code permission_error(modify, operator, ',')} and {@code '|'} outside its ISO window
+     * (priority 0, or an infix specifier with priority >= 1001)
+     * {@code permission_error(create, operator, '|')}. The checks run in ISO order:
+     * instantiation, then type, then domain, then permission, so a goal with two faults reports
+     * the one the standard names.
      */
     private static final class OpB implements Builtin {
         @Override public Outcome call(Machine m, Term[] args) {
             Term precT = m.deref(args[0]);
             Term typeT = m.deref(args[1]);
             Term nameT = m.deref(args[2]);
-            if (!(precT instanceof Number)) {
-                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
-                    "op/3: First argument must be an integer (precedence).");
-            }
+            // START_CHANGE: ISS-2025-0504 - ISO 8.14.3.3 error terms, in the standard's own order.
+            // (a)(b)(c) instantiation
+            if (precT instanceof Variable || typeT instanceof Variable) throw Errors.instantiation("op/3");
+            // (d)(e) type
+            if (!(precT instanceof Number)) throw Errors.type("integer", m.resolve(precT), "op/3");
             if (!((Number) precT).isInteger()) {                       // ISS-2025-0278
                 throw Errors.type("integer", m.resolve(precT), "op/3");
             }
-            if (!(typeT instanceof Atom)) {
-                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
-                    "op/3: Second argument must be an atom (type).");
-            }
-            List<String> names = opNames(nameT);                       // ISS-2025-0283
-            if (names == null || names.isEmpty()) {
-                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
-                    "op/3: Third argument must be an atom or a list of atoms (name).");
-            }
-            int precedence = (int) Math.round(((Number) precT).getValue().doubleValue());
+            // (f)(h) the name: an atom, or a proper list of atoms (ISS-2025-0283). A variable
+            // anywhere in it is (c)/(d) instantiation_error; a non-list is (f) type_error(list, N);
+            // a non-atom element is (h) type_error(atom, E). ISO tests the name's shape BEFORE the
+            // specifier's type, so op(700, 1, 2) is type_error(list, 2).
+            List<String> names = opNames(m, nameT);
+            // (g)
+            if (!(typeT instanceof Atom)) throw Errors.type("atom", m.resolve(typeT), "op/3");
+            // (h)(i) domain
+            int precedence = (int) ((Number) precT).longValue();
             String type = ((Atom) typeT).getName();
             if (precedence < 0 || precedence > 1200) {
-                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
-                    "op/3: Precedence must be between 0 and 1200.");
+                throw Errors.domain("operator_priority", m.resolve(precT), "op/3");
             }
             if (!isOperatorType(type)) {
-                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
-                    "op/3: Invalid operator type: " + type);
+                throw Errors.domain("operator_specifier", m.resolve(typeT), "op/3");
             }
+            // (j)(k)(l) permission
+            for (int i = 0; i < names.size(); i++) {
+                String n = names.get(i);
+                if (",".equals(n)) {
+                    throw Errors.permission("modify", "operator", new Atom(","), "op/3");
+                }
+                if ("|".equals(n) && precedence != 0
+                        && !(precedence >= 1001 && isInfix(type))) {
+                    throw Errors.permission("create", "operator", new Atom("|"), "op/3");
+                }
+            }
+            // END_CHANGE: ISS-2025-0504
             Ops ops = m.engine().prolog().getOps();
             for (int i = 0; i < names.size(); i++) {
                 m.pushUndo(ops.define(precedence, type, names.get(i)));
@@ -120,14 +139,29 @@ final class NativeMisc {
         }
     }
 
+    // START_CHANGE: ISS-2025-0504
+    private static boolean isInfix(String t) {
+        return "xfx".equals(t) || "xfy".equals(t) || "yfx".equals(t);
+    }
+
+    /** An ISO "character": a one-character atom. */
+    private static boolean isOneCharAtom(Term t) {
+        return (t instanceof Atom) && ((Atom) t).getName().length() == 1;
+    }
+    // END_CHANGE: ISS-2025-0504
+
     private static boolean isOperatorType(String t) {
         return "fx".equals(t) || "fy".equals(t) || "xfx".equals(t) || "xfy".equals(t)
             || "yfx".equals(t) || "xf".equals(t) || "yf".equals(t);
     }
 
-    /** An atom, or a proper list of atoms; null when the term is neither. */
-    private static List<String> opNames(Term nameT) {
+    // START_CHANGE: ISS-2025-0504 - the same acceptance as before (an atom, or a proper list of
+    // atoms), but each rejection now names the ISO error clause instead of collapsing into one
+    // "must be an atom or a list of atoms" message atom.
+    /** An atom, or a proper list of atoms; raises the ISO 8.14.3.3 (c)/(f)/(g) error otherwise. */
+    private static List<String> opNames(Machine m, Term nameT) {
         List<String> out = new ArrayList<String>();
+        if (nameT instanceof Variable) throw Errors.instantiation("op/3");
         if (nameT instanceof Atom && !"[]".equals(((Atom) nameT).getName())) {
             out.add(((Atom) nameT).getName());
             return out;
@@ -135,15 +169,25 @@ final class NativeMisc {
         Term cur = nameT;
         while (cur instanceof CompoundTerm) {
             CompoundTerm c = (CompoundTerm) cur;
-            if (!".".equals(c.getName()) || c.getArguments().size() != 2) return null;
+            if (!".".equals(c.getName()) || c.getArguments().size() != 2) {
+                throw Errors.type("list", m.resolve(nameT), "op/3");
+            }
             Term h = Unify.deref(c.getArguments().get(0));
-            if (!(h instanceof Atom)) return null;
+            if (h instanceof Variable) throw Errors.instantiation("op/3");
+            if (!(h instanceof Atom)) throw Errors.type("atom", m.resolve(h), "op/3");
             out.add(((Atom) h).getName());
             cur = Unify.deref(c.getArguments().get(1));
         }
-        if (cur instanceof Atom && "[]".equals(((Atom) cur).getName())) return out;
-        return null;
+        if (cur instanceof Variable) throw Errors.instantiation("op/3");
+        if (cur instanceof Atom && "[]".equals(((Atom) cur).getName())) {
+            // op(P, T, []) — the empty list is a name of no operators, which the registry version
+            // rejected. ISO's (f) is the closest clause: [] is not an operator name.
+            if (out.isEmpty()) throw Errors.domain("non_empty_list", NIL, "op/3");
+            return out;
+        }
+        throw Errors.type("list", m.resolve(nameT), "op/3");
     }
+    // END_CHANGE: ISS-2025-0504
 
     // ------------------------------------------------------------------ char_conversion/2
 
@@ -156,11 +200,16 @@ final class NativeMisc {
         @Override public Outcome call(Machine m, Term[] args) {
             Term f = m.deref(args[0]);
             Term t = m.deref(args[1]);
-            if (!(f instanceof Atom) || !(t instanceof Atom)
-                    || ((Atom) f).getName().length() != 1 || ((Atom) t).getName().length() != 1) {
-                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
-                    "char_conversion/2: both arguments must be single-character atoms");
+            // START_CHANGE: ISS-2025-0504 - ISO 8.14.5.3: a variable is instantiation_error, and
+            // anything that is not a one-character atom is representation_error(character) — not
+            // one message atom covering both.
+            if (f instanceof Variable || t instanceof Variable) {
+                throw Errors.instantiation("char_conversion/2");
             }
+            if (!isOneCharAtom(f) || !isOneCharAtom(t)) {
+                throw Errors.representation("character", "char_conversion/2");
+            }
+            // END_CHANGE: ISS-2025-0504
             Ops ops = m.engine().prolog().getOps();
             m.pushUndo(ops.convert(((Atom) f).getName().charAt(0), ((Atom) t).getName().charAt(0)));
             return Outcome.SUCCESS;
@@ -178,8 +227,17 @@ final class NativeMisc {
             Ops ops = m.engine().prolog().getOps();
             Term f = m.deref(args[0]);
             Term t = m.deref(args[1]);
+            // START_CHANGE: ISS-2025-0504 - ISO 8.14.6.3: a bound argument that is not a
+            // one-character atom is representation_error(character), where the registry version
+            // simply failed.
+            if (!(f instanceof Variable) && !isOneCharAtom(f)) {
+                throw Errors.representation("character", "current_char_conversion/2");
+            }
+            if (!(t instanceof Variable) && !isOneCharAtom(t)) {
+                throw Errors.representation("character", "current_char_conversion/2");
+            }
+            // END_CHANGE: ISS-2025-0504
             if (!(f instanceof Variable)) {
-                if (!(f instanceof Atom) || ((Atom) f).getName().length() != 1) return Outcome.FAILURE;
                 char c = ((Atom) f).getName().charAt(0);
                 return m.unify(args[1], new Atom(String.valueOf(ops.converted(c))))
                     ? Outcome.SUCCESS : Outcome.FAILURE;
@@ -187,7 +245,6 @@ final class NativeMisc {
             final java.util.Map<Character, Character> table = ops.conversions();
             final List<char[]> pairs = new ArrayList<char[]>();
             if (!(t instanceof Variable)) {                      // From unbound, To bound
-                if (!(t instanceof Atom) || ((Atom) t).getName().length() != 1) return Outcome.FAILURE;
                 char to = ((Atom) t).getName().charAt(0);
                 for (java.util.Map.Entry<Character, Character> e : table.entrySet()) {
                     if (e.getValue().charValue() == to) {
@@ -405,6 +462,31 @@ final class NativeMisc {
     /** {@code current_op(?P, ?Type, ?Name)} — lazy over the engine's own operator store. */
     private static final class CurrentOp implements Builtin {
         @Override public Outcome call(Machine m, final Term[] args) {
+            // START_CHANGE: ISS-2025-0504 - ISO 8.14.4.3. A bound argument of the wrong shape used
+            // to make current_op/3 simply fail (no operator could ever match it); the standard asks
+            // for a type or domain error, and a silent failure hides the caller's typo.
+            Term pT = m.deref(args[0]);
+            Term sT = m.deref(args[1]);
+            Term nT = m.deref(args[2]);
+            if (!(pT instanceof Variable)) {
+                if (!(pT instanceof Number) || !((Number) pT).isInteger()) {
+                    throw Errors.type("integer", m.resolve(pT), "current_op/3");
+                }
+                long pv = ((Number) pT).longValue();
+                if (pv < 0 || pv > 1200) {
+                    throw Errors.domain("operator_priority", m.resolve(pT), "current_op/3");
+                }
+            }
+            if (!(sT instanceof Variable)) {
+                if (!(sT instanceof Atom)) throw Errors.type("atom", m.resolve(sT), "current_op/3");
+                if (!isOperatorType(((Atom) sT).getName())) {
+                    throw Errors.domain("operator_specifier", m.resolve(sT), "current_op/3");
+                }
+            }
+            if (!(nT instanceof Variable) && !(nT instanceof Atom)) {
+                throw Errors.type("atom", m.resolve(nT), "current_op/3");
+            }
+            // END_CHANGE: ISS-2025-0504
             final List<Ops.Def> defs = Ops.current().visible();
             if (defs.isEmpty()) return Outcome.FAILURE;
             final int[] i = {0};

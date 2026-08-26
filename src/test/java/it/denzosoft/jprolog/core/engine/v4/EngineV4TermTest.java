@@ -200,7 +200,11 @@ public class EngineV4TermTest {
         assertEquals("f(X,Y)", all("atom_to_term('f(X,Y)', T, B)", "T"));
         assertEquals("['X'=X,'Y'=Y]", all("atom_to_term('f(X,Y)', T, B)", "B"));
         assertEquals("[]", all("atom_to_term('foo', T, B)", "B"));
-        assertTrue(err("atom_to_term(3, T, B)").startsWith("eval:"));
+        // START_CHANGE: ISS-2025-0507 - 4.3 wave D: a real ISO error term, not the atom
+        // 'type_error(atom, 3)' that a PrologEvaluationException carried.
+        assertEquals("error(type_error(atom,3),'atom_to_term/3')", err("atom_to_term(3, T, B)"));
+        assertEquals("error(instantiation_error,'atom_to_term/3')", err("atom_to_term(A, T, B)"));
+        // END_CHANGE: ISS-2025-0507
     }
 
     // ================================================================ succ/2, plus/3
@@ -210,15 +214,18 @@ public class EngineV4TermTest {
         assertEquals("4", all("succ(3, X)", "X"));
         assertEquals("2", all("succ(X, 3)", "X"));
         assertEquals("false", all("succ(X, 0)", "X"));
-        assertEquals("false", all("succ(a, X)", "X"));
-        assertEquals("false", all("succ(-1, X)", "X"));
-        assertTrue(err("succ(_, _)").startsWith("eval:"));
+        // START_CHANGE: ISS-2025-0507 - 4.3 wave D: succ/2 and plus/3 raise SWI's ISO error terms
+        // where they used to fail silently or carry an English sentence.
+        assertEquals("error(type_error(integer,a),'succ/2')", err("succ(a, X)"));
+        assertEquals("error(type_error(not_less_than_zero,-1),'succ/2')", err("succ(-1, X)"));
+        assertEquals("error(instantiation_error,'succ/2')", err("succ(_, _)"));
         assertEquals("3", all("plus(1, 2, X)", "X"));
         assertEquals("2", all("plus(1, X, 3)", "X"));
         assertEquals("1", all("plus(X, 2, 3)", "X"));
         assertEquals("false", all("plus(1, 2, 4)", "X"));
-        assertEquals("false", all("plus(a, 2, X)", "X"));
-        assertTrue(err("plus(_, _, _)").startsWith("eval:"));
+        assertEquals("error(type_error(integer,a),'plus/3')", err("plus(a, 2, X)"));
+        assertEquals("error(instantiation_error,'plus/3')", err("plus(_, _, _)"));
+        // END_CHANGE: ISS-2025-0507
     }
 
     // ================================================================ the remaining type checks

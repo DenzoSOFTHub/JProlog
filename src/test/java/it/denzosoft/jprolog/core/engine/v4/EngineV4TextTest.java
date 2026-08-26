@@ -174,8 +174,11 @@ public class EngineV4TextTest {
         assertEquals("'HELLO'", all("upcase_atom(hello, X)", "X"));
         assertEquals("'HELLO WORLD'", all("upcase_atom('Hello World', X)", "X"));
         assertEquals("hello", all("downcase_atom('HeLLo', X)", "X"));
-        assertTrue(err("upcase_atom(_, _)").startsWith("eval:"));
-        assertTrue(err("upcase_atom(123, _)").startsWith("eval:"));
+        // START_CHANGE: ISS-2025-0506 - 4.3 wave D: ISO error terms replace the message atom.
+        assertEquals("error(instantiation_error,'upcase_atom/2')", err("upcase_atom(_, _)"));
+        assertEquals("error(type_error(atom,123),'upcase_atom/2')", err("upcase_atom(123, _)"));
+        assertEquals("error(instantiation_error,'downcase_atom/2')", err("downcase_atom(_, _)"));
+        // END_CHANGE: ISS-2025-0506
     }
 
     // ================================================================ number_chars/2, number_codes/2
@@ -202,7 +205,17 @@ public class EngineV4TextTest {
         assertEquals("'123'", all("atom_number(X, 123)", "X"));
         assertEquals("false", all("atom_number(abc, X)", "X"));
         assertEquals("12.5", all("atom_number('12.5', X)", "X"));
-        assertEquals("false", all("atom_number(X, Y)", "X"));
+        // START_CHANGE: ISS-2025-0506 - neither argument bound is instantiation_error (SWI/ISO),
+        // where atom_number/2 used to fail silently.
+        assertEquals("error(instantiation_error,'atom_number/2')", err("atom_number(X, Y)"));
+        assertEquals("error(type_error(atom,1),'atom_number/2')", err("atom_number(1, N)"));
+        assertEquals("error(instantiation_error,'number_string/2')", err("number_string(N, S)"));
+        assertEquals("error(instantiation_error,'string_chars/2')", err("string_chars(S, L)"));
+        assertEquals("error(instantiation_error,'string_length/2')", err("string_length(S, L)"));
+        assertEquals("error(instantiation_error,'atom_string/2')", err("atom_string(A2, S2)"));
+        // string_concat/3 still FAILS with nothing bound: ISS-2025-0188 decided that explicitly.
+        assertTrue(prolog.solve("string_concat(X, Y, Z).").isEmpty());
+        // END_CHANGE: ISS-2025-0506
         assertEquals("42", all("number_string(N, \"42\")", "N"));
         assertEquals("\"42\"", all("number_string(42, S)", "S"));
         assertEquals("\"abc\"", all("atom_string(abc, S)", "S"));
@@ -228,7 +241,12 @@ public class EngineV4TextTest {
         assertEquals("[\"a\",\"b\"]", all("split_string(\" a b \", \" \", \" \", L)", "L"));
         assertEquals("[\"abc\"]", all("split_string(\"abc\", \"\", \"\", L)", "L"));
         assertEquals("[\"\",\"home\",\"\",\"x\"]", all("split_string(\"/home//x\", \"/\", \"\", L)", "L"));
-        assertTrue(err("split_string(abc, \",\", \"\", _)").startsWith("eval:"));
+        // START_CHANGE: ISS-2025-0506
+        assertEquals("error(type_error(string,abc),'split_string/4')",
+            err("split_string(abc, \",\", \"\", _)"));
+        assertEquals("error(instantiation_error,'split_string/4')",
+            err("split_string(S, \",\", \"\", _)"));
+        // END_CHANGE: ISS-2025-0506
     }
 
     // ================================================================ atomic_list_concat/2,3
@@ -237,12 +255,23 @@ public class EngineV4TextTest {
     public void testISS0497_AtomicListConcat() {
         assertEquals("abc", all("atomic_list_concat([a,b,c], X)", "X"));
         assertEquals("a1s", all("atomic_list_concat([a,1,\"s\"], X)", "X"));
-        assertEquals("false", all("atomic_list_concat(L, ab)", "L"));
+        // START_CHANGE: ISS-2025-0506 - atomic_list_concat/2 with an unbound (or partial) list is
+        // instantiation_error, as in SWI; it used to fail silently.
+        assertEquals("error(instantiation_error,'atomic_list_concat/2')",
+            err("atomic_list_concat(L, ab)"));
+        // END_CHANGE: ISS-2025-0506
         assertEquals("'a-b'", all("atomic_list_concat([a,b], '-', X)", "X"));
         assertEquals("[a,b,c]", all("atomic_list_concat(L, '-', 'a-b-c')", "L"));
         assertEquals("[a,b,c]", all("atomic_list_concat(L, '', abc)", "L"));
         assertEquals("false", all("atomic_list_concat([a,_], '-', 'a-b')", "L"));
-        assertTrue(err("atomic_list_concat(_, _, _)").startsWith("eval:"));
+        // START_CHANGE: ISS-2025-0506
+        assertEquals("error(instantiation_error,'atomic_list_concat/3')",
+            err("atomic_list_concat(_, _, _)"));
+        assertEquals("error(type_error(atom,1),'atomic_list_concat/3')",
+            err("atomic_list_concat([a], 1, _)"));
+        assertEquals("error(instantiation_error,'atomic_list_concat/2')",
+            err("atomic_list_concat(L2, X2)"));
+        // END_CHANGE: ISS-2025-0506
     }
 
     // ================================================================ term_to_atom/2, term_string/2

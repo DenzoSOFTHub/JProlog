@@ -142,9 +142,14 @@ public class EngineV4IoTest {
         assertTrue(prolog.solve("tab(-1).").isEmpty());
         assertTrue(prolog.solve("tab(a).").isEmpty());
         assertEquals("a", out("put_char(a)"));
-        assertTrue(prolog.solve("put_char('ab').").isEmpty());
-        assertTrue(prolog.solve("put_char(_).").isEmpty());
-        assertTrue(prolog.solve("put_code(a).").isEmpty());
+        // START_CHANGE: ISS-2025-0505 - 4.3 wave D: put_char/1 and put_code/1 raise the ISO
+        // errors of 8.12.3.3 instead of failing. tab/1,2 keeps its silent failure (non-ISO).
+        assertEquals("error(type_error(character,ab),'put_char/1')", text(errorOf("put_char('ab')")));
+        assertEquals("error(instantiation_error,'put_char/1')", text(errorOf("put_char(_)")));
+        assertEquals("error(type_error(integer,a),'put_code/1')", text(errorOf("put_code(a)")));
+        assertEquals("error(representation_error(character_code),'put_code/1')",
+            text(errorOf("put_code(-1)")));
+        // END_CHANGE: ISS-2025-0505
     }
 
     @Test

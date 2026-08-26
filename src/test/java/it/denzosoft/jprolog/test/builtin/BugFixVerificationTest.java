@@ -2654,7 +2654,11 @@ public class BugFixVerificationTest {
     public void testISS0349_LengthPartialListModePreserved() {
         // length(PartialList, N) generative mode must keep working
         assertEquals(1, prolog.solve("length([a|T], 3), T = [b, c].").size());
-        assertEquals(0, prolog.solve("length(foo, _N).").size());
+        // START_CHANGE: ISS-2025-0509 - 4.3 wave D: length(foo, N) is type_error(list, foo)
+        // (SWI's behaviour), where it used to fail silently.
+        assertEquals(1, prolog.solve(
+            "catch(length(foo, _N), error(type_error(list, foo), _), true).").size());
+        // END_CHANGE: ISS-2025-0509
     }
 
     @Test

@@ -105,9 +105,14 @@ public class ISOPrologFeaturesTest {
     @Test
     public void testSystemFlags() {
         // current_prolog_flag/2
-        assertFalse(prolog.solve("current_prolog_flag(bounded, true).").isEmpty());
+        // START_CHANGE: ISS-2025-0512 - bounded is false (unbounded integers); ISS-2025-0508 -
+        // an unknown flag is domain_error(prolog_flag, F), not a silent failure.
+        assertFalse(prolog.solve("current_prolog_flag(bounded, false).").isEmpty());
         assertFalse(prolog.solve("current_prolog_flag(dialect, iso).").isEmpty());
-        assertTrue(prolog.solve("current_prolog_flag(nonexistent, _).").isEmpty());
+        assertFalse(prolog.solve(
+            "catch(current_prolog_flag(nonexistent, _), error(domain_error(prolog_flag, nonexistent), _), true).")
+            .isEmpty());
+        // END_CHANGE: ISS-2025-0512
         
         // set_prolog_flag/2 (test modifiable flags)
         assertFalse(prolog.solve("set_prolog_flag(debug, on).").isEmpty());
