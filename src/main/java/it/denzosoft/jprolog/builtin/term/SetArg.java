@@ -37,9 +37,12 @@ public class SetArg implements BuiltIn {
         int idx = (int) ((Number) idxT).longValue();
         final CompoundTerm c = (CompoundTerm) termT;
         try {
-            final Term old = c.setArgument(idx, newT);
-            // Record undo: restore old arg on backtrack
-            it.denzosoft.jprolog.core.engine.v4.Undo.record(() -> c.setArgument(idx, old));
+            // START_CHANGE: ISS-2025-0500 - 4.2 wave C: setarg/3 has been the v4 native
+            // NativeBuiltins.SetArg since W1, so this class is never dispatched; the undo action it
+            // used to push through core.engine.v4.Undo went with that class's public API (a registry
+            // built-in has no trail to push onto).
+            c.setArgument(idx, newT);
+            // END_CHANGE: ISS-2025-0500
             solutions.add(new HashMap<>(bindings));
             return true;
         } catch (IndexOutOfBoundsException e) {

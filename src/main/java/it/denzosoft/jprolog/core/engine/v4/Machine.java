@@ -1935,7 +1935,14 @@ public final class Machine {
         if (h instanceof Atom) { f = ((Atom) h).getName(); ar = 0; }
         else { f = ((CompoundTerm) h).getName(); ar = ((CompoundTerm) h).getArguments().size(); }
         final ClauseStore.Predicate p = engine.store().lookup(f, ar);
-        final Clause[] candidates = p.all();
+        // START_CHANGE: ISS-2025-0502 - retract/1 selects its candidates through the first-argument
+        // index, exactly as a call does (Machine.selectClauses). It used to scan p.all(), so
+        // `retract(item(K))` over an N-clause predicate was O(N) per call and a loop that retracts
+        // every clause was O(N^2): 20 000 clauses took 22.7 s. An unbound or unindexable first
+        // argument still yields a null key, and select(null) is the full list — an index miss can
+        // never drop a clause (the ISS-2025-0340 hazard).
+        final Clause[] candidates = p.select(Clause.argKey1(h));
+        // END_CHANGE: ISS-2025-0502
         if (candidates.length == 0) return false;
         final long gen = engine.store().generation();
         final Term qc = queryClause;

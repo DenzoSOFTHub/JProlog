@@ -122,6 +122,16 @@ public class Number extends Term {
         return isInteger;
     }
 
+    // START_CHANGE: ISS-2025-0502 - 4.2 wave C: "is this an integer that fits in a long?", answered
+    // without materialising a BigInteger. The first-argument index asks it once per call with a
+    // bound numeric first argument (a million times in `loop(1000000)`), and
+    // {@code bigIntegerValue()} allocates on every call for a long-backed Number.
+    /** True for an integer representable in a {@code long} (the overwhelmingly common case). */
+    public boolean isLongInteger() {
+        return isInteger && (bigIntValue == null || bigIntValue.bitLength() < 64);
+    }
+    // END_CHANGE: ISS-2025-0502
+
     /**
      * Check if this number represents a float value.
      */

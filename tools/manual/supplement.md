@@ -616,6 +616,11 @@ true.
 operator; `Name` may be a list of atoms. `current_op(?Priority, ?Type, ?Name)` enumerates the
 active operators. Part III lists the default table.
 
+The operator store belongs to the `Prolog` instance: two engines in one JVM do not see each other's
+operators, an `op/3` inside a module file is local to that module for `current_op/3`, and an
+`op/3` executed in a branch that later fails is undone — `(op(700, xfx, tmp), fail ; true)` leaves
+no `tmp` operator.
+
 ```prolog
 ?- op(700, xfx, is_bigger), X =.. [is_bigger, elephant, mouse].
 X = elephant is_bigger mouse.
@@ -626,7 +631,10 @@ L = [400-yfx].
 
 ### char_conversion/2, current_char_conversion/2
 **Purpose**: ISO character conversion table applied while reading terms when the `char_conversion`
-flag is `true`. `current_char_conversion(?In, ?Out)` enumerates the active mappings.
+flag is `true`. `current_char_conversion(?In, ?Out)` enumerates the active mappings — the declared
+ones first, then the identity mapping of every other printable ASCII character. The table belongs to
+the `Prolog` instance, and a conversion declared in a branch that later fails is undone.
+`char_conversion(C, C)` removes the mapping for `C`.
 
 ```prolog
 ?- char_conversion(a, b), current_char_conversion(a, X).
@@ -634,15 +642,39 @@ X = b.
 ```
 
 ### code_type/2, char_type/2
-**Purpose**: Classify a character code (`code_type/2`) or a character (`char_type/2`). Supported
-types: `alpha`, `alnum`, `digit`, `xdigit`, `space`, `white`, `upper`, `lower`, `punct`, `csym`,
-`csymf`, `end_of_line`, `graph`, `print`, `ascii`, `cntrl`. The parameterised forms of SWI-Prolog
-(`digit(Weight)`, `upper(Lower)`, `to_lower(L)`, …) are not supported; use `upcase_atom/2`,
-`downcase_atom/2` and `char_code/2` for conversions.
+**Purpose**: Classify a character code (`code_type/2`) or a character (`char_type/2`). Both accept
+the same classes: `alpha`, `alnum`, `digit`, `xdigit`, `space`, `white`, `layout`, `upper`, `lower`,
+`punct`, `csym`, `csymf`, `end_of_line`, `newline`, `end_of_file`, `graph`, `print`, `ascii`,
+`cntrl`, `meta`, `solo`, `symbol`, `period`, `quote`, `paren`.
+
+Both are nondeterministic: with the character unbound they generate (over the ASCII range), with the
+type unbound they enumerate every class the character belongs to, and with both unbound they
+enumerate every pair.
+
+The **parametric forms** — `digit(Weight)`, `upper(Lower)`, `lower(Upper)`, `to_lower(Lower)` and
+`to_upper(Upper)` — work in every mode: bound they test, unbound they bind, and with the character
+unbound they generate. `char_type/2` gives a character where `code_type/2` gives a code;
+`digit(Weight)` gives an integer weight in both.
 
 ```prolog
 ?- code_type(0'7, digit), char_type('A', upper), char_type(a, lower), char_type(' ', space).
 true.
+
+?- char_type('7', digit(W)).
+W = 7.
+
+?- char_type('A', upper(L)).
+L = a.
+
+?- char_type(a, to_upper(U)).
+U = 'A'.
+
+?- code_type(0'a, lower(U)).
+U = 65.
+
+?- char_type(X, to_upper('A')).
+X = 'A' ;
+X = a.
 ```
 
 ## Debugging and profiling

@@ -1507,7 +1507,7 @@ Complete precedence table for JProlog operators:
 
 ---
 
-## Where operator definitions live (v3.14.0)
+## Where operator definitions live (v3.14.0, `op/3` native since v4.3.0)
 
 There is exactly **one** operator store, and it belongs to the `Prolog` instance
 (`Prolog.getOperatorTable()` / `Prolog.getOps()`). The parser, `op/3`, `current_op/3`, the whole
@@ -1525,6 +1525,14 @@ binary writer and the IDE's source formatter all read it. Consequences:
   narrowing *parsing* to the declaring module is a cross-engine decision, recorded as a deviation
   of wave W7 in `docs/reports/report-engine-v4-progress.md`.
 - **`op/3` is undone on backtracking**: `(op(700, xfx, tmp), fail ; true)` leaves no `tmp` operator.
+- **Since v4.3.0 `op/3` is a v4 native** (ISS-2025-0500) and writes into the store of the engine
+  whose machine is running — `m.engine().prolog().getOps()`, not a table captured at construction —
+  pushing its undo action straight onto that machine's trail. Everything above is unchanged; the
+  same release deletes `builtin.system.Op`, an unregistered `op/3` that really did capture
+  `OperatorTable.getDefault()`. `char_conversion/2` and `current_char_conversion/2` moved to the
+  same per-engine store in the same change: the character-conversion table used to be a
+  process-global `static` map shared by every `Prolog` in the JVM and was never undone on
+  backtracking.
 
 ---
 

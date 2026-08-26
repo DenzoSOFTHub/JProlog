@@ -27,8 +27,9 @@ import java.util.Map;
  * Backtrackability:
  * - nb_setval/nb_getval: non-backtrackable (value persists across backtracks).
  * - b_setval/b_getval: backtrackable via the machine's trail (R1, v2.9.0+; ISS-2025-0492). On failure of
- *   the choice point containing the b_setval, the previous value (or absence) is
- *   restored via {@link it.denzosoft.jprolog.core.engine.v4.Undo#record}.
+ *   the choice point containing the b_setval, the previous value (or absence) is restored.
+ *   ISS-2025-0500: that restoration is the v4 native {@code NativeDb.SetvalB}'s, which pushes onto
+ *   the running machine's trail directly; this class is shadowed by it and never dispatched.
  */
 public class GlobalVariables implements BuiltInWithContext {
 
@@ -107,15 +108,12 @@ public class GlobalVariables implements BuiltInWithContext {
 
         String name = ((Atom) nameTerm).getName();
         // START_CHANGE: R1 - b_setval records an undo action; nb_setval does not (ISS-2025-0492)
-        if (mode == Mode.B_SETVAL) {
-            final Term oldValue = solver.getPrologContext().nbGetval(name);
-            final it.denzosoft.jprolog.core.engine.Prolog ctx = solver.getPrologContext();
-            it.denzosoft.jprolog.core.engine.v4.Undo.record(() -> {
-                if (oldValue == null) ctx.nbDelete(name);
-                else ctx.nbSetval(name, oldValue);
-            });
-        }
+        // START_CHANGE: ISS-2025-0500 - 4.2 wave C: b_setval/2 has been the v4 native
+        // NativeDb.SetvalB since 4.2.0, so this branch is unreachable and the undo action it used
+        // to push through core.engine.v4.Undo is gone with that class's public API. A registry
+        // built-in cannot reach the machine's trail; the native pushes onto it directly.
         solver.getPrologContext().nbSetval(name, valueTerm);
+        // END_CHANGE: ISS-2025-0500
         return true;
         // END_CHANGE: R1
     }

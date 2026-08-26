@@ -1,5 +1,78 @@
 # JProlog - Release Notes
 
+## Release 4.3.0 - 2026-08-26
+
+### Wave C of 4.2: indexing everywhere, `op/3` native, `char_type/2` generators
+
+The three items the 4.2.0 wave record recommended for the next wave, plus the assert/retract
+measurement it left open. ISS-2025-0500, ISS-2025-0502, ISS-2025-0503. Wave record:
+`docs/reports/report-engine-v4-progress.md` section 18.
+
+**1301/1301 JUnit tests** (1261 + 40 new), **20/20 example programs** with unchanged per-program
+counts, and the generated Reference Manual's worked examples unchanged apart from timestamps and
+gensym numbers. Names that can still reach `LegacyBuiltinAdapter`: **234 -> 229**.
+
+#### Upgrading
+
+Nothing to do. Everything below is either faster, or a mode that used to fail or leak.
+
+```
+retract/1, clause/2           SAME ANSWERS, IN THE SAME ORDER, but selected through the
+                              first-argument index instead of a full scan. Emptying a
+                              20 000-clause predicate went from 22.7 s to 0.3 s.
+char_conversion(a, b)         NOW PER ENGINE and undone on backtracking. The conversion table was
+                              a process-global static: two Prolog instances in one JVM shared it,
+                              and a conversion posted under a choice point survived the failure.
+op(P, T, N)                   unchanged, but on the calling engine's store and undone on
+                              backtracking, as a native. Module scoping, the list form,
+                              precedence-0 removal and every error term are as they were.
+current_char_conversion(1, X) NOW FAILS. It raised system_error(ClassCastException).
+char_type(C, digit(W))        THE PARAMETRIC FORMS WORK, in every mode: digit(Weight),
+code_type(C, upper(L))        upper(Lower), lower(Upper), to_lower(Lower), to_upper(Upper).
+                              char_type/2 had none of them; code_type/2 could only TEST three, so
+                              code_type(0'a, lower(U)) succeeded with U unbound. It now binds
+                              U = 0'A. The parameter is a character for char_type/2 and a code for
+                              code_type/2; digit(Weight)'s weight is an integer in both.
+char_type(C, csym)            SIX NEW CLASS NAMES for char_type/2 — csym, csymf, white, period,
+                              quote, paren — and the ten char_type/2-only names (xdigit, newline,
+                              end_of_file, layout, meta, solo, symbol and the atom forms of
+                              digit/upper/lower) now work for code_type/2 too. Both keep their
+                              historical enumeration order, with the new classes appended.
+```
+
+Removed: `it.denzosoft.jprolog.builtin.system.Op`, an `op/3` implementation that
+`BuiltInFactory` never registered (it captured `OperatorTable.getDefault()` in its constructor —
+the multi-engine bug the 4.2.0 notes recorded, in code nothing could reach). The live `op/3` is
+unaffected. `core.engine.v4.Undo` and its `record(Runnable)` are package-private: an embedder that
+called `Undo.record` (there was no supported reason to) must instead implement a v4 native.
+
+#### Faster
+
+Interleaved A/B against the 4.2.0 classes, one session, 6 pairs, best of 6 warm iterations per JVM,
+median over runs. The noise floor on the measuring VM is ~5%.
+
+| benchmark | 4.2.0 | 4.3.0 | change |
+|---|---|---|---|
+| `clause(tbl(K, _), _)` x2 000 into a 20 000-clause table | 2 948 ms | 10 ms | **-99.7%** |
+| `retract(rt(K, _))` over a 2 000-clause table | 196 ms | 21 ms | **-89%** |
+| `loop(1000000)` | 414.5 ms | 346.5 ms | **-16%** |
+| `nrev` of 30 elements x2 000 | 345.5 ms | 302 ms | **-13%** |
+| lookup in a 20 000-fact table x20 000 | 16 ms | 14 ms | **-13%** |
+| dispatch over a 200-clause predicate x60 000 | 24.5 ms | 22 ms | **-10%** |
+| `assertz(z(N)), retract(z(N))` x100 000 | 164.5 ms | 156.5 ms | **-5%** |
+
+The two big wins are `retract/1` and `clause/2` finally using the index the machine has used since
+wave W2; the across-the-board 10-16% comes from the index key, which used to be a string built by
+concatenation (and, for an integer, a `BigInteger` and its decimal rendering) on every call with a
+bound first argument.
+
+**And a non-regression**: an independent measurement had put the assert/retract loop 5-9% slower on
+4.2.0 than on 4.1.0. Re-measured over two interleaved sessions and 12 samples per side, the medians
+are 164.5 ms (4.1.0) against 162.5 ms (4.2.0) — **-1.2%**, with an untouched control benchmark
+moving 0.0% and -1.4% in the same sessions. There was no regression to fix.
+
+---
+
 ## Release 4.2.0 - 2026-08-26
 
 ### Wave B of 4.1: the hot and ISO-core built-in families leave the eager bridge

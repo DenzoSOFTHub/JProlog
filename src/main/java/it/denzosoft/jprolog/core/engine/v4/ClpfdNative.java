@@ -40,6 +40,18 @@ final class ClpfdNative {
 
     private ClpfdNative() {}
 
+    // START_CHANGE: ISS-2025-0500 - 4.2 wave C: the CLP(FD) bridge records its backtrackable store
+    // mutations through a sink it declares itself; the engine points that sink at the running
+    // machine's trail. That is the last external user of core.engine.v4.Undo, which is
+    // package-private again.
+    static {
+        it.denzosoft.jprolog.builtin.clpfd.v2.ClpfdV2Bridge.setUndoSink(
+            new it.denzosoft.jprolog.builtin.clpfd.v2.ClpfdV2Bridge.UndoSink() {
+                @Override public void record(Runnable undo) { Undo.record(undo); }
+            });
+    }
+    // END_CHANGE: ISS-2025-0500
+
     static void register(BuiltinTable t) {
         t.register("label", 1, new Label(false));
         t.register("labeling", 2, new Label(true));

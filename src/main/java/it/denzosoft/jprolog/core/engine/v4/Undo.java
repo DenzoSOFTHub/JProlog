@@ -30,7 +30,7 @@ package it.denzosoft.jprolog.core.engine.v4;
  *       duration, so its actions land on its own trail and die with it.</li>
  * </ul>
  */
-public final class Undo {
+final class Undo {
 
     private static final ThreadLocal<Machine> CURRENT = new ThreadLocal<Machine>();
 
@@ -39,8 +39,14 @@ public final class Undo {
     /**
      * Record {@code undo} on the trail of the machine running on this thread; a no-op when there
      * is none (see the class comment).
+     *
+     * <p>START_CHANGE: ISS-2025-0500 - package-private since 4.3.0. The five built-ins that used to
+     * call it from outside are native now ({@code op/3}, {@code char_conversion/2},
+     * {@code b_setval/2}, {@code setarg/3}) or reach the trail through a sink the engine installs
+     * ({@code builtin.clpfd.v2.ClpfdV2Bridge.setUndoSink}), so the doorway is an implementation
+     * detail of the machine again. END_CHANGE: ISS-2025-0500
      */
-    public static void record(Runnable undo) {
+    static void record(Runnable undo) {
         if (undo == null) return;
         Machine m = CURRENT.get();
         if (m != null) m.pushUndo(undo);

@@ -165,22 +165,95 @@ public final class Clause {
         return argKey(as.get(0));
     }
 
-    /** The index key of a (already dereferenced) goal argument, or null when it is unindexable. */
+    // START_CHANGE: ISS-2025-0502 - first-argument index key of a GOAL (or of a retract/clause
+    // head pattern) whose arguments are live cells: the first argument has to be dereferenced
+    // before it is classified, which {@link #firstArgKey} (a skeleton walker, VarRef-based) must
+    // not do. Null — "unindexable" — whenever the goal is not compound, has no arguments, or its
+    // first argument derefs to an unbound cell; {@code ClauseStore.Predicate.select(null)} is then
+    // the full clause list, so a miss never drops a clause.
+    /** The index key of a live goal term, or null when the goal cannot be indexed. */
+    static Object argKey1(Term goal) {
+        if (!(goal instanceof CompoundTerm)) return null;
+        List<Term> as = ((CompoundTerm) goal).getArguments();
+        if (as.isEmpty()) return null;
+        return argKey(Unify.deref(as.get(0)));
+    }
+    // END_CHANGE: ISS-2025-0502
+
+    /**
+     * The index key of a (already dereferenced) goal argument, or null when it is unindexable.
+     *
+     * <p>START_CHANGE: ISS-2025-0502 - the key of an ATOM is its name and the key of a NUMBER is a
+     * boxed {@code Long}/{@code Double}/{@code BigInteger}, not a freshly concatenated string. This
+     * method runs once per call with a bound first argument — {@code loop(1000000)} evaluates it a
+     * million times — and the old {@code "i" + n.bigIntegerValue().toString()} allocated a
+     * {@code BigInteger}, its decimal rendering and a concatenation every single time.
+     *
+     * <p><b>Type faithfulness</b> is what the key must preserve, and it does: an integer is a
+     * {@code Long} (a value wider than 64 bits keeps its {@code BigInteger}, and a {@code Number}
+     * that happens to hold a small {@code BigInteger} is narrowed to the same {@code Long}, so the
+     * two representations of 5 share a bucket), a float is a {@code Double} — whose
+     * {@code equals} agrees with {@code Number.equals}'s {@code Double.compare} on both NaN and
+     * -0.0 — and neither can collide with the other or with a {@code String}. {@code 1}, {@code 1.0},
+     * {@code '1'} and {@code "1"} therefore still land in four different buckets.
+     *
+     * <p>A compound and a Prolog string get a small value key of their own ({@link FunctorKey},
+     * {@link StringKey}) rather than a prefixed string, so no two kinds of key can ever collide and
+     * the per-call cost is one non-escaping object instead of a StringBuilder. Even a collision
+     * would be safe — it merges two buckets, which makes the candidate set larger, never smaller,
+     * and an index may over-approximate but must never under-approximate (the ISS-2025-0340 hazard,
+     * pinned by {@code EngineV4IndexingTest}). END_CHANGE: ISS-2025-0502
+     */
     static Object argKey(Term a) {
         if (a instanceof VarRef || a instanceof Variable) return null;
-        if (a instanceof Atom) return "a" + ((Atom) a).getName();
+        if (a instanceof Atom) return ((Atom) a).getName();
         if (a instanceof Number) {
             Number n = (Number) a;
             // Type-faithful: 1 and 1.0 are different terms and must land in different buckets.
-            return n.isInteger() ? ("i" + n.bigIntegerValue().toString()) : ("f" + n.doubleValue());
+            if (!n.isInteger()) return Double.valueOf(n.doubleValue());
+            if (n.isLongInteger()) return Long.valueOf(n.longValue());
+            return n.bigIntegerValue();
         }
-        if (a instanceof PrologString) return "s" + ((PrologString) a).getStringValue();
+        if (a instanceof PrologString) return new StringKey(((PrologString) a).getStringValue());
         if (a instanceof CompoundTerm) {
             CompoundTerm c = (CompoundTerm) a;
-            return "c" + c.getName() + "/" + c.getArguments().size();
+            return new FunctorKey(c.getName(), c.getArguments().size());
         }
         return null;
     }
+
+    // START_CHANGE: ISS-2025-0502 - two tiny value keys instead of a concatenated string. Building
+    // {@code "c" + name + "/" + arity} on every call with a compound first argument (which is every
+    // step of `app/3` over a list) costs a StringBuilder, a char array and a String; a FunctorKey is
+    // one small object that the JIT can usually scalarise away, because it never escapes the
+    // {@code HashMap.get} in {@code ClauseStore.Predicate.select}. They also make the key space
+    // exactly type-faithful: no atom name can collide with a compound's or a string's key.
+    /** The index key of a compound goal argument: functor name and arity. */
+    static final class FunctorKey {
+        private final String name;
+        private final int arity;
+        FunctorKey(String name, int arity) { this.name = name; this.arity = arity; }
+        @Override public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof FunctorKey)) return false;
+            FunctorKey k = (FunctorKey) o;
+            return arity == k.arity && name.equals(k.name);
+        }
+        @Override public int hashCode() { return name.hashCode() * 31 + arity; }
+        @Override public String toString() { return name + "/" + arity; }
+    }
+
+    /** The index key of a {@code PrologString}, distinct from the atom of the same text. */
+    static final class StringKey {
+        private final String value;
+        StringKey(String value) { this.value = value; }
+        @Override public boolean equals(Object o) {
+            return (o instanceof StringKey) && value.equals(((StringKey) o).value);
+        }
+        @Override public int hashCode() { return value.hashCode() ^ 0x5715; }
+        @Override public String toString() { return "\"" + value + "\""; }
+    }
+    // END_CHANGE: ISS-2025-0502
 
     // ------------------------------------------------------------------ activation
 

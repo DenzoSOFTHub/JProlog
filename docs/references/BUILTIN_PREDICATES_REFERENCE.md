@@ -3530,9 +3530,41 @@ Type = upper ;    % Uppercase
 % - lower: lowercase letter
 % - print: printable character
 % - punct: punctuation
-% - space: whitespace
+% - space: whitespace (white and layout are synonyms)
 % - upper: uppercase letter
 % - xdigit: hexadecimal digit
+% - csym: letter, digit or underscore     % since 4.3.0
+% - csymf: letter or underscore           % since 4.3.0
+% - period: . ! ?                         % since 4.3.0
+% - quote: " ' `                          % since 4.3.0
+% - paren: ( )                            % since 4.3.0
+% - newline, end_of_line, end_of_file, layout, meta, solo, symbol
+
+% Parametric forms (since 4.3.0) — they work in EVERY mode: with the argument bound
+% they test, with it unbound they bind, and with the character unbound they generate.
+% char_type/2 gives a CHARACTER, code_type/2 a CODE; digit(Weight) gives an integer
+% in both.
+?- char_type('7', digit(W)).
+W = 7.
+
+?- char_type('A', upper(L)).      % 'A' is uppercase, with lowercase L
+L = a.
+
+?- char_type(a, lower(U)).        % a is lowercase, with uppercase U
+U = 'A'.
+
+?- char_type(a, to_upper(U)).     % U is the uppercase of a (any character)
+U = 'A'.
+
+?- char_type('.', to_lower(L)).
+L = '.'.
+
+?- char_type(X, to_upper('A')).   % generate: which characters uppercase to 'A'?
+X = 'A' ;
+X = a.
+
+?- code_type(0'a, lower(U)).
+U = 65.
 
 % Practical example: Validate password
 validate_password(Password) :-

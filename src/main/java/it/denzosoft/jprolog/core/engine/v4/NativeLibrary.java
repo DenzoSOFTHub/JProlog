@@ -635,7 +635,12 @@ final class NativeLibrary {
             }
             // END_CHANGE: ISS-2025-0501
             ClauseStore.Predicate p = m.engine().store().lookup(f, ar);
-            final Clause[] candidates = p.all();
+            // START_CHANGE: ISS-2025-0502 - clause/2 selects through the first-argument index like
+            // a call does; a bound first argument used to cost a full scan of the predicate
+            // (5.6 s for 4 000 lookups into a 20 000-clause table). select(null) — an unbound or
+            // unindexable first argument — is still the whole list.
+            final Clause[] candidates = p.select(Clause.argKey1(head));
+            // END_CHANGE: ISS-2025-0502
             if (candidates.length == 0) return Outcome.FAILURE;
             final long gen = m.engine().store().generation();
             final int[] i = {0};

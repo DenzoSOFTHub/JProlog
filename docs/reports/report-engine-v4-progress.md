@@ -1,6 +1,6 @@
 # Engine v4 — implementation progress and handoff
 
-**Date**: 2026-08-26 · **Version**: 4.2.0 · **Design**:
+**Date**: 2026-08-26 · **Version**: 4.3.0 · **Design**:
 `docs/reports/report-engine-v4-design-2026-08-25.md` (part B) ·
 **Background**: `docs/reports/report-engine-deep-analysis-2026-08-24.md`
 
@@ -8,17 +8,19 @@
 meta-calls), W4 (coroutining), W5 (tabling), W6 (modules & prelude), W7 (engine state: streams,
 operators, writer), W8 (default switch, threads, debugger) and **W9 (retirement)** are implemented.
 **v4 is the DEFAULT engine since v4.0.0 and the recursive `QuerySolver` is deleted.**
-**Section 17 is the 4.1 wave B record** (the L-08 built-in migration); section 16 is 4.1 wave A
-(the v2 machine is deleted); section 15 is W9; section 14 is W8; section 13 is W7; section 12 is
-W6; section 11 is W5; section 10 is W4; section 9 is W3; sections 1–8 describe W1/W2 and are still
-accurate except where sections 9 to 17 say otherwise.
+**Section 18 is the 4.2 wave C record** (first-argument indexing on every clause-selection path,
+`op/3` and `char_conversion/2` native, `char_type/2`/`code_type/2` generators, and the closed
+assert/retract question); section 17 is 4.1 wave B (the L-08 built-in migration); section 16 is
+4.1 wave A (the v2 machine is deleted); section 15 is W9; section 14 is W8; section 13 is W7;
+section 12 is W6; section 11 is W5; section 10 is W4; section 9 is W3; sections 1–8 describe W1/W2
+and are still accurate except where sections 9 to 18 say otherwise.
 
 **Since 4.1.0 there is ONE engine.** The v2 `MachineSolver` stayed selectable for one release
 (`-Djprolog.engine=v2`), as design decision 1 (B.17) required; wave A of 4.1 deletes it, with the
 `engine-v2` profile, the engine-selection API and `core.engine.Trail`. Anywhere below that says
 "on both engines" or "the v2 fallback", read it as history.
 
-**Suite**: 1261/1261 JUnit tests, one engine, one leg; 20/20 example programs.
+**Suite**: 1301/1301 JUnit tests, one engine, one leg; 20/20 example programs.
 
 **Post-review**: an independent verification of W1/W2 found two v4-only regressions, both fixed
 before W3 — `findall/3` was not opaque (**ISS-2025-0448**) and retract/assert loops were superlinear
@@ -2508,3 +2510,238 @@ it is what caught every mode difference in this wave; one mark/undo extent aroun
 unifications inside a `Generator.next()`; `Machine.lastSolution()` on the last alternative; and
 measure with a control benchmark in the harness so the noise floor is visible in the same table as
 the result.
+
+---
+
+## 18. Release 4.3, wave C of 4.2 — indexing, `op/3` native, `char_type/2` generators (v4.3.0, ISS-2025-0500/0502/0503)
+
+**Status**: done, all four items of §17.6 (three recommendations plus the assert/retract question).
+Suite **1301/1301** (1261 + 40 new); **20/20 example programs** with every per-program "Successful
+queries" count unchanged (2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 0, 0); the Reference
+Manual's worked examples unchanged apart from timestamps and gensym numbers; `EngineV4TraceTest`'s
+16 pinned trace oracles byte-identical. Names that can still reach `LegacyBuiltinAdapter`:
+**234 -> 229**. `src/main`: **74 613 -> 75 032 lines** (+419), **351 -> 351 files** (1 added,
+1 deleted).
+
+### 18.1 What changed
+
+| ISS | Change | Files |
+|---|---|---|
+| 0502 | `retract/1` and `clause/2` select through the first-argument index instead of scanning `Predicate.all()`; the index key stops allocating (atom name / boxed `Long`,`Double`,`BigInteger` / `FunctorKey` / `StringKey` instead of a concatenated string) | `core/engine/v4/{Clause,Machine,NativeLibrary}.java`, `core/terms/Number.java` |
+| 0500 | `op/3`, `char_conversion/2`, `current_char_conversion/2` native over the calling engine's `Ops`; the character-conversion table moves from a process-global `static` map to `Ops`; the CLP(FD) bridge records through its own `UndoSink`; **`core.engine.v4.Undo` is package-private**; `builtin.system.Op` (unregistered, 287 lines) deleted | `core/engine/v4/{NativeMisc,Ops,ClpfdNative,Undo}.java`, `builtin/clpfd/v2/ClpfdV2Bridge.java`, `builtin/system/{OperatorDefinition,GlobalVariables,Op}.java`, `builtin/term/SetArg.java` |
+| 0503 | `char_type/2` and `code_type/2` are generators with the five SWI parametric forms and six new class names | `core/engine/v4/NativeChars.java` (new, 332), `NativeBuiltins.java` |
+| — | the assert/retract loop re-measured against 4.1.0 **and** 4.2.0: no regression | — |
+
+**Added tests** (40): `core/engine/v4/EngineV4IndexingTest` (10), `EngineV4OpsTest` (16),
+`EngineV4CharTypeTest` (14).
+
+### 18.2 How it works, in one page
+
+1. **The v4 store always had the index; two of the three selection sites did not use it.** §17.6
+   item 2 said "re-land first-argument indexing in the v4 machine". It was already landed:
+   `ClauseStore.Predicate` has carried the per-predicate hash of design B.7 since wave W2, and
+   `Machine.selectClauses` has read it through `p.select(key)` since then. What had never been
+   converted were the two OTHER places that pick candidate clauses — `Machine.retractClause` and
+   `NativeLibrary.ClauseB` — which both took `p.all()`, the whole predicate. That is why
+   `retract(item(K))` was O(#clauses) and emptying a 20 000-clause table took 22.7 s. Both now call
+   `p.select(Clause.argKey1(goal))`. `argKey1` is new only because `Clause.firstArgKey` walks a
+   *skeleton* (VarRef-based) and must not dereference; a goal's first argument must be.
+2. **`select(null)` is the whole list, and that is the safety property.** The ISS-2025-0340 revert
+   on the old engine happened because `KnowledgeBase.getRulesWithFirstArgIndex` answered EMPTY for a
+   predicate whose index had never been populated — an index miss dropped clauses. In the v4 store
+   an unbound or unindexable first argument yields a null key and `select(null)` returns `all()`,
+   an unknown key with variable-headed clauses returns just those, and a key that matches nothing at
+   all returns EMPTY *correctly* (no clause head could unify). The index is also rebuilt from
+   scratch by `sync` and by `compact`, so a KB write behind the store's back cannot leave it stale.
+3. **The index key was the hidden cost of indexing.** It ran once per call with a bound first
+   argument and built a `String`: `"i" + n.bigIntegerValue().toString()` for an integer (a
+   `BigInteger`, its decimal rendering and a concatenation — a million times in `loop(1000000)`),
+   `"a" + name` for an atom, `"c" + name + "/" + arity` for a compound (a StringBuilder on every
+   step of `app/3`). It is now the atom's own name `String`, `Long.valueOf` / `Double.valueOf` /
+   the `BigInteger` itself, or a small `Clause.FunctorKey` / `Clause.StringKey` that never escapes
+   the `HashMap.get` and is usually scalarised. `Number.isLongInteger()` answers "does this integer
+   fit in a long?" without materialising a `BigInteger`. Type faithfulness is exact (`Double.equals`
+   agrees with `Number.equals`'s `Double.compare` on NaN and -0.0) and no two kinds of key can
+   compare equal. **This, not the two new selection sites, is where the 10-16% on `loop`, `nrev`
+   and dispatch comes from.**
+4. **`op/3` was never the multi-engine bug; `builtin.system.Op` was.** §17.4 deviation 4 recorded
+   that `op/3` "captures `OperatorTable.getDefault()` at construction". The live implementation,
+   `builtin.system.OperatorDefinition`, has read `Ops.current()` since ISS-2025-0474 (W7). The class
+   with the constructor capture is `builtin.system.Op` — 287 lines that `BuiltInFactory` never
+   registered and nothing could reach. It is deleted; the record is corrected in track-issues.md.
+   The real defect in the pair was `char_conversion/2`: its table was a
+   `static final ConcurrentHashMap` inside the built-in, shared by every `Prolog` in the JVM and
+   never undone on backtracking. It now lives on `Ops` beside the operator table, because both are
+   read-time syntax state of one engine.
+5. **Making `Undo` internal is a question about one client, not five.** `b_setval/2` and `setarg/3`
+   were already native; `op/3` and `char_conversion/2` became native here, and the three dead
+   `Undo.record` calls left in the registry classes the natives shadow (`OperatorDefinition`,
+   `GlobalVariables`, `SetArg`) were removed — those classes stay *registered*, because
+   `BuiltInRegistry.isBuiltIn` is what makes `assertz(op(_,_,_))` a `permission_error`. The one
+   client that is not a built-in is `builtin.clpfd.v2.ClpfdV2Bridge`, which cannot be made native
+   (it is the bridge for the CLP(FD) predicates that are still registry built-ins and for the
+   attribute hooks). Instead of exporting the trail to it, the bridge now declares what it needs —
+   `ClpfdV2Bridge.UndoSink` — and `core.engine.v4.ClpfdNative`'s static initialiser installs a sink
+   that calls `Undo.record`. Dependency inverted, `Undo` package-private, and with no engine
+   installed the sink is a no-op, exactly as `Undo.record` was with no machine on the thread.
+6. **A parametric character class is one unification, not three modes.** `NativeChars` builds the
+   CANONICAL type term of a character in a class — `upper(a)` for `'A'`, `digit(5)` for `'5'`,
+   `to_upper('A')` for `a` — and unifies it with the caller's type argument. Testing a bound
+   parameter, binding an unbound one and generating the character all fall out of that one
+   operation, which is why the registry version could not do it: it had to decide the mode from the
+   term's shape and had no way to bind an argument nested inside it. The enumeration is a two-index
+   cursor (class inner, character outer) over the ASCII range plus any character a bound parameter
+   names, so it stays finite and lazy; `Machine.lastSolution()` on the last pair keeps the
+   deterministic tail choice-point-free, and every group of unifications sits in one
+   `mark`/`forceTrail++`/undo/`forceTrail--` extent (invariant 12).
+
+### 18.3 New invariants (add to section 3)
+
+61. **Every clause-selection site goes through the first-argument index, and a miss degrades to the
+    full list.** `p.select(Clause.argKey1(goal))`, never `p.all()`, in `Machine.selectClauses`,
+    `Machine.retractClause` and `NativeLibrary.ClauseB`. `Clause.argKey` must answer **null** for
+    anything it cannot classify, because `select(null)` is `all()` — that null is the whole
+    ISS-2025-0340 safety property. `p.all()` is for the sites that really want the whole predicate
+    (`Machine.hasQualifiedHook`).
+62. **The index key must be type-faithful and must not allocate a String per call.** An atom's own
+    name, a boxed `Long`/`Double`/`BigInteger`, a non-escaping `FunctorKey`/`StringKey`. `1`, `1.0`,
+    `'1'` and `"1"` are four buckets; two kinds of key never compare equal. A key that
+    over-approximates (two shapes sharing a bucket) is safe; one that under-approximates loses
+    clauses.
+63. **`core.engine.v4.Undo` is package-private and stays that way.** A construct that needs the
+    backtracking trail is either a native (use `Machine.pushUndo`) or a client outside the engine
+    that declares its own sink for the engine to install (`ClpfdV2Bridge.UndoSink`). Re-exporting
+    `Undo` would put the trail back in the hands of code that has no choice point.
+
+### 18.4 Deviations from the 4.2-C brief, and why
+
+1. **Item 2 was not a re-land; the v4 store already had the index.** The brief says "the v4 store
+   never got it". It got it in wave W2 (design B.7, `Predicate.byKey` + `varHeaded` + `select`), and
+   `Machine.selectClauses` has used it ever since — `lk` (20 000 lookups into a 20 000-fact table)
+   measured 16 ms on 4.2.0, which is not a linear scan. The work that remained, and that this wave
+   did, is the two selection sites that bypassed it and the cost of the key itself. Reported here
+   rather than silently re-scoped.
+2. **The `op/3` correctness bug was in dead code.** See 18.2 item 4. Nothing observable was wrong
+   with the live `op/3`; the observable bug in the pair was `char_conversion/2`'s process-global
+   table, which the brief did not name. Both are fixed and both are tested.
+3. **`op/3`'s validation errors are preserved, not ISO-ified.** `op(P, xfx, f)` with `P` unbound
+   still raises `PrologEvaluationException("op/3: First argument must be an integer (precedence).")`
+   rather than `instantiation_error`, and an out-of-range precedence or an unknown specifier still
+   raises an evaluation exception rather than `domain_error(operator_priority, P)` /
+   `domain_error(operator_specifier, T)`. Only `type_error(integer, 700.5)` (ISS-2025-0278) is a
+   proper ISO term. Migrating a built-in is not the moment to change its error terms — that is a
+   separate, testable ISO-conformance issue, and it is on the next-wave list below.
+4. **`char_type/2` and `code_type/2` keep two different enumeration orders.** They now accept
+   exactly the same class names, but with the type unbound `char_type/2` still answers
+   `alnum, alpha, ascii, …` (its historical enum order) and `code_type/2` still
+   `alpha, alnum, space, …` (its historical `SIMPLE_TYPES` order), each with the new classes
+   appended. Unifying the order would have changed the first answers of two documented predicates
+   for no benefit.
+5. **`char_type/2`'s NUL quirk is preserved.** A bound one-character atom whose character is `\0`
+   fails, because the registry version used `0` as its "not a character" sentinel. `code_type(0, T)`
+   classifies normally, as it always did. (This is the "very-low-value edge" the 2026-06-07 audit
+   disposition already recorded.)
+6. **`retractall/1` and `abolish/1` are not indexed.** They go through
+   `Prolog.retractAllClauses`, a KnowledgeBase-level operation, not a `ClauseStore` scan. Indexing
+   them is a KB change, not a store change, and no benchmark asked for it.
+7. **`compileFile` still cannot pre-compile a file that needs its own `:- op/3`.** It parses with
+   the legacy `core.parser.TermParser`, which does not read the engine's operator store, so
+   `compileFile` of a file declaring `:- op(700, xfx, ===>).` and then using `===>` fails —
+   identically on 4.2.0 and on this tree (verified both ways). `consultSmart` of the same file
+   works. `EngineV4OpsTest` pins what does hold: `op/3` writes into the one `OperatorTable` the
+   parser, the writer and the `.jpc` writer share, and the file re-consults to the same answers.
+
+### 18.5 A/B evidence
+
+Same shell session, alternating JVMs, `java -Xss4m -Xmx2g`, harness `scratchpad/42c/WaveC.java`
+(one warm-up solve, then best of 6 warm iterations per figure; all output redirected to a sink).
+**A** = the v4.2.0 classes, **B** = this tree. 6 A/B pairs per row unless noted; median over runs,
+min over all iterations. The noise floor on this VM is ~5% (§17.4 deviation 8).
+
+| benchmark | A (median / min) | B (median / min) | change (median) |
+|---|---|---|---|
+| `cl`: `clause(tbl(K, _), _)` x2 000 into a 20 000-clause table (3 pairs, best of 3) | 2 948 / 2 545 ms | 10 / 10 ms | **-99.7%** |
+| `rr`: `retract(rt(K, _))` over a 2 000-clause table (3 pairs, best of 3) | 196 / 190 ms | 21 / 14 ms | **-89%** |
+| `loop`: `loop(1000000)` — integer first argument | 414.5 / 390 ms | 346.5 / 332 ms | **-16%** |
+| `nrev`: nrev of 30 elements x2 000 — compound first argument | 345.5 / 324 ms | 302 / 287 ms | **-13%** |
+| `lk`: `tbl(N, _)` x20 000 into a 20 000-fact table | 16 / 15 ms | 14 / 12 ms | **-13%** |
+| `dsp`: 3 lookups into a 200-clause predicate x20 000 | 24.5 / 24 ms | 22 / 21 ms | **-10%** |
+| `db`: `assertz(z(N)), retract(z(N))` x100 000 | 164.5 / 160 ms | 156.5 / 149 ms | **-5%** |
+
+**Nothing regressed**, and there is no control row that moved the wrong way: `loop` and `nrev` were
+the controls of §17.5 (the wave that did not touch resolution) and are now themselves beneficiaries,
+because the index key is on the call path of every predicate whose first argument is bound.
+
+The intermediate measurement is worth recording, because it is what found the key cost. With only
+the two selection sites converted — the index key untouched — the same table read
+`db +3.3%, nrev +2.4%, loop -0.5%, dsp 0.0%, lk 0.0%`: no win outside the noise anywhere except
+`cl`/`rr`, and a small apparent cost on `db` from the extra `argKey1` call per retract. Making the
+key allocation-free turned that into `db -9.9%, loop -13.9%, lk -21.9%, dsp -6.1%` in one step
+(`nrev` came with the `FunctorKey`, the step after). **The ship decision is therefore
+unambiguous: ship.** Had only the selection sites been available, the honest report would have been
+"a large win for `retract/1` and `clause/2`, no measurable change elsewhere".
+
+### 18.6 The assert/retract investigation (§17.4 deviation 8, closed)
+
+The question: an independent A/B had measured `db(100000)` at 147/161 ms on 4.1.0 against
+154/176 ms on 4.2.0 — consistently 5-9% slower over two interleaved rounds — while the wave-B
+measurement said -1%. Candidates: the widened `Machine.isProtectedProcedure` (ISS-2025-0501, asked
+on every assert and every retract), `NativeDb`'s argument handling, the generation bump.
+
+Re-measured with the §16.6 method: 4.1.0 and 4.2.0 exports, two interleaved sessions, 6 A/B pairs
+each, order reversed in the second, best of 6 warm iterations per JVM, `loop(1000000)` as the
+untouched control.
+
+| | round 1 (A first) | round 2 (B first) | pooled, 12 samples/side |
+|---|---|---|---|
+| `db`, 4.1.0 median / min | 163.5 / 156 ms | 167.0 / 162 ms | **164.5 / 156 ms** |
+| `db`, 4.2.0 median / min | 162.0 / 153 ms | 163.0 / 156 ms | **162.5 / 153 ms** |
+| change | -0.9% | -2.4% | **-1.2%** |
+| control `loop`, change | +0.0% | -1.4% | — |
+
+**Verdict: noise, not a regression.** 4.2.0 is if anything marginally faster, the two rounds
+disagree on the sign of a sub-1% difference, and the untouched control moves by as much. Nothing
+was changed on the strength of it. (ISS-2025-0502 then took a further 5% off the same loop, so the
+absolute figure moves in the right direction anyway: 164.5 ms on 4.1.0, 156.5 ms here.)
+
+### 18.7 What remains, and where the next wave starts
+
+The residual is unchanged in kind from §17.6 and smaller by five names:
+
+| | 4.2.0 | 4.3.0 |
+|---|---:|---:|
+| registered names | 410 | 410 |
+| shadowed by a v4 native | 121 | **126** |
+| machine-inline / control constructs | 44 | 44 |
+| defined by a prelude library module | 11 | 11 |
+| **can reach `LegacyBuiltinAdapter`** | **234** | **229** |
+
+Of the 229, **191 are the extended libraries** and they should stay bridged (§17.6). What is worth
+doing next, in this order:
+
+1. **ISO error terms for `op/3` and the other surviving `PrologEvaluationException` sites.**
+   `op(P, xfx, f)` with `P` unbound should be `instantiation_error`; an out-of-range precedence
+   `domain_error(operator_priority, P)`; an unknown specifier
+   `domain_error(operator_specifier, T)`; a non-atom name `type_error(atom, N)`. This is now a
+   pure conformance change with a native to change it in and a test class to pin it
+   (`EngineV4OpsTest`) — deviation 3 above. A grep for `PrologEvaluationException` in the natives
+   is the scope.
+2. **`retractall/1` and `abolish/1` through the index** — a `KnowledgeBase` change (deviation 6),
+   worth a benchmark first: `retractall(item(K))` with a bound key over a large table has the same
+   quadratic shape `retract/1` had.
+3. **The remaining `io` predicates, still only if a benchmark asks** (§17.6 item 3, unchanged).
+   `read_term/2,3` is 442 lines of parser integration; write the benchmark first.
+4. **`statistics/2`, `table/1` and the 11 debug predicates** — the last non-library bridged names.
+   No hot-path claim; migrate only if something else forces it.
+5. **A second-argument or multi-argument index** is NOT recommended without a benchmark that shows
+   the first-argument one failing. LIM-014 is closed for a reason: the first argument is where the
+   discrimination is in almost every Prolog program, and the wave's measurements say the cost of
+   indexing is now the key, not the lookup.
+
+**Rules a wave-C-style change must follow**: write the characterisation harness first and diff it
+against the previous release's classes (`scratchpad/42c/{CharIdx,CharOps,CharTy}.java` did that for
+`retract`/`clause`, `op`/`char_conversion` and `char_type`/`code_type` — the `retract`/`clause` diff
+was identical modulo fresh-variable serial numbers, which is exactly the assurance a JUnit test
+cannot give); measure with a control benchmark in the same table; and when a change is only
+worthwhile *combined* with a second one, measure the intermediate state too — that is what
+distinguished "indexing does not pay" from "the key does not pay".

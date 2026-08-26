@@ -7,6 +7,131 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.3.0] - 2026-08-26
+
+### Wave C of 4.2: first-argument indexing everywhere, `op/3` native, `char_type/2` generators
+
+The three items §17.6 named as "the recommended next wave is performance, not more migration",
+plus the assert/retract measurement it left open. Wave record, invariants and the starting point for
+the next wave are in `docs/reports/report-engine-v4-progress.md` (new section 18).
+ISS-2025-0500, ISS-2025-0502, ISS-2025-0503.
+
+#### ISS-2025-0502 — first-argument indexing on every clause-selection path, and a key that does not allocate
+
+`Machine.selectClauses` has selected calls through the `ClauseStore`'s incremental first-argument
+index since wave W2; `retract/1` and `clause/2` did not — they scanned `Predicate.all()`. On a
+20 000-clause table that made every `retract(item(K))` and every `clause(item(K), B)` O(#clauses),
+so a loop over the table was quadratic. Both now select through the same index, and an unbound or
+unindexable first argument still yields the null key, whose candidate set is the whole clause list:
+**an index miss can never drop a clause** (the ISS-2025-0340 hazard, now pinned by a randomised
+equivalence test).
+
+The index key itself was rebuilt in the same issue. It used to be a freshly concatenated string —
+`"i" + n.bigIntegerValue().toString()` for an integer, `"a" + name` for an atom,
+`"c" + name + "/" + arity` for a compound — computed once per call with a bound first argument, so
+`loop(1000000)` allocated a million `BigInteger`s, their decimal renderings and a concatenation
+each. It is now the atom's own name, a boxed `Long`/`Double`/`BigInteger`, or a small
+`FunctorKey`/`StringKey` value object that never escapes the `HashMap.get`. Type faithfulness is
+unchanged (`1`, `1.0`, `'1'` and `"1"` are still four buckets) and there is no longer any way for
+two kinds of key to collide. `Number.isLongInteger()` is new: "is this an integer that fits in a
+long?", answered without materialising a `BigInteger`.
+
+Measured (interleaved A/B against the 4.2.0 classes, one session, 6 pairs, best of 6 warm per JVM,
+median over runs; the noise floor on this VM is ~5%):
+
+| benchmark | 4.2.0 (median / min) | 4.3.0 (median / min) | change |
+|---|---|---|---|
+| `clause(tbl(K, _), _)` x2 000 into a 20 000-clause table | 2 948 / 2 545 ms | 10 / 10 ms | **-99.7%** |
+| `retract(rt(K, _))` over a 2 000-clause table | 196 / 190 ms | 21 / 14 ms | **-89%** |
+| `loop(1000000)` — integer first argument | 414.5 / 390 ms | 346.5 / 332 ms | **-16%** |
+| `nrev` of a 30-element list x2 000 — compound first argument | 345.5 / 324 ms | 302 / 287 ms | **-13%** |
+| `tbl(N, _)` x20 000 into a 20 000-fact table | 16 / 15 ms | 14 / 12 ms | **-13%** |
+| 200-clause dispatch x20 000 x3 | 24.5 / 24 ms | 22 / 21 ms | **-10%** |
+| `assertz(z(N)), retract(z(N))` x100 000 | 164.5 / 160 ms | 156.5 / 149 ms | **-5%** |
+
+#### ISS-2025-0500 — `op/3` and `char_conversion/2` are native, and `Undo` is machine-internal again
+
+`op/3`, `char_conversion/2` and `current_char_conversion/2` join `current_op/3` on the engine's own
+`core.engine.v4.Ops` store (`NativeMisc`). What that buys:
+
+- **`char_conversion/2` was process-global and permanent.** Its table was a
+  `static final ConcurrentHashMap` inside `builtin.system.CharConversion`, so two `Prolog` instances
+  in one JVM shared it, and a conversion declared under a choice point was never undone. It is now a
+  per-engine table on `Ops`, and the declaration is on the running machine's trail.
+- **`op/3` is undone on backtracking, on the calling engine's store.** (It already read
+  `Ops.current()` — the class that captured `OperatorTable.getDefault()` in its constructor was
+  `builtin.system.Op`, which was **never registered** and is deleted in this release.) Module
+  scoping, the list form `op(P, T, [a, b])`, precedence 0 removal, the ISO
+  `type_error(integer, 700.5)` and the parse-time `:- op/3` directive are all unchanged.
+- **`current_char_conversion(NotAnAtom, X)`** fails instead of raising
+  `system_error(ClassCastException)`.
+- **`core.engine.v4.Undo` is package-private**, and its `record(Runnable)` entry point with it —
+  the 4.1.0 doorway a bridged built-in used to reach the machine's trail. `b_setval/2` and
+  `setarg/3` had already become native; `op/3` and `char_conversion/2` are the last two, and
+  `builtin.clpfd.v2.ClpfdV2Bridge` — the one client that is not a built-in — now declares its own
+  `UndoSink` interface, which `core.engine.v4.ClpfdNative` points at the running machine's trail.
+  The dead `Undo.record` calls in the registry classes that the natives shadow
+  (`OperatorDefinition`, `GlobalVariables`, `SetArg`) are removed; the classes stay registered,
+  because `BuiltInRegistry.isBuiltIn` is what makes `assertz(op(_,_,_))` a `permission_error`.
+
+**Deleted**: `it.denzosoft.jprolog.builtin.system.Op` (an unregistered 287-line `op/3` that captured
+`OperatorTable.getDefault()` at construction — the multi-engine bug §17.4 recorded, in code nothing
+could reach).
+
+#### ISS-2025-0503 — `char_type/2` and `code_type/2` are generators with the parametric forms
+
+The last eager enumeration of the ISO-core set. `builtin.character.CharType` built every
+`(char, type)` pair of the ASCII range into a `List<Map<String,Term>>` before the caller saw the
+first one; both predicates are now lazy generators in `core.engine.v4.NativeChars`, one answer per
+redo.
+
+- **The parametric forms work in every mode**: `digit(Weight)`, `upper(Lower)`, `lower(Upper)`,
+  `to_lower(Lower)` and `to_upper(Upper)`. `char_type/2` had none of them; `code_type/2` recognised
+  three but could only *test* them — `code_type(0'a, lower(U))` succeeded and left `U` unbound,
+  because the eager contract could not bind an argument nested inside the type term. Now
+  `U = 0'A`, `char_type(a, to_upper(U))` gives `U = 'A'`, and `char_type(X, to_upper('A'))`
+  enumerates `'A'` and `a`. For `char_type/2` the parameter is a character, for `code_type/2` a
+  code; `digit(Weight)`'s weight is an integer in both.
+- **Six SWI class names are new to `char_type/2`** — `csym`, `csymf`, `white`, `period`, `quote`,
+  `paren` — and the ten `char_type/2`-only names (`xdigit`, `newline`, `end_of_file`, `layout`,
+  `meta`, `solo`, `symbol`, and the atom forms of `digit`/`upper`/`lower`) now work for
+  `code_type/2` too. The two predicates classify identically.
+- Every classification test, both historical enumeration orders (`char_type/2` still answers
+  `alnum, alpha, ascii, …`, `code_type/2` still `alpha, alnum, space, …`) and the "a bad character
+  argument fails rather than raises" rule are unchanged; the new classes are appended to each order.
+  An unbound character enumerates the ASCII range 0..127, plus any character a bound argument of the
+  type term names.
+
+#### The assert/retract loop: measured, not a regression
+
+An independent measurement had put `db(100000)` (`assertz` + `retract` per iteration) 5-9% slower on
+4.2.0 than on 4.1.0. Re-measured with the §16.6 method — two interleaved sessions, 6 pairs each,
+best of 6 warm per JVM, 12 samples per side — the medians are **164.5 ms on 4.1.0 against 162.5 ms on
+4.2.0, -1.2%**, with `loop(1000000)` as the untouched control at 0.0% and -1.4%. There is no
+regression; the earlier figure is inside this VM's ~5% noise floor. (4.3.0 then takes another 5% off
+the same loop through the cheaper index key.)
+
+### Changed
+
+- `pom.xml` version 4.2.0 -> 4.3.0.
+- **Names that can still reach `LegacyBuiltinAdapter`: 234 -> 229** (`op/3`, `char_conversion/2`,
+  `current_char_conversion/2`, `char_type/2`, `code_type/2` are native). LIM-037's residual shrinks
+  accordingly.
+- `core.terms.Number` gains `isLongInteger()`.
+- `core.terms.CompoundTerm`'s javadoc no longer points `setarg/3`'s undo at a public `Undo`.
+
+### Tests
+
+40 new (**1261 -> 1301**), all in `core/engine/v4`:
+`EngineV4IndexingTest` (10 — the randomised candidate-set equivalence, the ISS-2025-0340 hazard,
+type-faithful keys, indexed `retract/1` and `clause/2`, the logical update view, incremental
+maintenance), `EngineV4OpsTest` (16 — nativeness, backtracking, two-engine isolation, consulted
+operators, module scoping, the preserved error terms, the CLP(FD) narrowing rollback, `Undo` is not
+public API) and `EngineV4CharTypeTest` (14 — nativeness, the classic modes, both enumeration orders,
+laziness, the new class names, every parametric form, the malformed-input rules, a DCG body).
+
+---
+
 ## [4.2.0] - 2026-08-26
 
 ### Wave B of 4.1: the hot and ISO-core built-in families leave `LegacyBuiltinAdapter`

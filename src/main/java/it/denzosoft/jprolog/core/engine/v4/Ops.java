@@ -133,6 +133,48 @@ public final class Ops {
     }
 
     // ------------------------------------------------------------------
+    // char_conversion/2 and current_char_conversion/2  (ISS-2025-0500)
+    // ------------------------------------------------------------------
+
+    // START_CHANGE: ISS-2025-0500 - 4.2 wave C: the character-conversion table is per ENGINE, like
+    // the operator table next to it. It used to be a `static final ConcurrentHashMap` inside
+    // {@code builtin.system.CharConversion}, so two Prolog instances in one JVM shared it and a
+    // conversion declared under a choice point was never undone. Both defects are the same one the
+    // operator store fixed in W7; this is the same fix, in the same object, because both are
+    // read-time syntax state of one engine.
+    private final Map<Character, Character> charConversions = new ConcurrentHashMap<Character, Character>();
+
+    /**
+     * Declare {@code from -> to} ({@code from == to} removes the entry, ISO 8.14.5). Returns the
+     * undo action, so a {@code char_conversion/2} executed under a choice point can be rolled back
+     * with the rest of the trail.
+     */
+    public Runnable convert(final char from, final char to) {
+        final Character prev = charConversions.get(Character.valueOf(from));
+        Runnable undo = new Runnable() {
+            public void run() {
+                if (prev == null) charConversions.remove(Character.valueOf(from));
+                else charConversions.put(Character.valueOf(from), prev);
+            }
+        };
+        if (from == to) charConversions.remove(Character.valueOf(from));
+        else charConversions.put(Character.valueOf(from), Character.valueOf(to));
+        return undo;
+    }
+
+    /** What {@code c} converts to; {@code c} itself when no conversion is declared. */
+    public char converted(char c) {
+        Character t = charConversions.get(Character.valueOf(c));
+        return (t == null) ? c : t.charValue();
+    }
+
+    /** The declared (non-identity) conversions, in declaration-independent key order. */
+    public Map<Character, Character> conversions() {
+        return new java.util.TreeMap<Character, Character>(charConversions);
+    }
+    // END_CHANGE: ISS-2025-0500
+
+    // ------------------------------------------------------------------
     // current_op/3 and the lookup facade
     // ------------------------------------------------------------------
 

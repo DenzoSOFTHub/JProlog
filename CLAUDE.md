@@ -19,14 +19,14 @@ clean-room rewrites of the parser, the DCG translator, the CLP(FD) solver, the a
 and the IDE source formatter, and they are all current.
 
 **Repository**: https://github.com/DenzoSOFTHub/JProlog
-**Current version**: `<version>` in pom.xml (4.2.0). pom.xml and CHANGELOG.md are the source of
+**Current version**: `<version>` in pom.xml (4.3.0). pom.xml and CHANGELOG.md are the source of
 truth; README.md is refreshed at release time and may lag between releases.
 
 ## Build & Run
 
 ```bash
 mvn compile                  # Build
-mvn test                     # the whole suite — ONE engine, one leg (4.2.0 baseline: 1261/1261)
+mvn test                     # the whole suite — ONE engine, one leg (4.3.0 baseline: 1301/1301)
 mvn test -Dtest=BugFixVerificationTest                                  # one test class
 mvn test -Dtest=BugFixVerificationTest#testISS0188_ModNegativeDivisor   # one method
 mvn clean compile            # Clean rebuild
@@ -94,7 +94,9 @@ Build/test gotchas:
    `consultWithDiagnostics` on the v2-parser path, so plain `consult()` leaves it -1.
 3. **ClauseStore** (`core.engine.v4.ClauseStore`) mirrors it as compiled `Clause` skeletons with
    birth/death generations and an incremental first-argument index, re-syncing a predicate when the
-   KB's version for it changes.
+   KB's version for it changes. **Every** clause-selection path goes through that index since
+   4.3.0 — calls (`Machine.selectClauses`), `retract/1` and `clause/2`; see "First-argument
+   indexing" below.
 4. **Machine** (`core.engine.v4.Machine`) resolves: an iterative SLD drive loop over a goal stack
    and an explicit choice-point list, binding directly in mutable `Variable` cells with a
    conditional trail (`core.engine.v4.Bindings`). One `core.engine.v4.Engine` per `Prolog`, one
@@ -189,9 +191,11 @@ The clean-room core designed in `docs/reports/report-engine-v4-design-2026-08-25
 waves are done (v3.9.0: ISS-2025-0438..0449; v3.10.0: 0450..0456; v3.11.0: 0457..0462;
 v3.12.0: 0463..0465; v3.13.0: 0466..0471; v3.14.0: 0472..0477; **v4.0.0: 0478..0488**), and so are
 the two 4.1 waves (**v4.1.0**, one engine: 0491..0495; **v4.2.0**, the L-08 built-in migration:
-0496..0501). Progress, the 60 invariants, the benchmarks and what remains live in
+0496..0501) and **v4.3.0** (4.2 wave C — indexing on every selection path, `op/3` and
+`char_conversion/2` native, `char_type/2`/`code_type/2` generators: 0500, 0502, 0503). Progress,
+the 63 invariants, the benchmarks and what remains live in
 `docs/reports/report-engine-v4-progress.md` — **read it before touching `core.engine.v4`**;
-sections 9–17 are the wave records.
+sections 9–18 are the wave records.
 
 **Package `core.engine.v4`**:
 - `Machine` — the drive loop: goal stack, choice points, cut, catch/throw, findall, cleanup frames,
@@ -211,19 +215,26 @@ sections 9–17 are the wave records.
   term_to_atom/term_string + keysort/delete/flatten),
   **`NativeTerm`** (functor/arg/=../atom_to_term, the remaining type checks, succ/plus,
   unify_with_occurs_check) and **`NativeDb`** (current_predicate/retractall/abolish/dynamic/
-  listing, the global variables, the ISO flags, halt, findall/4).
+  listing, the global variables, the ISO flags, halt, findall/4); and, since 4.3.0,
+  **`NativeChars`** (`char_type/2` and `code_type/2` as generators, with the SWI parametric forms)
+  plus `op/3`, `char_conversion/2` and `current_char_conversion/2` in `NativeMisc`.
 - `Modules` — the module owner (system/user/library, resolution order, imports, meta_predicate);
   `Prelude` — indexes and autoloads `prelude/*.pl`.
 - `Workers` — one `Machine` per thread over the same `Engine`.
-- `LegacyBuiltinAdapter` + `SolverFacade` — the **234** remaining registry built-ins, unchanged
-  (4.1 wave B took 94 indicators off it). What is left is essentially the extended libraries plus
+- `LegacyBuiltinAdapter` + `SolverFacade` — the **229** remaining registry built-ins, unchanged
+  (4.1 wave B took 94 indicators off it, 4.2 wave C another 5). What is left is essentially the extended libraries plus
   the stream/parser half of `io`; see LIM-037 and the residual list below.
 - `Engine` — the per-`Prolog` context; `Errors` — ISO error construction.
 - `EngineState` (the thread-current per-engine state), `Streams` + `PrologStream`, `Ops`, `Writer`,
   `Answer` — the W7 services the bridged built-ins reach through their static facades.
-- `Undo` — the doorway a bridged built-in uses to push a backtrackable undo action onto the running
-  machine's trail (`b_setval/2`, `op/3`, `setarg/3`, the CLP(FD) store). It replaced the static
-  `core.engine.Trail` in 4.1.0; there is ONE trail now.
+- `Undo` — **package-private since 4.3.0** (ISS-2025-0500): the doorway that finds the machine
+  running on the calling thread and pushes a backtrackable undo action onto its trail. It replaced
+  the static `core.engine.Trail` in 4.1.0; there is ONE trail now. Every built-in that used it is
+  native and pushes with `Machine.pushUndo` directly; the one client outside the engine,
+  `builtin.clpfd.v2.ClpfdV2Bridge`, declares its own `UndoSink` interface, which
+  `core.engine.v4.ClpfdNative`'s static initialiser points at `Undo.record`. **Do not make it
+  public again** — a construct that needs the trail belongs inside the machine, or behind a sink
+  the engine installs.
 
 **What the core does differently**: `Variable` is a mutable cell (`ref`, `serial`, identity
 `equals`/`hashCode`, lazy `_G<serial>` name), so bindings are reclaimed by the JVM and
@@ -287,6 +298,24 @@ inference budget, the trust model, the IDE debugger contract, and the four-port 
   and every `NativeLibrary` walker deref as they go; `m.resolve(t)` is a full copy and is what made
   the bridge slow. Use it only for the small things — a stream argument, an option list, an error
   culprit.
+- **First-argument indexing is on EVERY clause-selection path, and a miss must never drop a
+  clause.** Design B.7: one lazy hash per predicate from the first argument's key to its clauses,
+  merged with the variable-headed clauses **in source order**, maintained incrementally by
+  `assert`/`retract` and rebuilt on compaction and on a re-sync from the KB. Three rules:
+  - `Clause.argKey(goalArg)` returns **null** for a variable or anything unindexable, and
+    `ClauseStore.Predicate.select(null)` is the FULL clause list. That is what makes an index miss
+    degrade instead of dropping clauses — the ISS-2025-0340 hazard that made the old engine revert
+    indexing. Any new key kind must keep it.
+  - The key is **type-faithful and allocation-light**: an atom's own name `String`, a boxed
+    `Long`/`Double`/`BigInteger`, or a small non-escaping `Clause.FunctorKey`/`Clause.StringKey`.
+    `1`, `1.0`, `'1'` and `"1"` are four buckets. Never go back to building a `String` per call
+    (`"i" + n.bigIntegerValue()` cost `loop(1000000)` about 16%, ISS-2025-0502), and never let two
+    kinds of key compare equal unless you mean the over-approximation.
+  - A **new selection site** must call `p.select(Clause.argKey1(goal))`, not `p.all()`. The three
+    that exist are `Machine.selectClauses` (calls), `Machine.retractClause` and
+    `NativeLibrary.ClauseB` (`clause/2`); `p.all()` survives only where the whole predicate really
+    is wanted (`Machine.hasQualifiedHook`). `EngineV4IndexingTest` pins the property with a
+    randomised equivalence against an independent "could the first arguments unify?" oracle.
 - **Protection is a question about three stores, not one.** `Machine.isProtectedProcedure` asks
   `BuiltInRegistry.isBuiltIn`, `BuiltinTable.isNativeKey` and `Modules.isLibraryIndicatorKey`;
   `checkModifiable` (assert/retract), `NativeLibrary.ClauseB` (`clause/2`) and
@@ -316,7 +345,7 @@ There are **two** SPIs, and new work should use the first:
 `Outcome.SUSPENDED`) and register it in `NativeBuiltins.register` / `NativeControl.register` /
 `NativeLibrary.register` / `NativeMisc.register` / `NativeIo.register` / `NativeText.register` /
 `NativeTerm.register` / `NativeDb.register`. A native sees dereferenced `Term[] args` and the
-`Machine`; it never builds a `Map<String,Term>`. **160 indicators (136 names) are native**, and
+`Machine`; it never builds a `Map<String,Term>`. **165 indicators (141 names) are native**, and
 ~44 more are handled inline by the machine.
 
 **How the io natives are laid out** (`NativeIo`, 4.1 wave B): one `Builtin` class per *shape*, not
@@ -331,12 +360,11 @@ cells instead of a `Map<String,Term>` and calls back into the running machine
 the term to print is handed to `core.engine.v4.Writer` **unresolved**, because the writer derefs as
 it walks. That last point is the whole performance story: the bridge had to copy the term first.
 
-**2. The legacy registry SPI** (`core.engine`), which the **234** remaining built-ins use — the
+**2. The legacy registry SPI** (`core.engine`), which the **229** remaining built-ins use — the
 extended libraries (jdbc, filesystem, threading, crypto, ffi, graph, network, persistence, os,
 http, datetime, json, logging, regex, dcg, csv, xml, clpfd), the stream/parser half of `io`
 (`open`, `close`, `read`, `read_term`, `stream_property`, `seek`, the byte I/O, `print_message`,
-`portray_clause`), `op/3`, `statistics/2`, `char_type/2`, `code_type/2`, `table/1` and the debug
-and profiler predicates (LIM-037):
+`portray_clause`), `statistics/2`, `table/1` and the debug and profiler predicates (LIM-037):
 - `BuiltIn.execute(Term query, Map bindings, List solutions)` — the eager contract: a *resolved*
   goal, an empty bindings map, one solution map appended per answer.
 - `BuiltInWithContext.executeWithContext(SolverContext solver, Term query, Map bindings,
@@ -499,8 +527,10 @@ with the parser, `op/3` and the writer, so dynamic operators round-trip.
   `QueryCancelledException`; `thread_create/2,3` and the `concurrent_*` family get a fresh machine
   over the same `Engine` through `core.engine.v4.Workers`, with the goal copied in and every answer
   copied out.
-- **Immutable terms** except `Variable`; the engine binds in the cell with a trail, and the
-  bridged built-ins push their own undo actions onto the same trail through `core.engine.v4.Undo`.
+- **Immutable terms** except `Variable`; the engine binds in the cell with a trail. There is ONE
+  trail: a native pushes an undo action with `Machine.pushUndo`, and the single non-built-in client
+  outside the engine package (the CLP(FD) bridge) reaches it through a sink the engine installs —
+  `core.engine.v4.Undo` itself is package-private since 4.3.0.
 - ISO 13211-1 compliance where possible (exception handling, arithmetic functions, error terms).
 - `.gitignore` scratch patterns must stay **anchored to the root** (`/Debug*.java`, `/Test*.java`,
   `/*.sh`) — the unanchored forms once silently excluded core sources from the repo (ISS-2025-0334).
@@ -518,7 +548,7 @@ Every bug or feature request must be documented before implementation:
 - **Release Notes**: `docs/tracking/track-release-notes.md`
 
 Before allocating a new ISS number, grep **CHANGELOG.md** and `src/` (`START_CHANGE` tags) for the
-highest used one (**ISS-2025-0501** as of 4.2.0) — track-issues.md lags behind recent releases.
+highest used one (**ISS-2025-0503** as of 4.3.0) — track-issues.md lags behind recent releases.
 Its internal ordering and header levels are inconsistent; grep for an ID rather than assuming
 position. Some tracking content is in Italian — match surrounding style rather than rewriting.
 
@@ -545,15 +575,16 @@ its own `core/engine/v4/EngineV4*Test`:
 `EngineV4TablingTest` (18, W5), `EngineV4ModulesTest` (29, W6), `EngineV4StreamsTest` (25, W7),
 `EngineV4WriterTest` (21, W7), `EngineV4ThreadsTest` (15, W8), `EngineV4TraceTest` (25, W8 — 16
 line-for-line pinned trace oracles), `EngineV4RetirementTest` (17, W9),
-`EngineV41RetirementTest` (21, 4.1 wave A) and **`EngineV4IoTest` (19), `EngineV4TextTest` (16),
-`EngineV4TermTest` (13), `EngineV4DatabaseTest` (17) — 4.1 wave B**, plus
+`EngineV41RetirementTest` (21, 4.1 wave A), `EngineV4IoTest` (19), `EngineV4TextTest` (16),
+`EngineV4TermTest` (13), `EngineV4DatabaseTest` (17) — 4.1 wave B — and **`EngineV4IndexingTest`
+(10), `EngineV4OpsTest` (16), `EngineV4CharTypeTest` (14) — 4.2 wave C**, plus
 `test/cli/PrologCliBatchTest` (6). A wave-B class opens with a `test*IsNative` method that fails
 the moment one of the migrated indicators is not in the `BuiltinTable`; the rest pin the modes and
 the ISO error terms so a migration cannot quietly change one.
 - Add a `@Test` method named after the issue and fix (e.g. `testISS0188_ModNegativeDivisor`)
 - The test must fail without the fix and pass with it
 - Use `prolog.solve()` for query-level assertions, direct Java assertions for internal fixes
-- Every wave must keep the full suite green (4.2.0 baseline: **1261/1261**). There is one engine
+- Every wave must keep the full suite green (4.3.0 baseline: **1301/1301**). There is one engine
   and one leg, so a test never selects an engine (ISS-2025-0491 removed the `setUp`/`tearDown`
   toggles the v4 classes used to carry).
 

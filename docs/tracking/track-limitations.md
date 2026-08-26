@@ -3,11 +3,17 @@
 This document describes current limitations in JProlog implementation.
 When an issue is resolved, the corresponding limitation should be removed from this file.
 
-**Last updated**: 2026-08-26 (v4.2.0, 4.1 wave B)
+**Last updated**: 2026-08-26 (v4.3.0, 4.2 wave C)
 
 ---
 
 ## LIM-037: the EXTENDED LIBRARIES still run on the eager built-in bridge
+
+**Re-scoped again in v4.3.0 (4.2 wave C, ISS-2025-0500/0503):** `op/3`, `char_conversion/2`,
+`current_char_conversion/2`, `char_type/2` and `code_type/2` are v4 natives, so **229** names can
+still reach the adapter (234 before). With them the last external `core.engine.v4.Undo.record`
+caller is gone: `Undo` and its `record` are package-private, and `builtin.clpfd.v2.ClpfdV2Bridge`
+reaches the machine's trail through an `UndoSink` the engine installs.
 
 **Re-scoped in v4.2.0 (4.1 wave B, ISS-2025-0496..0499).** The hot and ISO-core families are off
 `core.engine.v4.LegacyBuiltinAdapter`: the `io` write family and `format/1,2,3`, the
@@ -21,8 +27,9 @@ posting/labeling, `current_op/3` and the two atom slicers.
 **What is left**, measured from a live `Prolog` by `scratchpad/41b/probe/Fam2.java`: of 410
 registered names, **121** are shadowed by a v4 native, **44** are control constructs or inline
 built-ins the machine handles itself and never dispatches, **11** are defined by a prelude library
-module (`Modules.overridesBuiltin` routes them to `callUser` before the adapter) — so **234 names
-can still reach the adapter** (305 before this wave). They are:
+module (`Modules.overridesBuiltin` routes them to `callUser` before the adapter) — so **229 names
+can still reach the adapter** in v4.3.0 (234 in v4.2.0, 305 before wave B; the v4.3.0 count is
+126 native-shadowed). They are:
 
 - **the extended libraries, 191 names** — `jdbc` 28, `filesystem` 15, `threading` 15, `crypto` 14,
   `ffi` 14, `graph` 13, `network` 13, `persistence` 13, `os` 12, `http` 11, `datetime` 10,
@@ -35,10 +42,7 @@ can still reach the adapter** (305 before this wave). They are:
   `stream_position_data/3`, `character_count/2`, `line_count/2`, `line_position/2`,
   `current_stream/3`, `get_byte/1,2`, `put_byte/1,2`, `peek_byte/1,2`, `print_message/2`,
   `portray_clause/1,2`. These are host I/O and parser integration, not inner-loop work.
-- **`op/3`** (and `char_conversion/2`, `current_char_conversion/2`) — the last external
-  `core.engine.v4.Undo.record` callers together with `builtin.clpfd.v2.ClpfdV2Bridge`, which is why
-  `Undo.record` is still public rather than `Machine`-internal (see 16.6's "what wave B unblocks").
-- **`statistics/2`**, **`char_type/2`**, **`code_type/2`**, **`table/1`**, the 11 `debug`
+- **`statistics/2`**, **`table/1`**, the 11 `debug`
   predicates (`spy/1`, `nospy/1`, `spying/1`, `leash/1`, `trace/0`, `notrace/0`, `debugging/0`,
   `profile/0`, `noprofile/0`, `profile_data/1`, `reset_profile/0`) and a handful of one-offs
   (`to_codes/2`, `atom_to_number/2`, `number_to_atom/2`, `rational/1`, `atom_gc/0`,

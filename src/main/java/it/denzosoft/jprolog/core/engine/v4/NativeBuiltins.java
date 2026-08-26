@@ -76,6 +76,11 @@ final class NativeBuiltins {
         // START_CHANGE: ISS-2025-0499 - 4.1 wave B: the database, global-variable, flag and halt
         // built-ins, plus findall/4.
         NativeDb.register(t);
+
+        // START_CHANGE: ISS-2025-0503 - 4.2 wave C: char_type/2 and code_type/2, the last eager
+        // enumeration of the ISO-core set, are generators with the SWI parametric forms.
+        NativeChars.register(t);
+        // END_CHANGE: ISS-2025-0503
         // END_CHANGE: ISS-2025-0499
     }
 

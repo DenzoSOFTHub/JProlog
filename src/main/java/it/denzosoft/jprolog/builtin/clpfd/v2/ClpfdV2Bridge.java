@@ -51,6 +51,30 @@ public final class ClpfdV2Bridge {
 
     private ClpfdV2Bridge() {}
 
+    // START_CHANGE: ISS-2025-0500 - 4.2 wave C: the bridge no longer reaches into
+    // core.engine.v4.Undo. It declares WHERE a backtrackable side effect goes and the engine
+    // installs the destination (ClpfdNative.register -> the running Machine's trail), which is what
+    // lets core.engine.v4.Undo stop being public API: the trail is the machine's business, and the
+    // one client outside the engine package now depends on an interface it owns itself.
+    //
+    // With no engine installed — a directly-instantiated store in a unit test, a bridge call with
+    // no machine running on the thread — the sink is a no-op, exactly what Undo.record did when
+    // there was no current machine: nothing can backtrack over the mutation, so it is permanent.
+    /** Where a backtrackable CLP(FD) side effect is recorded; installed by the v4 engine. */
+    public interface UndoSink { void record(Runnable undo); }
+
+    private static final UndoSink NO_TRAIL = new UndoSink() { public void record(Runnable undo) {} };
+
+    private static volatile UndoSink undoSink = NO_TRAIL;
+
+    /** Called once per engine by {@code core.engine.v4.ClpfdNative}. */
+    public static void setUndoSink(UndoSink sink) { undoSink = (sink == null) ? NO_TRAIL : sink; }
+
+    private static void recordUndo(Runnable undo) {
+        if (undo != null) undoSink.record(undo);
+    }
+    // END_CHANGE: ISS-2025-0500
+
     /** Reset the per-query CLP state (call at the start of each top-level solve). */
     public static void reset() { CTX.set(new Ctx()); }
 
@@ -70,7 +94,7 @@ public final class ClpfdV2Bridge {
             // created the FdVar restores plain-variable semantics.
             v.putAttribute(CLPFD_ATTR, FD_MARKER);
             final Ctx fc = c; final String name = v.getName(); final Variable fvv = v;
-            it.denzosoft.jprolog.core.engine.v4.Undo.record(() -> {
+            recordUndo(() -> {
                 fc.vars.remove(name);
                 fc.cells.remove(name);                   // ISS-2025-0460
                 fvv.removeAttribute(CLPFD_ATTR);
@@ -97,7 +121,7 @@ public final class ClpfdV2Bridge {
             if (!ok) store.rollbackTo(dm, cm);            // failed (or threw): leave no trace
         }
         if (!ok) return false;
-        it.denzosoft.jprolog.core.engine.v4.Undo.record(() -> store.rollbackTo(dm, cm));
+        recordUndo(() -> store.rollbackTo(dm, cm));
         return true;
     }
     // END_CHANGE: ISS-2025-0356
@@ -131,7 +155,7 @@ public final class ClpfdV2Bridge {
             c.cells.put(to.getName(), to);               // ISS-2025-0460
             to.putAttribute(CLPFD_ATTR, FD_MARKER);
             final String name = to.getName(); final Variable tv = to;
-            it.denzosoft.jprolog.core.engine.v4.Undo.record(() -> {
+            recordUndo(() -> {
                 c.vars.remove(name);
                 c.cells.remove(name);                    // ISS-2025-0460
                 tv.removeAttribute(CLPFD_ATTR);

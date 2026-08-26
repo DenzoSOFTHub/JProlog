@@ -45,7 +45,191 @@ final class NativeMisc {
         t.register("current_op", 3, new CurrentOp());
         t.register("nb_getval", 2, new GetVal("nb_getval/2"));
         t.register("b_getval", 2, new GetVal("b_getval/2"));
+        // START_CHANGE: ISS-2025-0500 - 4.2 wave C: op/3 and the character-conversion pair join
+        // current_op/3 on the engine's own Ops store. They were the last built-ins outside
+        // builtin.clpfd.v2 that pushed an undo action through the public core.engine.v4.Undo
+        // doorway; a native has the Machine in its hand and pushes onto its trail directly, which
+        // is what lets Undo become package-private.
+        t.register("op", 3, new OpB());
+        t.register("char_conversion", 2, new CharConvB());
+        t.register("current_char_conversion", 2, new CurrentCharConv());
+        // END_CHANGE: ISS-2025-0500
     }
+
+    // ------------------------------------------------------------------ op/3
+
+    // START_CHANGE: ISS-2025-0500 - 4.2 wave C.
+    /**
+     * {@code op(+Precedence, +Type, +Name)} over the CALLING ENGINE's operator store.
+     *
+     * <p>Three properties the registry version could not offer together:
+     * <ul>
+     *   <li>it writes into {@code m.engine().prolog().getOps()} — the store of the engine whose
+     *       machine is running — never a process-global table. (The registry {@code op/3} that is
+     *       still registered under the name, {@code builtin.system.OperatorDefinition}, has read
+     *       {@code Ops.current()} since W7; the class that really did capture
+     *       {@code OperatorTable.getDefault()} in its constructor was {@code builtin.system.Op},
+     *       which was never registered at all and is deleted in this wave.)</li>
+     *   <li>the definition is undone on backtracking, because the undo action the store hands back
+     *       goes straight onto the running machine's trail;</li>
+     *   <li>the module scoping W7 introduced is unchanged: {@code Ops.define/3} attributes the
+     *       operator to the module currently in context, and {@code current_op/3} filters by it.</li>
+     * </ul>
+     *
+     * <p>Modes, validation and error terms are the registry version's, unchanged and characterised:
+     * a non-integer precedence is {@code type_error(integer, P)} (ISS-2025-0278), a precedence
+     * outside 0..1200 or an unknown specifier is a {@code PrologEvaluationException}, and the name
+     * may be an atom or a proper list of atoms (ISS-2025-0283).
+     */
+    private static final class OpB implements Builtin {
+        @Override public Outcome call(Machine m, Term[] args) {
+            Term precT = m.deref(args[0]);
+            Term typeT = m.deref(args[1]);
+            Term nameT = m.deref(args[2]);
+            if (!(precT instanceof Number)) {
+                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
+                    "op/3: First argument must be an integer (precedence).");
+            }
+            if (!((Number) precT).isInteger()) {                       // ISS-2025-0278
+                throw Errors.type("integer", m.resolve(precT), "op/3");
+            }
+            if (!(typeT instanceof Atom)) {
+                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
+                    "op/3: Second argument must be an atom (type).");
+            }
+            List<String> names = opNames(nameT);                       // ISS-2025-0283
+            if (names == null || names.isEmpty()) {
+                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
+                    "op/3: Third argument must be an atom or a list of atoms (name).");
+            }
+            int precedence = (int) Math.round(((Number) precT).getValue().doubleValue());
+            String type = ((Atom) typeT).getName();
+            if (precedence < 0 || precedence > 1200) {
+                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
+                    "op/3: Precedence must be between 0 and 1200.");
+            }
+            if (!isOperatorType(type)) {
+                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
+                    "op/3: Invalid operator type: " + type);
+            }
+            Ops ops = m.engine().prolog().getOps();
+            for (int i = 0; i < names.size(); i++) {
+                m.pushUndo(ops.define(precedence, type, names.get(i)));
+            }
+            return Outcome.SUCCESS;
+        }
+    }
+
+    private static boolean isOperatorType(String t) {
+        return "fx".equals(t) || "fy".equals(t) || "xfx".equals(t) || "xfy".equals(t)
+            || "yfx".equals(t) || "xf".equals(t) || "yf".equals(t);
+    }
+
+    /** An atom, or a proper list of atoms; null when the term is neither. */
+    private static List<String> opNames(Term nameT) {
+        List<String> out = new ArrayList<String>();
+        if (nameT instanceof Atom && !"[]".equals(((Atom) nameT).getName())) {
+            out.add(((Atom) nameT).getName());
+            return out;
+        }
+        Term cur = nameT;
+        while (cur instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) cur;
+            if (!".".equals(c.getName()) || c.getArguments().size() != 2) return null;
+            Term h = Unify.deref(c.getArguments().get(0));
+            if (!(h instanceof Atom)) return null;
+            out.add(((Atom) h).getName());
+            cur = Unify.deref(c.getArguments().get(1));
+        }
+        if (cur instanceof Atom && "[]".equals(((Atom) cur).getName())) return out;
+        return null;
+    }
+
+    // ------------------------------------------------------------------ char_conversion/2
+
+    /**
+     * {@code char_conversion(+From, +To)} on the engine's own conversion table (ISO 8.14.5).
+     * {@code From == To} removes the entry. Undone on backtracking, and — unlike the
+     * {@code static} table it replaces — invisible to every other {@code Prolog} instance.
+     */
+    private static final class CharConvB implements Builtin {
+        @Override public Outcome call(Machine m, Term[] args) {
+            Term f = m.deref(args[0]);
+            Term t = m.deref(args[1]);
+            if (!(f instanceof Atom) || !(t instanceof Atom)
+                    || ((Atom) f).getName().length() != 1 || ((Atom) t).getName().length() != 1) {
+                throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
+                    "char_conversion/2: both arguments must be single-character atoms");
+            }
+            Ops ops = m.engine().prolog().getOps();
+            m.pushUndo(ops.convert(((Atom) f).getName().charAt(0), ((Atom) t).getName().charAt(0)));
+            return Outcome.SUCCESS;
+        }
+    }
+
+    /**
+     * {@code current_char_conversion(?From, ?To)} — a generator, one pair per redo. With
+     * {@code From} bound the answer is deterministic ({@code To} defaults to {@code From}); with
+     * {@code From} unbound the declared conversions come first, then the identity conversions of
+     * the printable ASCII range, exactly as the registry version enumerated them.
+     */
+    private static final class CurrentCharConv implements Builtin {
+        @Override public Outcome call(Machine m, final Term[] args) {
+            Ops ops = m.engine().prolog().getOps();
+            Term f = m.deref(args[0]);
+            Term t = m.deref(args[1]);
+            if (!(f instanceof Variable)) {
+                if (!(f instanceof Atom) || ((Atom) f).getName().length() != 1) return Outcome.FAILURE;
+                char c = ((Atom) f).getName().charAt(0);
+                return m.unify(args[1], new Atom(String.valueOf(ops.converted(c))))
+                    ? Outcome.SUCCESS : Outcome.FAILURE;
+            }
+            final java.util.Map<Character, Character> table = ops.conversions();
+            final List<char[]> pairs = new ArrayList<char[]>();
+            if (!(t instanceof Variable)) {                      // From unbound, To bound
+                if (!(t instanceof Atom) || ((Atom) t).getName().length() != 1) return Outcome.FAILURE;
+                char to = ((Atom) t).getName().charAt(0);
+                for (java.util.Map.Entry<Character, Character> e : table.entrySet()) {
+                    if (e.getValue().charValue() == to) {
+                        pairs.add(new char[] { e.getKey().charValue(), to });
+                    }
+                }
+            } else {                                             // both unbound
+                for (java.util.Map.Entry<Character, Character> e : table.entrySet()) {
+                    pairs.add(new char[] { e.getKey().charValue(), e.getValue().charValue() });
+                }
+                for (char c = 32; c < 127; c++) {
+                    if (!table.containsKey(Character.valueOf(c))) pairs.add(new char[] { c, c });
+                }
+            }
+            if (pairs.isEmpty()) return Outcome.FAILURE;
+            final int[] i = {0};
+            Generator gen = new Generator() {
+                @Override public boolean next(Machine mm) {
+                    while (i[0] < pairs.size()) {
+                        char[] pr = pairs.get(i[0]++);
+                        if (i[0] >= pairs.size()) mm.lastSolution();
+                        // ONE mark/undo extent around the pair of unifications (invariant 12).
+                        Bindings b = mm.bindings();
+                        int mark = b.mark();
+                        b.forceTrail++;
+                        boolean ok;
+                        try {
+                            ok = Unify.unify(args[0], new Atom(String.valueOf(pr[0])), b)
+                              && Unify.unify(args[1], new Atom(String.valueOf(pr[1])), b);
+                            if (!ok) b.undo(mark);
+                        } finally {
+                            b.forceTrail--;
+                        }
+                        if (ok) return true;
+                    }
+                    return false;
+                }
+            };
+            return m.pushGenerator(gen) ? Outcome.SUSPENDED : Outcome.FAILURE;
+        }
+    }
+    // END_CHANGE: ISS-2025-0500
 
     // ------------------------------------------------------------------ sort/4
 
