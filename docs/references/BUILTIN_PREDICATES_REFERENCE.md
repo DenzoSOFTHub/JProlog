@@ -446,12 +446,22 @@ true.
 false.
 ```
 
+*v4.2.0*: a **non-ground compound is decomposed** (ISO 8.5.1): `functor(f(X, b), N, A)` gives `N = f, A = 2`. It used to raise `instantiation_error`, because the mode was chosen with a groundness test rather than a variable test. Construct mode makes fresh unnamed cells.
+
 ### arg/3
 **Purpose**: Extracts or checks a specific argument from a compound term.
 
 **When to use**: Use to access fields in structured data without pattern matching.
 
-*v3.6.0*: full ISO error clauses (8.5.2.3) — an unbound index or term raises `instantiation_error`, a non-integer index raises `type_error(integer, N)`, a negative index raises `domain_error(not_less_than_zero, N)`, a non-compound term raises `type_error(compound, T)`; an out-of-range index still just fails. Also works on non-ground compounds: `arg(1, f(X), A)` gives `A = X` (previously failed).
+*v3.6.0*: full ISO error clauses (8.5.2.3) — an unbound term raises `instantiation_error`, a non-integer index raises `type_error(integer, N)`, a negative index raises `domain_error(not_less_than_zero, N)`, a non-compound term raises `type_error(compound, T)`; an out-of-range index still just fails. Also works on non-ground compounds: `arg(1, f(X), A)` gives `A = X` (previously failed).
+
+*v4.2.0*: an **unbound index enumerates** the arguments (ISO 8.5.2), lazily — one per redo, so `once/1` stops it at the first. It used to raise `instantiation_error`.
+
+```prolog
+?- arg(N, f(a, b), X).
+N = 1, X = a ;
+N = 2, X = b.
+```
 
 ```prolog
 % Example: Database of person records
@@ -751,6 +761,22 @@ T = f(a, b).
 ?- term_to_atom(1+2*3, A).
 A = '1+2*3'.   % operator notation preserved
 ```
+
+### term_string/2
+**Purpose**: Convert between a term and its **string** representation. The SWI string twin of `term_to_atom/2`, bidirectional and with the same rules. *(added v4.2.0)*
+
+```prolog
+?- term_string(f(x), S).
+S = "f(x)".
+
+?- term_string(T, "foo(a, B)").
+T = foo(a, B).
+
+?- term_string(1+2*3, S).
+S = "1+2*3".   % operator notation preserved
+```
+
+The string side also accepts an atom, so `term_string(T, 'f(a)')` parses; the term side is written with `quoted(true)`, exactly as `term_to_atom/2` writes it.
 
 ### atom_to_term/3
 **Purpose**: Parse an atom as a Prolog term, returning the term plus a list of variable bindings (`Name=Var` pairs). *(v2.8.2+)*
@@ -2054,6 +2080,30 @@ average_salary(Avg) :-
 List = [].  % Empty list, not failure
 ```
 
+### findall/4
+**Purpose**: `findall(+Template, :Goal, -List, +Tail)` — like `findall/3`, but the collected list
+ends in `Tail` instead of `[]` (a difference list). *(added v4.2.0)*
+
+**When to use**: to append the solutions of several goals without a second `append/3` pass.
+
+```prolog
+?- findall(X, member(X, [1, 2]), L, t).
+L = [1, 2|t].
+
+?- findall(X, member(X, [1, 2]), L, [3]).
+L = [1, 2, 3].
+
+?- findall(X, fail, L, t).
+L = t.
+
+% Concatenating two collections in one pass
+?- findall(X, member(X, [a, b]), L, T), findall(Y, member(Y, [c, d]), T, []).
+L = [a, b, c, d].
+```
+
+An unbound `Goal` raises `instantiation_error`; a non-callable one raises
+`type_error(callable, Goal)`.
+
 ### bagof/3
 **Purpose**: Collects solutions like findall/3 but respects variable bindings.
 
@@ -2328,6 +2378,8 @@ true.
 
 ?- writeq(Stream, Term).   % stream form
 ```
+
+*v4.2.0*: `writeq/2` resolves its stream exactly like `write/2` — it is captured by `with_output_to/2` and by the IDE console (it used to write straight to the process stdout through a static stream map), and it reports the ISO stream errors (`instantiation_error`, `domain_error(stream_or_alias, S)`, `existence_error(stream, S)`) instead of a bare evaluation error.
 
 *v3.5.0*: quoting/spacing fixes — `writeq(-(1))` prints `- 1`, which re-reads as the same compound (it used to print `-1`, a number); `','`, `'.'` and comment-opening symbolic atoms such as `'/*'` are quoted; `numbervars(true)` is implied (`'$VAR'(0)` prints as `A`); floats print in ISO syntax (`1.0e10`, `inf`, `-inf`, `nan`).
 
@@ -2930,6 +2982,13 @@ Note: `assert`/`retractall` on a predicate imply declaring it dynamic; the `:- d
 **Purpose**: Display current database contents.
 
 **When to use**: Use for debugging, inspecting dynamic predicates, or showing current state.
+
+*v4.2.0*: **`listing/1` works.** Every earlier release registered one implementation for the name
+`listing`, the arity-0 one, which rejected any argument — `listing(foo/1)` raised
+`listing/0 takes no arguments` despite being documented here since v2. Both arities are now
+separate v4 natives; a bare name lists every arity, `Name/Arity` lists one, and both print through
+the current output (so `with_output_to/2` and the IDE console capture them) with one full stop per
+clause instead of two.
 
 ```prolog
 % List everything

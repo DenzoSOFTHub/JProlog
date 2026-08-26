@@ -1,6 +1,6 @@
 # Engine v4 — implementation progress and handoff
 
-**Date**: 2026-08-26 · **Version**: 4.1.0 · **Design**:
+**Date**: 2026-08-26 · **Version**: 4.2.0 · **Design**:
 `docs/reports/report-engine-v4-design-2026-08-25.md` (part B) ·
 **Background**: `docs/reports/report-engine-deep-analysis-2026-08-24.md`
 
@@ -8,17 +8,17 @@
 meta-calls), W4 (coroutining), W5 (tabling), W6 (modules & prelude), W7 (engine state: streams,
 operators, writer), W8 (default switch, threads, debugger) and **W9 (retirement)** are implemented.
 **v4 is the DEFAULT engine since v4.0.0 and the recursive `QuerySolver` is deleted.**
-**Section 16 is the 4.1 wave A record** (the v2 machine is deleted) and the starting point for
-wave B; section 15 is W9; section 14 is W8; section 13 is W7; section 12 is W6; section 11 is W5;
-section 10 is W4; section 9 is W3; sections 1–8 describe W1/W2 and are still accurate except where
-sections 9 to 16 say otherwise.
+**Section 17 is the 4.1 wave B record** (the L-08 built-in migration); section 16 is 4.1 wave A
+(the v2 machine is deleted); section 15 is W9; section 14 is W8; section 13 is W7; section 12 is
+W6; section 11 is W5; section 10 is W4; section 9 is W3; sections 1–8 describe W1/W2 and are still
+accurate except where sections 9 to 17 say otherwise.
 
 **Since 4.1.0 there is ONE engine.** The v2 `MachineSolver` stayed selectable for one release
 (`-Djprolog.engine=v2`), as design decision 1 (B.17) required; wave A of 4.1 deletes it, with the
 `engine-v2` profile, the engine-selection API and `core.engine.Trail`. Anywhere below that says
 "on both engines" or "the v2 fallback", read it as history.
 
-**Suite**: 1196/1196 JUnit tests, one engine, one leg; 20/20 example programs.
+**Suite**: 1261/1261 JUnit tests, one engine, one leg; 20/20 example programs.
 
 **Post-review**: an independent verification of W1/W2 found two v4-only regressions, both fixed
 before W3 — `findall/3` was not opaque (**ISS-2025-0448**) and retract/assert loops were superlinear
@@ -2278,3 +2278,233 @@ survives the trust-me pop.
 potential `Undo.record` caller and a `TermCopier`/`TermUtils` user; when `op/3`, `b_setval/2` and
 `setarg/3` are native, `core.engine.v4.Undo` can lose its public `record` entry point and become
 `Machine`-internal, and `util.TermCopier` / `util.TermUtils` can be deleted (W9 deviation 3).
+
+---
+
+## 17. Release 4.2, wave B of 4.1 — the L-08 migration (v4.2.0, ISS-2025-0496..0501)
+
+**Status**: done for the hot and ISO-core families; the extended libraries stay bridged on purpose
+(LIM-037, re-scoped). Suite **1261/1261** (1196 + 65 new); **20/20 example programs** with every
+per-program "Successful queries" count unchanged
+(2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 0, 0).
+Names that can still reach `LegacyBuiltinAdapter`: **305 -> 234**.
+`src/main`: **71 899 -> 74 613 lines** (+2 714), **347 -> 351 files** (4 added, 0 deleted).
+
+### 17.1 What changed
+
+| ISS | Change | Files |
+|---|---|---|
+| 0496 | the `io` family: `format/1,2,3` (every directive, the column stops, the four capture sinks), `write/1,2`, `writeln/1,2`, `writeq/1,2`, `print/1,2`, `write_canonical/1,2`, `write_term/2,3`, `nl/0,1`, `tab/1,2`, `put_char/1,2`, `put_code/1,2`, `get_char/1,2`, `get_code/1,2`, `peek_char/1,2`, `peek_code/1,2`, `flush_output/0,1`, `current_input/1`, `current_output/1`, `set_input/1`, `set_output/1`, `at_end_of_stream/0,1` — 39 indicators | `core/engine/v4/NativeIo.java` (new, 786), `NativeBuiltins.java` |
+| 0497 | the text families: `atom_length/2`, `atom_concat/3`, `atom_chars/2`, `atom_codes/2`, `char_code/2`, `upcase_atom/2`, `downcase_atom/2`, `number_chars/2`, `number_codes/2`, `atom_number/2`, `atom_string/2`, `number_string/2`, `string_to_atom/2`, `string_chars/2`, `string_codes/2`, `string_length/2`, `string_concat/3`, `string_code/3`, `split_string/4`, `atomic_list_concat/2,3`, `term_to_atom/2`, **`term_string/2` (new)**, plus the three eager `list` ones `keysort/2`, `delete/3`, `flatten/2` — 26 indicators | `core/engine/v4/NativeText.java` (new, 914) |
+| 0498 | term construction and the rest of the type checks: `functor/3`, `arg/3`, `=../2`, `atom_to_term/3`, `number_vars/3`, `succ/2`, `plus/3`, `is_list/1`, `proper_list/1`, `partial_list/1`, `simple/1`, `string/1`, `must_be/2`, `unify_with_occurs_check/2` — 14 indicators | `core/engine/v4/NativeTerm.java` (new, 439) |
+| 0499 | the database, global-variable, flag and halt families: `current_predicate/1`, `retractall/1`, `abolish/1`, `dynamic/1`, `listing/0,1`, `nb_setval/2`, `b_setval/2`, `nb_current/2`, `nb_delete/1`, `current_prolog_flag/2`, `set_prolog_flag/2`, `halt/0,1`, **`findall/4` (new)** — 15 indicators; `Prolog.listing()` prints through `StreamManager.out()` and stops doubling the full stop | `core/engine/v4/NativeDb.java` (new, 483), `core/engine/Prolog.java` |
+| 0500 | **NOT DONE, recorded**: `op/3` and `statistics/2` stay bridged, so `Undo.record` stays public (the CLP(FD) bridge is the other user) | — |
+| 0501 | `Machine.isProtectedProcedure` — the `permission_error` protection covers the v4 native table and the prelude exports, not only the legacy registry; pays off 4.1-A deviation 4 | `core/engine/v4/{Machine,BuiltinTable,Modules,Prelude,NativeLibrary,NativeDb}.java` |
+
+**Added tests** (65): `core/engine/v4/EngineV4IoTest` (19), `EngineV4TextTest` (16),
+`EngineV4TermTest` (13), `EngineV4DatabaseTest` (17).
+
+**Nothing was deleted.** A migrated built-in's registry class stays registered *by name* even
+though it is never dispatched again, because `BuiltInRegistry.isBuiltIn` is what makes
+`assertz(write(_))` a `permission_error` and what `Prolog.checkBuiltInConflict` consults at
+consult time. `builtin.database.Listing1` was already dead (never registered) and stays so.
+
+### 17.2 How it works, in one page
+
+1. **The bridge's cost is two term walks and a map, and the first walk is the expensive one.**
+   `LegacyBuiltinAdapter.run` calls `Unify.resolve(goal)` — a full structural copy — before the
+   built-in sees anything, then (only if the built-in reported a binding) indexes the resolved
+   goal's unbound cells by name, then turns each `Map<String,Term>` back into unifications. For
+   `write(BigTerm)` the resolve alone is O(term) per call and the built-in then walks the same term
+   again to print it. A native gets the argument cells: `Writer`, `Unify` and the `NativeLibrary`
+   walkers all deref as they go, so `write/1` is one walk, not three. That is where the -22 % on a
+   small compound and the -59 % on a 2 000-element list come from, and why `m.resolve` survives in
+   the natives only for the small things (a stream argument, an option list, an error culprit).
+2. **A dereferenced cell is not a resolved term, and the mode analyses had to be re-read for it.**
+   Half a dozen registry built-ins chose their mode with `Term.isGround()` — which, on a resolved
+   goal, is the same as "not a variable" for an atomic argument but *not* the same for a compound
+   holding a variable. `atom_concat/3`, `atom_number/2`, `atom_string/2`, `number_string/2`,
+   `string_to_atom/2`, `string_chars/2` and `term_to_atom/2` keep that exact test, now written as
+   `Unify.isGround(t, guard)`; `functor/3` did not, and that is deviation 1 below.
+3. **Six enumerations became `Generator`s.** `atom_concat(-,-,+)`, `string_concat(-,-,+)`,
+   `arg(-,+,?)`, `current_predicate/1`, `nb_current/2` and `current_prolog_flag/2` each built one
+   `Map<String,Term>` per alternative before the first was looked at. Each is now one alternative
+   per redo, with the invariant-1 ordering around every multi-unification group
+   (`mark` / `forceTrail++` / unify / `undo` on failure / `forceTrail--`) and
+   `Machine.lastSolution()` on the last alternative so the deterministic tail leaves no choice
+   point.
+4. **`format/2,3` is a port, not a rewrite.** `NativeIo.Fmt` is `builtin.io.Format`'s
+   `processFormat`/`processFormatCode` with the `Map<String,Term>` argument removed and
+   `Unify.deref` in its place: the same directive table (`~a ~d ~D ~f ~e ~g ~s ~w ~q ~n ~t ~| ~+
+   ~i ~p ~@ ~c ~r ~R ~* ~~`), the same column-stop arithmetic, the same
+   `error(format(Message), format/2)` shape, the same `type_error(integer, X)` for `~d`. The two
+   directives that run Prolog (`~@` and `~p`) call `Machine.runSubQuery` with the output captured
+   through `StreamManager.setThreadLocalOutput` — collecting ALL solutions, as `solveMeta` did, so
+   a `~@` goal with several solutions still splices all of their output.
+5. **Protection is a question about the stores the machine dispatches from.** Wave A deleted the
+   Java `freeze`/`when`/`dif`/attributed-variable built-ins and, with their registrations, the only
+   thing that made `assertz(freeze(X, Y))` a `permission_error`. `Machine.isProtectedProcedure`
+   asks all three stores — `BuiltInRegistry.isBuiltIn`, `BuiltinTable.isNativeKey`,
+   `Modules.isLibraryIndicatorKey` — building the `"name/arity"` key once for the two key-based
+   ones and memoising the last answer (an assert/retract loop asks about the same indicator every
+   iteration). `checkModifiable`, `clause/2` and `retractall`/`abolish` all go through it.
+   **Consult does not**: it still checks the registry alone, which is what keeps the documented
+   library-override rule (a module may define its own `partition/4`) working.
+
+### 17.3 New invariants (add to section 3)
+
+57. **A native must not `resolve` what it is about to print, walk or unify.** `Writer`, `Unify` and
+    the `NativeLibrary` spine walkers all deref as they go; `Machine.resolve` is a full copy and is
+    exactly the cost the bridge imposed. Use it only for a small argument whose *shape* must be
+    inspected outside the engine (a stream term handed to `IOStreamUtils`, a `write_term` option
+    list handed to `WriteOptions`, an error culprit put into an ISO error term).
+58. **A mode test written as `Term.isGround()` in a registry built-in is `Unify.isGround` in the
+    native, not `instanceof Variable`.** The two differ exactly on a compound holding a variable,
+    and several text predicates depend on the difference. Change one deliberately or not at all.
+59. **Protection is asked of three stores.** Anything that can be dispatched — a registry entry, a
+    `BuiltinTable` entry, a prelude export — must answer `isProtectedProcedure`. A new native is
+    protected the moment it is registered; a new *registry* built-in still needs its arity entry.
+    Consult's own check (`Prolog.checkBuiltInConflict`) is deliberately narrower.
+60. **`BuiltinTable` is keyed by `(name, arity)`; `BuiltInFactory` is keyed by NAME.** That is not
+    a detail: it is why `listing/0` and `listing/1` can be two different implementations and why
+    `listing/1` had never worked. When migrating a family, check for a name whose arities the
+    registry conflated — the v4 table can express what the registry could not.
+
+### 17.4 Deviations from the 4.1-B brief, and why
+
+1. **Two ISO bugs were fixed rather than preserved.** The brief says "every ISO error term and mode
+   currently produced must be preserved". Two of the term built-ins produced an error where ISO
+   requires an answer, and preserving them would have meant writing the bug into a new native and
+   into a new test:
+   `functor(f(X), N, A)` raised `instantiation_error` (the registry version chose CONSTRUCT mode
+   with `Term.isGround()`, so a compound holding a variable took the wrong branch; ISO 8.5.1
+   decomposes any non-variable first argument), and `arg(N, T, A)` with `N` unbound raised
+   `instantiation_error` where ISO 8.5.2 — and §16.6 itself — say it should enumerate. Both are
+   pinned by `EngineV4TermTest` and listed in CHANGELOG.md and the release notes.
+   Construct-mode `functor/3` also makes *fresh unnamed* cells instead of variables literally named
+   `_G0`, `_G1` — the old names could alias a user variable of the same name on the legacy
+   name-keyed paths.
+2. **`writeq/2` and `put_code/2` were repaired in passing.** `writeq/2` resolved its stream through
+   `StreamManager.getOutputStream(alias)`, the static map that captured `System.out` at class-load,
+   so it escaped the thread-local capture `writeq/1` honoured — a native that reproduced that would
+   have been a native that violates invariant 11. `put_code/2` had an arity entry and an
+   implementation that threw. Both now behave like their siblings.
+3. **`listing/1` is new behaviour, not preserved behaviour.** There was nothing to preserve: the
+   name `listing` was bound to the arity-0 class, which rejects any argument. The native pair also
+   implements the by-name form the reference has always shown (`listing(parent)` lists every
+   arity), because the alternative was to delete a documented example.
+4. **`op/3` and `statistics/2` are NOT migrated, so `Undo` is still public** (ISS-2025-0500).
+   §16.6 expected `op/3` + `b_setval/2` + `setarg/3` to retire `Undo.record`. `b_setval/2` is
+   native now and `setarg/3` has been native since W1 — but `builtin.clpfd.v2.ClpfdV2Bridge`
+   records three undo actions of its own and is the bridge for the CLP(FD) predicates that are
+   still registry built-ins, so `Undo.record` could not have become `Machine`-internal in this wave
+   whatever `op/3` did. `op/3` on its own is a 287-line built-in that captures
+   `OperatorTable.getDefault()` at construction (a latent multi-engine bug — it should read
+   `Ops.current()`) and rewriting it changes how source parses: the highest-risk item in the wave
+   for no hot-path gain. It is the first item of the next wave.
+5. **`util.TermCopier` and `util.TermUtils` are still not deletable** — re-verified, not assumed.
+   `TermCopier` has live callers in `core.engine.Rule`, `Prolog.compile` and `core.terms.Variable`
+   (plus three bridged built-ins); `TermUtils` in `Prolog`, `ModuleManager`, `Module`,
+   `core.parser.TermParser` and `core.dcg.DCGTransformer` (plus six bridged built-ins). The
+   remaining users are CORE, not built-ins, so no amount of built-in migration removes them; that
+   is a `Rule`/`ModuleManager` change and belongs to its own issue.
+6. **`char_type/2`, `code_type/2`, `table/1`, `statistics/2` and the 11 debug predicates stay
+   bridged.** They are 268 lines of character-class enumeration, a declaration registry and the
+   spy/profile plumbing: no hot-path claim, and `char_type/2`'s enumerating mode would be a
+   generator rewrite of its own. Recorded in LIM-037 rather than half-done.
+7. **The 19 stream/parser `io` predicates stay bridged** (`open/3,4`, `close/1,2`, `read/1,2`,
+   `read_term/2,3`, `stream_property/2`, `set_stream/2`, `seek/4`, `set_stream_position/2`,
+   `stream_position/2`, `stream_position_data/3`, `character_count/2`, `line_count/2`,
+   `line_position/2`, `current_stream/3`, the byte I/O, `print_message/2`, `portray_clause/1,2`).
+   `read_term/2,3` alone is 442 lines of parser integration with its own option set; none of them
+   is in an inner loop, and the wave's point was the printing path. The output half of `io` — the
+   half that runs inside `forall(member(X, L), format(...))` — is migrated.
+8. **The A/B "no measurable change" band had to be established, not assumed.** The assert/retract
+   loop measured +3.0 %, +2.0 % and +6.1 % in three separate interleaved sessions and -1.1 % in the
+   final one. Building a third variant (C = every migration, ISS-2025-0501 reverted) settled it:
+   A vs C on that loop is **+0.3 %**, and C vs B measured **-4.9 %** twenty minutes later — while
+   `loop(1000000)`, whose code this wave does not touch at all, moved **-5.4 %** between A and B in
+   the same session. The noise floor on this VM is ~5 % for a 300 ms benchmark, which is exactly
+   what §16.6 said; the control row is now part of the harness so the next wave does not have to
+   rediscover it.
+
+### 17.5 A/B evidence
+
+Same shell session, alternating JVMs, 8 A/B pairs, `java -Xss4m -Xmx2g`, harness
+`scratchpad/41b/probe/AB42.java` (best of 6 warm iterations per figure, after a warm-up round; all
+output redirected to a sink so the console is not the bottleneck).
+**A** = the v4.1.0 build (`git archive v4.1.0` + `mvn -o compile`); **B** = this tree.
+
+| benchmark | A (median / min) | B (median / min) | change (median) |
+|---|---|---|---|
+| `fmt`: `format(atom(_), "~w \| ~a \| ~d~n", [f(x,[1,2]), abc, 42])` x100 000 | 184 / 163 ms | 116 / 106 ms | **-37 %** |
+| `fmt2`: `format("~w ~a ~d~n", ...)` to the current output x100 000 | 130 / 113 ms | 94 / 86 ms | **-28 %** |
+| `wr`: `write(point(1,2,[a,b,c])), nl` x200 000 | 275 / 262 ms | 214 / 202 ms | **-22 %** |
+| `wrbig`: `write/1` of a 2 000-element list x200 | 26 / 25 ms | 11 / 10 ms | **-59 %** |
+| `at`: `atom_codes` + `atom_codes` + `atom_length` + `atom_concat` + `sub_atom` x100 000 | 372 / 343 ms | 167 / 155 ms | **-55 %** |
+| `st`: `atomic_list_concat/3` join + split + `split_string/4` x50 000 | 134 / 126 ms | 78 / 70 ms | **-41 %** |
+| `tm`: `functor/3` + `arg/3` + `=../2` + `succ/2` x100 000 | 254 / 241 ms | 119 / 111 ms | **-53 %** |
+| `ks`: `keysort/2` of 2 000 pairs x200 | 74 / 67 ms | 14 / 13 ms | **-82 %** |
+| `ar`: `assertz(item(N)), retract(item(N))` x200 000 | 350 / 325 ms | 346 / 327 ms | -1 % |
+| **control** `loop(1000000)` — code this wave does not touch | 428 / 380 ms | 405 / 384 ms | -5 % |
+
+The control row is the point of the table as much as the wins are: an untouched benchmark moved
+5 % between the two sides in the same session, so the assert/retract row is "no measurable change"
+and every other row is far outside the noise. `keysort/2` is the extreme case because the bridge
+resolved a 2 000-pair list, indexed its cells and built a solution map for a single answer; the
+native compares the same pairs with `Unify.compareTerms` and unifies once.
+
+**Behaviour, not just speed**: a characterisation harness (`scratchpad/41b/probe/Char.java`) ran
+~250 goals across the four families — every mode and every documented error of each migrated
+predicate — against the 4.1.0 classes and against this tree, and diffed the answers, the captured
+output and the exception terms. The only differences are the six deliberate ones of 17.4 (plus
+`statistics/2`'s runtime numbers). The Reference Manual's own examples were re-run the same way
+(`scratchpad/manual/ExCheck.java` over the extracted `examples.txt`): identical apart from
+timestamps and gensym numbers.
+
+### 17.6 What remains, and where the next wave starts
+
+**The residual, counted from a live `Prolog`** by `scratchpad/41b/probe/Fam2.java` (it subtracts
+the three sets that never reach the adapter — native-shadowed, machine-inline/control,
+prelude-defined — instead of estimating them, which is why its "before" figure is 305 and §16.6's
+was "~317"):
+
+| | 4.1.0 | 4.2.0 |
+|---|---:|---:|
+| registered names | 410 | 410 |
+| shadowed by a v4 native | 49 | **121** |
+| machine-inline / control constructs | 45 | 44 |
+| defined by a prelude library module | 11 | 11 |
+| **can reach `LegacyBuiltinAdapter`** | **305** | **234** |
+| (§16.6's headline metric: registered, not native-shadowed) | 361 | 289 |
+
+Of the 234, **191 are the extended libraries** — jdbc 28, filesystem 15, threading 15, crypto 14,
+ffi 14, graph 13, network 13, persistence 13, os 12, http 11, datetime 10, json 6, logging 6,
+regex 6, dcg 5, csv 4, xml 3, clpfd 3. Every one of them is a call into a database, a socket, the
+file system, a process or a Java object; the adapter hop is invisible next to what it does, and
+migrating them buys nothing measurable. **They should stay bridged.**
+
+**The recommended next wave is performance, not more migration**, in this order:
+
+1. **`op/3` (and `char_conversion/2`)** — the one migration still worth doing, and for correctness
+   rather than speed: the built-in captures `OperatorTable.getDefault()` in its constructor instead
+   of reading `Ops.current()`, so in a two-engine process `op/3` can write into the wrong store.
+   Doing it together with the CLP(FD) bridge's three `Undo.record` sites would finally let
+   `core.engine.v4.Undo.record` become `Machine`-internal (ISS-2025-0500).
+2. **Re-land first-argument indexing in the v4 machine.** ISS-2025-0340 reverted it because
+   `KnowledgeBase.getRulesWithFirstArgIndex` returned an empty list for an unpopulated index;
+   ISS-2025-0344 fixed index maintenance and made a miss degrade to the full clause list, and the
+   v4 `ClauseStore` has carried an incremental first-argument index since W2. The `lk`/`lk0`
+   benchmarks of 16.5 are the ones to watch.
+3. **The remaining `io` predicates, if and only if a benchmark asks for them.** `read_term/2,3` is
+   the only one with a plausible inner-loop use (a program that reads a large term stream), and it
+   is 442 lines: write the benchmark first.
+4. **`char_type/2` / `code_type/2` as generators**, which is the last eager enumeration in the
+   ISO-core set.
+
+**Rules a wave-B-style migration must follow** (they are invariants 57–60 plus the three structural
+ones of §16.6): write the characterisation harness FIRST and diff it, not just the JUnit tests —
+it is what caught every mode difference in this wave; one mark/undo extent around a group of
+unifications inside a `Generator.next()`; `Machine.lastSolution()` on the last alternative; and
+measure with a control benchmark in the harness so the noise floor is visible in the same table as
+the result.

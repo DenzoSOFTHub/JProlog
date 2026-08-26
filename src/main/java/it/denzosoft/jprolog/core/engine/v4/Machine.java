@@ -1836,8 +1836,51 @@ public final class Machine {
         if (b instanceof Number || b instanceof PrologString) throw Errors.type("callable", b, context);
     }
 
+    // START_CHANGE: ISS-2025-0501 - 4.1 wave B: the protection covers the v4 NATIVE table and the
+    // prelude library exports too, not only the legacy registry.
+    //
+    // 4.1-A deviation 4: deleting the Java `freeze/2`, `when/2`, `dif/2` and attributed-variable
+    // built-ins deleted their registry entries with them, and `isBuiltIn` needs a registration AND
+    // an arity entry — so `assertz(freeze(X, Y))` silently became legal while calling freeze/2 still
+    // ran the prelude clause. Asking the two stores the machine actually dispatches from
+    // (`BuiltinTable` and the prelude) restores the error for those seven and, by the same rule,
+    // for the 18 other native indicators that had no registry entry (`put_code/2`, `memberchk/2`,
+    // `selectchk/3`, `copy_term/3`, `unifiable/3`, `term_string/2`, `findall/4`, ...).
+    //
+    // It does NOT change the documented library-override rule: a module that DEFINES partition/4 in
+    // its source still overrides the library one, because consult checks
+    // `Prolog.checkBuiltInConflict` (the registry) and never comes through here.
+    /** Is {@code f/n} a procedure the user may not add clauses to, take clauses from, or abolish? */
+    boolean isProtectedProcedure(String f, int n) {
+        // A one-entry memo: an assert/retract loop asks about the same indicator every iteration,
+        // and none of the three stores can change while ONE query runs (the registry changes only
+        // through Prolog.enableSafeMode / registerBuiltIn, the native table only at construction,
+        // the prelude owner index only once per JVM). A machine lives for one query.
+        if (n == protectedArity && f.equals(protectedFunctor)) return protectedAnswer;
+        boolean r;
+        if (engine.registry() != null && engine.registry().isBuiltIn(f, n)) {
+            r = true;
+        } else {
+            String key = f + "/" + n;                          // built ONCE for both stores
+            r = engine.natives().isNativeKey(key) || engine.modules4().isLibraryIndicatorKey(key);
+        }
+        protectedFunctor = f;
+        protectedArity = n;
+        protectedAnswer = r;
+        return r;
+    }
+
+    private String protectedFunctor;
+    private int protectedArity = -1;
+    private boolean protectedAnswer;
+
+    /** The predicate indicator term {@code f/n}, for an error message. */
+    static Term indicator(String f, int n) {
+        return new CompoundTerm(new Atom("/"),
+            Arrays.asList((Term) new Atom(f), (Term) Number.valueOf(n)));
+    }
+
     private void checkModifiable(Term head, String context) {
-        if (engine.registry() == null) return;
         String f;
         int ar;
         if (head instanceof Atom) { f = ((Atom) head).getName(); ar = 0; }
@@ -1845,11 +1888,11 @@ public final class Machine {
             f = ((CompoundTerm) head).getName();
             ar = ((CompoundTerm) head).getArguments().size();
         } else return;
-        if (engine.registry().isBuiltIn(f, ar)) {
-            Term pi = new CompoundTerm(new Atom("/"), Arrays.asList((Term) new Atom(f), (Term) Number.valueOf(ar)));
-            throw Errors.permission("modify", "static_procedure", pi, context);
+        if (isProtectedProcedure(f, ar)) {
+            throw Errors.permission("modify", "static_procedure", indicator(f, ar), context);
         }
     }
+    // END_CHANGE: ISS-2025-0501
 
     private void assertClause(Term clause, boolean front) {
         Term checkedHead = checkClauseArgument(clause, front ? "asserta/1" : "assertz/1", true);

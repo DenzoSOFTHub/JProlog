@@ -1,5 +1,75 @@
 # JProlog - Release Notes
 
+## Release 4.2.0 - 2026-08-26
+
+### Wave B of 4.1: the hot and ISO-core built-in families leave the eager bridge
+
+94 predicate indicators move from the legacy `(goal, Map<String,Term>, List<Map<String,Term>>)`
+contract to the **v4 native SPI**: the `io` write family and `format/1,2,3`, the atom / string /
+character / conversion families, `functor/3` / `arg/3` / `=../2`, the remaining type checks,
+`succ/2` / `plus/3` / `unify_with_occurs_check/2`, the database family, the global variables and
+the ISO flags. ISS-2025-0496..0501. Wave record:
+`docs/reports/report-engine-v4-progress.md` section 17.
+
+**1261/1261 JUnit tests** (1196 + 65 new), **20/20 example programs** with unchanged per-program
+counts. Names that can still reach `LegacyBuiltinAdapter`: **305 -> 234**.
+
+#### Upgrading
+
+Nothing to do. The migration is behaviour-preserving down to the error terms — a characterisation
+run of ~250 goals over the four families is byte-identical between 4.1.0 and 4.2.0 apart from the
+six deliberate changes below, and the generated Reference Manual's ~450 worked examples produce the
+same answers.
+
+```
+term_string(?Term, ?String)   NEW. The SWI string twin of term_to_atom/2, both directions.
+findall(Tmpl, Goal, L, Tail)  NEW. findall/3 with an open tail: L ends in Tail, not [].
+listing(foo/1) / listing(foo) NOW WORKS. It raised "listing/0 takes no arguments" in every
+                              release that documented it (BuiltInFactory binds one class per NAME
+                              and `listing` was bound to the arity-0 class). A bare name lists
+                              every arity. listing/0,1 also print through StreamManager.out(), so
+                              with_output_to/2 and the IDE console capture them, and a clause is no
+                              longer printed with a doubled full stop.
+arg(N, T, A), N unbound       NOW ENUMERATES (ISO 8.5.2), lazily. It raised instantiation_error.
+functor(f(X), N, A)           NOW ANSWERS N=f, A=1 (ISO 8.5.1). It raised instantiation_error,
+                              because the mode was chosen with Term.isGround().
+writeq(Stream, T)             now resolves Stream the way write/2 does: it is captured by
+                              with_output_to/2 and by the IDE console (it went straight to the
+                              process stdout), and reports the ISO stream errors instead of a bare
+                              evaluation error for a non-stream argument.
+put_code(Stream, Code)        now writes to Stream. It threw "put_code/1 requires exactly 1
+                              argument" although the arity entry existed.
+assertz/retract/retractall/   now raise permission_error for freeze/2, when/2, dif/2, put_attr/3,
+abolish/clause on a NATIVE    get_attr/3, del_attr/2, attvar/1 and every other v4 native or prelude
+or a prelude export           export, as they did before 4.1.0 deleted those built-ins' Java
+                              classes. Consulting a module that DEFINES a library predicate still
+                              overrides it — that rule is unchanged.
+```
+
+#### What is new in this release
+
+- **Printing is 22-59 % faster.** `write/1` of a 2 000-element list is 59 % faster, `format/3` into
+  an atom 37 %, `write/1`+`nl/0` of a small compound 22 %. The bridge used to `Unify.resolve` the
+  whole goal — a complete copy of the term — before printing a single character.
+- **Text and term inspection are ~50 % faster.** The `atom_*` loop -55 %, `atomic_list_concat` +
+  `split_string` -41 %, `functor`/`arg`/`=..`/`succ` -53 %, `keysort/2` of 2 000 pairs -82 %.
+- **Four enumerations became lazy generators**: `atom_concat(-,-,+)`, `string_concat(-,-,+)`,
+  `arg(-,+,?)`, `current_predicate/1`, `nb_current/2` and `current_prolog_flag/2` produce one
+  solution per redo instead of a pre-built list, so `once/1` over them stops at the first.
+- **`b_setval/2` records its undo on the machine's own trail** instead of going through the
+  `core.engine.v4.Undo` doorway.
+
+#### Known limitation (LIM-037, re-scoped)
+
+234 registered names still reach `LegacyBuiltinAdapter`: 191 of them are the extended libraries
+(jdbc, filesystem, threading, crypto, ffi, graph, network, persistence, os, http, datetime, json,
+logging, regex, dcg, csv, xml, clpfd), which call out to a database, a socket, the file system, a
+process or a Java object and have no hot-path claim; the rest are 19 stream/parser `io` predicates
+(`open`, `close`, `read`, `read_term`, `stream_property`, the byte I/O), `op/3`, `statistics/2`,
+`char_type/2`, `code_type/2`, `table/1` and the 11 debug/profiler predicates.
+
+---
+
 ## Release 4.1.0 - 2026-08-26
 
 ### Wave A of 4.1: one engine

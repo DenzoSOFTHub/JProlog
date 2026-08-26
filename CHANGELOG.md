@@ -7,6 +7,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.2.0] - 2026-08-26
+
+### Wave B of 4.1: the hot and ISO-core built-in families leave `LegacyBuiltinAdapter`
+
+Item 2 of the 4.1 plan (section 15.6 / 16.6 of the engine report): the eager registry built-ins
+move to the **v4 native SPI**, family by family, each with the §16.6 measurement method — pin the
+behaviour first, migrate, then A/B the same session. Wave record, invariants and the starting point
+for the next wave are in `docs/reports/report-engine-v4-progress.md` (new section 17).
+ISS-2025-0496..0501.
+
+A bridged built-in reaches the machine through `LegacyBuiltinAdapter`, whose first act is
+`Unify.resolve` of the WHOLE goal, followed by a `HashMap` of the goal's cells and one
+`Map<String,Term>` per solution. For `write(BigTerm)`, `format("~w", [BigTerm])` or
+`keysort(BigList, _)` that is a complete copy of the argument before a single character is printed
+or a single pair compared. A v4 native sees the argument cells and acts on the machine directly.
+
+**Migrated** (94 predicate indicators, 4 new files in `core.engine.v4`, 2 622 lines):
+
+| ISS | Family | Predicates |
+|---|---|---|
+| 0496 | `io` — `NativeIo` | `format/1,2,3` (every directive, the column stops, the four capture sinks), `write/1,2`, `writeln/1,2`, `writeq/1,2`, `print/1,2`, `write_canonical/1,2`, `write_term/2,3`, `nl/0,1`, `tab/1,2`, `put_char/1,2`, `put_code/1,2`, `get_char/1,2`, `get_code/1,2`, `peek_char/1,2`, `peek_code/1,2`, `flush_output/0,1`, `current_input/1`, `current_output/1`, `set_input/1`, `set_output/1`, `at_end_of_stream/0,1` |
+| 0497 | `atom`/`string`/`character`/`conversion` + the 3 eager `list` ones — `NativeText` | `atom_length/2`, `atom_concat/3`, `atom_chars/2`, `atom_codes/2`, `char_code/2`, `upcase_atom/2`, `downcase_atom/2`, `number_chars/2`, `number_codes/2`, `atom_number/2`, `atom_string/2`, `number_string/2`, `string_to_atom/2`, `string_chars/2`, `string_codes/2`, `string_length/2`, `string_concat/3`, `string_code/3`, `split_string/4`, `atomic_list_concat/2,3`, `term_to_atom/2`, **`term_string/2` (new)**, `keysort/2`, `delete/3`, `flatten/2` |
+| 0498 | `term`/`type`/`unification`/`arithmetic` — `NativeTerm` | `functor/3`, `arg/3`, `=../2`, `atom_to_term/3`, `number_vars/3`, `succ/2`, `plus/3`, `is_list/1`, `proper_list/1`, `partial_list/1`, `simple/1`, `string/1`, `must_be/2`, `unify_with_occurs_check/2` |
+| 0499 | `database`/`system`/`exception` — `NativeDb` | `current_predicate/1`, `retractall/1`, `abolish/1`, `dynamic/1`, `listing/0,1`, `nb_setval/2`, `b_setval/2`, `nb_current/2`, `nb_delete/1`, `current_prolog_flag/2`, `set_prolog_flag/2`, `halt/0,1`, **`findall/4` (new)** |
+| 0501 | — | `permission_error` protection widened from the legacy registry to the v4 native table and the prelude exports |
+
+**Names that can still reach the adapter: 305 -> 234** (`scratchpad/41b/probe/Fam2.java` counts them
+from a live `Prolog`: 410 registered names, minus 121 shadowed by a native, minus 44 the machine
+handles inline, minus 11 a prelude library defines). By §16.6's headline metric — registered names
+not shadowed by a native — **361 -> 289**. What is left is the extended libraries (jdbc 28,
+filesystem 15, threading 15, crypto 14, ffi 14, graph 13, network 13, persistence 13, os 12,
+http 11, datetime 10, json/logging/regex 6 each, dcg 5, csv 4, xml 3, clpfd 3), the 19 remaining
+`io` predicates (`open`, `close`, `read`, `read_term`, `stream_property` and the byte I/O),
+`op/3`, `statistics/2`, `char_type/2`, `code_type/2`, `table/1` and the 11 `debug` predicates —
+that residual is the new scope of LIM-037.
+
+**New behaviour**
+
+- **`term_string/2`** — the SWI string twin of `term_to_atom/2`, in both directions.
+- **`findall/4`** — `findall(Template, Goal, List, Tail)`: `List` ends in `Tail` instead of `[]`.
+- **`listing/1` works at all.** `BuiltInFactory` binds ONE implementation per NAME, and `listing`
+  was bound to `Listing0`, whose first statement rejects any argument: `listing(foo/1)` raised
+  "listing/0 takes no arguments" in every release that documented it. The v4 table is keyed by
+  `(name, arity)`, so `listing/0` and `listing/1` are two entries. A bare name lists every arity
+  (`listing(parent)`), as the reference has always shown. `builtin.database.Listing1` was dead code
+  and stays unregistered.
+- **`arg/3` enumerates** with an unbound index (`arg(N, f(a,b), X)` gives `N=1,X=a ; N=2,X=b`)
+  instead of raising `instantiation_error`; ISO 8.5.2, and a lazy generator, so `once/1` stops it.
+- **`functor/3` decomposes a non-ground compound.** `functor(f(X,b), N, A)` raised
+  `instantiation_error` because the registry version chose its mode with `Term.isGround()`; ISO
+  8.5.1 decomposes any non-variable first argument, so it now answers `N=f, A=2`.
+- **`writeq/2` is captured.** It resolved its stream through `StreamManager.getOutputStream(alias)`,
+  the static map that captured `System.out` at class-load, so it escaped `with_output_to/2` and the
+  IDE console that `writeq/1` already honoured — and raised a non-ISO evaluation error for a
+  non-atom stream. It resolves its stream exactly like `write/2` now.
+- **`put_code/2` exists.** It had an arity entry but the class threw
+  "put_code/1 requires exactly 1 argument".
+- **`listing/0,1` print through `StreamManager.out()`** (invariant 11) instead of `System.out`, so
+  `with_output_to/2` and the IDE's per-thread console capture them; and a clause is no longer
+  printed with a doubled full stop (`foo(a)..`), because `Rule.toString()` already ends in one.
+- **ISS-2025-0501 pays off 4.1-A deviation 4**: `assertz`/`retract`/`retractall`/`abolish`/`clause`
+  raise `permission_error(modify|access, static_procedure|private_procedure, PI)` again for
+  `freeze/2`, `when/2`, `dif/2`, `put_attr/3`, `get_attr/3`, `del_attr/2` and `attvar/1` — and, by
+  the same rule, for every v4 native and every prelude export. Wave A had deleted their Java
+  classes and with them their registry entries, and `BuiltInRegistry.isBuiltIn` needs a registration
+  AND an arity entry, so `assertz(freeze(X, Y))` had quietly become legal. The documented
+  library-override rule is untouched: a module that DEFINES `partition/4` in its source still
+  overrides the library one, because consult checks the registry (`Prolog.checkBuiltInConflict`) and
+  never comes through `Machine.checkModifiable`.
+
+**Deliberately NOT changed**: the sandbox deny list (`builtin.io` stays allowed), the four-port
+trace contract (`EngineV4TraceTest`'s 16 pinned oracles are byte-identical — a native emits the same
+Call/Exit/Fail/Redo the bridge did), `ResourceGuard` budget/cancel inside every new generator, and
+the IDE contract (`StreamManager.setThreadLocalOutput`, `Prolog.setTracing`, `getEngineContext`,
+`getLastListingOutput`).
+
+**Measured** (8 interleaved A/B JVM pairs in one shell session, `java -Xss4m -Xmx2g`, best of 6 warm
+iterations per figure, harness `scratchpad/41b/probe/AB42.java`; A = the v4.1.0 build,
+B = this tree):
+
+| benchmark | A (median / min) | B (median / min) | change |
+|---|---|---|---|
+| `format(atom(_), "~w \| ~a \| ~d~n", ...)` x100 000 | 184 / 163 ms | 116 / 106 ms | **-37 %** |
+| `format/2` to a stream x100 000 | 130 / 113 ms | 94 / 86 ms | **-28 %** |
+| `write/1` + `nl/0` of a small compound x200 000 | 275 / 262 ms | 214 / 202 ms | **-22 %** |
+| `write/1` of a 2 000-element list x200 | 26 / 25 ms | 11 / 10 ms | **-59 %** |
+| `atom_codes`/`atom_length`/`atom_concat`/`sub_atom` x100 000 | 372 / 343 ms | 167 / 155 ms | **-55 %** |
+| `atomic_list_concat`/`split_string` x50 000 | 134 / 126 ms | 78 / 70 ms | **-41 %** |
+| `functor`/`arg`/`=..`/`succ` x100 000 | 254 / 241 ms | 119 / 111 ms | **-53 %** |
+| `keysort/2` of 2 000 pairs x200 | 74 / 67 ms | 14 / 13 ms | **-82 %** |
+| `assertz` + `retract` x200 000 | 350 / 325 ms | 346 / 327 ms | -1 % (none) |
+| **control**: `loop(1000000)` (code this wave does not touch) | 428 / 380 ms | 405 / 384 ms | -5 % |
+
+The control row is the noise floor: an untouched benchmark moved 5 % between the two sides in the
+same session, so anything inside +/-5 % is "no measurable change" — which is where the
+assert/retract loop sits.
+
+**Suite**: 1196 -> **1261/1261** (65 new tests in `EngineV4IoTest` 19, `EngineV4TextTest` 16,
+`EngineV4TermTest` 13, `EngineV4DatabaseTest` 17). **20/20 example programs** with every
+per-program "Successful queries" count unchanged
+(2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 0, 0). `src/main`: **71 899 -> 74 613
+lines**, **347 -> 351 files** (4 added, 0 deleted).
+
+**New files**: `core/engine/v4/NativeIo.java`, `NativeText.java`, `NativeTerm.java`,
+`NativeDb.java`. The registry classes they shadow are kept, unregistered from dispatch but still
+registered by name so `BuiltInRegistry.isBuiltIn` keeps answering (that is what makes
+`assertz(write(_))` a permission error).
+
+---
+
 ## [4.1.0] - 2026-08-26
 
 ### Wave A of 4.1: one engine

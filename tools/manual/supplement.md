@@ -511,6 +511,9 @@ hi
 true.
 ```
 
+*v4.2.0*: the two-argument form actually writes to `Stream`. Before, the arity entry existed but
+the implementation raised "put_code/1 requires exactly 1 argument".
+
 ### unify_with_occurs_check/2
 **Purpose**: ISO unification **with** the occurs check, whatever the `occurs_check` flag says:
 it fails rather than building a cyclic term.

@@ -105,10 +105,17 @@ final class Prelude {
 
     /** The library module that exports {@code f/n}, or null. Never loads anything. */
     static String owner(String f, int n) {
+        return ownerKey(f + "/" + n);
+    }
+
+    // START_CHANGE: ISS-2025-0501 - the same lookup with a key the caller already built
+    /** The library module that exports {@code key} ({@code "name/arity"}), or null. */
+    static String ownerKey(String key) {
         if (ownerIndex == null) libraries();
         Map<String, String> idx = ownerIndex;
-        return (idx == null) ? null : idx.get(f + "/" + n);
+        return (idx == null) ? null : idx.get(key);
     }
+    // END_CHANGE: ISS-2025-0501
 
     /** Parse (once per JVM) the clauses and meta declarations of one library resource. */
     static Parsed parse(String resource) {

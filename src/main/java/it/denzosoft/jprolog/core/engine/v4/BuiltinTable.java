@@ -33,6 +33,13 @@ public final class BuiltinTable {
 
     public boolean isNative(String name, int arity) { return entries.containsKey(key(name, arity)); }
 
+    // START_CHANGE: ISS-2025-0501 - the same question asked with a key the caller already built
+    // (Machine.isProtectedProcedure asks the native table AND the prelude index, and both are
+    // indexed by "name/arity"; building the string twice showed up on the assert/retract loop).
+    /** Is {@code key} ({@code "name/arity"}) a native? */
+    boolean isNativeKey(String key) { return entries.containsKey(key); }
+    // END_CHANGE: ISS-2025-0501
+
     public int size() { return entries.size(); }
 }
 // END_CHANGE: ISS-2025-0443

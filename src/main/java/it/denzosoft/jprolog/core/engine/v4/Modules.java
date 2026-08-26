@@ -338,6 +338,13 @@ public final class Modules {
         return Prelude.owner(f, n) != null;
     }
 
+    // START_CHANGE: ISS-2025-0501 - the same test with a key the caller already built
+    /** Is {@code key} ({@code "name/arity"}) exported by an autoloadable library? */
+    boolean isLibraryIndicatorKey(String key) {
+        return Prelude.ownerKey(key) != null;
+    }
+    // END_CHANGE: ISS-2025-0501
+
     /** Does an autoloadable library actually define {@code f/n} in Prolog? (An export with no
      *  clauses — {@code lists:length/2} — is implemented as a built-in and answers false.) */
     public boolean hasLibraryClauses(String f, int n) {

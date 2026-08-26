@@ -1312,7 +1312,11 @@ public class Prolog {
      */
     public void listing() {
         String listing = getListingOutput();
-        System.out.println(listing);
+        // START_CHANGE: ISS-2025-0499 - 4.1 wave B: through StreamManager.out() (invariant 11), so
+        // listing/0 is captured by with_output_to/2 and by the IDE's per-thread console override
+        // instead of escaping to the process stdout.
+        it.denzosoft.jprolog.builtin.io.StreamManager.out().println(listing);
+        // END_CHANGE: ISS-2025-0499
         // Also store for retrieval by IDE
         lastListingOutput = listing;
     }
@@ -1324,7 +1328,9 @@ public class Prolog {
      */
     public void listing(String predicateIndicator) {
         String listing = getListingOutput(predicateIndicator);
-        System.out.println(listing);
+        // START_CHANGE: ISS-2025-0499 - see listing() above (invariant 11)
+        it.denzosoft.jprolog.builtin.io.StreamManager.out().println(listing);
+        // END_CHANGE: ISS-2025-0499
         // Also store for retrieval by IDE
         lastListingOutput = listing;
     }
@@ -1341,7 +1347,10 @@ public class Prolog {
         } else {
             sb.append("% Knowledge base contains " + rules.size() + " clauses:\n\n");
             for (Rule rule : rules) {
-                sb.append(rule.toString()).append(".\n");
+                // ISS-2025-0499: Rule.toString() already ends in the full stop; appending one
+                // printed every clause as "foo(a)..". Visible in listing/0 and, since listing/1
+                // works at all, there too.
+                sb.append(rule.toString()).append("\n");
             }
         }
         
@@ -1377,7 +1386,7 @@ public class Prolog {
         for (Rule rule : rules) {
             Term head = rule.getHead();
             if (matchesPredicate(head, functor, arity)) {
-                sb.append(rule.toString()).append(".\n");
+                sb.append(rule.toString()).append("\n");   // ISS-2025-0499: no doubled full stop
                 found = true;
             }
         }

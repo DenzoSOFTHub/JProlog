@@ -3,54 +3,58 @@
 This document describes current limitations in JProlog implementation.
 When an issue is resolved, the corresponding limitation should be removed from this file.
 
-**Last updated**: 2026-08-26 (v4.1.0, wave A)
+**Last updated**: 2026-08-26 (v4.2.0, 4.1 wave B)
 
 ---
 
-## LIM-037: a large part of the library still runs on the eager built-in bridge
+## LIM-037: the EXTENDED LIBRARIES still run on the eager built-in bridge
 
-**Wave W9 is done** (v4.0.0, ISS-2025-0484..0488): the recursive `QuerySolver` engine is deleted,
-`BuiltInWithContext` is typed against the `SolverContext` interface, `CollectionBuiltInAdapter`,
-`CutStatus`, `MutableCutStatus`, `LayeredMap` and the seven control-construct built-ins are gone,
-and the engine has no name-keyed hop left. **4.1.0 wave A** (ISS-2025-0491) deleted the v2
-`MachineSolver` too, so there is exactly one engine and `-Djprolog.engine` selects nothing.
+**Re-scoped in v4.2.0 (4.1 wave B, ISS-2025-0496..0499).** The hot and ISO-core families are off
+`core.engine.v4.LegacyBuiltinAdapter`: the `io` write family and `format/1,2,3`, the
+atom/string/character/conversion families, `functor/3`/`arg/3`/`=../2`, the remaining type checks,
+`succ/2`/`plus/3`/`unify_with_occurs_check/2`, the database family
+(`current_predicate/1`, `retractall/1`, `abolish/1`, `dynamic/1`, `listing/0,1`), the global
+variables and the ISO flags are v4 natives. Waves W3/W9 had already taken the list library, the
+control and collection predicates, the term walkers, `clause/2`, `predicate_property/2`, CLP(FD)
+posting/labeling, `current_op/3` and the two atom slicers.
 
-What is left of this limitation is limit **L-08** of the design. Of the 416 registered predicate
-names, 63 are v4 natives and about 40 more are control constructs or inline built-ins the machine
-handles itself and never dispatches (`,/2`, `;/2`, `->/2`, `\\+/1`, `call/N`, `catch/3`, `!/0`,
-`=/2`, `is/2`, the arithmetic and term comparisons, the type checks, `once/1`, `ignore/1`,
-`forall/2`, `between/3`, `repeat/0`); the remaining **~310 still run through
-`core.engine.v4.LegacyBuiltinAdapter`** with the eager
-`(goal, Map<String,Term>, List<Map<String,Term>>)` contract. Nothing they do reaches a recursive
-solver (there is none), and a deterministic one costs only two extra term walks per call — the
-adapter dereferences the goal and indexes its unbound cells by name — but a *nondeterministic* one
-still materialises every solution before the first is delivered.
+**What is left**, measured from a live `Prolog` by `scratchpad/41b/probe/Fam2.java`: of 410
+registered names, **121** are shadowed by a v4 native, **44** are control constructs or inline
+built-ins the machine handles itself and never dispatches, **11** are defined by a prelude library
+module (`Modules.overridesBuiltin` routes them to `callUser` before the adapter) — so **234 names
+can still reach the adapter** (305 before this wave). They are:
 
-Native on v4 (65 indicators, so the adapter is never involved): the list library (`member/2`,
-`memberchk/2`, `append/3`, `select/3`, `selectchk/3`, `nth0/3`, `nth1/3`, `last/2`, `reverse/2`,
-`length/2`, `msort/2`, `sort/2`, `sort/4`, `predsort/3`, `sum_list/2`, `sumlist/2`, `numlist/3`,
-`max_list/2`, `min_list/2`), the control and collection predicates (`phrase/2,3`, `bagof/3`,
-`setof/3`, `aggregate_all/3`, `with_output_to/2`), the term predicates (`copy_term/2,3`,
-`term_variables/2`, `ground/1`, `numbervars/3`, `subsumes_term/2`, `compare/3`, `setarg/3`,
-`nb_setarg/3`, `cyclic_term/1`, `acyclic_term/1`, `unifiable/3`, `term_attvars/2`), the database
-and module predicates (`clause/2`, `predicate_property/2`, `current_module/1`), the atom/string
-slicers (`sub_atom/5`, `sub_string/5`), coroutining (`put_attr/3`, `get_attr/3`, `del_attr/2`,
-`attvar/1`), tabling (`abolish_all_tables/0`, `abolish_table/1`, `current_table/2`), CLP(FD)
-(`in/2`, `#=`, `#\=`, `#<`, `#>`, `#=<`, `#>=`, `all_different/1`, `all_distinct/1`, `label/1`,
-`labeling/2`), the operator store (`current_op/3`) and the global variables (`nb_getval/2`,
-`b_getval/2`). `maplist/2..7`, `foldl/4..7`, `include/3`, `exclude/3`, `partition/4,5`,
-`member/2`, `append/3`, `freeze/2`, `frozen/2`, `when/2`, `dif/2` and `?=/2` are Prolog clauses in
-`src/main/resources/prelude/`.
+- **the extended libraries, 191 names** — `jdbc` 28, `filesystem` 15, `threading` 15, `crypto` 14,
+  `ffi` 14, `graph` 13, `network` 13, `persistence` 13, `os` 12, `http` 11, `datetime` 10,
+  `json` 6, `logging` 6, `regex` 6, `dcg` 5 (the non-default translators), `csv` 4, `xml` 3,
+  `clpfd` 3 (`fd_dom`, `fd_size`, `indomain`). **None of them has a hot-path claim**: every one is
+  a call into a database, a socket, the file system, a process or a Java object, and the adapter
+  hop is invisible next to what it does. They can stay bridged indefinitely.
+- **19 `io` predicates** — `open/3,4`, `close/1,2`, `read/1,2`, `read_term/2,3`,
+  `stream_property/2`, `set_stream/2`, `seek/4`, `set_stream_position/2`, `stream_position/2`,
+  `stream_position_data/3`, `character_count/2`, `line_count/2`, `line_position/2`,
+  `current_stream/3`, `get_byte/1,2`, `put_byte/1,2`, `peek_byte/1,2`, `print_message/2`,
+  `portray_clause/1,2`. These are host I/O and parser integration, not inner-loop work.
+- **`op/3`** (and `char_conversion/2`, `current_char_conversion/2`) — the last external
+  `core.engine.v4.Undo.record` callers together with `builtin.clpfd.v2.ClpfdV2Bridge`, which is why
+  `Undo.record` is still public rather than `Machine`-internal (see 16.6's "what wave B unblocks").
+- **`statistics/2`**, **`char_type/2`**, **`code_type/2`**, **`table/1`**, the 11 `debug`
+  predicates (`spy/1`, `nospy/1`, `spying/1`, `leash/1`, `trace/0`, `notrace/0`, `debugging/0`,
+  `profile/0`, `noprofile/0`, `profile_data/1`, `reset_profile/0`) and a handful of one-offs
+  (`to_codes/2`, `atom_to_number/2`, `number_to_atom/2`, `rational/1`, `atom_gc/0`,
+  `atom_table_size/1`).
 
-Still on the adapter, and why: the atom/string/character library, the arithmetic comparisons that
-are inlined by the machine anyway, the type checks (likewise inlined), `keysort/2`, the I/O family,
-`format/2,3`, `read_term/2,3`, `write_term/2,3`, the assert/retract/abolish/listing family (shared
-with the `KnowledgeBase`, the IDE and the v2 engine), `op/3`, `statistics/2`, the debug and
-profiler predicates, and the whole extended library (CSV, JSON, XML, HTTP, JDBC, crypto, datetime,
-filesystem, graph, logging, network, os, persistence, regex, threading, FFI). None of them is on a
-measured hot path and each would be a separate benchmark-backed change; migrating them is **4.1
-wave B** (families, order and measurement method: section 16.6 of
-`docs/reports/report-engine-v4-progress.md`), not a correctness gap.
+A bridged deterministic built-in costs two extra term walks per call (the adapter dereferences the
+goal and indexes its unbound cells by name) plus one `Map<String,Term>` per solution; a bridged
+*nondeterministic* one still materialises every solution before the first is delivered. That is the
+cost, and for everything in the list above it is not on a measured hot path.
+
+`util.TermCopier` and `util.TermUtils` are still alive — re-verified in this wave, not assumed:
+`TermCopier` is used by `core.engine.Rule`, `Prolog.compile`, `core.terms.Variable` and three
+bridged built-ins, and `TermUtils` by `Prolog`, `ModuleManager`, `Module`, `TermParser`,
+`DCGTransformer` and six bridged built-ins. Neither is reachable from the machine (it has
+`Clause.instantiate` and `Unify.copy`). They go when `Rule`/`ModuleManager` stop needing them,
+which is a core change, not a built-in migration.
 
 Two behaviour differences on v4 are deliberate and approved (design B.17): rational trees are
 supported (queries that raised `representation_error(cyclic_term)` now succeed;

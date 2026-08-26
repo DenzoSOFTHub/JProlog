@@ -19,14 +19,14 @@ clean-room rewrites of the parser, the DCG translator, the CLP(FD) solver, the a
 and the IDE source formatter, and they are all current.
 
 **Repository**: https://github.com/DenzoSOFTHub/JProlog
-**Current version**: `<version>` in pom.xml (4.1.0). pom.xml and CHANGELOG.md are the source of
+**Current version**: `<version>` in pom.xml (4.2.0). pom.xml and CHANGELOG.md are the source of
 truth; README.md is refreshed at release time and may lag between releases.
 
 ## Build & Run
 
 ```bash
 mvn compile                  # Build
-mvn test                     # the whole suite — ONE engine, one leg (4.1.0 baseline: 1196/1196)
+mvn test                     # the whole suite — ONE engine, one leg (4.2.0 baseline: 1261/1261)
 mvn test -Dtest=BugFixVerificationTest                                  # one test class
 mvn test -Dtest=BugFixVerificationTest#testISS0188_ModNegativeDivisor   # one method
 mvn clean compile            # Clean rebuild
@@ -187,10 +187,11 @@ source formatter). Console answers are `core.engine.v4.Answer`.
 
 The clean-room core designed in `docs/reports/report-engine-v4-design-2026-08-25.md`. All nine
 waves are done (v3.9.0: ISS-2025-0438..0449; v3.10.0: 0450..0456; v3.11.0: 0457..0462;
-v3.12.0: 0463..0465; v3.13.0: 0466..0471; v3.14.0: 0472..0477; **v4.0.0: 0478..0488**).
-Progress, the 51 invariants, the benchmarks and the 4.1 outlook live in
+v3.12.0: 0463..0465; v3.13.0: 0466..0471; v3.14.0: 0472..0477; **v4.0.0: 0478..0488**), and so are
+the two 4.1 waves (**v4.1.0**, one engine: 0491..0495; **v4.2.0**, the L-08 built-in migration:
+0496..0501). Progress, the 60 invariants, the benchmarks and what remains live in
 `docs/reports/report-engine-v4-progress.md` — **read it before touching `core.engine.v4`**;
-sections 9–15 are the wave records.
+sections 9–17 are the wave records.
 
 **Package `core.engine.v4`**:
 - `Machine` — the drive loop: goal stack, choice points, cut, catch/throw, findall, cleanup frames,
@@ -204,11 +205,19 @@ sections 9–15 are the wave records.
 - `NativeControl` (phrase, bagof, setof, aggregate_all, with_output_to), `NativeLibrary` (the lazy
   list/atom/database generators), `NativeMisc` (sort/4, predsort/3, max_list, min_list, current_op,
   nb_getval, b_getval), `ClpfdNative` (the cell-based CLP(FD) posting and labeling),
-  `Lambdas` (yall), `ModuleBuiltins`, `Tabling`, `Coroutining`.
+  `Lambdas` (yall), `ModuleBuiltins`, `Tabling`, `Coroutining`; and, since 4.2.0,
+  **`NativeIo`** (format/1,2,3 + the whole write family + the character I/O),
+  **`NativeText`** (atom_*/string_*/number_*/char_code/atomic_list_concat/split_string/
+  term_to_atom/term_string + keysort/delete/flatten),
+  **`NativeTerm`** (functor/arg/=../atom_to_term, the remaining type checks, succ/plus,
+  unify_with_occurs_check) and **`NativeDb`** (current_predicate/retractall/abolish/dynamic/
+  listing, the global variables, the ISO flags, halt, findall/4).
 - `Modules` — the module owner (system/user/library, resolution order, imports, meta_predicate);
   `Prelude` — indexes and autoloads `prelude/*.pl`.
 - `Workers` — one `Machine` per thread over the same `Engine`.
-- `LegacyBuiltinAdapter` + `SolverFacade` — the ~310 remaining registry built-ins, unchanged.
+- `LegacyBuiltinAdapter` + `SolverFacade` — the **234** remaining registry built-ins, unchanged
+  (4.1 wave B took 94 indicators off it). What is left is essentially the extended libraries plus
+  the stream/parser half of `io`; see LIM-037 and the residual list below.
 - `Engine` — the per-`Prolog` context; `Errors` — ISO error construction.
 - `EngineState` (the thread-current per-engine state), `Streams` + `PrologStream`, `Ops`, `Writer`,
   `Answer` — the W7 services the bridged built-ins reach through their static facades.
@@ -272,7 +281,18 @@ inference budget, the trust model, the IDE debugger contract, and the four-port 
 - **A stream argument is a term, not a string** — resolve it with `IOStreamUtils.inputStream` /
   `outputStream` / `StreamManager.stream(Term)`.
 - **Anything a built-in prints goes through `StreamManager.out()`** — `with_output_to/2` captures
-  through the thread-local override alone, so a `System.out.print` escapes it.
+  through the thread-local override alone, so a `System.out.print` escapes it. That includes
+  `Prolog.listing()` (ISS-2025-0499).
+- **A native must NOT `resolve` the term it is about to print, walk or unify.** `Writer`, `Unify`
+  and every `NativeLibrary` walker deref as they go; `m.resolve(t)` is a full copy and is what made
+  the bridge slow. Use it only for the small things — a stream argument, an option list, an error
+  culprit.
+- **Protection is a question about three stores, not one.** `Machine.isProtectedProcedure` asks
+  `BuiltInRegistry.isBuiltIn`, `BuiltinTable.isNativeKey` and `Modules.isLibraryIndicatorKey`;
+  `checkModifiable` (assert/retract), `NativeLibrary.ClauseB` (`clause/2`) and
+  `NativeDb.checkModifiable` (`retractall`/`abolish`) all go through it. Consult does NOT — it
+  checks the registry only (`Prolog.checkBuiltInConflict`), which is what keeps the documented
+  library-override rule (a module may define its own `partition/4`) working.
 
 ### Term Hierarchy
 
@@ -294,10 +314,29 @@ There are **two** SPIs, and new work should use the first:
 **1. The v4 native SPI** (`core.engine.v4`): implement `Builtin` (deterministic — return
 `Outcome.SUCCESS` / `FAILURE`) or push a `Generator` (nondeterministic — return
 `Outcome.SUSPENDED`) and register it in `NativeBuiltins.register` / `NativeControl.register` /
-`NativeLibrary.register` / `NativeMisc.register`. A native sees dereferenced `Term[] args` and the
-`Machine`; it never builds a `Map<String,Term>`. 63 indicators are native, and ~40 more are handled inline by the machine.
+`NativeLibrary.register` / `NativeMisc.register` / `NativeIo.register` / `NativeText.register` /
+`NativeTerm.register` / `NativeDb.register`. A native sees dereferenced `Term[] args` and the
+`Machine`; it never builds a `Map<String,Term>`. **160 indicators (136 names) are native**, and
+~44 more are handled inline by the machine.
 
-**2. The legacy registry SPI** (`core.engine`), which the ~310 remaining built-ins use:
+**How the io natives are laid out** (`NativeIo`, 4.1 wave B): one `Builtin` class per *shape*, not
+per predicate — `WriteB(Kind, streamArg)` covers `write`/`writeln`/`writeq`/`print`/
+`write_canonical` at both arities by choosing a `Writer.Options` preset, `GetB(asChar, peek,
+streamArg)` covers the eight `get_*`/`peek_*` entries, and the format-directive engine is the
+private `Fmt` class, a faithful port of `builtin.io.Format.processFormat` that reads dereferenced
+cells instead of a `Map<String,Term>` and calls back into the running machine
+(`Machine.runSubQuery` with the output captured through `StreamManager.setThreadLocalOutput`) for
+`~@` and the `portray/1` hook. A stream argument is resolved with
+`IOStreamUtils.resolveOutputStream(m.resolve(arg), emptyMap, ctx)` — a TERM, never a string — and
+the term to print is handed to `core.engine.v4.Writer` **unresolved**, because the writer derefs as
+it walks. That last point is the whole performance story: the bridge had to copy the term first.
+
+**2. The legacy registry SPI** (`core.engine`), which the **234** remaining built-ins use — the
+extended libraries (jdbc, filesystem, threading, crypto, ffi, graph, network, persistence, os,
+http, datetime, json, logging, regex, dcg, csv, xml, clpfd), the stream/parser half of `io`
+(`open`, `close`, `read`, `read_term`, `stream_property`, `seek`, the byte I/O, `print_message`,
+`portray_clause`), `op/3`, `statistics/2`, `char_type/2`, `code_type/2`, `table/1` and the debug
+and profiler predicates (LIM-037):
 - `BuiltIn.execute(Term query, Map bindings, List solutions)` — the eager contract: a *resolved*
   goal, an empty bindings map, one solution map appended per answer.
 - `BuiltInWithContext.executeWithContext(SolverContext solver, Term query, Map bindings,
@@ -323,6 +362,9 @@ and never dispatch them.
 
 **Adding a native built-in (preferred)**:
 1. Implement `Builtin`/`Generator` in the right `core.engine.v4.Native*` file and register it.
+   Registering it is also what makes `assertz`/`retract`/`clause` raise `permission_error` for it
+   (`Machine.isProtectedProcedure` asks the registry, the `BuiltinTable` and the prelude owner
+   index) — there is no separate arity table to maintain, unlike the legacy registry.
 2. Follow the three rules: `Machine.unifyOrUndo` (or one explicit extent) when you try several
    alternatives inside one `next()`; `Machine.lastSolution()` on the last alternative; never take a
    `Bindings` mark without the `forceTrail++` / undo / `forceTrail--` ordering of invariant 1.
@@ -476,7 +518,7 @@ Every bug or feature request must be documented before implementation:
 - **Release Notes**: `docs/tracking/track-release-notes.md`
 
 Before allocating a new ISS number, grep **CHANGELOG.md** and `src/` (`START_CHANGE` tags) for the
-highest used one (**ISS-2025-0495** as of 4.1.0) — track-issues.md lags behind recent releases.
+highest used one (**ISS-2025-0501** as of 4.2.0) — track-issues.md lags behind recent releases.
 Its internal ordering and header levels are inconsistent; grep for an ID rather than assuming
 position. Some tracking content is in Italian — match surrounding style rather than rewriting.
 
@@ -502,12 +544,16 @@ its own `core/engine/v4/EngineV4*Test`:
 `EngineV4Test` (34, W1/W2), `EngineV4LibraryTest` (19, W3), `EngineV4CoroutiningTest` (22, W4),
 `EngineV4TablingTest` (18, W5), `EngineV4ModulesTest` (29, W6), `EngineV4StreamsTest` (25, W7),
 `EngineV4WriterTest` (21, W7), `EngineV4ThreadsTest` (15, W8), `EngineV4TraceTest` (25, W8 — 16
-line-for-line pinned trace oracles), `EngineV4RetirementTest` (17, W9) and
-**`EngineV41RetirementTest` (21, 4.1 wave A)**, plus `test/cli/PrologCliBatchTest` (6).
+line-for-line pinned trace oracles), `EngineV4RetirementTest` (17, W9),
+`EngineV41RetirementTest` (21, 4.1 wave A) and **`EngineV4IoTest` (19), `EngineV4TextTest` (16),
+`EngineV4TermTest` (13), `EngineV4DatabaseTest` (17) — 4.1 wave B**, plus
+`test/cli/PrologCliBatchTest` (6). A wave-B class opens with a `test*IsNative` method that fails
+the moment one of the migrated indicators is not in the `BuiltinTable`; the rest pin the modes and
+the ISO error terms so a migration cannot quietly change one.
 - Add a `@Test` method named after the issue and fix (e.g. `testISS0188_ModNegativeDivisor`)
 - The test must fail without the fix and pass with it
 - Use `prolog.solve()` for query-level assertions, direct Java assertions for internal fixes
-- Every wave must keep the full suite green (4.1.0 baseline: **1196/1196**). There is one engine
+- Every wave must keep the full suite green (4.2.0 baseline: **1261/1261**). There is one engine
   and one leg, so a test never selects an engine (ISS-2025-0491 removed the `setUp`/`tearDown`
   toggles the v4 classes used to carry).
 

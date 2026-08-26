@@ -2,6 +2,118 @@
 
 ## Active and Resolved Issues
 
+## 4.1 wave B 2026-08-26 (v4.2.0) — THE L-08 MIGRATION
+
+Item 2 of the 4.1 plan: the hot and ISO-core built-in families move from the eager registry
+contract to the **v4 native SPI**, family by family, with the section-16.6 method (pin the
+behaviour first, migrate, A/B in the same session). Wave record:
+`docs/reports/report-engine-v4-progress.md` section 17.
+Suite: **1261/1261** (1196 + 65 new); 20/20 example programs with every per-program
+"Successful queries" count unchanged. New tests:
+`core/engine/v4/EngineV4IoTest` (19), `EngineV4TextTest` (16), `EngineV4TermTest` (13),
+`EngineV4DatabaseTest` (17).
+Acceptance: names that can still reach `LegacyBuiltinAdapter` **305 -> 234**
+(`scratchpad/41b/probe/Fam2.java`).
+
+### ISS-2025-0496
+**Status**: RESOLVED (v4.2.0) — 4.1 wave B step 1, the `io` family
+**Problem**: `format/1,2,3` and the whole `write/1` family reached the machine through
+`LegacyBuiltinAdapter`, whose first act is `Unify.resolve` of the WHOLE goal — for
+`write(BigTerm)` or `format("~w", [BigTerm])` a complete copy of the term before a single character
+is printed, paid on every call in a printing loop, plus a `HashMap` of the goal's cells and one
+`Map<String,Term>` per solution. `writeq/2` additionally resolved its stream through
+`StreamManager.getOutputStream(alias)`, the static map that captured `System.out` at class-load, so
+it escaped the thread-local capture (`with_output_to/2`, the IDE console) that `writeq/1` honoured;
+and `put_code/2` had an arity entry but a class that threw "put_code/1 requires exactly 1 argument".
+**Fix**: new `core/engine/v4/NativeIo.java` — 39 indicators over `Streams`/`Writer`, including a
+faithful port of the format-directive engine (`~a ~d ~D ~f ~e ~g ~s ~w ~q ~n ~t ~| ~+ ~i ~p ~@ ~c
+~r ~R ~* ~~`, the column stops and the `atom/string/codes/chars` capture sinks) that reads
+dereferenced cells and calls back into the running machine (`Machine.runSubQuery`) for `~@` and the
+`portray/1` hook. `writeq/2` resolves its stream like `write/2`; `put_code/2` writes to the stream.
+**Test**: `EngineV4IoTest` (19), `testISS0496_TheIoFamilyIsNative` fails if any indicator is not
+registered in the `BuiltinTable`.
+
+### ISS-2025-0497
+**Status**: RESOLVED (v4.2.0) — 4.1 wave B step 2, the text families
+**Problem**: the atom, string, character and conversion families were bridged and eager. The two
+split modes (`atom_concat(-,-,+)`, `string_concat(-,-,+)`) built one solution map per split before
+the first was looked at, so `once(atom_concat(X, Y, Long))` paid for the whole atom; `keysort/2`,
+`delete/3` and `flatten/2` were the three `list` built-ins the prelude does not cover.
+**Fix**: new `core/engine/v4/NativeText.java` — 26 indicators, the two split modes as lazy
+`Generator`s, every mode analysis and every ISO error term of the registry versions reproduced
+exactly (including the non-ISO evaluation errors of `upcase_atom/2`, `split_string/4`,
+`string_length/2` and `atomic_list_concat/3`, which programs catch by shape). A mode test the
+registry version wrote as `Term.isGround()` is `Unify.isGround` here, and every list walk derefs.
+**New**: `term_string/2`, the SWI string twin of `term_to_atom/2`.
+**Test**: `EngineV4TextTest` (16).
+
+### ISS-2025-0498
+**Status**: RESOLVED (v4.2.0) — 4.1 wave B step 3, term construction and the remaining type checks
+**Problem**: `functor/3`, `arg/3`, `=../2`, `atom_to_term/3`, `succ/2`, `plus/3`, the six type
+checks the machine does not inline and `unify_with_occurs_check/2` were bridged. Two of them were
+also wrong: `functor(f(X), N, A)` raised `instantiation_error` because the registry version chose
+its mode with `Term.isGround()`, so a compound holding a variable took the CONSTRUCT branch; and
+`arg(N, T, A)` with `N` unbound raised `instantiation_error` where ISO 8.5.2 and every other system
+enumerate.
+**Fix**: new `core/engine/v4/NativeTerm.java` — 14 indicators. `functor/3` decomposes any
+non-variable first argument (ISO 8.5.1); `arg/3` with an unbound index is a lazy `Generator`, one
+argument per redo. `unify_with_occurs_check/2` unifies inside one mark/undo extent and rejects the
+result when it became cyclic, which keeps the occurs check out of `Unify`'s binding path (the
+engine supports rational trees, so a plain unification succeeds on `X = f(X)`).
+**Test**: `EngineV4TermTest` (13), including the two corrections.
+
+### ISS-2025-0499
+**Status**: RESOLVED (v4.2.0) — 4.1 wave B step 4, the database, global-variable and flag families
+**Problem**: `current_predicate/1` and `nb_current/2` built one solution map per predicate / per
+global variable before the first was looked at; `b_setval/2` reached the trail through the
+`core.engine.v4.Undo` doorway; and **`listing/1` never worked** — `BuiltInFactory` binds ONE
+implementation per NAME and `listing` was bound to `Listing0`, whose first statement rejects any
+argument, so `listing(foo/1)` raised "listing/0 takes no arguments" in every release that
+documented it. `Prolog.listing()` also printed to `System.out`, escaping `with_output_to/2` and the
+IDE console (invariant 11), and doubled the full stop of every clause (`foo(a)..`) because
+`Rule.toString()` already ends in one.
+**Fix**: new `core/engine/v4/NativeDb.java` — 15 indicators. The v4 table is keyed by
+`(name, arity)`, so `listing/0` and `listing/1` are two entries; a bare name lists every arity, as
+the reference has always documented. `current_predicate/1`, `nb_current/2` and
+`current_prolog_flag/2` are lazy generators; `b_setval/2` pushes its restore action straight onto
+the machine's trail. `Prolog.listing()/listing(String)` print through `StreamManager.out()`.
+**New**: `findall/4` (`findall(Template, Goal, List, Tail)`).
+**Test**: `EngineV4DatabaseTest` (17).
+
+### ISS-2025-0500
+**Status**: NOT DONE (deferred) — `op/3` and `statistics/2` stay bridged; `Undo.record` stays public
+**Problem**: section 16.6 lists `op/3` and `b_setval/2` as the last external `Undo.record` users,
+so migrating both would let `core.engine.v4.Undo` lose its public entry point and become
+`Machine`-internal.
+**Why not**: `b_setval/2` is native (ISS-2025-0499) but `builtin.clpfd.v2.ClpfdV2Bridge` records
+three undo actions of its own, and it is the bridge for the CLP(FD) predicates that are still
+registry built-ins (`in/2` posting through the legacy path, `fd_dom/2`, `fd_size/2`,
+`indomain/1`) — so `Undo.record` cannot become internal in this wave whatever `op/3` does.
+`op/3` itself is a 287-line built-in that captures `OperatorTable.getDefault()` at construction
+(a latent multi-engine bug: it should read `Ops.current()`), and rewriting it changes how source is
+parsed — the highest-risk item in the wave, for no hot-path gain. Recorded here rather than done
+silently; it is the first item of the next wave.
+
+### ISS-2025-0501
+**Status**: RESOLVED (v4.2.0) — 4.1-A deviation 4 paid off: the natives are protected procedures
+**Problem**: wave A deleted the Java `Freeze`/`When`/`Dif`/`AttributedVariables` classes and with
+them their `BuiltInFactory` registrations. `BuiltInRegistry.isBuiltIn` needs a registration AND an
+arity entry, and `Machine.checkModifiable` asked only the registry — so `assertz(freeze(X, Y))`,
+and the same for `when/2`, `dif/2`, `put_attr/3`, `get_attr/3`, `del_attr/2` and `attvar/1`, had
+quietly become legal instead of raising `permission_error(modify, static_procedure, PI)`, while
+calling them still ran the native or the prelude clause. The same hole covered the 18 other native
+indicators with no registry entry (`memberchk/2`, `selectchk/3`, `copy_term/3`, `unifiable/3`,
+`put_code/2`, `term_string/2`, `findall/4`, `current_module/1`, ...).
+**Fix**: `Machine.isProtectedProcedure(f, n)` asks the three stores the machine actually dispatches
+from — the legacy registry, the v4 `BuiltinTable` and the prelude owner index — and is used by
+`Machine.checkModifiable` (assert/retract), `NativeLibrary.ClauseB` (`clause/2`) and
+`NativeDb.checkModifiable` (`retractall/1`, `abolish/1`). The key string is built once for both
+key-based lookups and a one-entry memo covers an assert/retract loop.
+**Not changed**: the documented library-override rule. A module that DEFINES `partition/4` in its
+source still overrides the library one, because consult checks `Prolog.checkBuiltInConflict` (the
+registry) and never comes through `checkModifiable`.
+**Test**: `EngineV4DatabaseTest.testISS0501_*` (3).
+
 ## 4.1 wave A 2026-08-26 (v4.1.0) — ONE ENGINE
 
 The one-release promise of decision 1 of B.17 expires: **the v2 `MachineSolver` is deleted**, with

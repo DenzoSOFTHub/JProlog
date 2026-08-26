@@ -627,11 +627,13 @@ final class NativeLibrary {
             int ar;
             if (head instanceof Atom) { f = ((Atom) head).getName(); ar = 0; }
             else { f = ((CompoundTerm) head).getName(); ar = ((CompoundTerm) head).getArguments().size(); }
-            if (m.engine().registry() != null && m.engine().registry().isBuiltIn(f, ar)) {
-                Term pi = new CompoundTerm(new Atom("/"),
-                    Arrays.asList((Term) new Atom(f), (Term) Number.valueOf(ar)));
-                throw Errors.permission("access", "private_procedure", pi, "clause/2");
+            // START_CHANGE: ISS-2025-0501 - the natives and the prelude exports are private
+            // procedures too, not only the legacy registry entries.
+            if (m.isProtectedProcedure(f, ar)) {
+                throw Errors.permission("access", "private_procedure",
+                    Machine.indicator(f, ar), "clause/2");
             }
+            // END_CHANGE: ISS-2025-0501
             ClauseStore.Predicate p = m.engine().store().lookup(f, ar);
             final Clause[] candidates = p.all();
             if (candidates.length == 0) return Outcome.FAILURE;

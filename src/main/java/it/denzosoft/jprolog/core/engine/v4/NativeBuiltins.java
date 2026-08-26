@@ -60,6 +60,23 @@ final class NativeBuiltins {
         // nb_getval/2, b_getval/2 (the last of LIM-037's eager list)
         NativeMisc.register(t);
         // END_CHANGE: ISS-2025-0471
+        // START_CHANGE: ISS-2025-0496 - 4.1 wave B: the io family (format, the write family, the
+        // character I/O predicates) as natives over Streams/Writer.
+        NativeIo.register(t);
+        // END_CHANGE: ISS-2025-0496
+        // START_CHANGE: ISS-2025-0497 - 4.1 wave B: the atom/string/character/conversion families
+        // and the last three eager list built-ins.
+        NativeText.register(t);
+        // END_CHANGE: ISS-2025-0497
+        // START_CHANGE: ISS-2025-0498 - 4.1 wave B: functor/arg/univ, the remaining type checks,
+        // succ/plus and unify_with_occurs_check.
+        NativeTerm.register(t);
+        t.register("number_vars", 3, new NumberVars());     // the legacy alias of numbervars/3
+        // END_CHANGE: ISS-2025-0498
+        // START_CHANGE: ISS-2025-0499 - 4.1 wave B: the database, global-variable, flag and halt
+        // built-ins, plus findall/4.
+        NativeDb.register(t);
+        // END_CHANGE: ISS-2025-0499
     }
 
     /** {@code setarg(+N, +Compound, +Value)} — backtrackable; {@code nb_setarg/3} is not. */
