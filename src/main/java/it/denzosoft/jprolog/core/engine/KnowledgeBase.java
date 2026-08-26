@@ -27,8 +27,139 @@ public class KnowledgeBase {
     // END_CHANGE: ISS-2025-0093
     // START_CHANGE: LIM-014 - Multi-argument indexing (second argument)
     /** Three-level index: predicate indicator -> arg1 key -> arg2 key -> rules */
-    private final Map<String, Map<String, Map<String, List<Rule>>>> multiArgIndex = new HashMap<>();
+    // START_CHANGE: ISS-2025-0436 - ENG-17: the multi-argument index (LIM-014) had no caller outside
+    // this class — the legacy solver and the v2 engine both use the first-argument index — while
+    // still being built and maintained on EVERY assert/retract, costing a second nested map per
+    // clause. Removed together with its unused accessor getRulesWithMultiArgIndex.
+    // END_CHANGE: ISS-2025-0436
     // END_CHANGE: LIM-014
+
+    // START_CHANGE: ISS-2025-0433 - ENG-13: versioned immutable clause snapshots + first-arg buckets.
+    // getRulesForPredicate used to copy the whole clause list under `synchronized` on EVERY call, so
+    // a 20 000-fact table cost a 20 000-element copy per lookup (measured 2.5 ms/call, the same
+    // whether the first or the last clause matched — the cost was pure per-call setup). Each
+    // predicate now owns a PredEntry holding a version counter (bumped on assert/retract), the
+    // immutable full-clause snapshot, and the immutable first-argument bucket snapshots. A snapshot
+    // is built once per version and reused; reads take no lock and no copy, and the logical update
+    // view comes for free because a published snapshot is never mutated.
+    private static final class PredEntry {
+        volatile long version = 0;                                    // bumped on every write
+        volatile long fullVersion = -1;
+        volatile List<Rule> full = Collections.emptyList();
+        volatile long bucketVersion = -1;
+        final java.util.concurrent.ConcurrentHashMap<String, List<Rule>> buckets =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    }
+
+    private final java.util.concurrent.ConcurrentHashMap<String, PredEntry> predEntries =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Invalidate every cached snapshot of {@code predKey} (called from the index writers). */
+    private void bumpVersion(String predKey) {
+        predEntries.computeIfAbsent(predKey, k -> new PredEntry()).version++;
+    }
+
+    /**
+     * The immutable clause list of {@code functor/arity} for the current database version — built
+     * at most once per version, never copied per call. Safe to hold across backtracking: a later
+     * assert/retract publishes a NEW snapshot and leaves this one untouched.
+     */
+    // START_CHANGE: ISS-2025-0445 - engine v4 (design B.7): the v4 ClauseStore keeps a COMPILED
+    // view of each predicate and must know when something wrote to this KnowledgeBase by any other
+    // route (consult, a legacy built-in's assert, the IDE). The per-predicate version counter that
+    // already invalidates the snapshot caches is exactly that signal; expose it read-only.
+    /** Write counter of {@code functor/arity}; bumped by every assert/retract/abolish. */
+    public long getPredicateVersion(String functor, int arity) {
+        PredEntry e = predEntries.get(functor + "/" + arity);
+        return (e == null) ? 0 : e.version;
+    }
+    // END_CHANGE: ISS-2025-0445
+
+    public List<Rule> getClauseSnapshot(String functor, int arity) {
+        PredEntry e = predEntries.get(functor + "/" + arity);
+        if (e == null) return Collections.emptyList();
+        return fullSnapshot(e, functor + "/" + arity);
+    }
+
+    private List<Rule> fullSnapshot(PredEntry e, String predKey) {
+        long v = e.version;
+        if (e.fullVersion == v) return e.full;
+        synchronized (this) {
+            List<Rule> live = ruleIndex.get(predKey);
+            List<Rule> snap = (live == null || live.isEmpty())
+                ? Collections.<Rule>emptyList()
+                : Collections.unmodifiableList(new ArrayList<>(live));
+            e.full = snap;
+            e.fullVersion = v;
+            return snap;
+        }
+    }
+
+    /**
+     * The immutable clause list of {@code functor/arity} restricted, when possible, to the clauses
+     * whose head could unify with a goal whose first argument is {@code firstArg}: those in the
+     * matching first-argument bucket plus those whose head has a VARIABLE first argument, in source
+     * order. An unbound or unindexable {@code firstArg}, a single-clause predicate, or a predicate
+     * with no first-argument index degrades to the full list — never to a short one (the
+     * ISS-2025-0340 hazard).
+     */
+    public List<Rule> getClauseSnapshot(String functor, int arity, Term firstArg) {
+        String predKey = functor + "/" + arity;
+        PredEntry e = predEntries.get(predKey);
+        if (e == null) return Collections.emptyList();
+        List<Rule> full = fullSnapshot(e, predKey);
+        if (full.size() < 2) return full;                     // nothing to filter
+        if (firstArg == null || firstArg instanceof Variable) return full;
+        if (!(firstArg instanceof Atom) && !(firstArg instanceof it.denzosoft.jprolog.core.terms.Number)
+                && !(firstArg instanceof CompoundTerm)) {
+            return full;                                      // e.g. a string: not an indexable key
+        }
+        long v = e.version;
+        if (e.bucketVersion != v) {
+            synchronized (this) {
+                if (e.bucketVersion != v) { e.buckets.clear(); e.bucketVersion = v; }
+            }
+        }
+        String argKey = getFirstArgKey(firstArg);
+        List<Rule> bucket = e.buckets.get(argKey);
+        if (bucket != null) return bucket;
+        synchronized (this) {
+            bucket = buildIndexedSnapshot(predKey, argKey, full);
+            // START_CHANGE: ISS-2025-0433 - the bucket cache MUST be bounded. A recursive predicate
+            // called with a different integer every time (loop(1000000), loop(999999), ...) produces
+            // a distinct key per call, so an unbounded cache grew to one entry per call and turned a
+            // deterministic recursion into a memory leak (loop(3000000) went from 5.8 s in 1 GB to
+            // an OutOfMemoryError). Past the cap the snapshot is still computed and returned, just
+            // not remembered — and the computation is cheap precisely in that case, because a
+            // predicate with thousands of distinct first arguments has tiny buckets.
+            if (e.buckets.size() < MAX_CACHED_BUCKETS) e.buckets.put(argKey, bucket);
+            // END_CHANGE: ISS-2025-0433
+            return bucket;
+        }
+    }
+
+    /** Upper bound on cached first-argument buckets per predicate (see getClauseSnapshot). */
+    private static final int MAX_CACHED_BUCKETS = 512;
+
+    private List<Rule> buildIndexedSnapshot(String predKey, String argKey, List<Rule> full) {
+        Map<String, List<Rule>> argIndex = firstArgIndex.get(predKey);
+        if (argIndex == null) return full;                    // no index -> never drop clauses
+        List<Rule> matching = argIndex.get(argKey);
+        List<Rule> vars = argIndex.get(VAR_KEY);
+        boolean noMatch = (matching == null || matching.isEmpty());
+        boolean noVars = (vars == null || vars.isEmpty());
+        if (noMatch && noVars) return Collections.emptyList();
+        if (noVars) return Collections.unmodifiableList(new ArrayList<>(matching));
+        if (noMatch) return Collections.unmodifiableList(new ArrayList<>(vars));
+        // both buckets non-empty: merge preserving source order
+        Set<Rule> eligible = Collections.newSetFromMap(new java.util.IdentityHashMap<Rule, Boolean>());
+        eligible.addAll(matching);
+        eligible.addAll(vars);
+        List<Rule> result = new ArrayList<>(eligible.size());
+        for (Rule r : full) if (eligible.contains(r)) result.add(r);
+        return Collections.unmodifiableList(result);
+    }
+    // END_CHANGE: ISS-2025-0433
     // START_CHANGE: ISS-2025-0347 - track dynamic procedures: declared via ':- dynamic' or implied
     // by assert/retractall (ISO 8.9.1: asserting an unknown procedure makes it dynamic). The mark
     // survives retracting every clause, so a retracted-to-empty dynamic predicate FAILS instead of
@@ -200,7 +331,14 @@ public class KnowledgeBase {
         } else if (arg instanceof Atom) {
             return "a:" + ((Atom) arg).getName();
         } else if (arg instanceof it.denzosoft.jprolog.core.terms.Number) {
-            return "n:" + ((it.denzosoft.jprolog.core.terms.Number) arg).getValue();
+            // START_CHANGE: ISS-2025-0433 - ENG-13: a TYPE-FAITHFUL numeric key. getValue() returns
+            // a double, so 1 and 1.0 shared a bucket (they do not unify — ISS-2025-0261) and every
+            // integer beyond 2^53 collided with its neighbours. Integers key on their exact
+            // BigInteger value, floats on their double.
+            it.denzosoft.jprolog.core.terms.Number num = (it.denzosoft.jprolog.core.terms.Number) arg;
+            if (!num.isInteger()) return "f:" + num.doubleValue();
+            return num.fitsInLong() ? ("i:" + num.longValue()) : ("i:" + num.bigIntegerValue());
+            // END_CHANGE: ISS-2025-0433
         } else if (arg instanceof CompoundTerm) {
             CompoundTerm ct = (CompoundTerm) arg;
             return "c:" + ct.getFunctor().getName() + "/" + ct.getArguments().size();
@@ -228,9 +366,6 @@ public class KnowledgeBase {
         Term firstArg = getHeadFirstArg(rule);
         String argKey = (firstArg != null) ? getFirstArgKey(firstArg) : VAR_KEY;
         argIndex.computeIfAbsent(argKey, k -> new ArrayList<>()).add(rule);
-        // START_CHANGE: LIM-014 - Multi-argument indexing
-        addToMultiArgIndex(rule, predKey, argKey);
-        // END_CHANGE: LIM-014
     }
 
     private void addToFirstArgIndexFirst(Rule rule) {
@@ -239,98 +374,9 @@ public class KnowledgeBase {
         Term firstArg = getHeadFirstArg(rule);
         String argKey = (firstArg != null) ? getFirstArgKey(firstArg) : VAR_KEY;
         argIndex.computeIfAbsent(argKey, k -> new ArrayList<>()).add(0, rule);
-        // START_CHANGE: LIM-014 - Multi-argument indexing
-        addToMultiArgIndexFirst(rule, predKey, argKey);
-        // END_CHANGE: LIM-014
     }
 
-    // START_CHANGE: LIM-014 - Multi-argument indexing on second argument
-    private void addToMultiArgIndex(Rule rule, String predKey, String arg1Key) {
-        Term secondArg = getHeadNthArg(rule, 1);
-        String arg2Key = (secondArg != null) ? getFirstArgKey(secondArg) : VAR_KEY;
-        multiArgIndex
-            .computeIfAbsent(predKey, k -> new HashMap<>())
-            .computeIfAbsent(arg1Key, k -> new HashMap<>())
-            .computeIfAbsent(arg2Key, k -> new ArrayList<>())
-            .add(rule);
-    }
-
-    private void addToMultiArgIndexFirst(Rule rule, String predKey, String arg1Key) {
-        Term secondArg = getHeadNthArg(rule, 1);
-        String arg2Key = (secondArg != null) ? getFirstArgKey(secondArg) : VAR_KEY;
-        multiArgIndex
-            .computeIfAbsent(predKey, k -> new HashMap<>())
-            .computeIfAbsent(arg1Key, k -> new HashMap<>())
-            .computeIfAbsent(arg2Key, k -> new ArrayList<>())
-            .add(0, rule);
-    }
-
-    private Term getHeadNthArg(Rule rule, int n) {
-        Term head = rule.getHead();
-        if (head instanceof CompoundTerm) {
-            List<Term> args = ((CompoundTerm) head).getArguments();
-            if (args != null && args.size() > n) {
-                Term arg = args.get(n);
-                if (arg instanceof Variable) return null; // Variable = no index
-                return arg;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Get rules using multi-argument indexing (first + second argument).
-     * Falls back to first-argument-only if second argument is a variable.
-     */
-    public List<Rule> getRulesWithMultiArgIndex(String functor, int arity, Term firstArg, Term secondArg) {
-        synchronized (this) {
-            String predKey = functor + "/" + arity;
-
-            // If no first arg, fall through to basic lookup
-            if (firstArg == null || firstArg instanceof Variable) {
-                return getRulesForPredicate(functor, arity);
-            }
-
-            String arg1Key = getFirstArgKey(firstArg);
-
-            // If no second arg index possible, use first-arg only
-            if (secondArg == null || secondArg instanceof Variable) {
-                return getRulesWithFirstArgIndex(functor, arity, firstArg);
-            }
-
-            String arg2Key = getFirstArgKey(secondArg);
-
-            Map<String, Map<String, List<Rule>>> arg1Index = multiArgIndex.get(predKey);
-            if (arg1Index == null) {
-                return getRulesWithFirstArgIndex(functor, arity, firstArg);
-            }
-
-            // Collect: exact match on both args + variable matches
-            List<Rule> result = new ArrayList<>();
-            collectMultiArgRules(arg1Index, arg1Key, arg2Key, result);
-            collectMultiArgRules(arg1Index, arg1Key, VAR_KEY, result);
-            collectMultiArgRules(arg1Index, VAR_KEY, arg2Key, result);
-            collectMultiArgRules(arg1Index, VAR_KEY, VAR_KEY, result);
-
-            // Deduplicate while preserving order
-            Set<Rule> seen = new HashSet<>();
-            List<Rule> deduped = new ArrayList<>();
-            for (Rule r : result) {
-                if (seen.add(r)) deduped.add(r);
-            }
-            return Collections.unmodifiableList(deduped);
-        }
-    }
-
-    private void collectMultiArgRules(Map<String, Map<String, List<Rule>>> arg1Index,
-                                       String key1, String key2, List<Rule> result) {
-        Map<String, List<Rule>> arg2Index = arg1Index.get(key1);
-        if (arg2Index != null) {
-            List<Rule> rules = arg2Index.get(key2);
-            if (rules != null) result.addAll(rules);
-        }
-    }
-    // END_CHANGE: LIM-014
+    // ISS-2025-0436 - ENG-17: multi-argument index helpers removed (no callers).
 
     private void removeFromFirstArgIndex(Rule rule) {
         String predKey = getPredicateIndicator(rule.getHead());
@@ -351,33 +397,7 @@ public class KnowledgeBase {
                 firstArgIndex.remove(predKey);
             }
         }
-        // START_CHANGE: ISS-2025-0180 - Core engine bug fixes
-        Map<String, Map<String, List<Rule>>> arg1Index = multiArgIndex.get(predKey);
-        if (arg1Index != null) {
-            Term firstArg = getHeadFirstArg(rule);
-            String arg1Key = (firstArg != null) ? getFirstArgKey(firstArg) : VAR_KEY;
-            Map<String, List<Rule>> arg2Index = arg1Index.get(arg1Key);
-            if (arg2Index != null) {
-                Term secondArg = getHeadNthArg(rule, 1);
-                String arg2Key = (secondArg != null) ? getFirstArgKey(secondArg) : VAR_KEY;
-                List<Rule> list = arg2Index.get(arg2Key);
-                if (list != null) {
-                    // START_CHANGE: ISS-2025-0344 - identity-preferring removal
-                    removeOneOccurrence(list, rule);
-                    // END_CHANGE: ISS-2025-0344
-                    if (list.isEmpty()) {
-                        arg2Index.remove(arg2Key);
-                    }
-                }
-                if (arg2Index.isEmpty()) {
-                    arg1Index.remove(arg1Key);
-                }
-            }
-            if (arg1Index.isEmpty()) {
-                multiArgIndex.remove(predKey);
-            }
-        }
-        // END_CHANGE: ISS-2025-0180
+        // ISS-2025-0436 - ENG-17: multi-argument index removal dropped with the index itself
     }
     // END_CHANGE: ISS-2025-0093
 
@@ -702,9 +722,7 @@ public class KnowledgeBase {
                 // START_CHANGE: ISS-2025-0093 - Clear first-argument index on abolish
                 firstArgIndex.remove(key);
                 // END_CHANGE: ISS-2025-0093
-                // START_CHANGE: ISS-2025-0180 - Core engine bug fixes
-                multiArgIndex.remove(key);
-                // END_CHANGE: ISS-2025-0180
+                bumpVersion(key);   // ISS-2025-0433 - ENG-13: invalidate cached snapshots
             }
             // END_CHANGE: ISS-2025-0075
             return count;
@@ -734,6 +752,7 @@ public class KnowledgeBase {
             java.util.Map<String, Term> bindings = new java.util.HashMap<>();
             return term1.unify(term2, bindings);
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return false;
         }
     }
@@ -765,6 +784,7 @@ public class KnowledgeBase {
      */
     private void addToIndex(Rule rule) {
         String key = getPredicateIndicator(rule.getHead());
+        bumpVersion(key);                     // ISS-2025-0433 - ENG-13
         ruleIndex.computeIfAbsent(key, k -> new ArrayList<>()).add(rule);
         // START_CHANGE: ISS-2025-0093 - Maintain first-argument index
         addToFirstArgIndex(rule);
@@ -776,6 +796,7 @@ public class KnowledgeBase {
      */
     private void addToIndexFirst(Rule rule) {
         String key = getPredicateIndicator(rule.getHead());
+        bumpVersion(key);                     // ISS-2025-0433 - ENG-13
         ruleIndex.computeIfAbsent(key, k -> new ArrayList<>()).add(0, rule);
         // START_CHANGE: ISS-2025-0093 - Maintain first-argument index
         addToFirstArgIndexFirst(rule);
@@ -787,6 +808,7 @@ public class KnowledgeBase {
      */
     private void removeFromIndex(Rule rule) {
         String key = getPredicateIndicator(rule.getHead());
+        bumpVersion(key);                     // ISS-2025-0433 - ENG-13
         List<Rule> indexed = ruleIndex.get(key);
         if (indexed != null) {
             // START_CHANGE: ISS-2025-0344 - identity-preferring removal (see removeOneOccurrence)

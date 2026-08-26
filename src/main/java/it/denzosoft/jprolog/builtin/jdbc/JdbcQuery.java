@@ -90,6 +90,8 @@ public class JdbcQuery implements BuiltIn {
             case java.sql.Types.REAL:
             case java.sql.Types.DECIMAL:
             case java.sql.Types.NUMERIC:
+                // ISS-2025-0424 - ENG-02: read as a double => an ISO FLOAT (integral SQL types are
+                // handled by the long branch above); Number(double) no longer collapses 1.0 to 1.
                 return new Number(rs.getDouble(col));
             default:
                 return new Atom(rs.getString(col));

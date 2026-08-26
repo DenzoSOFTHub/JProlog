@@ -67,6 +67,50 @@ public class TableStore {
     }
     // END_CHANGE: ISS-2025-0173
 
+    // START_CHANGE: ISS-2025-0488 - LIM-039: a tabled evaluation is claimed by ONE thread.
+    // The v2 engine's variant-tabling driver (MachineSolver.tabledAnswers) keeps its state here —
+    // the in-progress set and the partial answer cache — and both describe ONE evaluation. Since
+    // v4.0.0 several worker threads can reach one engine, so an evaluation is claimed: a second
+    // thread waits for the first to finish and then finds the table CACHED, which is the
+    // answer-sharing behaviour a table exists for. Reading a cached table needs no claim beyond the
+    // call itself. The wait is bounded so a runaway producer surfaces as a resource_error rather
+    // than a hung thread, and a Stop interrupt is honoured while waiting.
+    private Thread evalOwner;
+    private int callDepth;
+    private static final long EVAL_WAIT_MS = 60_000L;
+
+    /** Enter a tabled call; no OTHER thread may be inside one on this store. */
+    public synchronized void enterCall() {
+        Thread me = Thread.currentThread();
+        long deadline = System.currentTimeMillis() + EVAL_WAIT_MS;
+        while (evalOwner != null && evalOwner != me) {
+            long left = deadline - System.currentTimeMillis();
+            if (left <= 0) {
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError(
+                        "tabling_busy", "another thread is evaluating a table on this engine"));
+            }
+            try {
+                wait(left);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new QueryCancelledException();
+            }
+        }
+        evalOwner = me;
+        callDepth++;
+    }
+
+    /** Leave a tabled call; the claim is released when nothing is left in progress. */
+    public synchronized void exitCall() {
+        if (evalOwner != Thread.currentThread()) return;
+        if (--callDepth <= 0) {
+            callDepth = 0;
+            if (inProgress.isEmpty()) { evalOwner = null; notifyAll(); }
+        }
+    }
+    // END_CHANGE: ISS-2025-0488
+
     public boolean isInProgress(String cacheKey) {
         return inProgress.contains(cacheKey);
     }

@@ -51,9 +51,17 @@ public class AtomToTerm implements BuiltIn {
                 return true;
             }
             return false;
+        // START_CHANGE: ISS-2025-0473 - a resource error must NEVER become a syntax error
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
+            throw pe;
+        } catch (StackOverflowError so) {
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("parser_nesting", "atom_to_term/3"));
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("syntax_error(" + e.getMessage() + ")");
         }
+        // END_CHANGE: ISS-2025-0473
     }
 
     private void collectNamedVars(Term t, Map<String, Variable> out) {

@@ -1,7 +1,7 @@
 package it.denzosoft.jprolog.builtin.io;
 
 import it.denzosoft.jprolog.builtin.AbstractBuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.parser.TermParser;
 import it.denzosoft.jprolog.core.terms.*;
 
@@ -29,7 +29,7 @@ public class ReadTerm extends AbstractBuiltInWithContext {
      *
      * @param solver The query solver
      */
-    public ReadTerm(QuerySolver solver) {
+    public ReadTerm(SolverContext solver) {
         super(solver);
     }
 
@@ -41,7 +41,7 @@ public class ReadTerm extends AbstractBuiltInWithContext {
     }
 
     @Override
-    public boolean solve(QuerySolver solver, Map<String, Term> bindings) {
+    public boolean solve(SolverContext solver, Map<String, Term> bindings) {
         Term[] args = getArguments();
 
         if (args.length == 2) {
@@ -85,8 +85,12 @@ public class ReadTerm extends AbstractBuiltInWithContext {
         }
         // END_CHANGE: ISS-2025-0204
         try {
+            // START_CHANGE: ISS-2025-0473 - the stream position BEFORE the term, for term_position/1
+            it.denzosoft.jprolog.core.engine.v4.PrologStream posStream = StreamManager.stream(streamTerm);
+            Term startPosition = (posStream == null) ? null : StreamProperty.positionTerm(posStream);
+            // END_CHANGE: ISS-2025-0473
             // START_CHANGE: ISS-2025-0202 - honor stream argument; resolve to actual InputStream via StreamManager
-            BufferedReader reader = resolveReader(streamTerm);
+            java.io.Reader reader = resolveReader(streamTerm);
             // END_CHANGE: ISS-2025-0202
 
             // START_CHANGE: ISS-2025-0408 - consume characters up to the ISO end token instead of
@@ -145,6 +149,15 @@ public class ReadTerm extends AbstractBuiltInWithContext {
                         }
                         break;
                     }
+                    // START_CHANGE: ISS-2025-0473 - term_position(Pos): the '$stream_position'/4
+                    // term for the FIRST character of the term just read (SWI semantics).
+                    case TERM_POSITION: {
+                        if (option.getValue() != null && startPosition != null) {
+                            if (!unifyTerm(option.getValue(), startPosition, bindings)) return false;
+                        }
+                        break;
+                    }
+                    // END_CHANGE: ISS-2025-0473
                     default:
                         break;
                 }
@@ -155,6 +168,7 @@ public class ReadTerm extends AbstractBuiltInWithContext {
             return unifyTerm(termVar, parsedTerm, bindings);
 
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             // START_CHANGE: ISS-2025-0204 - honor syntax_errors option
             if ("error".equals(syntaxErrorsMode)) {
                 throw new it.denzosoft.jprolog.core.exceptions.PrologEvaluationException(
@@ -178,6 +192,7 @@ public class ReadTerm extends AbstractBuiltInWithContext {
             return readTermFromStream(new Atom("current_input"), termVar, options, bindings);
 
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return false;
         }
     }
@@ -308,6 +323,10 @@ public class ReadTerm extends AbstractBuiltInWithContext {
                     // START_CHANGE: ISS-2025-0204 - syntax_errors(error|fail|quiet) option
                     case "syntax_errors":
                         return new ReadOption(ReadOption.Type.SYNTAX_ERRORS, arg);
+                    // START_CHANGE: ISS-2025-0473 - engine v4 wave W7 (design B.11): term_position
+                    case "term_position":
+                        return new ReadOption(ReadOption.Type.TERM_POSITION, arg);
+                    // END_CHANGE: ISS-2025-0473
                     // END_CHANGE: ISS-2025-0204
                     default:
                         return null;
@@ -322,17 +341,11 @@ public class ReadTerm extends AbstractBuiltInWithContext {
      * Check if a term represents a stream.
      */
     private boolean isStream(Term term) {
-        // START_CHANGE: ISS-2025-0202 - recognize any registered stream alias as a stream
-        if (term instanceof Atom) {
-            String name = ((Atom) term).getName();
-            if (name.equals("current_input") || name.equals("current_output") ||
-                name.equals("user_input") || name.equals("user_output")) {
-                return true;
-            }
-            return StreamManager.hasStream(name);
-        }
-        return term instanceof CompoundTerm && "stream".equals(TermUtils.getFunctorName(term));
-        // END_CHANGE: ISS-2025-0202
+        // START_CHANGE: ISS-2025-0472 - wave W7: '$stream'(N) is the canonical stream term now, so
+        // read_term(S, T) must recognise it or it silently becomes read_term(-Term, +Options) and
+        // blocks on stdin.
+        return IOStreamUtils.isStreamTerm(term);
+        // END_CHANGE: ISS-2025-0472
     }
 
     // START_CHANGE: ISS-2025-0173 - Cache stdin BufferedReader to prevent resource leak
@@ -349,30 +362,23 @@ public class ReadTerm extends AbstractBuiltInWithContext {
         // END_CHANGE: ISS-2025-0173
     }
 
-    // START_CHANGE: ISS-2025-0202 - resolve stream argument to a BufferedReader
-    private static final Map<String, BufferedReader> READER_CACHE = new HashMap<>();
-    private BufferedReader resolveReader(Term streamTerm) {
-        String alias = null;
-        if (streamTerm instanceof Atom) {
-            alias = ((Atom) streamTerm).getName();
-        } else if (streamTerm instanceof CompoundTerm && "stream".equals(TermUtils.getFunctorName(streamTerm))) {
-            Term inner = TermUtils.getArgument((CompoundTerm) streamTerm, 0);
-            if (inner instanceof Atom) alias = ((Atom) inner).getName();
-        }
-        if (alias == null || "current_input".equals(alias) || "user_input".equals(alias)) {
-            return STDIN_READER;
-        }
-        BufferedReader cached = READER_CACHE.get(alias);
-        if (cached != null) return cached;
-        InputStream is = StreamManager.getInputStream(alias);
-        if (is == null) {
+    // START_CHANGE: ISS-2025-0202 - resolve stream argument to a Reader
+    // START_CHANGE: ISS-2025-0472 - wave W7: through the STREAM's own decoder, not a process-global
+    // per-alias BufferedReader cache that buffered ahead of every other I/O built-in (limit L-07).
+    private java.io.Reader resolveReader(Term streamTerm) {
+        it.denzosoft.jprolog.core.engine.v4.PrologStream ps = StreamManager.stream(streamTerm);
+        if (ps == null) {
+            String alias = null;
+            if (streamTerm instanceof Atom) alias = ((Atom) streamTerm).getName();
+            if (alias == null || "current_input".equals(alias) || "user_input".equals(alias)) return STDIN_READER;
             // unknown stream — fall back to stdin to preserve legacy behaviour
             return STDIN_READER;
         }
-        BufferedReader br = new BufferedReader(new InputStreamReader(is));
-        READER_CACHE.put(alias, br);
-        return br;
+        if (ps == StreamManager.streams().userInput()) return STDIN_READER;
+        if (!ps.isInput()) return STDIN_READER;
+        return StreamManager.reader(ps);
     }
+    // END_CHANGE: ISS-2025-0472
     // END_CHANGE: ISS-2025-0202
 
     /**
@@ -415,8 +421,11 @@ public class ReadTerm extends AbstractBuiltInWithContext {
             SINGLETONS,
             MODULE,
             // START_CHANGE: ISS-2025-0204
-            SYNTAX_ERRORS
+            SYNTAX_ERRORS,
             // END_CHANGE: ISS-2025-0204
+            // START_CHANGE: ISS-2025-0473
+            TERM_POSITION
+            // END_CHANGE: ISS-2025-0473
         }
 
         private final Type type;

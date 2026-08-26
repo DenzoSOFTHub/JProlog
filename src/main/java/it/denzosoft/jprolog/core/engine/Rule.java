@@ -57,6 +57,19 @@ public class Rule {
     }
     // END_CHANGE: ISS-2025-0092
 
+    // START_CHANGE: ISS-2025-0439 - engine v4 (design B.2): cache of this clause's compiled
+    // skeleton (core.engine.v4.Clause), so re-syncing the v4 ClauseStore after an external write is
+    // a pointer copy instead of a recompilation. Typed as Object to keep core.engine independent of
+    // core.engine.v4; not part of clause identity, never serialised.
+    private transient Object compiled;
+
+    /** The v4 compiled skeleton of this clause, or null when it has not been compiled yet. */
+    public Object getCompiled() { return compiled; }
+
+    /** Cache the v4 compiled skeleton of this clause. */
+    public void setCompiled(Object skeleton) { this.compiled = skeleton; }
+    // END_CHANGE: ISS-2025-0439
+
     /** Source line of this clause's head (1-based), or -1 if unknown. (ISS-2025-0322) */
     public int getSourceLine() { return sourceLine; }
     public void setSourceLine(int line) { this.sourceLine = line; }

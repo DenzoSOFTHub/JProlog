@@ -1,7 +1,7 @@
 package it.denzosoft.jprolog.builtin.database;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.engine.Rule;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
@@ -26,14 +26,14 @@ import java.util.Map;
  */
 public class Clause implements BuiltInWithContext {
 
-    private final QuerySolver querySolver;
+    private final SolverContext querySolver;
 
-    public Clause(QuerySolver querySolver) {
+    public Clause(SolverContext querySolver) {
         this.querySolver = querySolver;
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query,
+    public boolean executeWithContext(SolverContext solver, Term query,
                                     Map<String, Term> bindings,
                                     List<Map<String, Term>> solutions) {
 

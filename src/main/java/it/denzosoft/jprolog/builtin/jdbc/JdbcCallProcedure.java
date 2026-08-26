@@ -162,7 +162,7 @@ public class JdbcCallProcedure implements BuiltIn {
         if (value == null) {
             valueTerm = new Atom("null");
         } else if (value instanceof java.lang.Number) {
-            valueTerm = new Number(((java.lang.Number) value).doubleValue());
+            valueTerm = sqlNumberToTerm((java.lang.Number) value);   /* ISS-2025-0424 */
         } else {
             valueTerm = new Atom(value.toString());
         }
@@ -205,7 +205,7 @@ public class JdbcCallProcedure implements BuiltIn {
                     if (val == null) {
                         colValues.add(new Atom("null"));
                     } else if (val instanceof java.lang.Number) {
-                        colValues.add(new Number(((java.lang.Number) val).doubleValue()));
+                        colValues.add(sqlNumberToTerm((java.lang.Number) val));   /* ISS-2025-0424 */
                     } else {
                         colValues.add(new Atom(val.toString()));
                     }
@@ -268,5 +268,21 @@ public class JdbcCallProcedure implements BuiltIn {
             default: return "jdbc_call";
         }
     }
+
+    // START_CHANGE: ISS-2025-0424 - ENG-02: map a java.lang.Number to an ISO integer when the SQL
+    // value is integral (Integer/Long/Short/Byte/BigInteger) and to an ISO float otherwise.
+    // Previously everything went through Number(double), which auto-classified integral doubles as
+    // integers — so a DECIMAL 1.0 came back as the integer 1.
+    private static Term sqlNumberToTerm(java.lang.Number value) {
+        if (value instanceof Integer || value instanceof Long
+                || value instanceof Short || value instanceof Byte) {
+            return new Number(value.longValue());
+        }
+        if (value instanceof java.math.BigInteger) {
+            return new Number((java.math.BigInteger) value);
+        }
+        return new Number(value.doubleValue());
+    }
+    // END_CHANGE: ISS-2025-0424
 }
 // END_CHANGE: ISS-2025-0110

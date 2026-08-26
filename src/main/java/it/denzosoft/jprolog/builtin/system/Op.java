@@ -1,7 +1,7 @@
 package it.denzosoft.jprolog.builtin.system;
 
 import it.denzosoft.jprolog.builtin.AbstractBuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.operator.Operator;
 import it.denzosoft.jprolog.core.operator.OperatorTable;
 import it.denzosoft.jprolog.core.terms.*;
@@ -24,7 +24,7 @@ public class Op extends AbstractBuiltInWithContext {
      * 
      * @param solver The query solver
      */
-    public Op(QuerySolver solver) {
+    public Op(SolverContext solver) {
         super(solver);
         // START_CHANGE: R1/R2 - use the shared default OperatorTable (was creating a private one)
         this.operatorTable = OperatorTable.getDefault();
@@ -38,7 +38,7 @@ public class Op extends AbstractBuiltInWithContext {
     }
     
     @Override
-    public boolean solve(QuerySolver solver, Map<String, Term> bindings) {
+    public boolean solve(SolverContext solver, Map<String, Term> bindings) {
         Term[] args = getArguments();
         if (args.length != 3) {
             return false;
@@ -81,6 +81,7 @@ public class Op extends AbstractBuiltInWithContext {
             return false;
             
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return false;
         }
     }
@@ -125,6 +126,7 @@ public class Op extends AbstractBuiltInWithContext {
             }
             // END_CHANGE: R1
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return false;
         }
     }

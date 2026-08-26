@@ -11,7 +11,7 @@ All shared state is thread-safe, backed by `ConcurrentHashMap` and `AtomicIntege
 - Detached threads are automatically cleaned up when they complete.
 - All threads are created as daemon threads so they do not prevent JVM shutdown.
 
-**Important limitation**: `thread_create/2` accepts a goal atom (a string description of the goal). In the current implementation, threads run as lightweight stubs. Full goal execution within spawned threads requires a `QuerySolver` context, which is planned for a future release. The message-passing predicates (`thread_send_message`, `thread_get_message`, `thread_peek_message`) are fully functional.
+**Since 4.0.0** a thread really runs its goal, on its own machine over the same engine (`core.engine.v4.Workers`): a shared clause store, shared flags and operators, its own current streams, its own inference-budget counter carrying the parent's limit, and a `copy_term`'d goal so no variable is shared between threads. `thread_create/3` accepts `alias/1` and `detached/1`; `thread_join/2` reports `true`, `false`, `exception(Ball)` or `cancelled`. Message queues carry **terms**, copied on the way in and out; every Prolog thread owns one — including the thread running the top-level query, which also answers to the alias `main` — so `thread_get_message/1` reads the calling thread's own queue.
 
 **Source file**: `src/main/java/it/denzosoft/jprolog/builtin/threading/ThreadPredicates.java`
 

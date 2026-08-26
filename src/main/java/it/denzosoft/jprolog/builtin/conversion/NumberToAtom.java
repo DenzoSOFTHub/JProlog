@@ -34,9 +34,14 @@ public class NumberToAtom implements BuiltIn {
             } else if (arg1 instanceof Atom) {
                 // atom_to_number mode
                 try {
-                    double val = Double.parseDouble(((Atom) arg1).getName());
+                    // START_CHANGE: ISS-2025-0424 - ENG-02: '3' must yield the integer 3 and '3.0'
+                    // the float 3.0; Double.parseDouble + Number(double) used to collapse both to 3.
+                    Number val = it.denzosoft.jprolog.builtin.conversion.AtomNumber
+                        .parseNumberToken(((Atom) arg1).getName());
+                    if (val == null) return false;
+                    // END_CHANGE: ISS-2025-0424
                     Map<String, Term> newBindings = new HashMap<>(bindings);
-                    if (arg2.unify(new Number(val), newBindings)) {
+                    if (arg2.unify(val, newBindings)) {
                         solutions.add(newBindings);
                         return true;
                     }
@@ -47,9 +52,13 @@ public class NumberToAtom implements BuiltIn {
         } else if (!arg1.isGround() && arg2.isGround()) {
             if (arg2 instanceof Atom) {
                 try {
-                    double val = Double.parseDouble(((Atom) arg2).getName());
+                    // START_CHANGE: ISS-2025-0424 - ENG-02: preserve integer/float distinction
+                    Number val = it.denzosoft.jprolog.builtin.conversion.AtomNumber
+                        .parseNumberToken(((Atom) arg2).getName());
+                    if (val == null) return false;
+                    // END_CHANGE: ISS-2025-0424
                     Map<String, Term> newBindings = new HashMap<>(bindings);
-                    if (arg1.unify(new Number(val), newBindings)) {
+                    if (arg1.unify(val, newBindings)) {
                         solutions.add(newBindings);
                         return true;
                     }

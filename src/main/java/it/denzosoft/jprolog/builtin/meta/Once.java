@@ -1,9 +1,8 @@
 package it.denzosoft.jprolog.builtin.meta;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.CutStatus;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -24,14 +23,14 @@ import java.util.Map;
  */
 public class Once implements BuiltInWithContext {
     
-    private final QuerySolver querySolver;
+    private final SolverContext querySolver;
     
-    public Once(QuerySolver querySolver) {
+    public Once(SolverContext querySolver) {
         this.querySolver = querySolver;
     }
     
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, 
+    public boolean executeWithContext(SolverContext solver, Term query, 
                                     Map<String, Term> bindings, 
                                     List<Map<String, Term>> solutions) {
         
@@ -55,7 +54,7 @@ public class Once implements BuiltInWithContext {
 
         // Execute the goal and get only the first solution
         List<Map<String, Term>> goalSolutions = new ArrayList<>();
-        boolean success = solver.solve(goal, new HashMap<>(bindings), goalSolutions, CutStatus.notOccurred());
+        boolean success = solver.solveMeta(goal, new HashMap<>(bindings), goalSolutions)   /* ISS-2025-0431 - ENG-04 */;
         
         if (success && !goalSolutions.isEmpty()) {
             // Return only the first solution
@@ -81,6 +80,7 @@ public class Once implements BuiltInWithContext {
                 )
             );
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return new Atom("instantiation_error");
         }
     }
@@ -101,6 +101,7 @@ public class Once implements BuiltInWithContext {
                 )
             );
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return new Atom("type_error");
         }
     }

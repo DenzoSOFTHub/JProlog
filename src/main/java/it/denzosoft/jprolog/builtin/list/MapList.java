@@ -1,8 +1,7 @@
 package it.denzosoft.jprolog.builtin.list;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.CutStatus;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -26,18 +25,18 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class MapList implements BuiltInWithContext {
 
-    private final QuerySolver querySolver;
+    private final SolverContext querySolver;
 
     // START_CHANGE: ISS-2025-0381 - Collision-free fresh-variable naming across nested maplist calls
     private static final AtomicInteger FRESH = new AtomicInteger();
     // END_CHANGE: ISS-2025-0381
 
-    public MapList(QuerySolver querySolver) {
+    public MapList(SolverContext querySolver) {
         this.querySolver = querySolver;
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query,
+    public boolean executeWithContext(SolverContext solver, Term query,
                                      Map<String, Term> bindings,
                                      List<Map<String, Term>> solutions) {
         int arity = query.getArguments().size();
@@ -117,7 +116,7 @@ public class MapList implements BuiltInWithContext {
         }
 
         List<Map<String, Term>> temp = new ArrayList<>();
-        boolean ok = solver.solve(conjunction, new HashMap<>(current), temp, CutStatus.notOccurred());
+        boolean ok = solver.solveMeta(conjunction, new HashMap<>(current), temp)   /* ISS-2025-0431 - ENG-04 */;
         if (!ok || temp.isEmpty()) {
             return false;
         }

@@ -1,5 +1,13 @@
 # Capitolo 7: Programmazione in Prolog Puro - Principi di Programmazione JProlog
 
+> **Nota di implementazione (v4.0.0).** Il codice Java mostrato in questo capitolo descrive il
+> motore *ricorsivo* `QuerySolver`, **eliminato nella 4.0.0** (wave W9, ISS-2025-0484). La
+> semantica del linguaggio descritta qui è invariata e resta valida; le classi no. Il motore
+> ora è `core.engine.v4` (`Machine`, `Unify`, `ClauseStore`, `Bindings`) e un built-in con
+> contesto riceve un `core.engine.SolverContext`, non un oggetto solver. Vedi `CLAUDE.md` e
+> `docs/reports/report-engine-v4-progress.md`.
+
+
 ## Panoramica
 
 Questo capitolo esplora i principi fondamentali della programmazione in Prolog puro utilizzando JProlog, concentrandosi sugli aspetti dichiarativi della programmazione logica senza effetti collaterali o predicati extra-logici. La programmazione Prolog pura enfatizza le relazioni logiche, l'uso appropriato dell'unificazione e la risoluzione dichiarativa dei problemi. Questo capitolo copre l'ordine delle regole, le condizioni di terminazione, le strategie di ordinamento obiettivi, la gestione di soluzioni ridondanti, le tecniche di programmazione ricorsiva e i fondamenti teorici che rendono Prolog un potente linguaggio di programmazione logica.

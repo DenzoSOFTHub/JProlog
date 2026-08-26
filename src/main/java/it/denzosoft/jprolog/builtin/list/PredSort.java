@@ -2,7 +2,7 @@
 package it.denzosoft.jprolog.builtin.list;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
@@ -10,7 +10,6 @@ import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
 import it.denzosoft.jprolog.core.util.ListUtils;
 
-import it.denzosoft.jprolog.core.engine.CutStatus;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 
 import java.util.ArrayList;
@@ -27,14 +26,14 @@ import java.util.Map;
  */
 public class PredSort implements BuiltInWithContext {
 
-    private final QuerySolver solver;
+    private final SolverContext solver;
 
-    public PredSort(QuerySolver solver) {
+    public PredSort(SolverContext solver) {
         this.solver = solver;
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+    public boolean executeWithContext(SolverContext solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 3) {
             throw new PrologEvaluationException("predsort/3 requires exactly 3 arguments");
         }
@@ -81,7 +80,7 @@ public class PredSort implements BuiltInWithContext {
 
     // START_CHANGE: ISS-2025-0419 - mergeSort/merge return null when the comparison predicate
     // fails (or binds Order to something other than <, =, >), making predsort/3 fail
-    private List<Term> mergeSort(QuerySolver solver, Term pred, List<Term> list, Map<String, Term> bindings) {
+    private List<Term> mergeSort(SolverContext solver, Term pred, List<Term> list, Map<String, Term> bindings) {
         if (list.size() <= 1) {
             return new ArrayList<>(list);
         }
@@ -95,7 +94,7 @@ public class PredSort implements BuiltInWithContext {
         return merge(solver, pred, left, right, bindings);
     }
 
-    private List<Term> merge(QuerySolver solver, Term pred, List<Term> left, List<Term> right, Map<String, Term> bindings) {
+    private List<Term> merge(SolverContext solver, Term pred, List<Term> left, List<Term> right, Map<String, Term> bindings) {
         List<Term> result = new ArrayList<>();
         int i = 0, j = 0;
 
@@ -119,7 +118,7 @@ public class PredSort implements BuiltInWithContext {
     }
 
     // START_CHANGE: ISS-2025-0191 - Fix solver call signature, propagate system errors
-    private String compareTerms(QuerySolver solver, Term pred, Term x, Term y, Map<String, Term> bindings) {
+    private String compareTerms(SolverContext solver, Term pred, Term x, Term y, Map<String, Term> bindings) {
         // Build goal: call(Pred, Order, X, Y)
         Variable orderVar = new Variable("_PredSortOrder");
         List<Term> callArgs = new ArrayList<>();
@@ -131,7 +130,7 @@ public class PredSort implements BuiltInWithContext {
 
         try {
             List<Map<String, Term>> tempSolutions = new ArrayList<>();
-            boolean success = solver.solve(callGoal, new HashMap<>(bindings), tempSolutions, CutStatus.notOccurred());
+            boolean success = solver.solveMeta(callGoal, new HashMap<>(bindings), tempSolutions)   /* ISS-2025-0431 - ENG-04 */;
             if (success && !tempSolutions.isEmpty()) {
                 Term orderTerm = orderVar.resolveBindings(tempSolutions.get(0));
                 // START_CHANGE: ISS-2025-0419 - only an Order of <, =, or > counts as a
@@ -147,8 +146,10 @@ public class PredSort implements BuiltInWithContext {
         } catch (PrologException e) {
             throw e; // Propagate Prolog exceptions
         } catch (RuntimeException e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw e; // Propagate system errors
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             // Fall through for checked exceptions: predsort fails
         }
 

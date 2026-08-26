@@ -265,6 +265,18 @@ public class Module {
         List<String> specs = metaPredicateDeclarations.get(sig);
         return specs != null ? new ArrayList<>(specs) : null;
     }
+
+    // START_CHANGE: ISS-2025-0469 - engine v4 wave W6 needs the whole table to mirror it into
+    // core.engine.v4.Modules, where it drives meta-argument qualification.
+    /**
+     * All meta-predicate declarations of this module.
+     *
+     * @return Map of predicate signature to its argument specifications
+     */
+    public Map<PredicateSignature, List<String>> getMetaPredicateDeclarations() {
+        return new HashMap<>(metaPredicateDeclarations);
+    }
+    // END_CHANGE: ISS-2025-0469
     // END_CHANGE: ISS-2025-0167
 
     // START_CHANGE: ISS-2025-0167 - module_transparent/1 support

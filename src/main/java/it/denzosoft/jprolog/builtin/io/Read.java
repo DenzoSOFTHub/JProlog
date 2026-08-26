@@ -2,7 +2,7 @@ package it.denzosoft.jprolog.builtin.io;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.Prolog;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.exceptions.PrologParserException;
 import it.denzosoft.jprolog.core.parser.TermParser;
@@ -21,12 +21,12 @@ import java.util.Map;
 
 public class Read implements BuiltInWithContext {
 
-    // START_CHANGE: ISS-2025-0203 - per-alias BufferedReader cache for read/2
-    private static final Map<String, BufferedReader> READERS = new HashMap<>();
+    // ISS-2025-0472 - wave W7: the per-alias BufferedReader cache is gone; the stream owns its
+    // decoder (see readTermTextFromStream).
     // END_CHANGE: ISS-2025-0203
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+    public boolean executeWithContext(SolverContext solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         int arity = query.getArguments().size();
         if (arity != 1 && arity != 2) {
             throw new PrologEvaluationException("read/1 or read/2 expected.");
@@ -40,12 +40,9 @@ public class Read implements BuiltInWithContext {
         } else {
             Term streamTerm = query.getArguments().get(0).resolveBindings(bindings);
             termVar = query.getArguments().get(1);
-            if (streamTerm instanceof Atom) {
-                streamAlias = ((Atom) streamTerm).getName();
-            } else if (streamTerm instanceof CompoundTerm && "stream".equals(streamTerm.getName())) {
-                Term inner = streamTerm.getArguments().get(0);
-                if (inner instanceof Atom) streamAlias = ((Atom) inner).getName();
-            } else {
+            // ISS-2025-0472 - wave W7: '$stream'(N), the legacy stream(A) wrapper, or an atom alias
+            streamAlias = IOStreamUtils.streamAlias(streamTerm);
+            if (streamAlias == null) {
                 throw new PrologEvaluationException("read/2: invalid stream argument");
             }
         }
@@ -107,24 +104,24 @@ public class Read implements BuiltInWithContext {
         }
         // END_CHANGE: ISS-2025-0375
         if (alias == null || "current_input".equals(alias) || "user_input".equals(alias)) {
-            System.out.print("?- ");
+            StreamManager.out().print("?- ");
             try {
                 return readTermText(STDIN_TERM_READER);
             } catch (java.io.IOException e) {
                 return null;
             }
         }
-        BufferedReader br = READERS.get(alias);
-        if (br == null) {
-            InputStream is = StreamManager.getInputStream(alias);
-            if (is == null) {
-                throw new PrologEvaluationException("existence_error(stream, " + alias + ")");
-            }
-            br = new BufferedReader(new InputStreamReader(is));
-            READERS.put(alias, br);
+        // START_CHANGE: ISS-2025-0472 - wave W7: read through the STREAM's own decoder instead of a
+        // private static per-alias BufferedReader cache. That cache was process-global state (so a
+        // second engine reusing a handle got the first engine's closed file) and it buffered ahead
+        // of the stream, so read/1 and get_char/2 disagreed about the position and a seek in
+        // between was invisible to it (limit L-07).
+        it.denzosoft.jprolog.core.engine.v4.PrologStream ps = StreamManager.stream(alias);
+        if (ps == null || !ps.isInput()) {
+            throw new PrologEvaluationException("existence_error(stream, " + alias + ")");
         }
         try {
-            return readTermText(br);
+            return readTermText(StreamManager.reader(ps));
         } catch (java.io.IOException e) {
             throw new PrologEvaluationException("io_error(read, " + alias + "): " + e.getMessage());
         }

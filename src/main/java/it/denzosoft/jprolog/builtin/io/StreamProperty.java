@@ -2,26 +2,31 @@ package it.denzosoft.jprolog.builtin.io;
 
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.engine.v4.PrologStream;
+import it.denzosoft.jprolog.core.engine.v4.Streams;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
+import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
 
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * stream_property/2 - ISO Prolog I/O predicate
- * Relates a stream to its properties.
- * stream_property(?Stream, ?Property)
+ * stream_property/2 - stream_property(?Stream, ?Property), ISO 8.11.8.
+ *
+ * <p>START_CHANGE: ISS-2025-0473 - wave W7 (design B.11): the complete property set —
+ * {@code file_name}, {@code mode}, {@code input}, {@code output}, {@code alias}, {@code position},
+ * {@code end_of_stream}, {@code eof_action}, {@code reposition}, {@code type}, {@code encoding},
+ * {@code line_count} — over every stream of the CURRENT ENGINE. It used to report six hard-coded
+ * properties for the three standard streams plus whatever the (process-global) alias tables held.
  */
-// START_CHANGE: ISS-2025-0171 - Throw existence_error for unknown ground streams
 public class StreamProperty implements BuiltIn {
 
     @Override
@@ -33,135 +38,78 @@ public class StreamProperty implements BuiltIn {
         Term streamTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term propertyTerm = query.getArguments().get(1).resolveBindings(bindings);
 
-        // For simplicity, we'll handle specific known streams
-        // In a full implementation, this would enumerate all open streams
-        
-        if (streamTerm instanceof Variable) {
-            // Generate solutions for all known streams
-            return generateStreamProperties(streamTerm, propertyTerm, bindings, solutions);
+        List<PrologStream> candidates = new ArrayList<>();
+        boolean bindStream = streamTerm instanceof Variable;
+        if (bindStream) {
+            candidates.addAll(StreamManager.streams().all());
         } else {
-            // Check properties for specific stream
-            return checkStreamProperties(streamTerm, propertyTerm, bindings, solutions);
-        }
-    }
-
-    private boolean generateStreamProperties(Term streamTerm, Term propertyTerm, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        // Check standard streams
-        String[] standardStreams = {"user_input", "user_output", "user_error"};
-        
-        boolean foundSolution = false;
-        
-        for (String streamAlias : standardStreams) {
-            if (StreamManager.hasStream(streamAlias)) {
-                Atom streamAtom = new Atom(streamAlias);
-                List<Term> properties = getStreamProperties(streamAlias);
-                
-                for (Term property : properties) {
-                    Map<String, Term> newBindings = new HashMap<>(bindings);
-                    if (streamTerm.unify(streamAtom, newBindings) && 
-                        propertyTerm.unify(property, newBindings)) {
-                        solutions.add(newBindings);
-                        foundSolution = true;
-                    }
-                }
-            }
-        }
-        
-        return foundSolution;
-    }
-
-    private boolean checkStreamProperties(Term streamTerm, Term propertyTerm, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        if (!(streamTerm instanceof Atom)) {
-            throw new PrologEvaluationException("stream_property/2: stream must be an atom");
-        }
-
-        String streamAlias = ((Atom) streamTerm).getName();
-
-        if (!StreamManager.hasStream(streamAlias)) {
-            // ISO 13211-1: existence_error(stream, StreamTerm) when stream does not exist
-            throw new PrologException(
+            PrologStream s = StreamManager.stream(streamTerm);
+            if (s == null) {
+                throw new PrologException(
                     ISOErrorTerms.existenceError("stream", streamTerm, "stream_property/2"));
+            }
+            candidates.add(s);
         }
-        // END_CHANGE: ISS-2025-0171
 
-        List<Term> properties = getStreamProperties(streamAlias);
-        
-        if (propertyTerm instanceof Variable) {
-            // Generate all properties for this stream
-            boolean foundSolution = false;
-            for (Term property : properties) {
-                Map<String, Term> newBindings = new HashMap<>(bindings);
-                if (propertyTerm.unify(property, newBindings)) {
-                    solutions.add(newBindings);
-                    foundSolution = true;
-                }
+        boolean found = false;
+        for (PrologStream s : candidates) {
+            // START_CHANGE: ISS-2025-0473 - only BIND the stream argument when it was unbound.
+            // A bound argument has already selected the stream (it may be an alias atom such as
+            // `myin`, which of course does not unify with the canonical '$stream'(N) term).
+            Term streamValue = Streams.termFor(s);
+            for (Term property : propertiesOf(s)) {
+                Map<String, Term> nb = new HashMap<>(bindings);
+                if (bindStream && !streamTerm.unify(streamValue, nb)) continue;
+                if (!propertyTerm.unify(property, nb)) continue;
+                solutions.add(nb);
+                found = true;
             }
-            return foundSolution;
-        } else {
-            // Check if this stream has the specified property
-            for (Term property : properties) {
-                if (property.equals(propertyTerm)) {
-                    solutions.add(bindings);
-                    return true;
-                }
-            }
-            return false;
+            // END_CHANGE: ISS-2025-0473
         }
+        return found;
     }
 
-    private List<Term> getStreamProperties(String streamAlias) {
-        // Determine stream properties based on stream type and alias
-        
-        // START_CHANGE: LIM-007 - Add reposition property to stream properties
-        boolean canReposition = StreamManager.supportsReposition(streamAlias);
-        Term repositionProp = new CompoundTerm(new Atom("reposition"),
-            Arrays.asList(new Atom(canReposition ? "true" : "false")));
-        // END_CHANGE: LIM-007
+    /** Every property of {@code s}, in ISO order. */
+    public static List<Term> propertiesOf(PrologStream s) {
+        List<Term> out = new ArrayList<>();
+        if (s.fileName() != null) out.add(one("file_name", new Atom(s.fileName())));
+        out.add(one("mode", new Atom(s.mode())));
+        out.add(new Atom(s.isInput() ? "input" : "output"));
+        for (String a : s.aliases()) out.add(one("alias", new Atom(a)));
+        out.add(one("position", positionTerm(s)));
+        if (s.isInput()) out.add(one("end_of_stream", new Atom(endOfStream(s))));
+        out.add(one("eof_action", new Atom(s.eofAction())));
+        out.add(one("reposition", new Atom(s.canReposition() ? "true" : "false")));
+        out.add(one("type", new Atom(s.type())));
+        out.add(new Atom(s.type()));                       // legacy bare `text` / `binary`
+        out.add(one("encoding", new Atom(s.encoding())));
+        out.add(one("line_count", new Number(s.lineCount())));
+        return out;
+    }
 
-        if ("user_input".equals(streamAlias)) {
-            return Arrays.asList(
-                new Atom("input"),
-                new Atom("text"),
-                new CompoundTerm(new Atom("mode"), Arrays.asList(new Atom("read"))),
-                new CompoundTerm(new Atom("alias"), Arrays.asList(new Atom("user_input"))),
-                new CompoundTerm(new Atom("type"), Arrays.asList(new Atom("text"))),
-                repositionProp
-            );
-        } else if ("user_output".equals(streamAlias) || "user_error".equals(streamAlias)) {
-            return Arrays.asList(
-                new Atom("output"),
-                new Atom("text"),
-                new CompoundTerm(new Atom("mode"), Arrays.asList(new Atom("write"))),
-                new CompoundTerm(new Atom("alias"), Arrays.asList(new Atom(streamAlias))),
-                new CompoundTerm(new Atom("type"), Arrays.asList(new Atom("text"))),
-                repositionProp
-            );
-        } else {
-            // For file streams, determine properties based on whether it's input or output
-            InputStream is = StreamManager.getInputStream(streamAlias);
-            OutputStream os = StreamManager.getOutputStream(streamAlias);
+    /** The opaque position term: {@code '$stream_position'(CharCount, LineCount, LinePos, ByteCount)}. */
+    public static Term positionTerm(PrologStream s) {
+        return new CompoundTerm(new Atom("$stream_position"), Arrays.<Term>asList(
+            new Number(s.charCount()), new Number(s.lineCount()),
+            new Number(s.linePosition()), new Number(s.bytePosition())));
+    }
 
-            if (is != null) {
-                return Arrays.asList(
-                    new Atom("input"),
-                    new Atom("text"),
-                    new CompoundTerm(new Atom("mode"), Arrays.asList(new Atom("read"))),
-                    new CompoundTerm(new Atom("alias"), Arrays.asList(new Atom(streamAlias))),
-                    new CompoundTerm(new Atom("type"), Arrays.asList(new Atom("text"))),
-                    repositionProp
-                );
-            } else if (os != null) {
-                return Arrays.asList(
-                    new Atom("output"),
-                    new Atom("text"),
-                    new CompoundTerm(new Atom("mode"), Arrays.asList(new Atom("write"))),
-                    new CompoundTerm(new Atom("alias"), Arrays.asList(new Atom(streamAlias))),
-                    new CompoundTerm(new Atom("type"), Arrays.asList(new Atom("text"))),
-                    repositionProp
-                );
-            } else {
-                return Arrays.asList();
-            }
-        }
+    // START_CHANGE: ISS-2025-0489 - enumerating stream properties must never BLOCK.
+    // `at_end_of_stream/0,1` may legitimately wait for input; `stream_property/2` may not — with an
+    // unbound first argument it walks EVERY open stream, and on an interactive `user_input` the
+    // one-character lookahead behind `atEndOfStream()` blocks until the user types something. That
+    // made the documented `stream_property(S, alias(user_error))` hang forever, and no inference
+    // budget or Stop interrupt could break it because the wait is inside a bridged built-in.
+    // A stream that cannot be repositioned (stdin, a socket, a pipe) is reported as `not` unless a
+    // read has already run past its end; a file is peeked as before.
+    private static String endOfStream(PrologStream s) {
+        if (s.pastEndOfStream()) return "past";
+        if (!s.canReposition()) return "not";
+        return s.atEndOfStream() ? "at" : "not";
+    }
+    // END_CHANGE: ISS-2025-0489
+
+    private static Term one(String name, Term arg) {
+        return new CompoundTerm(new Atom(name), Arrays.asList(arg));
     }
 }

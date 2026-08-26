@@ -36,13 +36,15 @@ public final class TermWriter {
     private final Options opt;
 
     public TermWriter(OperatorTable ops, Options opt) {
-        this.ops = ops != null ? ops : OperatorTable.getDefault();
+        // ISS-2025-0474 - wave W7: default to the ENGINE's operator store (design B.12: one store
+        // read by the parser, current_op/3, write_term, the .jpc writer and the IDE formatter).
+        this.ops = ops != null ? ops : it.denzosoft.jprolog.core.engine.v4.Ops.current().table();
         this.opt = opt != null ? opt : Options.write();
     }
 
     // ---------------------------------------------------------------- facade
-    public static String write(Term t)  { return new TermWriter(OperatorTable.getDefault(), Options.write()).format(t); }
-    public static String writeq(Term t) { return new TermWriter(OperatorTable.getDefault(), Options.writeq()).format(t); }
+    public static String write(Term t)  { return new TermWriter(null, Options.write()).format(t); }
+    public static String writeq(Term t) { return new TermWriter(null, Options.writeq()).format(t); }
     public static String write(Term t, OperatorTable ops, Options o) { return new TermWriter(ops, o).format(t); }
 
     public String format(Term t) {

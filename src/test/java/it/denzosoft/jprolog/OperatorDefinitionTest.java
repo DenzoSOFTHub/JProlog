@@ -126,7 +126,7 @@ public class OperatorDefinitionTest {
         
         // Check that variables were bound correctly
         Map<String, Term> solution = solutions.get(0);
-        assertEquals(new Number(800.0), solution.get("P"));
+        assertEquals(new Number(800L), solution.get("P"));   // ISS-2025-0424: precedence is an ISO integer
         assertEquals(new Atom("fx"), solution.get("T"));
     }
     
@@ -235,7 +235,7 @@ public class OperatorDefinitionTest {
     
     private Term createOpQuery(int precedence, String type, String name) {
         List<Term> args = new ArrayList<>();
-        args.add(new Number((double) precedence));
+        args.add(new Number((long) precedence));   // ISS-2025-0424: precedence is an ISO integer
         args.add(new Atom(type));
         args.add(new Atom(name));
         return new CompoundTerm(new Atom("op"), args);
@@ -243,7 +243,7 @@ public class OperatorDefinitionTest {
     
     private Term createCurrentOpQuery(int precedence, String type, String name) {
         List<Term> args = new ArrayList<>();
-        args.add(new Number((double) precedence));
+        args.add(new Number((long) precedence));   // ISS-2025-0424: precedence is an ISO integer
         args.add(new Atom(type));
         args.add(new Atom(name));
         return new CompoundTerm(new Atom("current_op"), args);

@@ -2,7 +2,7 @@ package it.denzosoft.jprolog.builtin.database;
 
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.engine.BuiltInRegistry;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
@@ -85,7 +85,7 @@ final class DatabaseValidation {
      * that merely share a name with a built-in at a different arity are NOT affected: the check is
      * exactly {@link BuiltInRegistry#isBuiltIn(String, int)}.
      */
-    static void checkProcedureAccess(QuerySolver solver, Term head, String operation,
+    static void checkProcedureAccess(SolverContext solver, Term head, String operation,
                                      String permissionType, String context) {
         String functor;
         int arity;
@@ -101,8 +101,8 @@ final class DatabaseValidation {
         checkProcedureAccess(solver, functor, arity, operation, permissionType, context);
     }
 
-    /** Same as {@link #checkProcedureAccess(QuerySolver, Term, String, String, String)} by Name/Arity. */
-    static void checkProcedureAccess(QuerySolver solver, String functor, int arity,
+    /** Same as {@link #checkProcedureAccess(SolverContext, Term, String, String, String)} by Name/Arity. */
+    static void checkProcedureAccess(SolverContext solver, String functor, int arity,
                                      String operation, String permissionType, String context) {
         if (solver == null) {
             return;

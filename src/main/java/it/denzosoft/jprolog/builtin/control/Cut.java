@@ -1,7 +1,6 @@
 package it.denzosoft.jprolog.builtin.control;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.engine.CutStatus;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Term;
 
@@ -27,7 +26,7 @@ public class Cut implements BuiltIn {
         
         // The cut behavior (preventing backtracking) is implemented by:
         // 1. Only returning one solution (first success)  
-        // 2. The QuerySolver handles cut detection for rule choice points
+        // 2. The SolverContext handles cut detection for rule choice points
         
         return true;
     }

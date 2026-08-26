@@ -5,7 +5,7 @@ import it.denzosoft.jprolog.builtin.AbstractBuiltInWithContext;
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 // END_CHANGE: ISS-2025-0409
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.*;
 
 import java.io.PrintWriter;
@@ -25,7 +25,7 @@ public class Format extends AbstractBuiltInWithContext {
      * 
      * @param solver The query solver
      */
-    public Format(QuerySolver solver) {
+    public Format(SolverContext solver) {
         super(solver);
     }
     
@@ -37,7 +37,7 @@ public class Format extends AbstractBuiltInWithContext {
     }
     
     @Override
-    public boolean solve(QuerySolver solver, Map<String, Term> bindings) {
+    public boolean solve(SolverContext solver, Map<String, Term> bindings) {
         Term[] args = getArguments();
 
         // START_CHANGE: ISS-2025-0373 - format/1: format(F) == format(F, [])
@@ -92,6 +92,7 @@ public class Format extends AbstractBuiltInWithContext {
             throw pe;
         // END_CHANGE: ISS-2025-0409
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return false;
         }
 
@@ -126,7 +127,7 @@ public class Format extends AbstractBuiltInWithContext {
         Term list = new Atom("[]");
         for (int i = text.length() - 1; i >= 0; i--) {
             Term head = codes
-                ? new it.denzosoft.jprolog.core.terms.Number((double) text.charAt(i))
+                ? new it.denzosoft.jprolog.core.terms.Number((long) text.charAt(i))   /* ISS-2025-0424 */
                 : new Atom(String.valueOf(text.charAt(i)));
             list = new CompoundTerm(new Atom("."), Arrays.asList(head, list));
         }
@@ -355,6 +356,15 @@ public class Format extends AbstractBuiltInWithContext {
                 return formatViaPortray(arg, bindings);
                 // END_CHANGE: R4
 
+            // START_CHANGE: ISS-2025-0452 - ~@ (SWI): run the argument as a goal and splice its
+            // output in. It is the only format directive that calls back into the solver besides
+            // ~p, and on the v4 engine that call now runs on the machine (SolverFacade.solve ->
+            // Machine.runSubQuery, ISS-2025-0450) rather than on the recursive SolverContext.
+            case '@':
+                if (arg == null) return "";
+                return formatViaCall(arg, bindings);
+            // END_CHANGE: ISS-2025-0452
+
             case 'c': // Character code (repeat N times if numArg given)
                 if (arg == null) return "";
                 int reps = (numArg != null && numArg > 0) ? numArg : 1;
@@ -379,7 +389,7 @@ public class Format extends AbstractBuiltInWithContext {
 
     // START_CHANGE: ISS-2025-0409 - strict format/2,3 helpers
     /** Directives understood by processFormatCode (~t/~|/~+ and ~* are handled earlier in processFormat). */
-    private static final String KNOWN_DIRECTIVES = "adDfegswqnt~ipcrR";
+    private static final String KNOWN_DIRECTIVES = "adDfegswqnt~ipcrR@";   // ISS-2025-0452: ~@
 
     /** Build an error(format(Message), format/2) exception (pragmatic SWI-style shape). */
     private static PrologException formatError(String message) {
@@ -397,6 +407,38 @@ public class Format extends AbstractBuiltInWithContext {
     }
     // END_CHANGE: ISS-2025-0409
 
+    // START_CHANGE: ISS-2025-0452 - ~@: call a goal, capture what it writes.
+    /**
+     * Run {@code goal} once and return everything it printed. Output is captured on three levels
+     * because the library is not yet uniform: the thread-local {@link StreamManager} override (what
+     * well-behaved built-ins use), {@code System.out} (what a few still use directly) and the
+     * {@code user_output} raw stream.
+     */
+    private String formatViaCall(Term goal, Map<String, Term> bindings) {
+        if (solver == null) return "";
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        java.io.PrintStream capture = new java.io.PrintStream(baos, true);
+        // START_CHANGE: ISS-2025-0472 - wave W7 closes LIM-025: the thread-local override is the
+        // whole capture. Every built-in writes through StreamManager.out()/resolveOutput now.
+        java.io.PrintStream origThread = StreamManager.threadLocalOutput();
+        try {
+            StreamManager.setThreadLocalOutput(capture);
+            java.util.List<Map<String, Term>> sols = new java.util.ArrayList<>();
+            solver.solveMeta(goal.resolveBindings(bindings), new java.util.HashMap<>(bindings), sols);   // ISS-2025-0485
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);
+            throw e;
+        } finally {
+            capture.flush();
+            StreamManager.setThreadLocalOutput(origThread);
+        }
+        return baos.toString();
+        // END_CHANGE: ISS-2025-0472
+    }
+    // END_CHANGE: ISS-2025-0452
+
     // START_CHANGE: R4 - portray hook: invoke user-defined portray/1 capturing its output
     private String formatViaPortray(Term arg, Map<String, Term> bindings) {
         if (solver == null || solver.getKnowledgeBase() == null) return formatTerm(arg);
@@ -404,37 +446,31 @@ public class Format extends AbstractBuiltInWithContext {
             solver.getKnowledgeBase().getRulesForPredicate("portray", 1);
         if (rules == null || rules.isEmpty()) return formatTerm(arg);
 
-        // START_CHANGE: Round5 final - capture System.out output during portray execution
-        java.io.PrintStream origOut = System.out;
-        // Also redirect StreamManager's user_output to capture writes
-        java.io.OutputStream prevUserOutput = StreamManager.getOutputStream("user_output");
+        // START_CHANGE: ISS-2025-0472 - wave W7: capture through the thread-local output override
+        // (LIM-025); no System.setOut, no user_output stream swap.
+        java.io.PrintStream origThread = StreamManager.threadLocalOutput();
         java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
         java.io.PrintStream wrapped = new java.io.PrintStream(baos);
-        System.setOut(wrapped);
-        if (prevUserOutput != null) {
-            StreamManager.setOutputStreamRaw("user_output", baos);
-        }
+        StreamManager.setThreadLocalOutput(wrapped);
         try {
             Term portrayGoal = new it.denzosoft.jprolog.core.terms.CompoundTerm(
                 new it.denzosoft.jprolog.core.terms.Atom("portray"),
                 java.util.Arrays.asList(arg));
             java.util.List<Map<String, Term>> sols = new java.util.ArrayList<>();
-            boolean ok = solver.solve(portrayGoal, new java.util.HashMap<>(bindings), sols,
-                it.denzosoft.jprolog.core.engine.CutStatus.notOccurred());
+            boolean ok = solver.solveMeta(portrayGoal, new java.util.HashMap<>(bindings), sols);   // ISS-2025-0485
             wrapped.flush();
             if (ok && baos.size() > 0) {
                 return baos.toString();
             }
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             // fall through to default
         } finally {
-            System.setOut(origOut);
-            if (prevUserOutput != null) {
-                StreamManager.setOutputStreamRaw("user_output", prevUserOutput);
-            }
+            wrapped.flush();
+            StreamManager.setThreadLocalOutput(origThread);
         }
         return formatTerm(arg);
-        // END_CHANGE: Round5 final
+        // END_CHANGE: ISS-2025-0472
     }
     // END_CHANGE: R4
 

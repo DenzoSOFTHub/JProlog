@@ -197,7 +197,7 @@ Create Java classes that implement JProlog's built-in interface pattern:
 ```java
 package extensions.math;
 
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.*;
 import it.denzosoft.jprolog.builtin.BuiltInWithContext;
 
@@ -210,7 +210,7 @@ public class CustomMathPredicates {
     public static class FibonacciPredicate extends BuiltInWithContext {
         
         @Override
-        public boolean solve(QuerySolver solver, Map<String, Term> bindings) {
+        public boolean solve(SolverContext solver, Map<String, Term> bindings) {
             Term[] args = getArguments();
             if (args.length != 2) return false;
             
@@ -253,7 +253,7 @@ public class CustomMathPredicates {
     public static class IsPrimePredicate extends BuiltInWithContext {
         
         @Override
-        public boolean solve(QuerySolver solver, Map<String, Term> bindings) {
+        public boolean solve(SolverContext solver, Map<String, Term> bindings) {
             Term[] args = getArguments();
             if (args.length != 1) return false;
             
@@ -577,7 +577,7 @@ matches_pattern(compound, Term) :- compound(Term).
 ```java
 package extensions.operators;
 
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.*;
 import it.denzosoft.jprolog.builtin.BuiltInWithContext;
 
@@ -590,7 +590,7 @@ public class CustomOperators {
     public static class BetweenOperator extends BuiltInWithContext {
         
         @Override
-        public boolean solve(QuerySolver solver, Map<String, Term> bindings) {
+        public boolean solve(SolverContext solver, Map<String, Term> bindings) {
             Term[] args = getArguments();
             if (args.length != 3) return false;
             
@@ -621,7 +621,7 @@ public class CustomOperators {
     public static class MatchesOperator extends BuiltInWithContext {
         
         @Override
-        public boolean solve(QuerySolver solver, Map<String, Term> bindings) {
+        public boolean solve(SolverContext solver, Map<String, Term> bindings) {
             Term[] args = getArguments();
             if (args.length != 2) return false;
             
@@ -848,7 +848,7 @@ find/3
 public class SafePredicate extends BuiltInWithContext {
     
     @Override
-    public boolean solve(QuerySolver solver, Map<String, Term> bindings) {
+    public boolean solve(SolverContext solver, Map<String, Term> bindings) {
         try {
             Term[] args = getArguments();
             

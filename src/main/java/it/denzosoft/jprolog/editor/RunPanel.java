@@ -195,10 +195,12 @@ public class RunPanel extends JPanel {
         // START_CHANGE: ISS-2025-0329 - Trace on/off toggle (four-port call tracing in the console output)
         traceToggle = new JToggleButton("Trace");
         traceToggle.setToolTipText("Enable/disable four-port call tracing (trace/0 .. notrace/0)");
-        traceToggle.setSelected(it.denzosoft.jprolog.builtin.debug.Trace.isTracingEnabled());
+        // ISS-2025-0437 - ENG-06: tracing is per ENGINE now, and this runs on the EDT (no engine is
+        // "current" on that thread), so toggle it on the IDE's shared Prolog instance directly.
+        traceToggle.setSelected(ide.getPrologEngine() != null && ide.getPrologEngine().isTracing());
         traceToggle.addActionListener(e -> {
             boolean on = traceToggle.isSelected();
-            it.denzosoft.jprolog.builtin.debug.Trace.setTracingEnabled(on);
+            if (ide.getPrologEngine() != null) ide.getPrologEngine().setTracing(on);
             appendText("% Tracing " + (on ? "enabled" : "disabled") + "\n", commentStyle);
         });
         controlPanel.add(traceToggle);
@@ -1300,6 +1302,16 @@ public class RunPanel extends JPanel {
             final String output = capturedOutput;
             final List<Map<String, Term>> finalSolutions = solutions;
             final boolean wasCapped = capped[0];
+            // START_CHANGE: ISS-2025-0476 - wave W7, design decision 5: render the answers with the
+            // engine's operator table, quoted, with _A-style variable names and residual goals.
+            // Done on the SOLVER thread, right after the solve, because the CLP(FD) part of
+            // Prolog.residualGoals reads the per-query constraint store.
+            final List<List<String>> renderedSolutions = new ArrayList<>();
+            for (Map<String, Term> sol : finalSolutions) {
+                renderedSolutions.add(it.denzosoft.jprolog.core.engine.v4.Answer.lines(
+                    sol, engine.residualGoals(sol), engine.getOps().table()));   // ISS-2025-0490
+            }
+            // END_CHANGE: ISS-2025-0476
 
             SwingUtilities.invokeLater(() -> {
                 // Display captured output (from write/1, nl/0, etc.)
@@ -1310,10 +1322,10 @@ public class RunPanel extends JPanel {
                 // Display solutions
                 if (finalSolutions.isEmpty()) {
                     appendText("false.\n", errorStyle);
-                } else if (finalSolutions.size() == 1 && finalSolutions.get(0).isEmpty()) {
+                } else if (renderedSolutions.size() == 1 && renderedSolutions.get(0).isEmpty()) {
                     appendText("true.\n", resultStyle);
                 } else {
-                    displaySolutions(finalSolutions);
+                    displaySolutions(renderedSolutions);
                     if (wasCapped) {
                         appendText("% (stopped after " + CAP + " solutions — more may exist)\n", commentStyle);
                     }
@@ -1369,23 +1381,19 @@ public class RunPanel extends JPanel {
     /**
      * Display query solutions interactively.
      */
-    private void displaySolutions(List<Map<String, Term>> solutions) {
+    private void displaySolutions(List<List<String>> solutions) {
         for (int i = 0; i < solutions.size(); i++) {
-            Map<String, Term> solution = solutions.get(i);
-            
-            if (solution.isEmpty()) {
+            List<String> lines = solutions.get(i);
+
+            if (lines.isEmpty()) {
                 appendText("true", resultStyle);
             } else {
-                boolean first = true;
-                for (Map.Entry<String, Term> entry : solution.entrySet()) {
-                    if (!first) {
-                        appendText(",\n", resultStyle);
-                    }
-                    appendText(entry.getKey() + " = " + entry.getValue(), resultStyle);
-                    first = false;
+                for (int k = 0; k < lines.size(); k++) {
+                    if (k > 0) appendText(",\n", resultStyle);
+                    appendText(lines.get(k), resultStyle);
                 }
             }
-            
+
             if (i < solutions.size() - 1) {
                 appendText(" ;\n", resultStyle);
             } else {

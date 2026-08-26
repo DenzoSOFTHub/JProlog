@@ -30,7 +30,7 @@ public class Debugging implements BuiltIn {
             sb.append("Spy points:\n");
             for (String s : spies) sb.append("  ").append(s).append('\n');
         }
-        System.out.print(sb);
+        it.denzosoft.jprolog.builtin.io.StreamManager.out().print(sb);
         solutions.add(new HashMap<>(bindings));
         return true;
     }

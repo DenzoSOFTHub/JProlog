@@ -2,6 +2,679 @@
 
 ## Active and Resolved Issues
 
+## Engine v4 wave W9 2026-08-26 (v4.0.0) — RETIREMENT
+
+Implements `docs/reports/report-engine-v4-design-2026-08-25.md` part B, section B.16 wave W9, and
+decision 1 of B.17: **the recursive `QuerySolver` engine is deleted now; the v2 `MachineSolver`
+stays selectable for this release** (`-Djprolog.engine=v2`, `mvn test -Pengine-v2`) and is deleted
+in 4.1. Progress/handoff: `docs/reports/report-engine-v4-progress.md` section 15.
+Suite: **1214/1214 on the default engine (v4) and under `-Pengine-v2`** (1196 pre-existing after
+the collapse of the legacy-engine tests + 18 new); 20/20 example programs on both engines with
+every per-program "Successful queries" count unchanged. New test:
+`src/test/java/it/denzosoft/jprolog/core/engine/v4/EngineV4RetirementTest.java` (18).
+Two further bugs (ISS-2025-0489, ISS-2025-0490) were found by re-running the manual's own examples
+against the build and are fixed here.
+Acceptance: `grep -rn QuerySolver src/main` returns **nothing**.
+
+### ISS-2025-0484
+**Status**: RESOLVED (v4.0.0) — design B.16 wave W9 item 1, delete the recursive engine
+**Problem**: `core.engine.QuerySolver` was two things in one class — the recursive SLD algorithm
+(`solveInternal`, `solveInternalProtected`, `solveAgainstKnowledgeBase`, `solveBodyGoals`,
+`solveInModuleContext`, `handleBuiltIn`, `handleConjunction`, `solveWithTabling`, the LCO
+trampoline, the 2 000-deep recursion cap) and the durable per-engine context (the
+`DebugController`, the query's `ResourceGuard`, the `Prolog` back-pointer, the `solveMeta` and
+`solveInWorker` seams, the legacy attributed-variable hook). Nothing reached the algorithm any
+more — waves W3 and W8 closed the last paths — but the class could not be deleted while
+`BuiltInWithContext.executeWithContext` was typed against it and `core.engine.v4.SolverFacade`
+was a subclass of it.
+**Resolution**: the context role is re-homed on two new types in `core.engine`:
+`SolverContext` (the interface a built-in receives: `solveMeta`, `solve(Term)`, `solveInWorker`
+plus read-only access to the engine) and `EngineContext` (the concrete object every `Prolog` owns:
+the debug controller, the query guard, the knowledge base and registry, the legacy
+`handleAttributeUnification` hook, and an engine-routed implementation of the three seams). Both
+machines take it: `core.engine.v4.Engine.context()` and the v2 `MachineSolver` constructor.
+`SolverFacade` implements `SolverContext` over `Machine.runSubQuery` and inherits nothing.
+DELETED: `QuerySolver`, `CutStatus`, `MutableCutStatus`, `LayeredMap` (and the `LayeredMap` fast
+path in `CompoundTerm.unify`), `CollectionBuiltInAdapter`, `builtin.BuiltInHelper` (a reflective
+`Prolog`-finder with no callers left), `Prolog.solveLegacy`, `Prolog.getQuerySolver`,
+`Prolog.solveWithGuard`, the `legacy` value of `-Djprolog.engine` and the `engine-legacy` Maven
+profile. `Prolog.solve(Term)` and `Prolog.solveStream` run the selected engine.
+`Prolog.getEngineContext()` replaces `getQuerySolver()`; `editor.DebugPanel` uses it for the
+debugger wiring and runs its detached breakpoint-condition and watch sub-solves through
+`Prolog.solve` with the controller temporarily nulled.
+Two consequences that needed work rather than deletion: (a) the v2 engine's tabling delegated to
+`QuerySolver.solveWithTabling`, so the variant-tabling driver (memo cache, in-progress partial
+cache for left recursion, bounded fixpoint) is **ported into `MachineSolver`**, producing against
+the NORMALISED pattern (`path(a, _TV0)`) rather than the caller's goal — a fresh machine restarts
+its clause-renaming counter at `_R1_`, so producing against `path(a, _R1_Z)` bound the goal's own
+variable and a ground variant such as `path(a, d)` silently failed; (b) the trace flag's unrelated
+`LOGGER.info` mechanism went with the class, so `Prolog.setTraceEnabled` only records the flag now
+(the four-port tracer is `Prolog.setTracing`).
+**Test**: `EngineV4RetirementTest.testISS0484_TheRecursiveEngineIsDeleted`,
+`testISS0484_BuiltInWithContextIsTypedAgainstTheInterface`,
+`testISS0484_ProlgHasNoLegacyEntryPoints`, `testISS0484_OnlyV2SelectsAFallbackEngine`,
+`testISS0484_EngineContextIsTheDebugControllerHome`,
+`testISS0484_GroundTabledVariantThroughAnOpenOne` (the v2 tabling regression — it fails without the
+normalised-pattern production), plus the whole suite on both engines.
+
+### ISS-2025-0485
+**Status**: RESOLVED (v4.0.0) — design B.16 wave W9 item 2, reduce `BuiltInWithContext` to the adapter
+**Problem**: 46 built-ins implemented `BuiltInWithContext`, seven of them ISO control constructs
+(`Conjunction`, `IfThen`, `IfThenElse`, `NegationAsFailure`, `Catch`, `Call`, `Caret`) that only
+the recursive engine ever dispatched — both surviving machines implement `,/2`, `;/2`, `->/2`,
+`*->/2`, `\+/1`, `call/N`, `catch/3` and `^/2` natively, with real choice points and real cut
+barriers, and never consult the registry for them. 35 call sites reached the recursive
+`solve(goal, bindings, solutions, CutStatus)` directly.
+**Resolution**: the seven control-construct classes and `CollectionBuiltInAdapter` are deleted.
+Their registry entries stay — as a 30-line `builtin.control.ControlConstruct` placeholder — because
+`BuiltInRegistry.isBuiltIn/2` is what makes `assertz`, `retract` and `clause/2` raise
+`permission_error(modify, static_procedure, call/1)` on a control construct; executing the
+placeholder is an `IllegalStateException`, i.e. a dispatcher bug. Every remaining sub-solve goes
+through `SolverContext.solveMeta` (`Freeze`, `When`, `Phrase`, `DCGUtils`, `Format`,
+`WriteOptions`, `ForAll`, `PersistencePredicates`) or `solveInWorker` (`ThreadPredicates`,
+`ConcurrentPredicates`), and `CutStatus` disappears from every signature. The `Prolog` constructor
+registers a `BuiltInWithContext` unwrapped, so invariant 43 ("a built-in that must reach the
+per-query facade may not be wrapped") is now structural rather than a rule.
+**Test**: `EngineV4RetirementTest.testISS0485_TheControlConstructBuiltInsAreDeleted` and
+`testISS0485_ControlConstructsStayIsoProtected` (the permission errors AND that the constructs
+still work); the whole suite on both engines is the regression oracle for the 35 rewritten sites.
+
+### ISS-2025-0486
+**Status**: RESOLVED (v4.0.0) — design B.16 wave W9 item 4, migrate the remaining eager built-ins
+**Problem**: LIM-037 named the built-ins still on `LegacyBuiltinAdapter` that were worth moving:
+`current_op/3` (materialises the whole operator table before the first solution), `sort/4`,
+`predsort/3`, `max_list/2`, `min_list/2`, `nb_getval/2`, `b_getval/2`, and — the architectural one
+— `in/2`, the six `#`-comparisons and `all_different/1`. Those CLP(FD) predicates called
+`ClpfdV2Bridge.exportSingletons(Map)` to report the variables propagation had determined, which
+names variables the goal never mentions, which is why `LegacyBuiltinAdapter.apply` still had to ask
+`ClpfdV2Bridge.cellFor(name)` for the cell behind a name — the last name-keyed hop in the engine.
+**Resolution**: `core.engine.v4.NativeMisc` (new) implements `sort/4`, `predsort/3`, `max_list/2`,
+`min_list/2`, `current_op/3` (a lazy `Generator`), `nb_getval/2` and `b_getval/2` on cells, with
+the ISO error terms of ISS-2025-0418/0419 reproduced exactly. `core.engine.v4.ClpfdNative` gains
+`in/2`, `#=`, `#\=`, `#<`, `#>`, `#=<`, `#>=`, `all_different/1` and `all_distinct/1`, which post
+through the bridge and then bind the determined **cells** returned by the new
+`ClpfdV2Bridge.determinedCells()`. `ClpfdV2Bridge.cellFor(String)` and `onBindByName(String, Term)`
+are DELETED: the machine hands the attributed cell to the hook directly, waking
+`'$clpfd_unify_hook'('$attvar_cell'(Cell), Other)` instead of routing a name through the prelude's
+`'$attr_hook'/4` dispatcher, and `LegacyBuiltinAdapter.apply` is goal-scoped again.
+The registry implementations stay registered and are what the v2 fallback runs.
+**Test**: `EngineV4RetirementTest.testISS0486_ClpfdHasNoNameKeyedHop`,
+`testISS0486_PropagationStillBindsDeterminedVariables`,
+`testISS0486_CurrentOpEnumeratesEveryOperator` (it fails without the single mark/undo extent around
+the three unifications — a partially-bound argument made every operator after the first fail),
+`testISS0486_Sort4KeepsItsSemantics`, `testISS0486_PredsortKeepsItsSemantics`,
+`testISS0486_MigratedDeterministicBuiltins`.
+
+### ISS-2025-0487
+**Status**: RESOLVED (v4.0.0) — wave W9 carry-over
+**Problem**: "every Prolog thread owns a queue" (ISS-2025-0479) was true only of threads created by
+`thread_create/2,3`. The thread that runs the top-level query — the embedder's, the CLI's, an IDE
+background solve — had no `SELF` id, so `thread_get_message/1` raised "this thread has no message
+queue" and `thread_send_message(main, T)` raised "unknown queue main". A worker therefore had no
+way to send a result back to its creator, which is the commonest SWI idiom.
+**Resolution**: `ThreadPredicates.selfId()` registers the calling thread on first use of
+`thread_self/1` or the message-queue predicates: it allocates a Prolog thread id and a queue, and
+the first such thread also claims the alias `main`. `thread_send_message(main, T)` registers it on
+demand, so a worker can post before the main thread has ever read its own queue. `thread_self/1`
+now always reports a usable `thread_send_message/2` target.
+**Test**: `EngineV4RetirementTest.testISS0487_MainThreadOwnsAMessageQueue` (round trip on the main
+thread, worker -> main, and `thread_self/1` -> send -> get).
+
+### ISS-2025-0488
+**Status**: RESOLVED (v4.0.0) — wave W9 carry-over, LIM-039
+**Problem**: two threads PRODUCING tables on one engine corrupted the shared store. Neither store
+is thread-safe (`core.engine.v4.Tabling`: one variant map, one producing stack, one `evalStack`,
+one answer list and `seen` set per table; `core.engine.TableStore` on v2: one in-progress set and
+one partial-answer cache), and worse than the data race, a second thread that found an EVALUATING
+table became a *consumer* of it and read a half-produced answer set as authoritative. Measured:
+`concurrent_maplist` over four workers each running a tabled transitive closure returned
+`[4, 4, 0, 1]`-style garbage on v4 and worse on v2.
+**Resolution**: an evaluation is claimed by one thread on both engines. A tabled call runs inside
+`enterCall`/`exitCall` so the "does this variant exist / do I produce it" decision and the frame it
+installs are atomic; the claim is HELD until the SCC completes (`completeScc`), is abandoned
+(`abortProduction`) or the query ends (`endQuery`), so no other thread can observe an EVALUATING
+table that is not its own. A worker machine hands the claim back in `Machine.solve`'s finally via
+the new `Tabling.endWorker()`, abandoning whatever it left EVALUATING — a worker owns no query
+boundary. Reading a COMPLETE table stays effectively parallel (the claim is held only for the call
+decision). The wait is bounded at 60 s and then raises `resource_error(tabling_busy)`, and a Stop
+interrupt is honoured while waiting, so a runaway or mutually-dependent producer never hangs.
+**Test**: `EngineV4RetirementTest.testISS0488_ConcurrentTableProductionIsSafe` — four workers of
+one query each counting a tabled transitive closure must all see 4 answers. It fails
+non-deterministically (~60 % of runs) without the claim.
+
+### ISS-2025-0489
+**Status**: RESOLVED (v4.0.0) — found while re-checking the manual's examples against the build
+**Problem**: `stream_property(S, alias(user_error))` — an example printed in the manual — **hung
+forever**. With an unbound first argument the built-in walks every open stream, and computing the
+`end_of_stream` property calls `PrologStream.atEndOfStream()`, whose one-character lookahead
+BLOCKS on an interactive `user_input`. Nothing could break the wait: it happens inside a bridged
+built-in, so neither the inference budget nor a Stop interrupt is polled. `findall/3` over the
+same goal appeared to work only because a previous timed-out call had already left stdin at EOF.
+**Resolution**: `at_end_of_stream/0,1` may legitimately wait for input; `stream_property/2` may
+not. A stream that cannot be repositioned (stdin, a socket, a pipe) is reported as
+`end_of_stream(not)` unless a read has already run past its end; a file is peeked as before.
+**Test**: `EngineV4RetirementTest.testISS0489_StreamPropertyNeverBlocksOnStandardInput` (it hangs
+to the JUnit timeout without the fix).
+
+### ISS-2025-0490
+**Status**: RESOLVED (v4.0.0) — found while re-checking the manual's examples against the build
+**Problem**: an answer printed in canonical form for a user-declared operator —
+`?- op(200, xfy, likes), X = (john likes (mary likes wine)).` answered
+`X = likes(john,likes(mary,wine))` where `write/1` inside the same query correctly printed
+`john likes mary likes wine`. Both the manual and
+`docs/references/BUILTIN_OPERATORS_REFERENCE.md` document the operator form. Cause: `Answer.lines`
+is called by the CLI and the IDE **after** `Prolog.solve` returns, i.e. after the engine's
+`EngineState` has been uninstalled from the thread, so `Writer`'s fallback to
+`Ops.current().table()` found a default table instead of the engine's.
+**Resolution**: new `Answer.lines(solution, residual, OperatorTable)`; `PrologCLI` and
+`editor.RunPanel` pass `prolog.getOps().table()`. The two-argument overload keeps the old
+behaviour for any embedder that calls it.
+**Test**: `EngineV4RetirementTest.testISS0490_AnswersRenderWithTheEnginesOperatorTable` — the
+operator form with the table, the canonical form without it, and the parenthesisation a
+700-priority operator needs inside the answer's `=`.
+
+## Engine v4 wave W8 2026-08-26 (v4.0.0) — v4 IS THE DEFAULT ENGINE
+
+Implements `docs/reports/report-engine-v4-design-2026-08-25.md` part B, sections B.6 (the debugger
+on machine port events) and B.13 (threads, engines, the embedding facade), section B.16 wave W8.
+Progress/handoff: `docs/reports/report-engine-v4-progress.md` section 14. Suite: **1204/1204 on the
+default engine (v4) and under `-Pengine-v2`**; 20/20 example programs on both. New tests:
+`src/test/java/it/denzosoft/jprolog/core/engine/v4/EngineV4ThreadsTest.java` (15),
+`EngineV4TraceTest.java` (25) and `src/test/java/it/denzosoft/jprolog/test/cli/PrologCliBatchTest.java` (6).
+
+The v2 `MachineSolver` stays selectable for ONE release (`-Djprolog.engine=v2`), as design decision
+1 (B.17) requires; the recursive `QuerySolver` stayed behind `-Djprolog.engine=legacy` and was
+deleted in wave W9 (ISS-2025-0484), together with that property value.
+
+### ISS-2025-0478
+**Status**: RESOLVED (v4.0.0) — design B.16 wave W8 item 1, the default switch
+**Problem**: the clean-room v4 core had been opt-in since v3.9.0 (`-Djprolog.engine=v4`). Every wave
+kept the whole suite green on it, it is 6x faster on a user's own list predicates, it runs
+`loop(10000000)` in 64 MB where v2 runs out of memory, and it is the only engine with correct
+tabling, correct `when/2` binding propagation, working module-qualified built-in calls and yall
+lambdas — but nothing used it unless the embedder asked. The switch is not a one-line flag flip:
+`Prolog.isUsingV4Engine()` starts answering **true** by default, so every engine-aware branch in
+`src/main` and `src/test` changes meaning, and two tests reached the older engines by clearing only
+ONE of the two flags.
+**Resolution**: `jprolog.engine` defaults to `v4`; `USE_V4_ENGINE` is true unless the property is
+literally `v2` or `legacy` (anything else is still v4, matching the parser/DCG/CLP(FD) toggles),
+and `USE_V2_ENGINE` is true unless it is literally `legacy` — v4 wins over it, so
+`Prolog.setUseV4Engine(false)` drops to v2 and `=legacy` drops to the recursive solver. The Maven
+profile `engine-v4` is replaced by **`engine-v2`**: `mvn test` is the v4 leg, `mvn test -Pengine-v2`
+the second CI leg (`-Pengine-legacy` remains a convenience, not an acceptance leg). Audited every
+`isUsingV4Engine()`/`isUsingV2Engine()` branch: the six engine-aware assertions in
+`BugFixVerificationTest`, `EngineV4LibraryTest` and `RefactorIssuesTest` keep testing the right
+thing (they select the branch, not the engine), while `V2EngineIntegrationTest.on()` and
+`BugFixVerificationTest.testISS0348_StringIdentityAndAtomicOnLegacyEngine` now clear AND restore
+both flags — without that they would have silently run on v4 and stopped testing what they name.
+**Test**: the whole suite twice (`mvn -o test`, `mvn -o test -Pengine-v2`) plus
+`EngineV4Test.testISS0444_EngineSelectionFlag`.
+
+### ISS-2025-0479
+**Status**: RESOLVED (v4.0.0) — design B.13, threads on v4 machines; closes **LIM-024** on v4
+**Problem**: `thread_create/2` did not run its goal. It started a thread that slept 10 ms and wrote
+`completed(<goal>)` into a status map, and it required the goal to be an ATOM (`resolveAtom`), so
+`thread_create(work(21), Id)` was a type error and `thread_create(true, Id)` "succeeded" without
+doing anything. `thread_join/2` returned that synthetic atom. Message queues carried
+`String`s, so only atoms could be sent. `thread_self/1` returned the JVM thread id even inside a
+Prolog thread. There was no `thread_create/3`, no thread aliases and no per-thread queue.
+**Resolution**: new `core.engine.v4.Workers` runs a goal on a **fresh `Machine` over the same
+`Engine`** from any thread: the clause store is shared and thread-safe by birth/death generations,
+the engine's `PrologFlags` and `EngineState` are installed as the worker thread's current state
+(so it shares flags, operators and the stream table but gets its own `current_input`/`current_output`),
+the worker gets its OWN `ResourceGuard` carrying the parent's inference budget, and the goal is
+`copy_term`'d in and every answer copied out so **no `Variable` cell is shared between machines**.
+`QuerySolver.solveInWorker(goal, bindings, solutions, cutStatus, maxSolutions)` is the new entry
+point; its default is the pre-W8 behaviour (the shared recursive solver), so v2 and legacy are
+unchanged. `ThreadPredicates` became a `BuiltInWithContext` and now implements `thread_create/2,3`
+(options `alias/1`, `detached/1`), `thread_join/2` with the SWI status terms
+`true` / `false` / `exception(Ball)` / `cancelled`, `thread_self/1` reporting the worker's own
+Prolog id, alias-accepting `thread_join`/`thread_detach`/`thread_is_alive`, term-carrying message
+queues (copied in and out), a queue per Prolog thread reachable by id or alias, and the new
+`thread_get_message/1`. A worker machine owns no query boundary (`Machine.asWorker()`): the
+engine-wide sweeps in `Machine.solve`'s `finally` (the shared solver's `ResourceGuard`,
+`ClauseStore.compact()`, `Tabling.endQuery()`) belong to the top-level query, and a worker finishing
+first would abandon the parent's in-progress tabled evaluation. What is still not thread-safe is
+recorded as **LIM-039**: two threads *producing* the same table at once. The sandbox was widened to
+match: `builtin.threading` joined `UNSAFE_BUILTIN_PACKAGES`, so `enableSafeMode()` removes
+`thread_create/2,3`, the queues and the `concurrent_*` family — a thread is a host resource, and a
+worker's inference budget is its own, so an untrusted program that can spawn threads escapes the
+CPU limit.
+**Test**: `EngineV4ThreadsTest.testISS0479_*` — the goal really runs, the three join statuses,
+`/3` options, `thread_self` inside a worker, assert+retract from two threads, a worker binding not
+leaking into the parent, term-carrying queues, the thread-owned queue and alias, a worker hitting
+the parent's inference budget, and safe mode removing the whole `builtin.threading` package.
+
+### ISS-2025-0480
+**Status**: RESOLVED (v4.0.0) — design B.13; the LAST path from a v4 query into `QuerySolver.solveInternal`
+**Problem**: `concurrent/3`, `concurrent_maplist/N`, `concurrent_and/2`, `concurrent_or/2` and
+`first_solution/3` submitted `solver.solve(goal, bindings, solutions, CutStatus)` to a worker
+thread. `SolverFacade` detected the foreign thread and fell back to the recursive algorithm — the
+one remaining routine path from a v4 query into `QuerySolver.solveInternal` (deviation 7 of section
+9.4 of the progress report) and the whole of LIM-024. Two further defects were hiding behind it:
+the family was registered wrapped in a `CollectionBuiltInAdapter`, which pins the solver at
+REGISTRATION time to the engine's shared recursive `QuerySolver` — so even after the facade gained
+a worker entry point the built-in never saw it — and `concurrent_maplist/3` and `/4` were registered
+under the literal names `concurrent_maplist3`/`concurrent_maplist4`, i.e. they were not callable
+from Prolog at all (`concurrent_maplist/3` reached the /2 handler and raised an arity error).
+**Resolution**: the family calls `solveInWorker`, which the facade overrides onto `Workers`; the
+`CollectionBuiltInAdapter` wrapper was removed for these seven names (every dispatcher —
+`LegacyBuiltinAdapter` on v4, `MachineSolver.bridgeBuiltin` on v2, `QuerySolver.solveInternal` on
+legacy — already handles a `BuiltInWithContext` and passes the right solver); one registry entry
+now dispatches `concurrent_maplist/2,3,4` on the goal's arity. Interrupting the parent cancels the
+workers: the blocking `get()`/`poll()` throws `InterruptedException`, every future is cancelled
+(which interrupts its worker, whose own guard raises `QueryCancelledException`) and the parent
+re-raises `QueryCancelledException`. `Machine.onOwnerThread()` is now
+`Machine.assertOwnerThread(what)` — an off-thread entry is an `IllegalStateException`, deliberately
+not a `PrologException` (invariant 9). `QuerySolver.internalSolveCount()` became `volatile` so the
+probe observes worker threads.
+**Test**: `EngineV4ThreadsTest.testISS0480_*` (all arities of `concurrent_maplist`, the rest of the
+family, the reachability probe, the off-thread assertion, parent interrupt cancels the workers) and
+the extended `EngineV4LibraryTest.testISS0450_NoBuiltinReachesTheRecursiveSolver`.
+
+### ISS-2025-0481
+**Status**: RESOLVED (v4.0.0) — design B.6, limit **L-13**: the debugger without disabling fast paths
+**Problem**: `Machine.stepN` skipped its whole inline built-in table whenever a `DebugController`
+was attached (`=/2`, `is/2`, the six arithmetic comparisons, `==`/`\==`, the four standard-order
+comparisons, `\=/2` and the nine type checks), and skipped `once/1`, `ignore/1`, `forall/2` and
+`between/3` whenever tracing OR debugging — so those goals went through the legacy bridge purely to
+get their ports. A debugged run therefore executed different code from an undebugged one (a
+correctness hazard, not only a performance one), paid a materialised `Map<String,Term>` and a
+forced choice point per inference, and the inline built-ins were invisible in a plain `trace/0`
+trace while the IDE debugger did see them.
+**Resolution**: the fast paths stay enabled and the machine emits the ports itself.
+`isInlineBuiltin(f, n)` answers, before the work, whether `solveBuiltin` will handle the goal — the
+Call port has to precede execution — and the deterministic inline built-ins then get
+Call + Exit/Fail and push NO choice point. `once/1`, `ignore/1` and `forall/2` keep the native
+if-then-else through the new `Machine.iteTraced`, which owns the wrapper's Call and Exit and pushes
+a port-only frame underneath so the Fail port survives the commit that cuts the construct's own
+choice point. `between/3` emits the four ports from its own lazy generator, like
+`lengthEnumerate`. `DebugController` builds its `DebugEvent` (which copies the whole call stack)
+only when a listener or a pause will use it, and the new `DebugController.needsGoalSnapshot()` lets
+the machine skip the goal snapshot when nobody will read it — a merely RUNNING debugger then costs
+nothing measurable (`nrev` with a controller attached went from 5.8x untraced to 1.1x).
+**Test**: `EngineV4TraceTest` — 16 pinned trace oracles (user predicates, inline built-ins,
+backtracking with Redo/Fail, cut, negation, catch/throw, findall, `once`/`between`,
+`forall`/`ignore`, the native list library, coroutining, tabling, if-then-else, maplist, the
+database), plus `testISS0481_DebuggerSeesTheSamePortsAsTheTracer` and
+`testISS0481_InlineBuiltinsArePortedNotBridged`.
+
+### ISS-2025-0482
+**Status**: RESOLVED (v4.0.0) — trace memory and the four-port depth
+**Problem**: a traced choice point was NEVER trust-me popped (`cp.traceGoal == null` was part of the
+pop condition), so a traced deterministic recursion retained one choice point per resolution step:
+`loop(N)` under `trace/0` was QUADRATIC (1.9 s / 8.4 s / 33 s at N = 20 000 / 50 000 / 100 000, and
+N = 1 000 000 did not finish in 110 s at 1 GB) and `nrev 30x100` was 567x slower than untraced —
+tracing was effectively unusable on anything but a toy. The port DEPTH was
+`cps.size()`, the choice-point height, which only looked like a call depth because those frames
+were never popped.
+**Resolution**: a frame that handed out exactly ONE alternative and is exhausted is deterministic —
+it can never Redo and its `Fail` after `Exit` is a phantom — so it is trust-me popped even while
+tracing (`CP.altsTaken`). That is SWI's last-call behaviour, and it is what makes trace memory
+linear in the number of OPEN calls instead of in the number of inferences. The depth then had to
+stop being the choice-point height: `Machine.portDepth` is the machine's own call-nesting level,
+ASSIGNED by every port (Call takes it and goes one deeper, Exit/Fail return to the frame's own
+value, Redo re-opens it one deeper), which is self-healing when a frame is cut away without an Exit
+port. The IDE needs exactly this: `DebugController` prunes its call stack by depth and
+step-over/step-out compare against a target depth. The trace indentation is capped at 40 levels
+(the depth itself is still exact) because a 1 000 000-deep tail recursion would otherwise emit a
+two-million-character indent — quadratic output; and `tracePort` stopped copying the goal with
+`Unify.resolve` before formatting it, because the writer dereferences and is cycle-safe.
+**Measured** (same session, best of 3 warm, against a faithful reconstruction of the v3.14.0
+`Machine` that reproduces the pre-W8 trace oracle byte for byte): `nrev 30x100` traced
+10779 ms (567x) -> **255 ms** (~10-18x); with a `DebugController` attached and no listener
+93 ms (5.8x) -> **21 ms** (1.1x); `loop(N)` traced 1850 / 8364 / 33293 ms at N = 20 000 / 50 000 /
+100 000 (quadratic) -> **479 / 478 / 738 ms** (linear), and `loop(1000000)` from "did not complete
+in 110 s at 1 GB" to **4597 ms**.
+**Test**: `EngineV4TraceTest.testISS0482_TracedDeterministicRecursionIsNotQuadratic` (200 000
+iterations under a 120 s timeout) and `testISS0482_TraceIndentationIsCapped`; the 16 pinned oracles
+are what proves the depths nest.
+
+### ISS-2025-0483
+**Status**: RESOLVED (v4.0.0) — the non-interactive console
+**Problem**: `PrologCLI.displaySolutionsInteractively` printed the first solution, wrote ` ;` and
+then called `reader.readLine()` — unconditionally. With stdin redirected (a pipe, a here-doc,
+`test_all_examples.sh`, a CI job) the line it read was **the next query**, which is not `;`, so the
+CLI printed `.` and threw that query away. Piping `between(1,5,X).` followed by `digit(X).` ran
+only the first, printed one of its five solutions, and never ran the second at all.
+**Resolution**: the CLI knows whether it is interactive — `System.console() == null` means it is
+not, and `--batch` / `-q` force it. In batch mode every solution is printed at once, separated by
+` ;` and terminated by `.`, and nothing is read back; interactive mode is byte-for-byte unchanged
+(`;` + Enter for the next solution, Enter to stop). The banner and `:help` name the mode in force.
+**Test**: `src/test/java/it/denzosoft/jprolog/test/cli/PrologCliBatchTest.java` (6 tests, driving
+`PrologCLI.main` with a redirected `System.in`/`System.out`).
+
+## Engine v4 wave W7 2026-08-26 (v3.14.0, mostly ENGINE-NEUTRAL)
+
+Implements `docs/reports/report-engine-v4-design-2026-08-25.md` part B, sections B.11 (streams) and
+B.12 (operators, flags, writer), section B.16 wave W7. Progress/handoff:
+`docs/reports/report-engine-v4-progress.md` section 13. Suite: 1157/1157 on the default engine and
+on v4; 20/20 example programs on both, byte-identical between the two engines. New tests:
+`src/test/java/it/denzosoft/jprolog/core/engine/v4/EngineV4StreamsTest.java` (25 tests) and
+`EngineV4WriterTest.java` (20 tests).
+
+Unlike waves W1-W6 this one is mostly **not** v4-only: the state it moves (streams, operators, spy
+points, profiler counters) and the writer it introduces are reached by the legacy and v2 engines
+through the unchanged static facades, because design decision 1 (B.17) keeps v2 selectable for one
+release after v4 becomes the default.
+
+### ISS-2025-0472
+**Status**: RESOLVED (v3.14.0) — design B.11, the per-engine stream table; fixes limits L-06 and L-07, closes LIM-025
+**Problem**: `builtin.io.StreamManager` OWNED the stream state in statics — `INPUT_STREAMS`, `OUTPUT_STREAMS`, `STREAM_PROPS`, `READERS`, `PRINT_WRAPPERS` — so every `Prolog` in the JVM shared one set of open streams and one alias namespace (limit L-06): a stream opened by engine A was visible to engine B, and `open/4` with `alias(input)` in a sandboxed engine collided with the host's. Text input went through a `PushbackReader` wrapped around the raw `FileInputStream`, which carries its own 8 KB buffer: `seek/4` and `set_stream_position/2` moved the file channel while the reader kept serving stale characters, so `get_char(S,C1), seek(S,0,bof,_), get_char(S,C2)` answered `C2 = e` after `C1 = h` (limit L-07). There was no character count, no line number and no line position at all. `read/1,2` and `read_term/2,3` each kept a PRIVATE static per-alias `BufferedReader`, so the three families of I/O built-ins disagreed about the stream position — and, because the stream-handle counter was per engine, a second `Prolog` reusing `stream_1001` was handed the first engine's CLOSED file. `with_output_to/2` and `format ~@` had to swap the process-wide `System.out` as well as the thread-local override, because a handful of built-ins printed to `System.out` directly (LIM-025).
+**Resolution**: New `core.engine.v4.Streams` (the table of one engine) and `core.engine.v4.PrologStream` (one open stream), owned by a new `core.engine.v4.EngineState` that each `Prolog` creates and installs as the **thread-current** state around every solve/consult entry point — the pattern `PrologFlags` has used since ISS-2025-0437. `StreamManager` keeps every static signature and becomes a facade over `Streams.current()`, so the ~30 legacy I/O built-ins, the two older engines and any embedder code are unchanged. A text stream decodes ONE code point at a time through a private `ByteBuffer` + `CharsetDecoder`, tracking byte position, character count, line number and line position exactly; a reposition drops the buffer, resets the decoder and recomputes the counters by re-scanning the prefix (bounded at 8 MB). Peek is a one-character lookahead ON THE DECODER (`pendingCp` + the byte width that produced it), so `bytePosition()` stays exact and a reposition simply discards it. `read/1,2` and `read_term/2,3` read through the same decoder; their static caches are gone. The handle counter is process-global so a handle denotes at most one stream in the JVM. `open/3,4` unifies `Stream` with `'$stream'(N)`; `IOStreamUtils.streamAlias`/`isStreamTerm` accept it, the legacy `stream(A)` wrapper, an atom alias, the `stream_<id>` handle and the reserved names. `current_input`/`current_output` are a `ThreadLocal` field of the per-engine table (per engine AND per thread); the IDE's `StreamManager.setThreadLocalOutput` stays a process-wide thread-local that wins over both — that contract is unchanged. LIM-025 closed: `with_output_to/2` (both engines), `format/3` with `atom/string/codes/chars`, `format ~@` and the `~p` portray path capture through the thread-local override ALONE; `Spy`, `NoSpy`, `Leash` and `Debugging` were the last built-ins printing to `System.out` and now write through `StreamManager.out()`.
+**Test**: `EngineV4StreamsTest` (25 tests) — seek/bof, seek to an offset, `set_stream_position/2`, peek semantics, a peek discarded by a reposition, per-engine isolation, per-thread `current_output`, capture without `System.out`, nested captures, binary bytes sharing the text position.
+
+### ISS-2025-0473
+**Status**: RESOLVED (v3.14.0) — design B.11, stream introspection and the parser nesting limit
+**Problem**: `stream_property/2` reported six hard-coded properties, only for the three standard streams plus whatever the alias tables happened to hold, and it tried to unify a BOUND stream argument with the stream's own term — so `stream_property(myin, alias(A))` was simply false for every stream opened with `alias(myin)`. `set_stream/2`, `stream_position_data/3`, `character_count/2`, `line_count/2`, `line_position/2` and `current_stream/3` did not exist. `read_term/2,3` had no `term_position` option. Deeply nested input blew the Java stack, and the resulting `StackOverflowError` surfaced as whatever the nearest catch made of it: inside `term_to_atom/2` a plain FAILURE, inside `atom_to_term/3` a `syntax_error`.
+**Resolution**: `StreamProperty` enumerates the complete ISO set (`file_name`, `mode`, `input`/`output`, `alias` — one solution per alias, `position`, `end_of_stream`, `eof_action`, `reposition`, `type`, `encoding`, `line_count`) over `Streams.all()`, and only BINDS the stream argument when it was unbound. New `builtin.io.StreamInfo` implements `set_stream/2`, `stream_position_data/3`, `character_count/2`, `line_count/2`, `line_position/2` and `current_stream/3`. `stream_property(S, position(P))` hands out `'$stream_position'(CharCount, LineCount, LinePosition, ByteCount)`, which `set_stream_position/2` accepts alongside a plain byte offset. `read_term/2,3` gained `term_position(Pos)`, the position of the FIRST character of the term just read. Both parsers (`core.parser.v2.TermReader` and the legacy `core.parser.TermParser`) got an explicit 1000-level nesting counter raising `error(resource_error(parser_nesting), read)`, and `TermToAtom`/`AtomToTerm` rethrow a `PrologException` and convert a residual `StackOverflowError` instead of swallowing it.
+**Test**: `EngineV4StreamsTest.testISS0473_*` — the complete property set, an alias as the stream argument, the three counters after reading two lines, `stream_position_data/3`, counters after a reposition, `set_stream/2`, `current_stream/3`, a closed stream, `read_term/2,3` options, and 5 000 nested parentheses raising `resource_error(parser_nesting)`.
+
+### ISS-2025-0474
+**Status**: RESOLVED (v3.14.0) — design B.12, one operator store per engine; part of LIM-034
+**Problem**: three separate operator stores. `OperatorDefinition.OPERATORS` (+ `OP_MODULE`) was what `current_op/3` read; `OperatorDefinition.sharedOperatorTable` was what the parser read; and `Prolog.processOpDirective` wrote to **neither of the first two** — it updated only `Prolog.operatorTable`. Consequences: a `:- op(700, xfx, ===).` directive in a consulted file worked in source and was INVISIBLE to `current_op/3` (documented as a known limitation in the manual), and all three stores were process-global, so `op/3` in one engine changed how every other engine in the JVM parsed and printed (LIM-034).
+**Resolution**: New `core.engine.v4.Ops`, owned by `EngineState`: one `OperatorTable` — the object `Prolog.getOperatorTable()` returns — plus an ownership map recording which module declared each non-standard operator. `op/3`, `current_op/3`, `Prolog.processOpDirective`, the parser, the writer, the `.jpc` writer and the IDE formatter all go through it. `OperatorDefinition` keeps its whole static API as a facade over `Ops.current()`; `OPERATORS`, `OP_MODULE` and `sharedOperatorTable` are deleted (`setSharedOperatorTable` is a deprecated no-op). `op/3` still records an undo action on the backtracking `Trail`. An operator declared inside a module file is local to that module for `current_op/3`.
+**Deviation**: a module-local operator is still installed in the SHARED parser table. Design B.12 wants the parser to be module-scoped too, but a JProlog session consults everything into one operator space and every already-read clause depends on it; narrowing that is a cross-engine decision, not a W7 one. `RefactorIssuesTest.testR2_operatorLocalToModule` (the observable the rule is about) passes either way.
+**Test**: `EngineV4WriterTest.testISS0474_CurrentOpSeesAConsultedOpDirective`, `testISS0474_OpThreeAndCurrentOpShareOneStore`, `EngineV4StreamsTest.testISS0474_TwoEnginesDoNotShareOperators`.
+
+### ISS-2025-0475
+**Status**: RESOLVED (v3.14.0) — design B.12, the ISO term writer
+**Problem**: `core.util.TermFormatter` recursed on every operator argument (only the last argument of a plain compound was iterative), had no cycle detection at all — so a rational tree, which the v4 engine builds happily, looped forever — and implemented four write options. `write_term/2,3` did not use it: it carried a second, private formatter that ignored operators, `max_depth` beyond a crude counter, `portray`, `cycles` and `variable_names`. `print/1,2` documented the `portray/1` hook as unsupported. `portray_clause/1,2` and `print_message/2` did not exist. The writer read `OperatorTable.getDefault()` — whichever engine booted first.
+**Resolution**: New `core.engine.v4.Writer`. Everything runs off an explicit work stack (term / literal / list-continuation / operator-token items), so there is no Java recursion anywhere; the current path is tracked in an `IdentityHashMap` for cycle detection, except list spines, which use Brent's algorithm and therefore cost O(1) extra memory on a 1 M-element list. Operator spacing is decided against the characters ALREADY EMITTED on the left (exact, no lookahead buffer) and a bounded leftmost-spine walk on the right, reproducing the ISS-2025-0387/0388/0389 rules the suite pins. Options: `quoted`, `ignore_ops`, `numbervars`, `max_depth`, `portray`, `cycles`, `variable_names`, `spacing(next_argument)`; an unknown option raises `domain_error(write_option, O)`. `cycles(true)` rewrites the term into the SWI `@(Template, Substitutions)` form first. `TermFormatter` is now a facade over it, which is what puts the new writer behind `write/1,2`, `writeln`, `writeq`, `print`, `write_canonical`, `format ~w/~q/~p` and the two engines' trace output at once; `write_term/2,3` was rewritten on it and its private formatter deleted; `portray_clause/1,2` and `print_message/2` are new built-ins; `core.write.v2.TermWriter` (the IDE formatter) and `DebugPanel`'s variable views read the engine's table through it too.
+**Test**: `EngineV4WriterTest` (20 tests) — the option matrix against expected strings, quoting, operator spacing and parentheses, lists and curlies, `ignore_ops`, numbervars, `variable_names`, `max_depth`, `spacing`, strings, an unknown option, `portray`, cyclic terms with and without `cycles(true)`, a 1 000 000-element list and a 200 000-deep spine at the default stack, `portray_clause/1`, `print_message/2`.
+
+### ISS-2025-0476
+**Status**: RESOLVED (v3.14.0) — design B.12 and B.17 decision 5; fixes limit L-11
+**Problem**: the console printed `Term.toString()`: canonical, unquoted, no operators, internal variable names, no residual goals. `?- X = 'a b'-1.` printed `X = -(a b, 1)`, `?- Body = (p,q).` printed `Body = ,(p, q)`, an unbound query variable printed as `Y = Y` next to `X = f(Y)`, and an answer still carrying `freeze/2`, `dif/2` or a CLP(FD) domain printed as if it were unconstrained. `Prolog.residualGoals/1` existed since wave W4 with no consumer.
+**Resolution**: New `core.engine.v4.Answer`, shared by `PrologCLI` and the IDE's `RunPanel`. It renders each binding with `quoted(true), numbervars(true), portray(true)` at priority 699 (the right argument of `=/2`, so a conjunction prints as `(p,q)`), names fresh variables `_A`, `_B`, ... — keyed by the ENGINE's variable name, not by object identity, because the legacy and v2 engines hand back a renamed copy per binding — keeps a query variable's own name when it comes back unbound, drops the redundant `Y = Y` line and any internal `_`-prefixed key, and appends the residual goals from `Prolog.residualGoals(solution)`. `true.` for an answer with no bindings, `false.` on failure.
+**Behaviour change (approved)**: this changes the text of every CLI answer. Measured with `scratchpad/bench/AnsAB.java` over the 16 example programs that produce bindings: 7 print different text (all of them either quoting/operator improvements or the removal of a spurious `Var = Var` line). The byte-identical example-output oracle was re-baselined once; v2 and v4 remain byte-identical to each other.
+**Test**: `EngineV4WriterTest.testISS0476_*` — the answer format for eight representative queries, `_A`-style naming with no internal name leaking, residual goals for `freeze/2`, `dif/2` and CLP(FD) on v4, and `PrologCLI` driven end to end through `System.in`/`System.out`.
+
+### ISS-2025-0477
+**Status**: RESOLVED (v3.14.0) — the tail of LIM-034
+**Problem**: `builtin.debug.Spy.spyPoints` and the `core.engine.Profiler` counters were process-global. `spy(foo/1)` in one `Prolog` set a spy point for every engine in the JVM; `profile(reset)` in one wiped everyone's numbers.
+**Resolution**: both live on `EngineState` (`spies()`, `profile()`); `Spy` and `Profiler` keep their static API as facades over the engine current on the calling thread. `Prolog.getEngineState()` is the accessor for embedders and tests.
+**Test**: `EngineV4StreamsTest.testISS0477_TwoEnginesDoNotShareSpyPointsOrProfilerCounters`; `DebuggingTest` reads `prolog.getEngineState().spies()` instead of the old static.
+
+## Engine v4 wave W6 2026-08-26 (v3.13.0, opt-in `-Djprolog.engine=v4`)
+
+Implements `docs/reports/report-engine-v4-design-2026-08-25.md` part B, section B.10 (modules and
+the Prolog prelude), section B.16 wave W6. Progress/handoff:
+`docs/reports/report-engine-v4-progress.md` section 12. Suite: 1112/1112 on the default engine and
+on v4; 20/20 example programs on both, byte-identical output. New tests:
+`src/test/java/it/denzosoft/jprolog/core/engine/v4/EngineV4ModulesTest.java` (29 tests).
+
+### ISS-2025-0466
+**Status**: RESOLVED (v3.13.0) — design B.10, the `Modules` owner; fixes limit L-09 on v4
+**Problem**: the v4 machine had no module system of its own. `Machine.selectClauses` delegated to the shared `core.module.ModuleManager` as soon as `modules.getAllModuleNames().size() > 1`, which diverted EVERY unqualified call away from the flat clause store the moment a program declared a second module (so a `user` predicate asserted at run time became unreachable from a module context, and the first-argument index was bypassed); `raiseUnknownIfRequired` had a matching escape hatch that silently disabled the ISO `unknown` flag whenever a module existed; and `Module:Goal` resolved only user clauses, so `lists:append([1],[2],L)` was FALSE (`scratchpad/bench/Limits.java` row "module-qualified builtin") and `system:atom_length(abc,N)` raised nothing at all.
+**Resolution**: New `core.engine.v4.Modules`, owned by the `Engine`. Every predicate belongs to a module: `system` is the built-ins (v4 natives plus the legacy registry), **`user` IS the flat `ClauseStore`**, and the library modules are Prolog resources (see ISS-2025-0467). The manager stays the consult-time RECORDER shared with the legacy and v2 engines — `Modules` mirrors the user-defined modules from it and detects staleness through a new monotone `ModuleManager.getStamp()`, bumped by `addRule`, `createModule`, `setCurrentModule`, `importModule` and `reset` (plus `touch()` for a change made through a `Module` handle). Resolution for an unqualified call from module `M`: `M`'s own clauses -> `M`'s imports (in import order, export-checked) -> `user` (the flat store, with its first-argument index) -> autoload libraries -> `system`. The `size() > 1` special case and its `raiseUnknownIfRequired` escape hatch are DELETED. `Machine.Goal` carries the context module (`null` == `user`, so a single-module program pays one null test), the drive loop derives it from the goal it pops, a clause body carries its DEFINING module, and every nested drive (`findAll`, `runSubQuery`, `runOnce`) saves and restores it — `CP.module` does the same for a `catch/3` recovery goal. `Module:Goal` is `Machine.qualifiedCall`: the innermost qualification of `a:b:Goal` wins; `system:G` is a built-in dispatch; `user:G` and an unknown module are ordinary resolution in that context; a known module that DEFINES the predicate answers only if it exports it (the ISS-2025-0314 enforcement, unchanged and still pinned by `RefactorIssuesTest.testR2_emptyExportListHidesAll` and `AuditRound5Test.test7_moduleQualifiedCall_exportEnforced`), and a known module that does NOT define it falls through to the ordinary resolution in its own context — which is what makes `lists:length/2` (a native) and `other:base/1` (a `user` predicate) both resolve. `Machine.callQualified` (the flat `:/2` lookup wave W4 added for `Module:attr_unify_hook/2`) is unchanged and is also tried as a fallback when a qualified call finds nothing.
+**Measured**: 27/27 acceptance queries on v4 against 11/27 on v2 (`scratchpad/bench/AB6.java`).
+
+### ISS-2025-0467
+**Status**: RESOLVED (v3.13.0) — design B.10, autoload by predicate indicator
+**Problem**: `Prelude.load` parsed `apply.pl` and `coroutining.pl` into the clause store in the `Engine` constructor, on every engine, whether or not the program used any of it. Adding the `lists`, `pairs` (and future `strings`, `aggregate`) modules would have multiplied that cost.
+**Resolution**: two-phase and JVM-wide. Each `prelude/*.pl` now starts with `:- module(Name, [Exports])`; those headers are extracted by a textual scan (no parser) ONCE per JVM into an `indicator -> module` index, and a module's clauses (and its `:- meta_predicate` declarations) are parsed and compiled the first time one of its predicates is actually referenced, cached for the whole JVM. `Prelude.owner(f, n)` is the cheap negative on the hot goal path: a name no library exports costs one `HashMap` probe and never triggers a load. The prelude is parsed with the STANDARD `OperatorTable`, never the engine's, so a user `:- op/3` cannot change how the library reads. `ClauseStore`'s flat library layer (`defineLibrary`/`libraryClauses`/`maybeLibrary`, ISS-2025-0454) is removed — the clauses live in `Modules` now, so the store is exactly what design B.10 says it is: the clauses of module `user`.
+**Measured** (same session): `new Prolog()` 0.196 ms best / 0.78 ms avg on v4 against 0.234 / 0.81 on v2 — unchanged, because the v4 `Engine` is still created lazily on the first v4 query. `new Prolog()` plus a first query: **0.34 ms best / 1.4 ms avg, against 8.0 ms before the wave** (eager prelude load).
+
+### ISS-2025-0468
+**Status**: RESOLVED (v3.13.0) — design B.10 / B.17 decision 4; pays off the two W3 deviations
+**Problem**: `append(X, Y, Z)` with all three arguments open produced the single standard solution instead of enumerating, and `member(X, PartialList)` failed at the open tail instead of extending it (section 9.4 deviation 2 of the progress report). `memberchk/2` had the same dead end. Module and library clauses also bypassed the first-argument index entirely, so `append([H|T], L, [H|R]) :- append(T, L, R).` pushed a two-clause choice point per element and left a million live frames behind on a 1 000 000-element list.
+**Resolution**: `src/main/resources/prelude/lists.pl` (new, module `lists`) holds the two-clause definitions of `member/2` and `append/3`; that is what `lists:member/2` and `lists:append/3` run. The unqualified call takes an observationally equivalent NATIVE generator extended with the missing modes: `MemberGen` extends an unbound tail (`L = [X|_]`, `[_,X|_]`, ... in the clauses' own order, an infinite generator, so it never announces a last solution), `AppendB`'s both-open branch enumerates instead of returning one answer, and `MemberB(once)` (`memberchk/2`) binds an open tail to `[X|_]`. `EngineV4ModulesTest.testISS0468_NativeAndPreludeListPredicatesAgree` pins the equivalence of the two. Which predicates are Prolog and which are native was decided by the measurement the wave required (see below): `select/3`, `selectchk/3`, `nth0/3`, `nth1/3`, `last/2`, `reverse/2`, `memberchk/2`, `length/2`, `msort/2`, `sort/2`, `sum_list/2`, `numlist/3` and `copy_term/2` stay native, while `maplist/N`, `foldl/N`, `include/3`, `exclude/3`, `partition/4,5` (module `apply`), `freeze/2`, `frozen/2`, `when/2`, `dif/2`, `?=/2` (module `coroutining`) and the new `pairs_keys_values/3`, `pairs_keys/2`, `pairs_values/2` (module `pairs`) are Prolog. Module clauses now get the SAME first-argument index the flat store has (`Modules.Pred`), built once when the module is installed and bounded by the keys that actually occur in a clause head.
+**Measured** (1 000 000-element list, same session, best of 3, `numlist/3` baseline 262 ms on v2 / 287 ms on v4): a clause walk pushes one choice point per element where a generator pushes one for the whole call, which costs 2x to 15x — user-written `myappend/3` 1162 ms against the native 426 ms on v4 (and 7205 ms on v2), `lists:member/2` 276 ms against `member/2` 110 ms. With the natives kept, v4 now matches or beats v2 on every row: `length/2` 693/1084, `append/3` 881/1171, `member/2` 690/566, `nth1/3` 355/463, `last/2` 527/511, `reverse/2` 1087/890, `msort/2` 1325/2362, `copy_term/2` 1246/1842, `findall+member` 1945/2143 (v4/v2 ms).
+**Behaviour change**: `append(X,Y,Z)` fully open and `member(X, PartialList)` are now infinite relations on v4 where they terminated on v2. `testISS0379_AppendFullyOpenDoesNotThrow` and `EngineV4LibraryTest.testISS0453_ListPredicatesAllModes` take the first solution with a cut on v4.
+
+### ISS-2025-0469
+**Status**: RESOLVED (v3.13.0) — design B.10, `meta_predicate/1`
+**Problem**: `meta_predicate/1` was recorded by `Prolog.processMetaPredicateDirective` into the module manager and never read by any engine. A library predicate that calls `call(G, X)` therefore resolved `G` in its own module and then in `user`, so two modules defining the same helper name and both calling the library `maplist/3` got the same (wrong for one of them) helper.
+**Resolution**: `Modules` mirrors the declarations (new `Module.getMetaPredicateDeclarations()`) and `Prelude` parses `:- meta_predicate(Spec)` out of the library files. When a predicate declared in module `M` is called from module `C`, `Machine.withMetaContext` qualifies its module-sensitive arguments (`0`-`9`, `:`, `^`, `//`) with `C` before the clause head is unified. The wrapper is the engine-internal `'$mctx'(Module, Goal)`, deliberately NOT `Module:Goal`: an explicit `M:G` is export-checked (ISS-2025-0314) while a meta-argument travelling back into its own caller must see that module from the INSIDE, and the two notions therefore get two functors. `stepN`'s `'$mctx'/2` branch simply pushes the goal with `Module` as the context, i.e. full internal resolution. `Machine.addArgs` builds `M:g(Args)` (or `'$mctx'(M, g(Args))`) for a qualified callee instead of the nonexistent `':'(M, g, Args)`. Only a non-`user` defining module can carry a declaration that changes anything, so a plain single-module program never even does the lookup. `prelude/apply.pl` declares `maplist/2..7`, `foldl/4..7`, `include/3`, `exclude/3`, `partition/4,5`.
+**Deliberate omission**: `coroutining.pl` carries NO meta declarations, so `freeze/2` and `when/2` store the goal exactly as written and `frozen/2` reports it unqualified, as before.
+
+### ISS-2025-0470
+**Status**: RESOLVED (v3.13.0) — design B.10, the module-facing built-ins
+**Resolution**: new `core.engine.v4.ModuleBuiltins`. `current_module(?Module)` enumerates by unification, like `current_op/3` (`user` first, then the rest sorted). `predicate_property/2` gains `defined_in(M)`, `exported` and `imported_from(M)`, layered over the existing registry implementation, which still answers `built_in`, `dynamic`, `static`, `defined` and the rest — when the property is unbound the module properties come first and the registry's follow. Both are v4-only, like `current_table/2` (W5) and `unifiable/3` (W4): the legacy and v2 engines resolve through `ModuleManager`, which has no notion of a library module and no autoload.
+
+### ISS-2025-0471
+**Status**: RESOLVED (v3.13.0) — design B.10, `label/1`/`labeling/2` on the cell model
+**Problem**: `label/1` was an eager legacy built-in returning `List<Map<String,Term>>`, and it used `ClpfdV2Bridge.exportSingletons/1` to add the functionally determined variables (`C in 1..3, D #= C*2+1, label([C])` must report `D`, ISS-2025-0357). Those variables are named in the solution map but do not occur in the goal, which is why `LegacyBuiltinAdapter.apply` has to ask the bridge for the cell behind a name — the last name-keyed hop in the v4 engine (progress report section 10.4).
+**Resolution**: new `ClpfdV2Bridge.labelCells(varTerms, VarSel, ValOrder)` returns one insertion-ordered `cell -> value` map per solution, including every FD variable of the query whose domain is a singleton under the assignment; new v4 natives `label/1` and `labeling/2` (`core.engine.v4.ClpfdNative`) push a generator over those assignments, one per redo, each inside its own forced-trail extent so a binding the CLP(FD) wake goal rejects leaves nothing behind. The `labeling/2` options and their ISO errors are ported verbatim and the `min(Expr)`/`max(Expr)` objective is now evaluated over the cells. The registry `ClpfdV2Builtins.Label` stays registered and is what v2 and legacy run.
+**Deviation**: the generator is lazy in DELIVERY but the search is eager, exactly as the registry version is. A resumable DFS is impossible while the CLP(FD) store rolls back through the process-global legacy `Trail` — the machine calls `Trail.rollbackTo(cp.legacyMark)` before every redo, which would undo the half-finished search's own narrowing. A per-engine constraint store is wave W7 (design B.12 / limit L-06).
+**Still name-keyed in `ClpfdV2Bridge` afterwards**: `in/2`, the `#=`/`#\=`/`#<`/`#>`/`#=<`/`#>=` comparisons and `all_different/1` are legacy-bridged, still call `exportSingletons(Map<String,Term>)` and still report a functionally determined variable their goal never mentions (`C in 1..3, D #= C*2+1, C #= 1` binds `D`), so `LegacyBuiltinAdapter.apply`'s `ClpfdV2Bridge.cellFor(name)` fallback is still needed and still exercised; `Ctx.vars`, `Ctx.cells` and `varFor`/`onBindByName`/`domainTermForCell` remain keyed by `Variable.getName()`.
+
+## Engine v4 wave W5 2026-08-26 (v3.12.0, opt-in `-Djprolog.engine=v4`)
+
+Implements `docs/reports/report-engine-v4-design-2026-08-25.md` part B, section B.8 (tabling),
+section B.16 wave W5. Progress/handoff: `docs/reports/report-engine-v4-progress.md` section 11.
+Suite: 1083/1083 on the default engine and on v4; 20/20 example programs on both, byte-identical
+output. New tests:
+`src/test/java/it/denzosoft/jprolog/core/engine/v4/EngineV4TablingTest.java` (18 tests).
+
+### ISS-2025-0463
+**Status**: RESOLVED (v3.12.0) — design B.8, linear tabling with completion; fixes limit L-03 on v4
+**Problem**: tabling was a bounded re-evaluation loop (`QuerySolver.solveWithTabling`, max 100 iterations, eager, answers as name-keyed `Map<String,Term>`, consumers reading a stale partial list) and returned WRONG ANSWERS. Repro (`scratchpad/bench/Limits.java`, still the behaviour on v2/legacy): `edge(I,J) :- between(1,3000,I), J is I+1.  :- table path/2.  path(X,Y) :- edge(X,Y).  path(X,Y) :- path(X,Z), edge(Z,Y).` — `path(1, 3001)` FAILS, `path(1, 51)` FAILS, `findall(Y, path(1,Y), L), length(L, 3000)` FAILS. The v4 machine additionally handed the whole call to the recursive legacy solver (`Machine.tabledDelegate`), inheriting the 2 000-deep Java recursion cap and a fixpoint the `ResourceGuard` could not see.
+**Resolution**: New `core.engine.v4.Tabling` (store + machine frame) and `Machine.callTabled`. One VARIANT TABLE per tabled subgoal on the `Engine` (`{status EVALUATING|COMPLETE, answers in insertion order + a hash set for dedup, dependencies}`); the variant key is a numbervars-style canonical encoding (`Tabling.variantKey`) computed on the CELL MODEL — iterative, guard-polling, length-prefixed so it is injective — never on variable names or a binding map, which is what makes `path(1,51)` and `path(1,Y)` two variants of one mechanism. A tabled call is an ordinary CHOICE POINT on the machine, so there is no Java recursion per subgoal and no `QuerySolver`: the first call to a variant is the GENERATOR (a fail-driven PRODUCE phase — clause body, then `record answer`, then `fail` — run against a private copy of the call, so the caller's goal is untouched until an answer is handed back), a later call to an EVALUATING variant is a CONSUMER over the answers recorded so far (lazily, by index, so answers appended later in the same round are consumed too — this is what makes left recursion terminate with the right answers), and a call to a COMPLETE table is a consumer over the final list. COMPLETION uses the classic DFN/leader SCC scheme: each table gets a creation sequence number, a producing frame records the smallest sequence number it read while incomplete, a child frame propagates its own to its parent, and a frame whose minimum is its own table's number LEADS its SCC — it re-runs its clauses (deduplication makes the re-execution semi-naive; every table of the SCC re-produces in the new round) until a round adds no answer, then all tables of the SCC are marked COMPLETE. No iteration cap: termination follows from the finite, deduplicated answer set of variant tabling. A round is repeated only when it BOTH grew the answer set AND read an incomplete table, so ordinary memoisation (tabled `fib/2`) is exact after one pass. Cut inside a tabled clause body is LOCAL to the body (the barrier is above the generator frame), so it can never abort the production of the table. An evaluation abandoned by an exception, a cut or the resource guard DISCARDS its half-built tables (`Tabling.abortProduction`, called from `Machine.cut` and `Machine.handleBall` through the new `CP.tframe`; `Tabling.endQuery` is the query-boundary sweep), so a later call recomputes instead of reading a partial answer set — no table can stay EVALUATING across queries. The `ResourceGuard` is charged inside the fixpoint, so the inference budget and the Stop interrupt abort a runaway tabled query. Four ports: the generator/consumer choice point carries `traceGoal`/`traceDepth` (invariant 14) and the internal PRODUCE phase suppresses its own Redo, so a tabled call traces exactly like any other predicate.
+**Measured** (same session, loaded VM, v2 = default engine): `path(1,3001)` FAIL / **201 ms OK**; `path(1,51)` FAIL / **118 ms OK**; `findall ... length(L,3000)` FAIL / **81 ms OK**; right-recursive closure of the same chain FAIL / **4990 ms OK**; `path(X,Y) :- path(X,Z), path(Z,Y)` at 120 edges wrong / **364 ms OK**; the 100 000-edge chain `path(1,100001)` (design target B.15) FAIL / **868 ms OK**; tabled `fib(1000,F)` 2723 ms / **99 ms**.
+
+### ISS-2025-0464
+**Status**: RESOLVED (v3.12.0) — design B.8, the tabling built-ins on the v4 store
+**Resolution**: `abolish_all_tables/0` and `abolish_table/1` are v4 natives (`Tabling.register`) that clear the v4 ANSWER tables and the legacy `TableStore` in the same step, so the two stores never diverge (the legacy Java built-ins stay registered and stay the implementation on v2/legacy). `abolish_table/1` keeps its documented side effect of un-declaring the predicate, and now raises `instantiation_error` / `type_error(predicate_indicator, T)` instead of failing silently; both raise `permission_error(modify, table, ...)` when called from INSIDE a running tabled evaluation (abolishing then would pull the store out from under the live generator frames). New `current_table(?Variant, ?Status)` (v4 only, like `partition/4` and `unifiable/3`) enumerates the live tables, `Status` being `complete` or `incomplete`. INVALIDATION POLICY: `assert`/`retract` of a TABLED predicate drops that predicate's tables (never while an evaluation is running); a change to a non-tabled predicate a tabled one depends on is NOT tracked — `abolish_all_tables/0` is the documented tool, as in XSB. Tables persist across queries by design; two safety caps (100 000 tables / 4 000 000 answers) drop the oldest COMPLETE tables at a query boundary only, so an embedder cannot grow the store without bound and no running evaluation is ever disturbed. `tnot/1` is deliberately NOT implemented and raises `existence_error(procedure, tnot/1)`.
+
+### ISS-2025-0465
+**Status**: RESOLVED (v3.12.0) — `Machine.tabledDelegate` deleted
+**Resolution**: The W1-W4 `tabledDelegate` (resolve the goal, hand it to `engine.contextSolver().solve(...)`, install the resulting solution maps through `LegacyBuiltinAdapter.installSolutions`) is gone; `Machine.callUser` routes a tabled goal to `Machine.callTabled`. That was the LAST routine path from a v4 query into `QuerySolver.solveInternal`. The only one left is a sub-solve arriving from a WORKER THREAD (`concurrent/3`, `concurrent_maplist/N`, `first_solution/3`), where `SolverFacade` falls back because a `Machine` is single-threaded by construction — wave W8 gives each thread its own machine. `EngineV4LibraryTest.testISS0450_NoBuiltinReachesTheRecursiveSolver` now also runs a tabled left-recursive query, a `findall/3` over it, a tabled `fib/2` and `abolish_all_tables/0` inside its zero-entry assertion, and `EngineV4TablingTest` repeats the check on its own.
+
+## Engine v4 wave W4 2026-08-25 (v3.11.0, opt-in `-Djprolog.engine=v4`)
+
+Implements `docs/reports/report-engine-v4-design-2026-08-25.md` part B, section B.9 (coroutining
+and attributed variables), section B.16 wave W4. Progress/handoff:
+`docs/reports/report-engine-v4-progress.md` section 10. Suite: 1065/1065 on the default engine and
+on v4; 20/20 example programs on both, byte-identical output. New tests:
+`src/test/java/it/denzosoft/jprolog/core/engine/v4/EngineV4CoroutiningTest.java` (22 tests).
+
+### ISS-2025-0457
+**Status**: RESOLVED (v3.11.0) — design B.9, the coroutining wake queue
+**Resolution**: New `core.engine.v4.Coroutining` + `Machine.wake(Term, Bindings)` replace the wave-W1 `Machine.AttrBridge` (which handled `freeze/2` natively and sent every other attribute kind through the legacy `Variable.getAttributeUnifyHook()` with a name-keyed VIEW of the bound cells — the reason a `when/2`-woken goal's bindings were lost, ISS-2025-0336). Binding an attributed cell — to a value, or by aliasing to another variable — now runs NOTHING inside the term walk: `Coroutining.onBind` queues one wake goal `'$attr_unify'(Module, AttValue, Other, VarName)` per attribute module, and `Machine.drive` runs the queue BEFORE the next goal, in the current binding context. A woken goal is therefore an ordinary goal: its bindings are ordinary bindings that propagate, it is traced through the four ports, it is charged to the `ResourceGuard` (budget + Stop reach a runaway woken goal), and an exception it throws unwinds to the enclosing `catch/3`. TRAILING: attribute changes go through `Coroutining.putAttr`/`delAttr`, which record an undo action, AND the queue push itself is trailed — so a clause head that binds an attributed cell and then fails on a later argument leaves no stale wake behind, and backtracking past the binding re-arms the suspension instead of consuming it (`freeze(X, true), member(X, [a,b])` gives two solutions). `Variable`'s lazily-created attribute map became a `LinkedHashMap` so the per-module wake order is reproducible. New `Machine.hasQualifiedHook`/`callQualified` and a `flat` parameter on `callUser`/`selectClauses` (see ISS-2025-0458).
+
+### ISS-2025-0458
+**Status**: RESOLVED (v3.11.0) — design B.9, the SWI attributed-variable protocol
+**Resolution**: `put_attr/3`, `get_attr/3`, `del_attr/2`, `attvar/1` are v4 natives over the cell's attribute map (the legacy `builtin.term.AttributedVariables` stays for the other engines), and three predicates that did not exist at all were added on v4: `term_attvars/2`, `copy_term/3` (the copy carries NO attributes; the residual goals are built for the original's attvars and then copied through the SAME variable map, so they talk about the copy's cells) and `unifiable/3` (the bindings `X = Y` would make, as `Var = Value` pairs, computed in a forced-trail extent and undone — with the ISS-2025-0448 undo-then-close ordering; new `Bindings.boundSince(mark)`). HOOK DISPATCH: the wake goal `'$attr_unify'/4` calls, in order, (1) a user-defined `Module:attr_unify_hook(AttValue, Other)` clause — JProlog stores a module-qualified clause head as a `:/2` predicate, so `Machine.callQualified` calls it with a FLAT lookup that skips the module-manager resolution `stepN` normally applies to a `:`-qualified goal — or (2) the prelude's `'$attr_hook'/4`, whose last clause is a catch-all, so an attribute of a module with no hook is inert data (the behaviour the legacy engines had for an unrecognised module). `put_attr/3` on a non-variable still raises `type_error(variable, T)` (ISS-2025-0182).
+
+### ISS-2025-0459
+**Status**: RESOLVED (v3.11.0) — design B.9/B.10; fixes ISS-2025-0336 on v4
+**Resolution**: New `src/main/resources/prelude/coroutining.pl` (added to `Prelude.RESOURCES`): `freeze/2`, `frozen/2`, `when/2`, `dif/2` and `?=/2` are Prolog clauses on top of `put_attr/3`, `get_attr/3` and `attr_unify_hook`, plus the `'$attr_hook'/4` dispatcher. The Java `builtin.control.{Freeze,When,Dif}` remain registered and unchanged for the legacy and v2 engines; on v4 the library layer is consulted before the legacy registry, so the clauses win. `when/2`: conditions `nonvar/1`, `ground/1`, `?=/2`, `(C1,C2)` and `(C1;C2)`; `instantiation_error` for an unbound condition and `domain_error(when_condition, C)` for anything else; the suspension carries a SHARED backtrackable "fired" flag, so a disjunctive condition attached to several variables runs Goal exactly ONCE. `dif/2`: fails at once when the terms are identical, succeeds at once when they cannot unify, otherwise suspends on the variables of the REMAINING unifier (`unifiable/3`) — so `dif(f(X), f(Y)), X = 1, Y = 1` fails while `..., Y = 2` succeeds. EFFECT (ISS-2025-0336): `when(nonvar(X), Y = done), X = 1, Y == done` and `when(ground(X-Y), Z is X+Y), X = 1, Y = 2, Z == 3` now succeed on v4; on the default v2 engine they still fail (only the woken goal's side effects survive there).
+
+### ISS-2025-0460
+**Status**: RESOLVED (v3.11.0) — design B.9; DELETES deviation 2 of waves W1-W3
+**Resolution**: CLP(FD) v2 moved onto the v4 attribute hook, and `Machine.nameIndex` / `Machine.cellFor` / `Machine.indexCells` — the bounded name->cell COMPATIBILITY SHIM of waves W1-W3 — are deleted. `ClpfdV2Bridge` now records the ENGINE CELL of every FD variable it attributes (`Ctx.cells`, maintained by `varFor` and `onAlias`, trailed and reset with the rest of the per-query context) and exposes `cellFor(name)`, `onBindByName(name, value)` and `domainTermForCell(cell)`. The v4 hook reaches the store through the prelude's `'$attr_hook'(clpfd, _, Other, VarName)` -> the native `'$clpfd_unify_hook'/2`, i.e. an FD variable is an ordinary attributed cell; `onBindByName` also handles the case the old `onAlias` could not, where the other variable was already bound by the time the hook runs. `LegacyBuiltinAdapter.apply` asks the BRIDGE, not an engine-wide name index, for the cell behind a name the built-in reported but the goal never mentioned — which is only ever `exportSingletons/1`. PROOF: `testISS0357_LabelingBindsDeterminedVariables` (`C in 1..3, D #= C*2+1, label([C])` reports D) and `testISS0421_AbsExpression` are green with the shim gone, on both engines; `ClpfdV2Test` and `ClpfdV2EngineTest` are green on v4; `EngineV4CoroutiningTest.testISS0460_TheNameIndexShimIsGone` asserts by reflection that the three members no longer exist.
+
+### ISS-2025-0461
+**Status**: RESOLVED (v3.11.0) — design decision 3 (B.17, approved): no cross-query coroutining on v4
+**Resolution**: A v4 query's variables die with the query. `Prolog.solveGuarded`, `solveTermGuarded` and `solveStreamGuarded` no longer call `spliceAttributedSessionVars`/`refreshAttributedSessionVars` on the v4 route, and `solveStreamWithV4Engine` UNINSTALLS the process-wide legacy attribute hook for the duration of the query (leaving it installed would let a legacy built-in's internal `Term.unify(Term, Map)` fire freeze/when/dif against a throw-away binding map behind the machine's back). EFFECT: `when(nonvar(X), throw(leak))` in one query followed by `X = 1` in the next succeeds silently on v4, where v2 throws `leak`; same for `freeze/2` and `dif/2`. The v2/legacy session behaviour (v2.9.4 session-scoped attributed variables) is untouched, and nothing in the IDE or the CLI depended on it (`Prolog.clearSession()` is only referenced from `Prolog` itself). `RefactorIssuesTest.testCoroutining_whenReSuspends` gained an engine-aware branch asserting the v4 semantics (no cross-query firing, and firing WITHIN one query with the bindings propagating).
+
+### ISS-2025-0462
+**Status**: RESOLVED (v3.11.0) — design B.9/B.12 (limit L-11); the data W7 will print
+**Resolution**: `Prolog.residualGoals(Map<String,Term> solution)` returns the goals still attached to the answer's variables: `freeze(V, Goal)`, `when(Cond, Goal)` for a suspension that has not fired, `dif(X, Y)` per pending constraint, `in(V, Domain)` for a CLP(FD) variable, and `put_attr(V, Module, Value)` for any other attribute module, so nothing is ever lost. Implemented as `core.engine.v4.Coroutining.residualGoals(List<Term>)` and shared with `copy_term/3`. Meaningful on v4, where attributes live in the answer's cells; call it right after the `solve` that produced the answer (the CLP(FD) part reads the per-query store, which the next top-level query resets). NOTHING PRINTS IT YET — the CLI and the IDE start showing residual goals in wave W7.
+
+## Engine v4 wave W3 2026-08-25 (v3.10.0, opt-in `-Djprolog.engine=v4`)
+
+Implements `docs/reports/report-engine-v4-design-2026-08-25.md` part B, section B.16 wave W3
+(native library and meta-calls). Progress/handoff: `docs/reports/report-engine-v4-progress.md`
+section 9. Suite: 1043/1043 on the default engine and on v4; 20/20 example programs on both,
+byte-identical output.
+
+### ISS-2025-0450
+**Status**: RESOLVED (v3.10.0) — design B.5, closes the last recursive-solver path on v4
+**Resolution**: `SolverFacade.solve(Term, Map, List, CutStatus)` — the four-argument entry point ~15 `BuiltInWithContext` built-ins call directly (`phrase/2,3`, the DCG helpers, `format ~p`/`~@`, the persistence transactions, the tabling driver, the concurrency predicates) — was deliberately left INHERITED in waves W1/W2, i.e. still the recursive `QuerySolver` algorithm with its 2 000-deep Java recursion cap. It now runs on `Machine.runSubQuery`, like `solveMeta`. CUT: the recursive solver reports a cut inside the goal by setting the caller's `CutStatus`; `runSubQuery` gives a goal-local cut, which is the correct semantics for every caller that survives on v4, because the constructs that DO propagate a cut outwards (`,/2`, `;/2`, `->/2`, `\+/1`, `call/N`, `catch/3`) are native in `Machine.stepN` and never reach a registry built-in. An already-cut `CutStatus` is still honoured (the goal does not run at all). OFF-THREAD: `concurrent/3`, `concurrent_maplist/N` and `first_solution/3` submit this call to a worker thread; a `Machine` is single-threaded by construction (one goal stack, one choice-point list, bindings in shared `Variable` cells), so an off-thread call falls back to the recursive algorithm exactly as before — threads get their own machines in W8. New test hook `QuerySolver.internalSolveCount()` (a plain static counter incremented in `solveInternal`); `EngineV4LibraryTest.testISS0450_NoBuiltinReachesTheRecursiveSolver` asserts it does not move across a v4 query exercising phrase, bagof, setof, aggregate_all, forall, with_output_to, `format ~@`, findall, maplist and catch.
+
+### ISS-2025-0451
+**Status**: RESOLVED (v3.10.0) — design B.5/B.6, closes limit L-02 on v4
+**Resolution**: Native `phrase/2,3` (`core.engine.v4.NativeControl`). The grammar body is translated with the default `core.dcg.v2.DCGTranslator` (so `(A,B)`, `(A;B)`, `(A->B)`, `\+A`, `!`, `{G}`, terminal lists and `call//N` all work exactly as in a `-->` rule) and the resulting goal is PUSHED onto the machine's goal stack — no Java recursion, no nested solver. The body is resolved (it is small and the translator pattern-matches on it); the token list and the rest argument are passed as CELLS, so a million-element list is never walked or copied. The ISO 13211-3 error clauses are preserved: `type_error(list, L)` for a non-list input/rest (checked with a tortoise-and-hare spine walk so a cyclic list terminates), `type_error(callable, B)` for a number or string body, and an unbound body routed through `call/3` so it raises `instantiation_error` instead of looping back into phrase. MEASURED: `numlist(1,1000000,L), phrase(digits(D), L)` succeeds in ~2.9 s at the DEFAULT JVM stack; v2 (and v4 before this change) raise `resource_error(stack_overflow)` even at `-Xss4m`. The inference budget and the Stop interrupt now fire inside a parse (v2: the parse overflows first).
+
+### ISS-2025-0452
+**Status**: RESOLVED (v3.10.0) — design B.5/B.6
+**Resolution**: Native `bagof/3`, `setof/3`, `aggregate_all/3`, `with_output_to/2` on `Machine.findAll`/`runOnce`, plus a new `~@` directive in `format/2,3` (that one on BOTH engines). bagof/setof: ISO 8.10.2/8.10.3 — `^` prefix stripping with the quantified cells recorded, free (witness) variables = vars(Goal) minus vars(Template) minus the quantified ones, one `findAll` of `Witness-Template`, grouping by VARIANT witness (ISS-2025-0411) with the group's witnesses unified in turn so unbound witness variables merge, and for `setof/3` group enumeration in the STANDARD ORDER of the representative witnesses plus sort+dedup inside each group (ISS-2025-0412). Groups are handed out lazily by a `Generator`. aggregate_all/3: `count`/`sum`/`max`/`min`/`bag`/`set` keeping ISS-2025-0413 (max/min FAIL when the goal has no solution) and ISS-2025-0414 (BigInteger-exact integer sums, float contagion, `type_error(number, T)`); NEW: `max(Value-Witness)`/`min(Value-Witness)` compare on the numeric left-hand side and answer with the winning pair. with_output_to/2: captures through the thread-local `StreamManager` override AND `System.out` (some built-ins still write there directly), restoring whatever was installed rather than clearing it, and supports the `atom/1`, `string/1`, `codes/1` and `chars/1` sinks (the legacy built-in handled only `atom/1`); a non-sink target raises `domain_error(output_sink, T)`. `~@`: `format("~@", [Goal])` runs Goal and splices its output in — it simply did not exist before (`KNOWN_DIRECTIVES` rejected it); `~p` already ran a sub-goal through `solver.solve(...)` and therefore now goes through the machine too (ISS-2025-0450). New `StreamManager.threadLocalOutput()` accessor.
+
+### ISS-2025-0453
+**Status**: RESOLVED (v3.10.0) — design B.5, closes limit L-08 on v4 for the list library
+**Resolution**: New `core.engine.v4.NativeLibrary`: native `Builtin`/`Generator` implementations of `member/2`, `memberchk/2`, `append/3`, `select/3`, `selectchk/3`, `nth0/3`, `nth1/3`, `last/2`, `reverse/2`, `length/2`, `msort/2`, `sort/2`, `sum_list/2`, `sumlist/2`, `numlist/3`, `copy_term/2`, `clause/2`, `sub_atom/5`, `sub_string/5`. WHY: a registry built-in reaches the machine through `LegacyBuiltinAdapter`, which dereferences the whole goal AND indexes its unbound cells by name — both O(list) — and then materialises every solution as a `Map<String,Term>`. On a million-element list that made v4 1.3-2x SLOWER than v2 despite the faster core. Same session, best-of-3, v2 -> v4: `length` 1466 -> 1001 ms, `msort` 1257 -> 1064, `copy_term` 1571 -> 1273, `==` 709 -> 405, `findall+member` 2341 -> 1499, `sum_list` 734 -> 318, `reverse` 1147 -> 692, `append` 2900 -> 1208. LAZINESS: the nondeterministic ones produce one alternative per redo in O(1) memory and stop the moment the caller cuts. `clause/2` walks the `ClauseStore` filtered by the caller's generation (logical update view) and keeps `permission_error(access, private_procedure, PI)`. `sub_atom/5` also FIXES a hang that v2 still has: `sub_atom(abc, B, L, A, '')` looped forever because `String.indexOf("", idx)` stops advancing past the end of the atom (the process died of heap exhaustion); an empty substring now enumerates the n+1 positions once. NEW MACHINE API: `Machine.unifyOrUndo` (a failed unification leaves partial bindings, and a generator trying several alternatives inside one `next()` must undo them itself — with the ISS-2025-0448 forceTrail ordering), `Machine.lastSolution()` (a generator announcing its last alternative so the choice point is trust-me popped), and `pushGenerator` now owns the Exit/Redo/Fail ports of the goal that installed it so the natives keep the four-port contract. PARITY KEPT DELIBERATELY: `append/3`'s fully-open mode yields the single standard solution (`testISS0379_AppendFullyOpenDoesNotThrow`) and `member/2` does not extend an open tail — the real two-clause definitions arrive when the list library moves to the prelude in W6. The name->cell shim of deviation 2 STAYS: removing it fails `testISS0357_LabelingBindsDeterminedVariables` and `testISS0421_AbsExpression`, both from still-bridged built-ins that report a binding by name for a cell their goal never mentions (W4).
+
+### ISS-2025-0454
+**Status**: RESOLVED (v3.10.0) — design B.10, decision 4 (library in Prolog)
+**Resolution**: `src/main/resources/prelude/apply.pl` holds `maplist/2..7`, `foldl/4..7`, `include/3`, `exclude/3`, `partition/4` and `partition/5` as Prolog clauses, loaded by `core.engine.v4.Prelude` into a new LIBRARY LAYER of the v4 `ClauseStore` (`defineLibrary`/`libraryClauses`/`maybeLibrary`) when the `Engine` is created. `Machine.selectClauses` consults the library ONLY when the knowledge base has no clause for that indicator, and `Machine.stepN` routes a library indicator straight to `callUser` so the registry entry of the same name cannot shadow it. OVERRIDE, DOCUMENTED: because the knowledge base always wins, a user program that defines `partition/4` (the quicksort of `examples/test_16_sorting.pl`) or its own `maplist/3` simply REPLACES the library definition — no unregistering trick, and no risk of appending to it. ISOLATION: the prelude is never written to the `KnowledgeBase`, so the legacy and v2 engines, `listing/1`, `clause/2` and the IDE do not see it, and `Prolog` instances stay independent. A parse failure in the prelude is not fatal (the registry built-ins answer instead). EFFECT: the clauses are lazy (`maplist(member, [X,Y], [[1,2],[3,4]])` gives four solutions), traceable through the four ports, cancellable by the budget and the Stop interrupt, and cost no Java stack; `maplist(dbl, L, L2)` over 200 000 elements went from 1634 ms (v2, eager Java built-in) to 729 ms. `partition/4`, deliberately unregistered as a Java built-in since v3.6.0, is available again on v4.
+
+### ISS-2025-0455
+**Status**: RESOLVED (v3.10.0) — design B.10 (`library(yall)`)
+**Resolution**: New `core.engine.v4.Lambdas`, wired into the machine's native `call/N` and into a lambda reached directly in goal position (`>>/N`, `\/N`, `//N`). Supported: `Params>>Body`, `Free/Params>>Body`, `\X1^...^Xn^Body` and `Free/\X^Body`. No operator is declared: `>>` and `/` are both `yfx 400`, so `N/[X,Y]>>Body` already parses as `>>( /(N,[X,Y]), Body)`, which is exactly how yall reads it. SEMANTICS: the lambda is `copy_term`ed before EVERY call (so one lambda serves every element of a maplist), except that the variables named in `Free` are unified back with the caller's after the copy — that is what makes them shared; a variable already bound outside is copied as its value, so a lambda closing over a bound variable needs no `/`. Extra arguments beyond the parameter list are appended to the body. `maplist([X,Y]>>(Y is X*2), [1,2,3], L)` gives `[2,4,6]`; `foldl([X,A0,A]>>(A is A0+X), L, 0, S)` works; `N = 10, maplist(N/[X,Y]>>(Y is X*N), [1,2], L)` gives `[10,20]`. On v2 all of these still raise `existence_error(procedure, >>/4)`.
+
+### ISS-2025-0456
+**Status**: RESOLVED (v3.10.0) — v4-only correctness bug found while writing bagof/3
+**Resolution**: `Unify.subsumes` (`subsumes_term/2`) was wrong for the variable-to-variable case. It tested "no variable of Specific has a `ref` afterwards", but `bindVar` binds the YOUNGER cell to the older one, so whichever side happened to be younger got the ref: `subsumes_term(f(X), f(Y))` answered FALSE on v4 where the v2 engine (and every other Prolog) answers true, and `subsumes_term(f(_), f(_))` was false too. The condition is now SWI's: after the match the variables of Specific must still dereference to DISTINCT UNBOUND cells — being aliased to a variable of General changes nothing about Specific and is allowed, becoming a non-variable is not, and two of them collapsing into one is not (`subsumes_term(f(A,A), f(B,C))` stays false, `subsumes_term(f(A,B), f(C,C))` stays true). `bagof/3`'s and `setof/3`'s variant grouping is built on this predicate, which is how the bug surfaced.
+
+## Engine v4 waves W1-W2 2026-08-25 (v3.9.0, opt-in `-Djprolog.engine=v4`)
+
+Implements `docs/reports/report-engine-v4-design-2026-08-25.md` part B, section B.16 waves W1 and
+W2. Progress/handoff: `docs/reports/report-engine-v4-progress.md`. Suite: 1020/1020 on the default
+engine and on v4 (1024/1024 after the ISS-2025-0448/0449 post-review fixes below); 20/20 example
+programs on both, byte-identical output.
+
+### ISS-2025-0438
+**Status**: RESOLVED (v3.9.0) — design B.2 + B.14 (identity audit)
+**Resolution**: `Variable` became a MUTABLE REFERENCE CELL: new public `ref` field (the binding, null when unbound) plus `getRef()/setRef()`, a JVM-unique `serial` (drives conditional trailing and the lazily generated `_G<serial>` name), a no-argument constructor for fresh unnamed cells, and `Variable.currentSerial()` for the choice-point watermark. `equals`/`hashCode` are now IDENTITY. Anonymous variables draw their generated name from the SAME counter as the lazy cell names, so `_G<n>` can never alias two distinct variables. Two compatibility guarantees keep the name-keyed engines (legacy QuerySolver, v2 MachineSolver, ~400 registry built-ins) working byte-for-byte: (a) `getName()` is unique per cell, so name equality still implies cell equality; (b) `Variable.unify(Term, Map)` — the legacy binding API — deliberately keeps comparing two Variables BY NAME, because on that path two objects sharing a name really are one logical variable (JpcReader and the legacy parser allocate one object per occurrence); without that guard the two objects would bind to each other and create a name self-loop in the substitution map. B.14 AUDIT: grepped every use of Variable equality/hashCode/getName-as-identity, `new Variable("...")` aliasing, TermCopier, TableStore, DebugPanel filters and JpcWriter/Reader. The codebase turned out to be largely identity-safe already (13 IdentityHashMap sites, 7 explicit `getName().equals` comparisons, 6 literal `new Variable("S0")`-style constructions confined to the legacy DCG helper). ONE live hazard was found and fixed: `Variable.copy()` returned a DIFFERENT object with the SAME name, and ~10 built-ins (arg/3, member/2, nth0/nth1, select/3, aggregate_all/3, CollectionUtils — which documents the reliance in a comment) call `x.copy()` and then unify with the result, relying on the alias. Under identity variables that alias silently disappeared: `arg(1, f(X), A), X = hello` left A bound to a dead twin of X. A named variable now copies to ITSELF (a no-op for the name-keyed model, correct for the cell model); an anonymous variable still copies to a fresh one, which is what the same built-ins expect. Verified: full suite green on the DEFAULT engine after the equality change alone, and again after the copy() change.
+
+### ISS-2025-0439
+**Status**: RESOLVED (v3.9.0) — design B.2 (clause skeletons)
+**Resolution**: New `core.engine.v4.Clause` + package-private `VarRef`. Consulting compiles each clause ONCE into a numbered-variable skeleton (variables numbered BY NAME, deliberately: on the paths that build a Rule two occurrences of X can be two objects and the name is the identity there), recording `nvars`, the flattened body goal array, the first-argument index key and the source line. Activation allocates one `Term[nvars]` frame; `Clause.unifyHead` unifies the goal DIRECTLY against the skeleton, and `Clause.instantiate` builds a body goal only when the machine pushes it. A head variable whose frame slot is still empty is aliased straight to the goal's sub-term — no cell allocated, nothing trailed, because the frame itself dies on backtracking. This removes the per-activation `HashMap<String,Variable>`, the `"_R<id>_<name>"` strings and the head/body copy of the v2 engine (limit L-12). Compiled skeletons are cached on the Rule itself (`Rule.getCompiled`/`setCompiled`, a transient Object field to keep core.engine independent of core.engine.v4), so re-syncing a predicate after an external write is a pointer copy. All three skeleton walkers (toSkeleton, instantiate, containsVarRef) iterate on the LAST argument.
+
+### ISS-2025-0440
+**Status**: RESOLVED (v3.9.0) — design B.3 (bindings, trail, choice points)
+**Resolution**: New `core.engine.v4.Bindings`. There is no binding store: a binding lives in `Variable.ref`, and this class owns only the trail (an Object[] of cells to reset and Runnables to run). CONDITIONAL TRAILING: `bind(v, t)` trails v only when an explicit mark/undo extent is open (`forceTrail > 0` — findall/3, `\=`/2, the catcher unification, `\+`) or when v is OLDER than the newest choice point (`v.serial <= barrierSerial`); a cell created after that choice point is unreachable once we backtrack past it. When neither holds the trail is not merely skipped but CLEARED (`clearIfUnreachable`). Choice-point frames (`Machine.CP`) carry the trail mark, the serial watermark, the legacy `Trail` mark, the continuation and the cut barrier, and come in four kinds (clause iterator, generator, catch frame, cleanup frame); `pushCP`/`popCP` maintain the watermark. Together with the trust-me pop this is what makes a deterministic recursion leave neither a choice point nor a trail entry behind — pinned by `EngineV4Test.testISS0442_DeterministicRecursionLeavesNothingBehind` (0 CPs, 0 trail entries after loop(20000)).
+
+### ISS-2025-0441
+**Status**: RESOLVED (v3.9.0) — design B.4 (cycle-safe walkers), closes L-04
+**Resolution**: New `core.engine.v4.Unify`: `deref`, `unify`, `equalTerms` (==), `compareTerms` (standard order), `resolve` (full structure-sharing dereference), `copy` (copy_term), `termVariables`, `isGround`, `isCyclic`, `numberVars`, `subsumes`, `occurs`. Three properties every one of them has: (1) NO Java recursion on the last argument (a list of N cells is N nested './2' terms linked through their last argument), so million-element lists work at the default JVM stack; (2) CYCLE SAFETY — unify/==/compare switch to a visited set of (compound, compound) IDENTITY pairs past 1024 pairs of work, and a pair already seen is assumed to unify, which is exactly rational-tree unification; resolve/copy watch the last-argument spine with a Brent tortoise/hare test and cut it at the repeat, with a 2000-deep cap on NON-last-argument recursion as a StackOverflow backstop; (3) CANCELLABILITY — every loop charges the ResourceGuard once every 4096 iterations. RESULT (design decision 2, approved): `X = f(X), Y = f(Y), X = Y` and `X = [1|X], Y = [1|Y], X = Y` SUCCEED in milliseconds on v4; on v3.8.0 they hang forever and poll nothing, so neither the inference budget nor a thread interrupt can stop them (a denial-of-service reachable from untrusted code). `cyclic_term/1` and `acyclic_term/1` are real tests. `X = f(Y), Y = 1, X == f(1)` — which raises resource_error(stack_overflow) on v2 because structuralEqual compared RESOLVED copies — is correct on v4. SIDE FIX: `set_prolog_flag(occurs_check, error)` is now accepted (ISO 7.11.2.4 defines three values, not two: the flag store rejected `error`, and `setOccursCheck` overwrote the stored atom with true/false, losing the third mode); on v4 it raises `representation_error(cyclic_term)`, on v2/legacy it behaves like `true` (fails). BEHAVIOUR CHANGE recorded in the release notes and pinned by an engine-aware branch in `BugFixVerificationTest.testISS0397_RealCyclicTermProtectionUntouched`.
+
+### ISS-2025-0442
+**Status**: RESOLVED (v3.9.0) — design B.6 (execution core)
+**Resolution**: New `core.engine.v4.Machine` (~1300 lines), an iterative SLD drive loop with the shape of the v2 MachineSolver over cells and skeletons. Native: `,` `;` `->` `*->` `\+`/`not` `!` `call/N` `^` `Module:Goal` `findall/3` `catch/3` `throw/1` `assert/asserta/assertz` `retract/1` `once/1` `ignore/1` `forall/2` `between/3` (lazy generator) `repeat/0` (infinite choice point) `length/2` enumeration `setup_call_cleanup/3` `call_cleanup/2`, plus the inline fast paths (`=`, `is`, the six arithmetic comparisons, `==`/`\==`, `@<`/`@>`/`@=<`/`@>=`, `\=`, the nine type checks). CLEANUP FRAMES: a CLEANUP choice point runs its goal exactly once — on deterministic exit (detected by the frame being on top when Goal's continuation runs), on failure (popped by backtrack), when cut away, or when an exception unwinds past it, in every case before the ball propagates. ERROR MODEL: `OutOfMemoryError` in the drive loop is converted to a catchable `resource_error(memory)` after clearing the frames, and a `StackOverflowError` raised inside a legacy built-in becomes `resource_error(stack_overflow)` routed to the catch frames INSIDE the loop, so the running program's catch/3 sees it (limit L-14; the v2 engine only converts after the whole query unwinds). QUERY NORMALISATION: the query term is rebuilt so that all occurrences of a variable NAME share one cell — without it, identity variables would make `X = 1, X = 2` succeed, because the v2 parser shares objects per top-level term but atom_to_term/read_term/JpcReader do not. Ports: Call/Exit/Fail/Redo for user predicates, bridged built-ins and v4 natives, with Redo/Fail carried on the choice point exactly as on v2 — the trace output of the two engines is byte-identical. BEHAVIOUR CHANGE: setup_call_cleanup/3 and call_cleanup/2 now run Cleanup when Goal has no alternatives left (ISO/SWI), not eagerly after the first solution as the bridged legacy built-in does; pinned by an engine-aware branch in `BugFixVerificationTest.testISS0273_setupCallCleanup`.
+
+### ISS-2025-0443
+**Status**: RESOLVED (v3.9.0) — design B.5 (built-in SPI + legacy adapter)
+**Resolution**: New `Builtin` (with `Outcome` SUCCESS/FAILURE/SUSPENDED), `Generator` (lazy, possibly infinite), `BuiltinTable` (keyed by NAME AND ARITY, so foo/2 can be native while foo/3 is a user predicate — the legacy BuiltInRegistry keys by bare name with a separate hand-maintained arity table and an "any arity" wildcard), `NativeBuiltins`, `LegacyBuiltinAdapter` and `SolverFacade`. ADAPTER: every existing `BuiltIn` class runs unchanged on a RESOLVED goal plus an EMPTY map (a faithful view: after resolution every variable still in the goal is an unbound cell), and the returned solution maps are installed by unifying the goal's own cells with the value each name got, following chains inside one map so `{X: Y, Y: 3}` binds X to 3. A deterministic built-in gets no choice point; a nondeterministic one gets a lazy choice point over the remaining maps. Two shortcuts matter for big data: when every returned map is empty (write/1, nl/0, assert/1, ...) the goal is not walked at all, and `resolve` is structure-sharing. SolverFacade is a `QuerySolver` SUBCLASS (executeWithContext is typed against the concrete class) sharing the KB, registry, Prolog context and debug controller with the engine's real solver, and overriding `solve(Term)`, `solveMeta` and `getResourceGuard` to run sub-goals on the v4 machine through `Machine.runSubQuery` — one nested drive sharing this query's trail, choice-point floor and guard. The four-argument `solve(goal, bindings, solutions, cutStatus)` is deliberately left inherited in W1 (the 46 context built-ins move to the v4 SPI in W3; until then keeping that path identical to v2 is the point). NATIVES: `setarg/3` and `nb_setarg/3` (they need object identity — on v3.8.0 they were the one exception to the resolved-goal handoff, ISS-2025-0317, and with cells there is no binding map to fall back on), `cyclic_term/1`, `acyclic_term/1`, `term_variables/2`, `ground/1`, `numbervars/3`, `subsumes_term/2`, `compare/3` (which now validates its Order argument: ISO 8.4.2.3 domain_error(order)/type_error(atom)). COMPATIBILITY SHIM: the machine keeps a bounded name->cell index (the query's own variables permanently, bridged goal cells up to a 4096 cap) because a few built-ins report a binding for a variable their goal never mentions — the CLP(FD) v2 bridge's `exportSingletons` is the live example (`C in 1..3, D #= C*2+1, label([C])` reports D). It disappears when the built-ins move to the v4 SPI (W3) and CLP(FD) to the native attribute hook (W4).
+
+### ISS-2025-0444
+**Status**: RESOLVED (v3.9.0) — design B.13/B.16 (opt-in switch, embedding API, hardening)
+**Resolution**: `core.engine.v4.Engine` is the per-`Prolog` v4 context (clause store, native table, KB, registry, module manager, table store, the shared QuerySolver that is the durable home of the IDE debug controller); one Engine per Prolog, one Machine per query, so the machine holds no cross-query state. `Prolog.USE_V4_ENGINE` is set from `-Djprolog.engine=v4` and toggled at runtime with `Prolog.setUseV4Engine(boolean)` / read with `isUsingV4Engine()`; it is checked BEFORE the v2 flag in `solve(String)`, `solve(Term)` and `solveStream`, and `solveStream` is natively lazy on v4. `enableSafeMode()` works unchanged (v4 consults the same BuiltInRegistry, so unregistering strips the same ~96 predicates) and `setInferenceBudget()` is enforced by the v4 drive loop and by every nested sub-drive, including inside catch/3, once/1, ignore/1, `\+`, findall/3 and the meta-call facade. The trust model is preserved: InferenceLimitException / QueryCancelledException / DebugStopException stay plain RuntimeExceptions and every broad catch in the v4 package starts with `ControlFlow.rethrowIfControl`. New Maven profiles `engine-v4` and `engine-legacy` set `argLine` so the whole suite can be run on either engine (`mvn test -Pengine-v4`); no surefire version is pinned, deliberately — a modern surefire would additionally match `*Tests` and change the test count.
+
+### ISS-2025-0445
+**Status**: RESOLVED (v3.9.0) — design B.7 (clause store with generations)
+**Resolution**: New `core.engine.v4.ClauseStore` with a nested public `Predicate`. Every clause carries `birth`/`death` generation numbers and a call captures `(array, size, generation)`, iterating the clauses with `birth <= g < death`. `assertz` appends IN PLACE (into spare capacity or a freshly grown array — a running call stops at its own captured size, so it cannot see the new slot); `asserta` always installs a NEW array (shifting in place would move clauses under a running call); `retract` sets a death generation, O(1). Nothing is rebuilt on any write, which removes the O(#clauses) snapshot rebuild the v3.8.0 KnowledgeBase does per write on a large dynamic predicate, and the ISO logical update view falls out of the generation test rather than being bolted on. Dead clauses are compacted at the next QUERY BOUNDARY — the only moment at which no running call can hold an older generation. FIRST-ARGUMENT INDEX: incremental (maintained on assert, never invalidated wholesale), type-faithful keys (`i<exact integer>` / `f<double>` / `a<atom>` / `s<string>` / `c<name>/<arity>`), and it needs NO bucket cap: a merged bucket array is cached only for keys that actually occur in a clause head, so `loop(1000000)`-style recursion with a different integer per call adds nothing — that unbounded growth is exactly what forced the 512-entry cap on the v3.8.0 KnowledgeBase cache. An unindexable key (unbound first argument, arity 0) degrades to the full clause list, never to a short one. RELATIONSHIP WITH KnowledgeBase: KnowledgeBase stays the database of record (consult, listing, the IDE, the ~400 legacy built-ins, and Rule.sourceLine for `Prolog.getPredicateIndicatorAtLine`); v4 writes to both in step and records the KB's per-predicate version, so no rebuild is triggered by its own writes, while a write by ANY other route bumps that version and the store re-syncs that one predicate on its next lookup (compiled skeletons are cached on the Rule, so the re-sync is a pointer copy). New read-only accessor `KnowledgeBase.getPredicateVersion(functor, arity)`.
+
+### ISS-2025-0446
+**Status**: RESOLVED (v3.9.0) — design B.7 (database built-ins on the store)
+**Resolution**: `asserta/1`, `assertz/1`, `assert/1` and `retract/1` are native on the v4 machine and go through `ClauseStore` (which writes the KnowledgeBase in the same step), with the full ISO validation of the v2 engine ported over: instantiation_error / type_error(callable) for a bad Clause or head, type_error(callable) for a number or string in goal position in the body, and permission_error(modify, static_procedure, PI) for a built-in procedure. `retract/1` is re-executable over a generation-filtered candidate array, so `findall(X, retract(c(X)), L)` drains the predicate and `(retract(c(X)), fail ; true)` purges every clause (the ISS-2025-0396 family, verified on v4). `retractall/1`, `abolish/1,2`, `clause/2`, `listing/0,1`, `predicate_property/2` and `dynamic/1` keep running as registry built-ins over the KnowledgeBase and are observed correctly by the store through the version re-sync path — deliberately, because they are also used by the legacy engines and the IDE; rewriting them on the v4 SPI belongs to W3.
+
+### ISS-2025-0447
+**Status**: RESOLVED (v3.9.0) — design B.7 (.jpc on skeletons)
+**Resolution**: `.jpc` format bumped to 0x03. (1) Variables are serialised BY INDEX within their clause (the per-clause index, then the name string index for display), and the reader creates ONE Variable object per index per clause. Before this, `JpcReader` did `new Variable(strings[idx])` per OCCURRENCE, so a clause read back from a .jpc file had as many distinct "X" cells as it had occurrences of X — harmless under the name-keyed model, fatal under identity variables (ISS-2025-0438). (2) Each clause records its source line, and `Parser.extractClauses` now tracks the 1-based start line of every clause it returns (new `Parser.getLastClauseLines()`), which `Prolog.compile` stamps onto the rules: `Rule.sourceLine` used to be lost by compilation, so the IDE's line breakpoints (`Prolog.getPredicateIndicatorAtLine`) silently did nothing on .jpc-loaded sources. Older 0x01/0x02 files fail the existing version check and are transparently recompiled.
+
+
+## Engine v4 W1-W2 post-review fixes 2026-08-25 (v3.9.0)
+
+Two regressions found by the independent verification of waves W1-W2 (both v4-only; the v2 engine
+was correct). Suite after the fixes: 1024/1024 on the default engine and on v4.
+
+### ISS-2025-0448
+**Status**: RESOLVED (v3.9.0) — regression in ISS-2025-0442, design B.3/B.6
+**Resolution**: findall/3 was NOT OPAQUE on the v4 engine: the template variable kept the binding of the LAST solution, so `findall(X, member(X,[1,2]), L), var(X)` FAILED and `findall(X, member(X,[1,2]), L), X == 2` SUCCEEDED (v2 is correct on both), and in `findall(X-Y, member(X,[1,2]), L)` the leaked X=2 showed up in the answer. ROOT CAUSE: the nested drive is correctly bracketed by a forced-trail extent (`B.forceTrail++` ... `B.undo(m)`), but the finally block ran `B.forceTrail--` FIRST and only then `cutTo(floor); B.undo(m)`. `cut()` ends in `Bindings.clearIfUnreachable(cps.isEmpty())`, which drops the ENTIRE trail as soon as `forceTrail == 0` and no choice point is left — precisely the state at the end of a findall whose goal is exhausted — so the undo found an empty trail and the template's bindings survived. The bug is in the ORDER, not in the extent: every construct that undoes to a mark while the choice-point stack may be empty had it. Fixed at all six sites: `Machine.findAll`, `Machine.runSubQuery` (hence bagof/setof/aggregate_all and every other meta-call routed through SolverFacade), the `\=/2` inline built-in, the `catch/3` catcher unification on a NON-matching catcher (`handleBall`), and `Unify.subsumes` — each now undoes INSIDE the extent and closes it afterwards. `Bindings.undo` additionally treats a mark at or above the current top as a no-op: after a clear, the old code would have set `top = m`, resurrecting freed (null) slots and NPE-ing on the next undo. Documented as a contract on `Bindings.clearIfUnreachable`. Verified against v2 on 13 opacity probes (findall x4, `\+ \+`, forall, aggregate_all, bagof, setof, failure-driven loop, catch, `\=`, side-effect goal): v4 now matches v2 exactly on every one. Tests: `EngineV4Test.testISS0448_FindallIsOpaque` and `testISS0448_EveryMarkUndoExtentIsOpaque` (the first fails on its first assertion without the fix).
+
+### ISS-2025-0449
+**Status**: RESOLVED (v3.9.0) — regression in ISS-2025-0445, design B.7
+**Resolution**: retract/assert loops were SUPERLINEAR on v4. `cnt(0) :- !. cnt(N) :- retract(counter(C)), C1 is C+1, assertz(counter(C1)), N1 is N-1, cnt(N1).` measured 2.1/1.9/5.8 s at N = 10k/20k/40k and 60 s at N = 100000, against 5.2 s on v2. ROOT CAUSE: `ClauseStore` only compacted dead clauses at the QUERY BOUNDARY, so the predicate's array grew by one dead clause per iteration and both the retract candidate scan (`Predicate.all()`, an exact-length copy) and the clause-iterator scan (`rawArray()` + the `isAlive(gen)` filter) became O(#clauses) per call — quadratic overall. The query-boundary restriction was documented as "the only moment at which no call can hold an older generation", and that reasoning was wrong: compaction installs a NEW array and never touches any clause's birth/death, so a call that already captured `(array, size, generation)` keeps walking its own array with the clause objects' own generation interval — nothing it can observe changes, and the ISO logical update view is preserved whenever we compact. `retractClause` therefore now compacts in place as soon as the dead clauses outnumber the live ones AND there are at least 32 of them (`COMPACT_MIN_DEAD`), which makes a retract/assert loop over a one-clause predicate rebuild a ~33-entry array every 32 iterations: amortised O(1). The query-boundary sweep is kept as a catch-all for predicates that never cross the threshold. Measured on the same loaded VM in the same session: cnt(10k/25k/50k/100k) v4 448/341/343/558 ms (linear) against v2 1257/978/1089/1387 ms; the physical clause count of `counter/1` is 1 after the loop and never exceeds 33 during it (5001 without the fix). Tests: `EngineV4Test.testISS0449_RetractAssertLoopStaysLinear` (a 30 s JUnit timeout, ~15x the fixed cost and well under the ~40 s the leak cost) and `testISS0449_PhysicalClauseCountStaysBoundedDuringTheLoop` (store-level, so no query boundary can hide the leak; it peaks at 5001 without the fix).
+
+### ISS-2025-0446 (tagging follow-up)
+**Status**: RESOLVED (v3.9.0)
+**Resolution**: ISS-2025-0446 was cited in CHANGELOG.md and this file but no `START_CHANGE` tag carried the id in `src`. The tag now brackets the v4 database section of `core/engine/v4/Machine.java` (the native asserta/assertz/assert/retract path and its ISO validation), which is where the change actually lives.
+
+
+## Engine deep analysis 2026-08-24 (wave 6, v3.8.0)
+
+### ISS-2025-0437
+**Status**: RESOLVED (v3.8.0) — ENG-06 (isolation)
+**Resolution**: Process-global mutable state leaked across Prolog instances and threads, undermining the v3.4.0 sandbox guidance ("use a fresh Prolog per security domain"): sandboxed code could flip `unknown`, `double_quotes` or `occurs_check` for every other engine in the JVM, and concurrent access to the plain static HashMap could corrupt it. Fixes: (1) PrologFlags is now an INSTANTIABLE store; every Prolog owns one and installs it as the thread-current store around solve(String)/solve(Term)/solveLegacy/solveStream/consult/consultWithDiagnostics, restoring the previous store in a finally (so engine-inside-engine cannot leak). The static PrologFlags API used by the built-ins, TermParser and TermReader is unchanged and routes to current(); with no engine in scope a process-wide DEFAULT store is used, preserving standalone-parser and unit-test behaviour. New public accessor Prolog.getFlags(). (2) occurs_check moved out of the static Variable.occursCheckEnabled (an AtomicBoolean) into the flag store; Variable.isOccursCheckEnabled()/setOccursCheckEnabled() still work and delegate. Hot-path guard: PrologFlags.isOccursCheckEnabled() short-circuits on a static volatile `anyOccursCheck` that is only ever set when some engine turns the check ON, so the universal off case costs one volatile read and never touches the ThreadLocal. (3) trace/0 state moved out of the static builtin.debug.Trace.tracingEnabled into the flag store (same volatile fast path via `anyTracing`, because MachineSolver.debugTraceActive() is on the hot path); new Prolog.setTracing(boolean)/isTracing() for callers that toggle tracing from OUTSIDE a query, and editor/RunPanel (EDT) + PrologCLI (`:trace`) now act on their own engine instead of the global. (4) StreamManager.currentInputStream/currentOutputStream became ThreadLocals, matching the thread-local output capture the IDE already relies on: set_output/1 on one thread no longer redirects current_output for all threads. (5) ClpfdPredicates.tempVarCounter is an AtomicLong: the non-atomic static int could hand the SAME temporary name to two threads and silently alias unrelated CLP(FD) variables. NOT CHANGED (recorded as LIM-034): OperatorDefinition.sharedOperatorTable / currentModuleContext (shared with the parser, op/3 and the .jpc format — a change of a different size), the legacy ConstraintStore singleton, builtin.debug.Spy.spyPoints and the Profiler counters. One existing test observed the now-per-engine trace flag through the global Trace.isTracingEnabled(); DebuggingTest was switched to prolog.isTracing() — its intent is unchanged, only the observation point moved.
+
+
+## Engine deep analysis 2026-08-24 (wave 5, v3.8.0)
+
+### ISS-2025-0433
+**Status**: RESOLVED (v3.8.0) — ENG-13
+**Resolution**: Clause selection was O(#clauses) per call WITH a full list copy: a lookup in a 20 000-fact table cost 2.36 ms and, tellingly, exactly as much when the FIRST clause matched as when the last did — the cost was per-call setup. Three causes: KnowledgeBase.getRulesForPredicate copied the whole predicate list under `synchronized` on every call; callUser allocated one Alt lambda per clause BEFORE the first head unification; renameRule copied head AND body of every candidate before trying the head (Rule.isGroundFact() existed but was unused on this path). Fixes: (1) VERSIONED IMMUTABLE SNAPSHOTS — each predicate owns a PredEntry {version, full snapshot, first-arg bucket snapshots}; writers bump the version, readers rebuild at most once per version and then take no lock and no copy; the ISO logical update view is free because a published snapshot is never mutated. The first-argument bucket cache is CAPPED at 512 buckets per predicate: loop(1000000), loop(999999), ... produce a distinct key per call, and an unbounded cache grew one entry per call, turning a deterministic recursion into a memory leak (loop(3000000) regressed from 5.8 s in 1 GB to an OutOfMemoryError until the cap was added). Past the cap the snapshot is still computed and returned, just not remembered — and that case is cheap by construction, because a predicate with thousands of distinct first arguments has tiny buckets. (2) LAZY CLAUSE CHOICE POINT — the frame holds (snapshot, index) and pulls one clause per redo via the Gen mechanism, and participates in the ISS-2025-0429 trust-me pop (Gen.next now receives its CP so it can flag exhaustion). (3) HEAD-FIRST RENAMING — rename the head, unify, rename the body only on success sharing the same variable map; skip renaming entirely for Rule.isGroundFact(). (4) FIRST-ARGUMENT INDEXING RE-LANDED on the v2 path (reverted as ISS-2025-0340 for silently dropping clauses): safe now because an index miss degrades to the full list (ISS-2025-0344), the VAR_KEY bucket is ALWAYS merged in, and a first argument that cannot be keyed (unbound, PrologString) falls back to the full list. getFirstArgKey's numeric key is now TYPE-FAITHFUL ("i:"+exact integer / "f:"+double) instead of Number.getValue() (a double), which had merged 1 with 1.0 — terms that do NOT unify (ISS-2025-0261) — and collided all integers beyond 2^53. Behavioural subtlety fixed along the way: with indexing an EMPTY candidate list normally means "the predicate has clauses but none matches this first argument", a plain failure; callUser now consults predicateHasClauses() before raising existence_error (this broke 10 tests until fixed). Measured (best-of-3, warm JVM, -Xmx2g): 20 000-fact lookup 2.358 ms -> 0.002 ms per call (~1200x); nrev30x2000 266 -> 324 KLIPS; loop(1000000) 2414 -> 2160 ms.
+
+### ISS-2025-0434
+**Status**: RESOLVED (v3.8.0) — ENG-14
+**Resolution**: The arithmetic hot path allocated on every evaluation. MachineSolver.evalNum deep-copied the expression with resolve() and then called ArithEvaluator.eval(copy, new HashMap<>()) — and ArithEvaluator.evaluate() called term.resolveBindings(bindings) at EVERY node, and resolveBindings walks the whole sub-term, so an n-node expression cost O(n^2) traversals plus a rebuilt copy. On top of that, +, - and * allocated three BigIntegers per operation even for single-digit integers, and numRel compared through BigInteger whenever both operands were integers. Fixes: ArithEvaluator.evalDeref(expr, UnaryOperator<Term> deref) evaluates against the machine's binding store through an O(1)-per-node dereference hook (evaluate() already recurses into the arguments, so one level is all that is needed) — no copy, no map; +, -, * take a primitive long path guarded by Math.addExact/subtractExact/multiplyExact and fall back to the exact BigInteger path on overflow (pinned by tests at the long boundaries); numRel compares primitives when both operands fitInLong; Number.valueOf(long) adds a -128..1024 cache used by the evaluator, between/3 and length/2 (Numbers are immutable, so sharing is invisible); structuralEqual short-circuits on object identity, which — now that resolve() is structure-sharing (ISS-2025-0430) — makes `L == L` on a million-element list O(1). Measured: arith(1000000) (one `A1 is A0 + N*2 - 1` per iteration) 5177 -> 4317 ms.
+
+### ISS-2025-0435
+**Status**: RESOLVED (v3.8.0) — ENG-15 (partial, see below)
+**Resolution**: collectVars() used List.contains for the membership test, O(n^2) in the number of distinct query variables; it now uses a HashSet. The drive loop polled Thread.currentThread().isInterrupted() on EVERY iteration; it now goes through ResourceGuard.step(), which polls once per 1024 steps (sub-millisecond Stop latency at engine speed) and takes a volatile read off the hottest path. NOT DONE (deliberate): the `name + "/" + arity` key strings in key()/KnowledgeBase and the per-choice-point Trail.mark() ThreadLocal lookup with its per-alternative rollbackTo. Both are single-digit-nanosecond costs, both were measured to be dwarfed by the ISS-2025-0433/0434 changes, and removing them cleanly needs a (name, arity) key object threaded through the KnowledgeBase API. Also not done: Variable("_") still builds a "_G"+counter String per anonymous variable.
+
+### ISS-2025-0436
+**Status**: RESOLVED (v3.8.0) — ENG-17
+**Resolution**: Removed core/engine/CompiledClause.java and core/engine/Interpreter.java (verified no callers — Main.java's only "Interpreter" occurrence is a banner string), and KnowledgeBase.multiArgIndex together with its addToMultiArgIndex/addToMultiArgIndexFirst/getHeadNthArg helpers and the unused public getRulesWithMultiArgIndex accessor: a second nested index (predicate -> arg1 -> arg2 -> clauses) built and maintained on EVERY assert/retract that no caller outside the class ever read, i.e. pure memory and write cost. KEPT: core/terms/AtomTable.java (2 callers: BuiltInFactory and AuditRound5Test) and LayeredMap (QuerySolver + the CompoundTerm.unify fast path), contrary to the report's suggestion that they might be dead. firstArgIndex is no longer "maintained but unused": the default engine reads it since ISS-2025-0433.
+
+
+## Engine deep analysis 2026-08-24 (wave 4, v3.7.0)
+
+### ISS-2025-0431
+**Status**: RESOLVED (v3.7.0) — ENG-04 (security)
+**Resolution**: The inference budget, the Stop interrupt and the v2 four-port trace were bypassed inside every meta-call built-in, because once/1, ignore/1, forall/2, bagof/3, setof/3, aggregate_all/3, setup_call_cleanup/3, with_output_to/2, maplist/2..5, foldl/4..6, include/3, exclude/3, partition/4, predsort/3 (46 BuiltInWithContext classes) ran their sub-goals through bridgeBuiltin -> executeWithContext(contextSolver, ...) on the RECURSIVE LEGACY QuerySolver, which polled neither. With setInferenceBudget(20000), once(loop(100000)) / ignore / aggregate_all / setup_call_cleanup ran until killed at 60 s and forall(between(1,100000,_), true) completed without charging a step — untrusted code only needed `once(Loop)` to defeat the v3.4.0 hardening. Three layers: (1) NEW core.engine.ResourceGuard holds the query's step counter + budget; MachineSolver.solve publishes it on the shared QuerySolver (saving/restoring the previous one) and QuerySolver.solveInternal charges every step, so one counter and one interrupt check cover both engines; Prolog.solveWithGuard installs one for legacy-engine queries too (budget/cancel were v2-only, LIM-028 narrowed). (2) NEW core.engine.ControlFlow.rethrowIfControl guards all 122 broad catch (Exception|RuntimeException|Throwable) clauses in builtin/** and core/**: several re-wrapped the abort into a PrologEvaluationException (a PrologException, hence catchable), so catch(aggregate_all(count, Loop, _), _, true) could swallow it — the trust model is now enforced at every catch site. (3) once/1, ignore/1 and forall/2 are expanded natively in MachineSolver.drive() as (G->true) / (G->true;true) / \+ (C, \+ A) — reusing ite(), which also gives the correct cut opacity — and the NEW QuerySolver.solveMeta(Goal, Bindings, Solutions) runs any other meta-call sub-goal on a nested MachineSolver sharing the outer ResourceGuard; 16 call sites (AggregateAll, SetupCallCleanup, WithOutputTo, Once, Ignore, MapList, Include, Exclude, Partition, Foldl, PredSort, CollectionUtils) converted. Native expansion is skipped while debugging/tracing so the four ports keep firing through the bridge (same rule as the =/2 and solveBuiltin fast paths); the ResourceGuard bounds that path anyway. Under -Djprolog.engine=legacy solveMeta falls back to the recursive solver. Measured (budget 20000): once 26 s-or-never -> 50 ms, aggregate_all -> 24 ms, setup_call_cleanup -> 13 ms, with_output_to -> 19 ms, bagof stack_overflow -> 21 ms; interrupt now reaches inside once/forall/aggregate_all at ~1.5 s; without a budget once(loop(100000)) 438 ms (previously 1.78 s for just 5000 iterations) and maplist(integer, L) over 200 000 elements OOM -> 460 ms, which resolves LIM-030. DEVIATIONS: the report proposed native aggregate_all/bagof/setof/setup_call_cleanup plus a Prolog prelude.pl for the list/apply predicates; solveMeta reaches the same three goals (budget, cancellation, machine speed) while preserving each built-in's ISO semantics — a rewrite of aggregate_all on top of sum_list/max_list would have regressed the exact sum/extremum behaviour fixed by ISS-2025-0413/0414. The prelude is NOT implemented: loading library clauses would require unregistering the corresponding built-ins, which changes legacy-engine behaviour too. Still open: maplist/3..5 with an OUTPUT list remains quadratic in the list length (2.8 s at 40 000) — that is the eager built-in's own list construction, not the sub-solve.
+
+### ISS-2025-0432
+**Status**: RESOLVED (v3.7.0) — ENG-12
+**Resolution**: between/3 is a LAZY generator on the v2 machine. The eager BuiltIn.execute(goal, bindings, solutions) contract made it materialise every solution (each one a binding-map copy) before the first could be used, so between(1,2000000,X), X >= 2000000 exhausted a 256 MB heap, and between(_, inf, _) was silently capped at low+1_000_000 solutions by an explicit safety cap in Between.java. MachineSolver.betweenNative now handles the (+integer, +integer|inf, -Var) mode on the lazy Gen choice point introduced for repeat/0 (ISS-2025-0423), producing one Number per redo in O(1) memory; every other mode and all the ISO error cases (instantiation_error, type_error(integer, _)) fall through to the registry built-in unchanged, and the native path is skipped while debugging/tracing so ports still fire. A protocol bug found here: Gen used null for "exhausted", but null is also a valid goal stack (the continuation of a query's LAST goal), so `between(1,5,X).` as a whole query produced no solutions — replaced by an explicit EXHAUSTED sentinel, which also fixed the same latent bug in repeat/0 and length/2 as final goals. Measured: between(1,2000000,X), X >= 2000000 OOM@256m -> 368 ms in a 64 MB heap; between(1, inf, X), X > 10^7, ! now terminates in 1.9 s. DEVIATION: the report proposed a public LazyBuiltIn/SolutionSink interface on the registry; the lazy Gen choice point lives inside the machine and now backs repeat/0, length/2 and between/3, but the BuiltIn contract is unchanged, so member/2, nth0/nth1, select/3, append/3, clause/2, sub_atom/5 and current_op/3 remain eager (no longer quadratic, though — ISS-2025-0430).
+
+
+## Engine deep analysis 2026-08-24 (wave 3, v3.7.0)
+
+### ISS-2025-0429
+**Status**: RESOLVED (v3.7.0) — ENG-10
+**Resolution**: Unbounded memory growth in deterministic execution on the v2 machine. (a) TRUST-ME POP: MachineSolver.advance() never removed an exhausted choice point (idx == alts.size()), so `loop/1` left one dead CP per iteration — each retaining its Alt closures (continuation + for bridged built-ins a full binding-map copy) — and cut()/backtrack() had to walk them. advance() now drops the frame after taking its LAST alternative, provided the frame is on top of cps (the only position from which removal cannot shift another frame's absolute cut barrier) and has no traceGoal (a traced frame still owes a Redo/Fail port, debugger contract preserved). Cut barriers remain valid: they are captured BEFORE the push and cut() only removes frames above the barrier, so a barrier that now equals cps.size() is a no-op cut. (b) CONDITIONAL TRAILING: bind() trailed unconditionally; it now trails only while a choice point/catch frame exists or an explicit mark-undo extent is open (findall/3, \=/2, the catcher unification in handleBall — all bracketed with a new forceTrail counter). DEVIATION from the report's proposal: instead of per-variable serial numbers plus a CP stamp, reclaimTrailIfUnreachable() CLEARS the trail whenever no live mark can reach it (cps empty and forceTrail == 0), called from the trust-me pop and from cut(). Every undo(mark) in the machine takes its mark from a frame on cps or from a forceTrail extent, so this is sound, needs no new Variable field, and reclaims strictly more than a serial test would. (c) addArgs reuses the compound's functor Atom (rename/resolve were converted under ISS-2025-0428). New package-private test hooks MachineSolver.choicePointCount()/trailSize() pin the invariant: after loop(20000) both are 0. Measured (JDK 25, -Xss4m): loop(300000) OOM@64m -> OK@128m; loop(1000000) OOM@256m -> OK@256m and 3.59s -> 2.38s at 2g; loop(3000000) now completes (5.8s in 1g). RESIDUAL: memory is still O(number of bindings) because `binding` is a name-keyed HashMap that never reclaims a dead variable — that is ENG-10.1, fixed only by the object-binding rewrite ENG-16 (architecture track, out of scope); loop(3000000) needs ~1 GB, not the 64 MB the report hoped for. Recorded as LIM-033.
+
+### ISS-2025-0430
+**Status**: RESOLVED (v3.7.0) — ENG-11
+**Resolution**: Registry built-in calls were quadratic in time and memory. bridgeBuiltin() copied the ENTIRE binding map per call (new HashMap<>(binding)); each built-in returned solution maps that were copies of that copy (Member copies twice per element); applySolution walked the whole returned map; and the exhausted choice point (ENG-10) retained every copy — Sigma(bindings at call i) = O(N^2). Evidence: loop2/1 (one atom_length(abc,_) per iteration) OOM with a 2 GB heap at N = 10 000 after 27 s, versus 198 ms for N = 40 000 without the built-in. Fix: built-ins now receive a RESOLVED goal and an EMPTY map — a resolved goal carries everything the built-in needs and every variable still in it is unbound, so the empty map is faithful and the built-in returns only the bindings it creates; resolve() preserves Variable objects and names, so applySolution installs them into the real store unchanged. MachineSolver.resolve() was made STRUCTURE-SHARING (a node whose arguments all resolve to themselves is returned as-is) so the handoff does not copy large ground terms. A deterministic built-in (sols.size() == 1, not tracing) now gets no choice point at all. setarg/3 and nb_setarg/3 keep the old unresolved-goal + full-map handoff via a small IDENTITY_BUILTINS set: they mutate the actual bound term and need object identity (ISS-2025-0317, pinned by testISS0430_SetargKeepsObjectIdentity). Measured: loop2(10000) OOM-after-27s at 2 GB -> 157 ms; loop2(200000) -> 639 ms in a 128 MB heap; nrev 30x2000 188 -> 350 KLIPS.
+
+
+## Engine deep analysis 2026-08-24 (wave 2, v3.6.2)
+
+### ISS-2025-0428
+**Status**: RESOLVED (v3.6.2) — ENG-09
+**Resolution**: All term walkers made TAIL-ITERATIVE on the last argument. Root cause: a list of N cells is N nested './2' terms whose SECOND (last) argument is the tail, so every walker that recursed into all arguments needed N Java frames; with -Xss4m `numlist(1,30000,L)` + `L == L` / sum_list / copy_term / assertz / msort / term_to_atom / write all raised resource_error(stack_overflow) (ISS-2025-0341 only made the crash polite), and deep(50000, T) failed. Rewritten to loop on argument N and recurse only into 1..N-1: CompoundTerm.unify (via a new unifySpine helper) / isGround / copy (spine built top-down, last slot patched by replaceLast) / resolveBindings (two-phase: collect the spine, rebuild bottom-up, still returning `this` when nothing changed) / equals / hashCode / toString (new appendTerm + appendAsList write straight into one StringBuilder); MachineSolver.resolve / rename / unify / structuralEqual (new structuralEqualLeaf) / checkBodyGoals; TermCopier.copyTermInternal; Variable.occursInTerm and GroundCheck.isGroundTerm rewritten with explicit work stacks; TermFormatter's functional-notation fallback (new isFunctionalNotation predicate mirroring format()'s dispatch). Two secondary fixes: CompoundTerm.unify snapshotted the substitution map at EVERY nesting level for rollback (O(depth x |bindings|)) and now snapshots once per top-level call; list toString no longer materialises a List<String> of every element. Both resolveBindings and MachineSolver.resolve deref THROUGH bound variables while scanning the spine (a structure built by recursive clauses links its spine by variables) — and resolveBindings tracks per link whether it crossed a variable, because "child unchanged" must still substitute var -> value (missing that broke append/3, caught by MegaPredicateTest.testFlatten/testQuicksort). MachineSolver.resolve preserves the ISS-2025-0313 cyclic-term detection exactly: the spine scan pushes every crossed variable into the active-path set and the bottom-up rebuild pops each link again, so a cycle reached through a NON-last argument is still caught. Verified at the surefire fork's DEFAULT JVM settings: 1 000 000-element list round trip (numlist, length, sum_list, ==, copy_term, msort, sort, ground, assertz+call, reverse, append, term_to_atom, write, \+ \+), 1 000 000-element OPEN list copy_term, and a 200 000-deep f(f(...)) built/copied/compared/written. Note: CompoundTerm.hashCode() now yields different VALUES (structural spine hash instead of Objects.hash(functor, arguments)); it stays consistent with equals and nothing persists hash values. Out of scope and still memory-bound: maplist on 1M elements (LIM-030) and member/2 inside findall (eager built-in contract, ENG-11/ENG-12).
+
+
+## Engine deep analysis 2026-08-24 (wave 1, v3.6.1)
+
+First implementation wave over `docs/reports/report-engine-deep-analysis-2026-08-24.md` (17 findings ENG-01..ENG-17). Wave 1 = the correctness quick wins: ENG-01, ENG-02, ENG-03, ENG-05, ENG-08. ENG-07 (cyclic terms) is filed as LIM-032 by decision; ENG-16 (object bindings) is an architecture track and out of scope.
+
+### ISS-2025-0423
+**Status**: RESOLVED (v3.6.1) — ENG-01
+**Resolution**: repeat/0 is an infinite choice point again. builtin/control/Repeat.java materialised exactly 1000 copies of the binding map (`for (int i = 0; i < 1000; i++) solutions.add(new HashMap<>(bindings))`), so `repeat, ..., Done, !` silently FAILED after 1000 iterations and each repeat cost 1000 full map copies. MachineSolver now dispatches `repeat` natively in the Atom branch of drive() (before the bridge, so it also applies while debugging) onto a new LAZY choice-point kind: `CP(Gen gen, int trailMark)` where `Gen.next()` returns the next goal stack, FAILED to skip, or null when exhausted; advance() pulls one alternative at a time. The repeat CP never returns null, so it is infinite in O(1) memory. Ports: Call before, Exit via a continuation action, Redo/Fail from the CP's traceGoal/traceDepth (debugger contract preserved). Verified to 100 000 iterations and prunable by cut. Legacy engine keeps the 1000 bound (LIM-031).
+
+### ISS-2025-0424
+**Status**: RESOLVED (v3.6.1) — ENG-02
+**Resolution**: `Number(double)` no longer auto-classifies an integral double as an ISO integer (ISO 9.1.3 / 7.1.2: a float never becomes an integer implicitly). Symptoms: sum_list([1.5,1.5],S) -> S = 3, sumlist([1.0],S) -> 1, JSON 1.0 -> 1, CSV 1.0 -> 1. The 58 call sites that actually bound to the double constructor were enumerated by temporarily making it private and compiling (`new Number(intExpr)` already binds to the long overload, which is why the real count is far below the 146 textual `new Number(...)` matches). Classification: (a) integer intent -> long constructor: character codes (ToCodes, ToCodesSimple, NumberCodes, Format, GetCode), sub_atom/sub_string before/length/after, atom_length, string_length, succ/2, current_op precedence, all statistics/2 counters, FFI Integer/Long/Short/Byte + array length, the arity in existence_error(procedure, Name/Arity) on BOTH engines; (b) genuine float intent -> unchanged and now correct: SumList's float branch, Plus's float branches, ArithmeticEvaluator's type_error culprits, JDBC DECIMAL/NUMERIC, graph edge weights; (c) text -> number sites rerouted through the strict ISO token parser AtomNumber.parseNumberToken: atom_number/2 (both directions), CSV fields, legacy PrologParser.parseNumber, plus JsonPredicates which already computed an isFloat flag and discarded it. New API: Number.ofLong/Number.ofDouble explicit factories and Number.isIntegralDouble (the legacy classification, used only by Rational, whose whole values ARE exact integers — pinned by testISS0189_rationalUnifyWithInteger). One pre-existing test asserted the bug (AdvancedArithmeticTest.testPlusWithFloats expected plus(1.5,2.5,X) = 4) and was corrected to 4.0.
+
+### ISS-2025-0425
+**Status**: RESOLVED (v3.6.1) — ENG-03
+**Resolution**: length/2 enumerates partial lists. builtin/list/Length.java handles (proper list, _) and (_, integer) and returned false for every other mode, so `length(L, N), N >= 3, !` and `length([a|T], N)` failed. MachineSolver.lengthEnumerate now intercepts length/2 when the length is unbound AND the spine ends in an unbound tail, installing a lazy infinite CP (the ISS-2025-0423 Gen mechanism) that binds Tail = [], [_], [_,_], ... and Length = Prefix+k. Cyclic spines, proper lists and non-list tails are declined so the Java built-in keeps the two deterministic modes verbatim (no regression). Ports emitted like any native construct.
+
+### ISS-2025-0426
+**Status**: RESOLVED (v3.6.1) — ENG-05
+**Resolution**: MachineSolver.bridgeBuiltin no longer swallows every RuntimeException. `catch (RuntimeException e) { return -1; }` reported any Java fault inside a built-in (NPE, ClassCastException, IndexOutOfBounds) as "not a built-in", which fell through to callUser -> existence_error(procedure, ...) or a silent failure, hiding real defects; it would equally have swallowed DebugStopException, QueryCancelledException and InferenceLimitException raised inside a nested sub-solve (all three extend RuntimeException). New policy, in order: PrologException rethrown (unchanged, ISS-2025-0309); the three engine-control exceptions rethrown explicitly — the trust model requires that they stay plain RuntimeExceptions no catch/3 can trap; the NEW core.engine.NeedsSolverContextException is the only remaining -1 ("not bridgeable here") signal; every other RuntimeException becomes a catchable error(system_error(SimpleName: Message), Name/Arity), with the Fail port emitted first so traces stay balanced.
+
+### ISS-2025-0427
+**Status**: RESOLVED (v3.6.1) — ENG-08 (minor inaccuracies, bundled)
+**Resolution**: (a) MachineSolver.raiseUnknownIfRequired printed the unknown=warning message with System.err.println, which the IDE console never sees; it now writes through StreamManager.out() per the output discipline. (b) throw/1 renamed the ball twice — once in drive()'s throw branch and again in drive()'s PrologException catch, which renames every ball it routes; the throw-branch rename was removed (resolve() already detaches the ball from the bindings that unwind). (c) PrologException's error-term constructor called super(errorTerm.toString()), paying for a Java stack trace (fillInStackTrace) and an eager full-term toString on every ISO error and every throw/1 — exceptions are control flow in Prolog. It now uses `super(null, null, true, false)` (no writable stack trace) and computes the detail message lazily in an overridden getMessage(); the String/Throwable constructors keep their traces because they wrap real Java faults. (d) The inference budget's unit (one drive-loop iteration, NOT one logical inference — conjunction splits, true, cut and internal action goals each consume one) is documented on MachineSolver.setInferenceBudget and Prolog.setInferenceBudget.
+
+
 ## Audit follow-up 2026-06-10 evening (wave 3, v3.6.0)
 
 Third fix wave over the ISS-2025-0395 open-findings roll-up: 27 issues resolved (ISS-2025-0396..0422), including LIM-026 (retract re-execution, default engine) and LIM-029 (line-based read). The ISS-2025-0395 roll-up below is updated accordingly.

@@ -40,6 +40,7 @@ This reference guide organizes JProlog's built-in predicates by their logical fu
 27. [Persistence Predicates](#27-persistence-predicates)
 28. [Graph Algorithm Predicates](#28-graph-algorithm-predicates)
 29. [Java FFI Predicates](#29-java-ffi-predicates)
+61. [Module System (engine v4)](#61-module-system-engine-v4)
 
 ---
 
@@ -363,10 +364,34 @@ false.
 
 **When to use**: Use to verify term safety before operations that would loop on cyclic terms.
 
+*v3.9.0* (ISS-2025-0441): on the opt-in **v4 engine** (`-Djprolog.engine=v4`) this is a real test
+over rational trees — `X = f(X), acyclic_term(X)` fails and `cyclic_term(X)` succeeds — because v4
+supports cyclic terms instead of raising `representation_error(cyclic_term)`. On the default engine
+a cyclic term cannot normally be built, so the predicate is effectively always true.
+
 ```prolog
 % Syntax: acyclic_term(+Term)
 ?- acyclic_term(f(a, b)).
 true.
+```
+
+### cyclic_term/1
+**Purpose**: Succeeds when `Term` is a rational (cyclic) tree; the complement of `acyclic_term/1`.
+
+**When to use**: Guard code that walks a term structurally before handing it to something that
+cannot represent cycles (a writer, a serialiser, an external API).
+
+**Availability**: the **v4 engine only** (`-Djprolog.engine=v4` / `Prolog.setUseV4Engine(true)`).
+The default v2 engine cannot construct cyclic terms and does not register this predicate, so a call
+there raises `existence_error(procedure, cyclic_term/1)`.
+
+```prolog
+% Syntax: cyclic_term(+Term)
+?- X = f(X), cyclic_term(X).
+true.
+
+?- cyclic_term(f(a, g(b))).
+false.
 ```
 
 ### proper_list/1
@@ -526,6 +551,83 @@ apply_template(Template, Values, Result) :-
     copy_term(Template, Result),
     Result =.. [Functor|Values].
 ```
+
+### Attributed variables and coroutining
+
+*v3.11.0, engine v4* (ISS-2025-0457..0462): on `-Djprolog.engine=v4` these predicates are native or
+prelude Prolog over a real wake queue — binding an attributed variable runs its suspended goals on
+the machine's goal stack, so **the bindings a woken goal makes propagate**, it is traced through the
+four ports, the inference budget and Stop can abort it, and an exception it throws reaches the
+enclosing `catch/3`. On the `-Djprolog.engine=v2` fallback `freeze/2`, `when/2`, `dif/2`,
+`put_attr/3`, `get_attr/3`, `del_attr/2` and `attvar/1` are the older Java built-ins (a
+`when/2`-woken goal's bindings are lost there — ISS-2025-0336), and `term_attvars/2`,
+`copy_term/3`, `frozen/2`, `unifiable/3` and `?=/2` do **not** exist (`existence_error`).
+
+One more deliberate difference on v4: **a query's variables die with the query**. A goal still
+suspended when a query ends never fires in a later one; on v2 it does (session-scoped attributed
+variables, v2.9.4).
+
+| Predicate | Purpose |
+|---|---|
+| `put_attr(-Var, +Module, +Value)` | Attach/replace `Module`'s attribute on an unbound variable. Backtrackable. `type_error(variable, T)` on a non-variable. |
+| `get_attr(+Var, +Module, ?Value)` | Unify `Value` with the attribute; fails when there is none. |
+| `del_attr(+Var, +Module)` | Remove the attribute; succeeds when there is none. Backtrackable. |
+| `attvar(@Term)` | True when `Term` is an unbound variable carrying at least one attribute. |
+| `term_attvars(+Term, -AttVars)` | The attributed variables of `Term`, in depth-first order. |
+| `copy_term(+Term, -Copy, -Goals)` | Copy with the attributes **stripped**; `Goals` are the residual goals that would restore them, expressed over `Copy`'s variables. |
+| `unifiable(@X, @Y, -Unifier)` | The bindings `X = Y` would make, as a list of `Var = Value`, **without making them**. Fails when the terms do not unify. |
+| `freeze(?Var, :Goal)` | Run `Goal` as soon as `Var` is bound (immediately when it already is). Several frozen goals on one variable aggregate into a conjunction. |
+| `frozen(@Var, -Goal)` | The goal (or conjunction) delayed on `Var`, or `true`. |
+| `when(+Condition, :Goal)` | Run `Goal` once `Condition` holds. Conditions: `nonvar/1`, `ground/1`, `?=/2`, `(C1, C2)`, `(C1 ; C2)`. `instantiation_error` for an unbound condition, `domain_error(when_condition, C)` for anything else. A disjunctive condition fires the goal exactly once. |
+| `dif(@X, @Y)` | `X` and `Y` can never become identical. Decided immediately when they are identical (fail) or cannot unify (succeed); otherwise it suspends on the variables of the remaining unifier and is re-checked as they are bound. |
+| `?=(@X, @Y)` | True when `X` and `Y` are already identical or already cannot unify — i.e. their (dis)equality is decided. |
+
+**`Module:attr_unify_hook(AttValue, Other)`** — user-definable in Prolog. The machine calls it,
+through the normal goal stack, for every attribute of a variable that has just been bound;
+`AttValue` is that module's attribute and `Other` is what the variable was bound to (possibly
+another variable). Failing the hook fails the unification. An attribute of a module with no hook is
+inert data.
+
+```prolog
+% A one-module constraint library: the variable may only ever be bound to an even integer.
+even:attr_unify_hook(_, Other) :-
+    (   var(Other) -> put_attr(Other, even, true)
+    ;   integer(Other), 0 is Other mod 2
+    ).
+
+even(X) :- put_attr(X, even, true).
+
+?- even(X), X = 4.
+X = 4.
+
+?- even(X), X = 5.
+false.
+
+% Coroutining
+?- freeze(X, format("X became ~w~n", [X])), X = hello.
+X became hello
+X = hello.
+
+?- when(ground(X-Y), Z is X + Y), X = 1, Y = 2.
+X = 1, Y = 2, Z = 3.
+
+?- dif(f(X), f(Y)), X = 1, Y = 1.
+false.
+
+?- dif(f(X), f(Y)), X = 1, Y = 2.
+X = 1, Y = 2.
+
+% Residual goals of a copy
+?- freeze(X, foo(X)), copy_term(X, Y, Goals).
+Goals = [freeze(Y, foo(Y))].
+
+?- unifiable(f(X, b), f(a, Y), U).
+U = [X = a, Y = b].
+```
+
+From Java, `Prolog.residualGoals(solution)` returns the same residual goals for the variables of an
+answer (`freeze/2`, `when/2`, `dif/2`, CLP(FD) `in/2`, `put_attr/3`). Nothing prints them yet — the
+CLI and the IDE start showing them in wave W7 of the v4 design.
 
 ### compare/3
 **Purpose**: Three-way comparison of terms using standard ordering.
@@ -690,6 +792,16 @@ Examples:
 
 **When to use**: Use for joining lists, finding prefixes/suffixes, or generating list partitions.
 
+*v3.10.0, engine v4* (ISS-2025-0453): `member/2`, `memberchk/2`, `append/3`, `select/3`,
+`selectchk/3`, `nth0/3`, `nth1/3`, `last/2`, `reverse/2`, `length/2`, `msort/2`, `sort/2`,
+`sum_list/2`, `numlist/3`, `copy_term/2` and `clause/2` are native to the v4 machine, and the
+nondeterministic ones are **lazy generators**: one alternative per redo, O(1) memory, and the
+enumeration stops the moment the caller cuts, instead of every solution being materialised before
+the first is used. Modes, solution order and ISO error terms are unchanged — including two
+deliberate parity points: `append(X, Y, Z)` with all three arguments open still yields only the
+single standard solution `X = [], Z = Y`, and `member(X, PartialList)` does not extend the open
+tail.
+
 ```prolog
 % Mode 1: Concatenate two lists (inputs: +List1, +List2, output: -List3)
 ?- append([1, 2], [3, 4], Result).
@@ -762,6 +874,8 @@ validate_option(Option, ValidOptions) :-
 **When to use**: Use to count elements, create lists of specific length, or constrain list size.
 
 *v3.5.0*: accepts proper lists containing unbound elements (e.g. `length([A, B, C], N)` gives `N = 3`) — only the list skeleton must be proper.
+
+*v3.6.1* (ISS-2025-0425): the **generative** mode works. When the length is unbound and the list's spine ends in an unbound tail, `length/2` enumerates `N = Prefix, Prefix+1, …` on backtracking instead of failing, so `length(L, N), N >= 3, !` gives `N = 3, L = [_,_,_]` and `length([a|T], N)` enumerates `N = 1, 2, 3, …`. Like SWI-Prolog, an **unguarded** `length(L, N)` with both arguments unbound is therefore a non-terminating generator — bound it with a cut, a comparison, or a known length.
 
 ```prolog
 % Mode 1: Find length of a list
@@ -1119,6 +1233,13 @@ R = [11, 22, 33].
 ```
 *Added in v2.8.1*: `maplist/5` arity for `call(Goal, E1, E2, E3, E4)` across 4 lists.
 
+*v3.10.0, engine v4 only* (`-Djprolog.engine=v4`, ISS-2025-0454): `maplist/2..7` are **Prolog
+clauses** loaded from the v4 prelude (`prelude/apply.pl`) instead of a Java built-in. They are
+linear rather than quadratic with an output list, lazy (re-satisfiable through the mapped goal),
+traceable through the four ports and interruptible; `maplist/6` and `maplist/7` exist only there.
+**A program that defines its own `maplist/3` overrides the library definition** — the prelude is
+consulted only when the knowledge base has no clause for that indicator.
+
 ### include/3, exclude/3
 **Purpose**: Filter a list by keeping (include) or removing (exclude) elements where Goal succeeds.
 ```prolog
@@ -1129,12 +1250,58 @@ X = [a, b].
 X = [1, 2].
 ```
 
-### foldl/4, foldl/5, foldl/6
+### partition/4, partition/5
+**Purpose**: Split a list in one pass. `partition(:Pred, +List, ?Included, ?Excluded)` puts each
+element where `call(Pred, X)` succeeds into `Included` and the rest into `Excluded`;
+`partition(:Pred, +List, ?Less, ?Equal, ?Greater)` uses `call(Pred, X, Order)` with `Order` one of
+`<`, `=`, `>`.
+
+**Availability**: **the default (v4) engine only** (v3.10.0, ISS-2025-0454), as prelude
+Prolog clauses. Under `-Djprolog.engine=v2` and `=legacy` `partition/4` is deliberately *not*
+registered, so a call raises `existence_error(procedure, partition/4)` and programs are expected to
+define their own. That remains true on v4 as well: **a user definition of `partition/4` overrides
+the library one** (the quicksort in `examples/test_16_sorting.pl` relies on this, and its
+`partition/4` takes a pivot rather than a goal).
+```prolog
+?- partition([X]>>(X > 2), [1,2,3,4], Big, Small).
+Big = [3, 4], Small = [1, 2].
+```
+
+### foldl/4, foldl/5, foldl/6, foldl/7
 **Purpose**: Left fold over a list with an accumulator.
 ```prolog
 add(X, Y, Z) :- Z is X + Y.
 ?- foldl(add, [1, 2, 3], 0, Sum).
 Sum = 6.
+```
+*v3.10.0, the default (v4) engine only*: `foldl/4..7` are prelude Prolog clauses (see `maplist`), so they fold
+over four parallel lists and are linear and interruptible.
+
+### Lambda expressions — `library(yall)`
+**Purpose**: Write an anonymous predicate inline instead of naming a helper.
+
+**Availability**: **the default (v4) engine only** (v3.10.0, ISS-2025-0455). Under
+`-Djprolog.engine=v2` and `=legacy` a lambda raises `existence_error(procedure, >>/4)`.
+
+| Form | Meaning |
+|---|---|
+| `Params>>Body` | `Params` is a list of formal parameters, e.g. `[X,Y]>>(Y is X*2)` |
+| `Free/Params>>Body` | the variables of `Free` are **shared** with the caller instead of renamed apart |
+| `\X1^...^Xn^Body` | the `library(lambda)` spelling of the same thing |
+| `Free/\X^Body` | ... with shared free variables |
+
+The lambda is copied before **every** call, so one lambda serves every element of a `maplist`. A
+variable that is already bound outside is copied as its value, so it needs no `/`; use `Free/` only
+to share an *unbound* variable.
+```prolog
+?- maplist([X,Y]>>(Y is X*2), [1,2,3], L).
+L = [2, 4, 6].
+
+?- foldl([X,A0,A]>>(A is A0+X), [1,2,3,4], 0, S).
+S = 10.
+
+?- N = 10, maplist(N/[X,Y]>>(Y is X*N), [1,2], L).
+L = [10, 20].
 ```
 
 ---
@@ -1305,6 +1472,8 @@ max_of_three(A, B, C, Max) :-
 **Purpose**: Generates or tests integers within a range.
 
 **When to use**: Use for generating sequences, validating ranges, or iteration.
+
+*v3.7.0* (ISS-2025-0432): the generative mode is **lazy** on the default engine — one integer per backtrack instead of materialising the whole range up front, so `between(1, 2000000, X), X >= 2000000, !` runs in constant memory. `between(Low, inf, X)` / `between(Low, infinite, X)` genuinely enumerate without an upper bound (they were silently capped at a million solutions).
 
 ```prolog
 % Mode 1: Check if number is in range
@@ -1571,6 +1740,8 @@ false.
 
 **When to use**: Use to make non-deterministic predicates deterministic.
 
+*v3.7.0* (ISS-2025-0431): `once/1`, `ignore/1` and `forall/2` run natively on the default engine (as `(G -> true)`, `(G -> true ; true)` and `\+ (C, \+ A)`) and every other meta-call built-in — `aggregate_all/3`, `bagof/3`, `setof/3`, `setup_call_cleanup/3`, `with_output_to/2`, `maplist/2..5`, `foldl/4..6`, `include/3`, `exclude/3`, `partition/4`, `predsort/3` — runs its sub-goal on the iterative machine instead of the (since 4.0.0 deleted) recursive solver. Visible effects: they are one to two orders of magnitude faster, they no longer hit a recursion limit on long lists, and (importantly for embedders) the inference budget set by `Prolog.setInferenceBudget` and the Stop interrupt now apply **inside** them. Semantics — cut opacity, determinism, ISO error terms — are unchanged.
+
 *v3.6.0*: a non-callable goal raises `type_error(callable, Goal)` (`once(1)` used to fail silently); an unbound goal raises `instantiation_error`.
 
 ```prolog
@@ -1606,6 +1777,8 @@ get_default(Key, Value) :-
 **Purpose**: Always succeeds and provides infinite choice points.
 
 **When to use**: Use to create loops that retry on failure.
+
+*v3.6.1* (ISS-2025-0423): genuinely **infinite** on the default engine. It previously produced exactly 1000 solutions, so a `repeat, …, Done, !` driver loop that needed more than 1000 iterations failed silently. (The 1000-solution bound of the pre-3.6.1 recursive engine is history: that engine was deleted in 4.0.0.)
 
 ```prolog
 % repeat/0 always succeeds and creates a choice point
@@ -1890,6 +2063,10 @@ List = [].  % Empty list, not failure
 
 *v3.5.0*: each collected solution is a renamed-apart fresh copy (result lists no longer alias caller variables); an unbound goal raises `instantiation_error` and a non-callable goal raises `type_error(callable, Goal)`.
 
+*v3.10.0, engine v4* (ISS-2025-0452): `bagof/3` and `setof/3` are native — the goal runs on the
+machine and the witness groups are handed out lazily, one per redo. The `^` handling, the
+variant-witness grouping and `setof/3`'s standard-order group enumeration are unchanged.
+
 *v3.6.0*: witness grouping follows ISO 8.10.2.1 — solutions whose witness tuples are variants of each other merge into a single group (e.g. fresh clause variables in the witness no longer split groups), with the member tuples unified against the witness variables on emission.
 
 ```prolog
@@ -1992,6 +2169,10 @@ P = [john, mary].  % Sorted list of people
 **When to use**: Use when you need to compute aggregate statistics (sum, count, max, min, bag, set) over all solutions to a goal in a single call.
 
 *v3.5.0*: ISO error balls raised by Goal propagate unchanged (no longer wrapped or swallowed); an unbound or non-callable goal raises `instantiation_error` / `type_error(callable, _)`.
+
+*v3.10.0, engine v4* (ISS-2025-0452): native over the machine's `findall`. New template forms
+`max(Value-Witness)` and `min(Value-Witness)`, which compare the numeric left-hand side and answer
+with the winning pair: `aggregate_all(max(V-W), member(V-W, [1-a, 3-b]), 3-b)`.
 
 *v3.6.0*: `max(Expr)`/`min(Expr)` fail when the goal has no solutions and raise `type_error(number, T)` on a non-numeric solution (previously skipped silently); `sum(Expr)` accumulates integers exactly (BigInteger — no 64-bit overflow), with float contagion producing a genuine float (`sum` over `[1.5, 2.5]` is `4.0`); the empty sum is the integer `0`.
 
@@ -2173,6 +2354,16 @@ A = '3.14'.
 
 *v3.5.0*: `format/2,3` now succeed as goals (output used to be produced with the goal then failing, killing any conjunction containing it); the format string may be an atom, a double-quoted string (the spelling produced by the default `double_quotes=string` flag), or a code/char list; `format/3` honours its first argument — a stream alias/handle, or a capture sink `atom(A)` / `string(S)` / `codes(C)` / `chars(C)`. `~w`/`~q` imply `numbervars(true)`.
 
+*v3.10.0* (ISS-2025-0452): new directive **`~@`** — the argument is a goal; it is called and
+everything it writes is spliced in at that point. `~p` (portray) likewise calls `portray/1`. Both
+sub-goals run on the resolution engine, so on the v4 engine they honour the inference budget and
+the Stop interrupt.
+```prolog
+?- format("[~@]~n", [write(inner)]).
+[inner]
+true.
+```
+
 *v3.6.0*: argument mismatches raise errors instead of being papered over — too few arguments for the directives raise a format error, `~d` with a non-integer raises `type_error(integer, Arg)`, and an unknown directive raises an error (previously echoed literally). The atom `[]` in the argument position is the **empty argument list** (`[[]]` passes the atom `[]` as a single argument; a non-list term still counts as one argument, SWI-style).
 
 ### Basic Input
@@ -2228,7 +2419,7 @@ process_command(_) :- writeln('Unknown command. Type help for assistance.').
 - `read_term(+Stream, -Term)` reads from a stream with default options
 - `read_term(+Stream, -Term, +Options)` — the primary ISO 8.14.1 form *(added v3.5.0)*
 
-Supported options: `variables(Vars)` (all variables of the term), `variable_names(Pairs)` (`Name=Var` pairs for the named variables), `singletons(Pairs)` (`Name=Var` pairs for singleton variables).
+Supported options: `variables(Vars)` (all variables of the term), `variable_names(Pairs)` (`Name=Var` pairs for the named variables), `singletons(Pairs)` (`Name=Var` pairs for singleton variables), `syntax_errors(error|fail|quiet)`, `term_position(Pos)` (*v3.14.0*: the `'$stream_position'(CharCount, LineCount, LinePosition, ByteCount)` term for the FIRST character of the term just read — feed it to `stream_position_data/3`).
 
 ```prolog
 ?- read_term(T, [variable_names(Vs)]).
@@ -2244,6 +2435,8 @@ T = foo(1, 2).
 *v3.5.0*: `read_term/2,3` succeed as goals (previously the read happened but the goal failed). On end-of-file, `Term` is bound to the atom `end_of_file`.
 
 *v3.6.0*: like `read/1,2`, reads up to the ISO end token instead of one line — multi-line terms, several terms per line, and leading comments all work, with the stream position preserved between calls.
+
+*v3.14.0*: reads through the stream's own decoder, so `read_term/2,3`, `get_char/2` and `seek/4` all agree about where the stream is (before this each of `read/1,2`, `read_term/2,3` and `get_char/2` kept its own buffer). Input nested more than 1000 levels deep raises `error(resource_error(parser_nesting), _)` rather than blowing the Java stack or failing silently.
 
 ### Character I/O
 
@@ -2345,7 +2538,20 @@ On end-of-file, `get_code`/`peek_code` unify the code with `-1` and `peek_char` 
 - `write_term(+Stream, +Term)` writes to a stream with default options
 - `write_term(+Stream, +Term, +Options)` — the primary ISO 8.14.2 form *(added v3.5.0)*
 
-Supported options: `quoted(Bool)`, `ignore_ops(Bool)`, `numbervars(Bool)`, `max_depth(N)`.
+Supported options (*complete since v3.14.0*):
+
+| Option | Meaning |
+|---|---|
+| `quoted(Bool)` | quote atoms and strings so the output re-reads as the same term |
+| `ignore_ops(Bool)` | never use operator notation: `1-2` prints as `-(1,2)` |
+| `numbervars(Bool)` | render `'$VAR'(N)` as `A`, `B`, ..., `Z`, `A1`, ... (default `false` for `write_term`, `true` for `write/1` and `print/1`) |
+| `max_depth(N)` | print at most `N` nesting levels; deeper structure prints as `...` and a longer list as `[E1,E2\|...]`. `0` means unlimited |
+| `portray(Bool)` | call the user's `portray/1` on every subterm; what it writes replaces the subterm |
+| `cycles(Bool)` | render a rational tree as `@(Template, Substitutions)` — `X = f(X)` prints as `@(_S1,[_S1=f(_S1)])`. With `cycles(false)` a back edge prints as `...`, so a cyclic term always terminates |
+| `variable_names(Pairs)` | a list of `Name=Var` pairs; each listed variable prints as its name |
+| `spacing(standard \| next_argument)` | `next_argument` puts a space after every argument separator: `f(a, b, c)` |
+
+An unrecognised option raises `error(domain_error(write_option, Option), _)`.
 
 ```prolog
 ?- write_term('hello world', [quoted(true)]).
@@ -2361,6 +2567,96 @@ true.
 ```
 
 *v3.5.0*: `write_term/2` succeeds as a goal (previously it printed and then failed); the three-argument stream form was added.
+
+*v3.14.0*: the whole family (`write/1,2`, `writeln/1,2`, `writeq/1,2`, `print/1,2`, `write_canonical/1,2`, `write_term/2,3`, `portray_clause/1,2`, `format ~w/~q/~p`) renders through one writer, `core.engine.v4.Writer`. It is iterative (a 1 000 000-element list and a 1 000 000-deep structure print at the default JVM stack), cycle-safe, and reads the **engine's own** operator table, so an operator declared by `:- op/3` in a consulted file is honoured when the term is written back.
+
+```prolog
+?- write_term([1,2,3,4,5], [max_depth(3)]).
+[1,2|...]
+
+?- write_term(f(X,Y), [variable_names(['Foo'=X, 'Bar'=Y])]).
+f(Foo,Bar)
+
+?- X = f(X), write_term(X, [cycles(true)]).
+@(_S1,[_S1=f(_S1)])
+```
+
+### portray_clause/1-2
+**Purpose**: Write a clause the way `listing/1` does — quoted, variables numbered `A`, `B`, ..., one body goal per indented line, terminated by a full stop and a newline. *(added v3.14.0)*
+
+```prolog
+?- portray_clause((p(X,Y) :- q(X), r(Y))).
+p(A,B) :-
+    q(A),
+    r(B).
+true.
+
+?- portray_clause(fact).
+fact.
+true.
+```
+
+`portray_clause(+Stream, +Clause)` writes to `Stream`.
+
+### print_message/2
+**Purpose**: `print_message(+Kind, +Message)` — report a message. *(added v3.14.0)*
+
+An ISO `error(Formal, Context)` ball is rendered readably; anything else is written with `quoted(true)`. `error` and `warning` go to `user_error`, `silent` prints nothing, every other kind goes to the current output. A user-defined `message_hook/3` is **not** consulted (JProlog has no message-catalogue layer).
+
+```prolog
+?- print_message(error, error(type_error(integer, abc), foo/1)).
+ERROR: Type error: `integer' expected, found `abc' (foo/1)
+true.
+
+?- print_message(informational, hello).
+% hello
+true.
+```
+
+### Stream properties and positions
+
+### stream_property/2
+**Purpose**: `stream_property(?Stream, ?Property)` relates an open stream of **this engine** to its properties. Both arguments may be unbound; an unbound `Stream` enumerates every open stream.
+
+Properties (*complete since v3.14.0*): `file_name(F)`, `mode(read|write|append)`, `input`, `output`, `alias(A)` (one solution per alias), `position(P)`, `end_of_stream(not|at|past)`, `eof_action(error|eof_code|reset)`, `reposition(true|false)`, `type(text|binary)`, `encoding(E)`, `line_count(N)`.
+
+`P` is the opaque term `'$stream_position'(CharCount, LineCount, LinePosition, ByteCount)`; take it apart with `stream_position_data/3` and feed it back to `set_stream_position/2`.
+
+```prolog
+?- open('data.txt', read, S, [alias(input)]), stream_property(input, mode(M)).
+M = read.
+```
+
+### set_stream/2
+**Purpose**: `set_stream(+Stream, +Property)` changes a property of an open stream. *(added v3.14.0)*
+
+Accepted: `alias(A)` (adds another name for the stream), `type(text|binary)`, `eof_action(error|eof_code|reset)`, `encoding(E)`. Anything else raises `domain_error(stream_property, P)`.
+
+### stream_position_data/3
+**Purpose**: `stream_position_data(+Field, +Position, ?Data)` extracts one field of a `'$stream_position'/4` term: `char_count`, `line_count`, `line_position` or `byte_count`. *(added v3.14.0)*
+
+### character_count/2, line_count/2, line_position/2
+**Purpose**: The three counters of an open stream, without going through `stream_property/2`. *(added v3.14.0)*
+
+`line_count/2` is 1-based (a freshly opened stream is on line 1); `line_position/2` is the 0-based column; `character_count/2` counts characters read or written so far. All three are exact on **text** streams, because the stream decodes through its own buffer.
+
+```prolog
+?- open('two_lines.txt', read, S), get_char(S,_), get_char(S,_), get_char(S,_),
+   get_char(S,_), get_char(S,_), get_char(S,_), get_char(S,C),
+   line_count(S, L), line_position(S, LP).
+C = w, L = 2, LP = 1.
+```
+
+### current_stream/3
+**Purpose**: `current_stream(?File, ?Mode, ?Stream)` enumerates the open **file** streams of this engine. *(added v3.14.0)*
+
+### seek/4, stream_position/2 and set_stream_position/2
+`seek(+Stream, +Offset, +Method, -NewLocation)` with `Method` one of `bof`, `current`, `eof`; `stream_position(+Stream, -ByteOffset)`; `set_stream_position(+Stream, +Position)` where `Position` is a byte offset or a `'$stream_position'/4` term.
+
+*v3.14.0*: **repositioning now works on text streams.** Before this release the stream handed out a `PushbackReader` over the raw file with its own 8 KB buffer, so a seek moved the file channel but not the reader — `get_char(S,C1), seek(S,0,bof,_), get_char(S,C2)` answered `C2 = e` after `C1 = h`. A reposition now flushes the stream's decode buffer and resets the decoder, and it recomputes the character/line counters.
+
+### Streams are per engine
+*v3.14.0*: the stream table, its aliases and `current_input`/`current_output` belong to the `Prolog` instance (and, for the current streams, to the calling thread). A stream opened by one engine is invisible to another, and `set_output/1` on one thread does not redirect another thread's output. `open/3,4` unifies `Stream` with the canonical term `'$stream'(N)`; every stream argument also accepts an atom alias, the `stream_<id>` handle, and the reserved `user_input`/`user_output`/`user_error`/`current_input`/`current_output`.
 
 ### char_conversion/2 and current_char_conversion/2
 **Purpose**: Manage character conversion table used during term reading.
@@ -2439,11 +2735,22 @@ hello     world
 ```
 
 ### with_output_to/2
-**Purpose**: Execute Goal, capturing its output as an atom.
+**Purpose**: Execute `Goal` once, capturing everything it writes into `Sink`.
+
+**Sinks**: `atom(A)` on every engine; `string(S)`, `codes(C)` and `chars(C)` in addition on the v4
+engine (v3.10.0, ISS-2025-0452), where a target that is none of those raises
+`domain_error(output_sink, T)`. `Goal` runs as `once/1`: only the first solution's output is
+captured, and `with_output_to/2` fails if `Goal` fails.
 ```prolog
 ?- with_output_to(atom(X), write(hello)).
 X = hello.
+
+?- with_output_to(codes(C), write(ab)).      % v4
+C = [97, 98].
 ```
+*v3.10.0, engine v4*: the capture uses the thread-local output stream and restores whatever was
+installed (the IDE installs one per background solve), instead of swapping JVM-wide `System.out`
+and clearing it afterwards. See LIM-025.
 
 ---
 
@@ -2520,7 +2827,7 @@ fibonacci_cached(N, Result) :-
 
 *v3.5.0*: ISO validation — `retract/1` validates its argument (`instantiation_error` for an unbound term, `type_error(callable, _)` for a non-callable one, instead of an internal error); retracting clauses of a built-in raises `permission_error(modify, static_procedure, Name/Arity)`; `retractall/1` validates its argument the same way and implies declaring the predicate dynamic.
 
-*v3.6.0*: `retract/1` is **re-executable on backtracking** on the default (v2) engine (ISO 8.9.3) — each redo retracts the next matching clause, so `findall(X, retract(p(X)), L)` drains the predicate one clause per solution; retractions of earlier solutions persist across backtracking. The legacy engine (`-Djprolog.engine=legacy`) still enumerates the solutions correctly but retracts all matching clauses eagerly on the first call, even if the query commits early.
+*v3.6.0*: `retract/1` is **re-executable on backtracking** on the v4 and v2 engines (ISO 8.9.3) — each redo retracts the next matching clause, so `findall(X, retract(p(X)), L)` drains the predicate one clause per solution; retractions of earlier solutions persist across backtracking. (The recursive engine, which retracted all matching clauses eagerly on the first call, was deleted in 4.0.0.)
 
 ```prolog
 % Remove a specific fact
@@ -2783,6 +3090,13 @@ ID = user_42.
 **Purpose**: Extracts substrings from atoms.
 
 **When to use**: Use for parsing, pattern matching, or string manipulation.
+
+*v3.10.0, engine v4* (ISS-2025-0453): `sub_atom/5` and `sub_string/5` are lazy generators — one
+candidate per redo instead of the full O(n^2) cross-product materialised up front, so
+`once(sub_atom(LongAtom, _, _, _, S))` is cheap. This also fixes a hang: with an **empty**
+`SubAtom` (`sub_atom(abc, B, L, A, '')`) the default engine loops forever, because
+`String.indexOf("", Idx)` stops advancing past the end of the atom; on v4 the four positions are
+enumerated once.
 
 ```prolog
 % Syntax: sub_atom(+Atom, ?Before, ?Length, ?After, ?SubAtom)
@@ -3269,6 +3583,13 @@ noun --> [dog].
 
 *v3.5.0*: the first argument may be any DCG body, not just a non-terminal — `(A, B)`, `(A ; B)`, `(A -> B)`, `\+ A`, `!`, `{Goal}`, terminal lists `[a, b]` and `[]` are all translated correctly; a non-list second/third argument raises `type_error(list, _)` and a non-callable body raises `type_error(callable, _)` (previously these failed silently).
 
+*v3.10.0, engine v4* (ISS-2025-0451): `phrase/2,3` is native — the grammar body is translated and
+the resulting goal is pushed onto the machine's goal stack instead of being solved by a nested
+recursive sub-solver. A DCG over a **1 000 000-token list** parses at the default JVM stack
+(the default engine raises `resource_error(stack_overflow)` on the same query even with
+`-Xss4m`), and the inference budget and the Stop interrupt now fire *inside* a parse. The ISO
+13211-3 error clauses are unchanged.
+
 *v3.6.0*: `phrase/3` with two free variables (e.g. `phrase(nt, [a|T], R)`) no longer raises a spurious `representation_error(cyclic_term)` on the default engine — it now answers with the expected var-var binding; real cyclic-term (rational-tree) protection is unaffected.
 
 ```prolog
@@ -3732,6 +4053,16 @@ debug_print(Message) :-
 **When to use**: Use to configure system behavior.
 
 *v3.5.0*: the `unknown` flag is enforced — calling an undefined procedure raises `existence_error(procedure, Name/Arity)` when the flag is `error` (the default), prints a warning and fails when `warning`, and fails silently when `fail`. Procedures declared dynamic (via the `:- dynamic` directive, the `dynamic/1` goal, or implied by `assert`/`retractall`) fail silently instead of raising the error.
+
+*v3.9.0* (ISS-2025-0441): `occurs_check` accepts a **third** value, `error`, as ISO 7.11.2.4
+requires (`true`, `false`, `error`) — it was rejected before. On the v4 engine `error` makes a
+unification that would build a cyclic term raise `representation_error(cyclic_term)` instead of
+succeeding with a rational tree; on the `-Djprolog.engine=v2` fallback it behaves like `true` (the
+unification fails).
+
+*v3.8.0* (ISS-2025-0437): flags are **per engine**. `set_prolog_flag/2` now changes only the `Prolog` instance that runs the goal — previously the flag store was a process-wide static, so `set_prolog_flag(unknown, fail)` (or `double_quotes`, or `occurs_check`) in one engine silently reconfigured every other engine in the JVM. The same applies to `trace/0` / `notrace/0`. Embedders can reach a specific engine's store with `Prolog.getFlags()` and toggle tracing from another thread with `Prolog.setTracing(boolean)`.
+
+*v3.14.0* (ISS-2025-0472/0474/0477): the last of the process-global state follows. The **stream table**, the **operator store** (`op/3` / `current_op/3`), the **spy points** and the **profiler counters** belong to the `Prolog` instance, reached with `Prolog.getStreams()`, `Prolog.getOps()` and `Prolog.getEngineState()`. Two engines in one JVM no longer see each other's streams, aliases, operators, spy points or profile numbers. LIM-034 is closed.
 
 ```prolog
 % Enable debug mode
@@ -4820,19 +5151,58 @@ get_attribute(Xml, Path, Attr, Value) :-
 
 Threading predicates enable concurrent execution with message passing, built on Java's threading model. Use these for parallelism and background task processing.
 
+**Since v4.0.0 (ISS-2025-0479) a thread really runs its goal**, on its own resolution machine over
+the same engine. Before that, `thread_create/2` started a thread that slept briefly and recorded a
+synthetic status; the goal never ran and it had to be an atom. What a worker shares with its
+creator: the clause store (so `assertz`/`retract` are visible both ways), the flags, the operator
+table and the module system. What it does not share: the goal's variables — the goal is
+`copy_term`'d, so **a binding made by a worker never appears in the creator's query** — its
+current input/output streams, and its inference-budget counter (its own, with the same limit).
+A thread id is an integer; an `alias(Name)` option gives it a name usable wherever an id is.
+
+**Sandbox**: `Prolog.enableSafeMode()` removes every predicate in this section and in section 40
+(concurrent execution) — a JVM thread is a host resource, and each worker carries its own inference
+budget, so spawning threads would escape the engine's CPU limit.
+
 ### thread_create/2
 **Purpose**: Creates a new thread that executes a given goal.
 
 **When to use**: Use to run a goal concurrently in the background.
 
 ```prolog
-% Syntax: thread_create(+Goal, -ThreadId)
+% Syntax: thread_create(:Goal, -ThreadId)
 ?- thread_create(long_computation(Result), TId).
-TId = thread_1.
+TId = 1.
 
 % Start a background task
 start_worker(Id) :-
     thread_create(worker_loop, Id).
+
+% The goal really runs, and its database writes are visible afterwards
+?- thread_create(assertz(done(yes)), T), thread_join(T, true), done(X).
+X = yes.
+
+% ... but its BINDINGS are not: the goal is copied
+?- thread_create(X = 1, T), thread_join(T, true), var(X).
+true.
+```
+
+### thread_create/3
+**Purpose**: Creates a thread with options.
+
+**When to use**: Use when the thread needs a name (so other threads can send it messages) or must
+clean itself up without being joined.
+
+```prolog
+% Syntax: thread_create(:Goal, -ThreadId, +Options)
+% Options: alias(Name)      - a name usable wherever a thread id is
+%          detached(Bool)   - true: the thread frees itself on completion and cannot be joined
+% Any other option is accepted and ignored.
+?- thread_create(worker_loop, _, [alias(logger)]).
+true.
+
+?- thread_create(cleanup_task, T, [detached(true)]).
+T = 4.
 ```
 
 ### thread_join/2
@@ -4840,11 +5210,22 @@ start_worker(Id) :-
 
 **When to use**: Use to synchronize with a thread and retrieve its result.
 
+The status is `true` when the goal succeeded, `false` when it failed, `exception(Ball)` when it
+threw (including `exception(inference_limit_exceeded)` when it exhausted the engine's inference
+budget), and `cancelled` when the thread was interrupted. The thread argument may be an id or an
+alias. A detached thread cannot be joined.
+
 ```prolog
-% Syntax: thread_join(+ThreadId, -Status)
+% Syntax: thread_join(+ThreadOrAlias, -Status)
 ?- thread_create(member(X, [a, b, c]), TId),
    thread_join(TId, Status).
 Status = true.
+
+?- thread_create(fail, T), thread_join(T, S).
+S = false.
+
+?- thread_create(throw(oops), T), thread_join(T, S).
+S = exception(oops).
 
 % Wait for a computation
 run_and_wait(Goal, Status) :-
@@ -4871,8 +5252,11 @@ true.
 ```prolog
 % Syntax: thread_self(-ThreadId)
 ?- thread_self(Id).
-Id = main.
+Id = 1.
 ```
+
+Inside a thread created by `thread_create/2,3` this is that thread's own Prolog id; on any other
+thread it is the JVM thread id.
 
 ### thread_sleep/1
 **Purpose**: Suspends the current thread for the specified number of seconds.
@@ -4910,10 +5294,30 @@ true.
 
 **When to use**: Use to set up communication channels between threads.
 
+Since v4.0.0 a queue carries **arbitrary Prolog terms**, not just atoms, and every message is
+copied on the way in and on the way out so no variable is shared between the two threads. Every
+thread created by `thread_create/2,3` also owns a queue: `thread_send_message/2` accepts a queue
+id, a thread id or a thread alias, and `thread_get_message/1` reads the calling thread's own queue.
+
 ```prolog
 % Syntax: message_queue_create(-QueueId)
 ?- message_queue_create(Q).
-Q = queue_1.
+Q = 1.
+```
+
+### thread_get_message/1
+**Purpose**: Reads a message from the calling thread's own queue, blocking until one arrives.
+
+**When to use**: Use inside a worker started with `thread_create/3` and an `alias/1`, so other
+threads can address it by name.
+
+```prolog
+% Syntax: thread_get_message(-Message)
+?- thread_create((thread_get_message(M), assertz(got(M))), T, [alias(worker)]),
+   thread_send_message(worker, hello(world)),
+   thread_join(T, true),
+   got(G).
+G = hello(world).
 ```
 
 ### thread_send_message/2
@@ -4922,9 +5326,14 @@ Q = queue_1.
 **When to use**: Use to pass data to a consumer thread.
 
 ```prolog
-% Syntax: thread_send_message(+QueueId, +Message)
+% Syntax: thread_send_message(+QueueOrThreadOrAlias, +Message)
 ?- message_queue_create(Q), thread_send_message(Q, hello).
 true.
+
+% Any term, not just an atom
+?- message_queue_create(Q), thread_send_message(Q, point(1, [a,b])),
+   thread_get_message(Q, M).
+M = point(1,[a,b]).
 
 % Producer pattern
 produce(Queue, Items) :-
@@ -4939,7 +5348,7 @@ produce(Queue, Items) :-
 **When to use**: Use in consumer threads to wait for and process incoming messages.
 
 ```prolog
-% Syntax: thread_get_message(+QueueId, -Message)
+% Syntax: thread_get_message(+QueueOrThreadOrAlias, -Message)
 ?- message_queue_create(Q),
    thread_send_message(Q, world),
    thread_get_message(Q, Msg).
@@ -5246,8 +5655,10 @@ X = 1 ; X = 2 ; X = 3.
 X = 4 ; X = 5.
 ```
 
-### all_different/1
+### all_different/1, all_distinct/1
 **Purpose**: Constrains all variables in a list to take pairwise different values.
+`all_distinct/1` is an accepted synonym (in SWI it is the stronger, domain-consistent propagator;
+JProlog implements the same pairwise constraint as `all_different/1` plus a pigeonhole check).
 
 **When to use**: Use for problems like Sudoku, graph coloring, or any assignment problem requiring distinct values.
 
@@ -5339,15 +5750,66 @@ S = 3.
 
 ## 25. Tabling Predicates
 
-Tabling (also known as memoization or tabled resolution) caches the results of predicate calls so that repeated calls with the same arguments return instantly. JProlog's implementation supports variant tabling with loop detection to handle left-recursive predicates.
+Tabling (memoization, tabled resolution) caches the answers of a tabled predicate per **call
+variant**, so a repeated call with the same argument pattern is answered from the table and a
+left-recursive or cyclic definition terminates instead of looping.
+
+### Two implementations — read this first
+
+| | `-Djprolog.engine=v2` and `=legacy` (the fallbacks) | **the default engine** (v4, since 3.12.0 as an option, the default since 4.0.0) |
+|---|---|---|
+| Algorithm | bounded re-evaluation: the goal is re-run at most **100** times over name-keyed answer maps | **linear tabling with completion** (SLD + iterative completion, B-Prolog/DRA style) in the machine's own choice points |
+| Correctness | **wrong answers** for a left-recursive predicate over a long chain (LIM-038 / design limit L-03) | correct and complete for definite programs, left recursion included |
+| Recursion depth | the pre-4.0.0 recursive solver's 2 000-deep Java cap | none (a tabled call is a choice point) |
+| Inference budget / Stop | not enforced inside the fixpoint | enforced |
+| Four-port trace / debugger | the whole tabled call is opaque | Call/Exit/Redo/Fail like any predicate |
+| `current_table/2` | not available | available |
+
+The classic repro, which **fails on the default engine and succeeds on v4**:
+
+```prolog
+edge(I, J) :- between(1, 3000, I), J is I + 1.
+:- table path/2.
+path(X, Y) :- edge(X, Y).
+path(X, Y) :- path(X, Z), edge(Z, Y).
+
+?- path(1, 3001).                                  % v4: true    v2: fails
+?- path(1, 51).                                    % v4: true    v2: fails
+?- findall(Y, path(1, Y), L), length(L, N).        % v4: N = 3000
+```
+
+### Semantics on v4
+
+- A **variant table** is created per tabled subgoal. `path(1, Y)` and `path(1, 51)` are different
+  variants and each gets its own table; both are answered correctly.
+- The first call to a variant is its **generator**: it runs the predicate's clauses against a
+  private copy of the call and records every answer. A call to a variant that is still being
+  evaluated is a **consumer** over the answers found so far. When a generator that leads its
+  strongly connected component exhausts its clauses, it re-runs them until a round produces no new
+  answer anywhere in the component, and the whole component is then marked complete. There is no
+  iteration cap; termination follows from the finite, deduplicated answer set.
+- Answers are deduplicated by variant, and returned in the order they were first found.
+- A `!` in a tabled clause body is **local to that body**: it prunes the body's own choice points
+  and never truncates the table.
+- An evaluation abandoned by an exception, a cut or the resource guard **discards its tables**, so
+  the next call recomputes them rather than reading a partial answer set.
+- Tabled calls work inside `findall/3`, `bagof/3`, `\+/1`, `catch/3`, `once/1` and `forall/2`.
+- **Invalidation policy**: asserting to or retracting from a *tabled* predicate drops that
+  predicate's tables. A change to a **non-tabled** predicate that a tabled one depends on is **not**
+  tracked — call `abolish_all_tables/0` yourself (this is also what XSB requires). Tables persist
+  across queries; two safety caps (100 000 tables, 4 000 000 answers) drop the oldest completed
+  tables at a query boundary so a long-lived engine cannot grow the store without bound.
+- **`tnot/1` (tabled negation) is not implemented** on any engine: it raises
+  `existence_error(procedure, tnot/1)`.
 
 ### table/1
 **Purpose**: Declares a predicate as tabled, enabling automatic memoization.
 
-**When to use**: Use for predicates with overlapping subproblems (e.g., Fibonacci, transitive closure) or left-recursive definitions.
+**When to use**: Use for predicates with overlapping subproblems (e.g., Fibonacci, transitive
+closure) or left-recursive definitions. Declare the predicate **before** it is first called.
 
 ```prolog
-% Syntax: :- table Predicate/Arity.
+% Syntax: :- table Predicate/Arity.       (also callable as a goal: table(Predicate/Arity))
 :- table fib/2.
 fib(0, 0).
 fib(1, 1).
@@ -5361,12 +5823,17 @@ fib(N, F) :-
 % With tabling: linear time
 ?- fib(30, F).
 F = 832040.
+?- fib(1000, F).                     % 209 digits, ~0.1 s on v4
 ```
 
-### abolish_all_tables/0
-**Purpose**: Clears all tabling caches, forcing predicates to recompute on next call.
+**Errors**: fails silently if the argument is not a `Name/Arity` predicate indicator.
 
-**When to use**: Use when the underlying facts change and cached results may be stale.
+### abolish_all_tables/0
+**Purpose**: Clears all cached answers, forcing every tabled predicate to recompute on its next
+call. The `table` **declarations are kept**.
+
+**When to use**: after `assert`/`retract` on facts a tabled predicate depends on, or between
+computation phases.
 
 ```prolog
 % Syntax: abolish_all_tables
@@ -5379,18 +5846,45 @@ true.
 % Next call to fib/2 recomputes from scratch
 ```
 
-### abolish_table/1
-**Purpose**: Clears the tabling cache for a specific predicate.
+**Errors** (v4): `permission_error(modify, table, ...)` if called from inside a running tabled
+evaluation.
 
-**When to use**: Use to selectively invalidate cached results for one predicate while keeping others.
+### abolish_table/1
+**Purpose**: Clears the cached answers of one predicate **and un-declares it as tabled**.
+
+**When to use**: to invalidate one predicate's table selectively, or to switch a predicate back to
+ordinary evaluation. Call `table(Name/Arity)` again to re-enable tabling for it.
 
 ```prolog
-% Syntax: abolish_table(+Predicate/Arity)
+% Syntax: abolish_table(+Name/Arity)
 ?- abolish_table(fib/2).
 true.
 
-% Only fib/2 cache is cleared; other tabled predicates retain their caches
+% Only fib/2 is affected; other tabled predicates keep their tables and their declarations
 ```
+
+**Errors** (v4): `instantiation_error` for an unbound argument,
+`type_error(predicate_indicator, T)` for anything that is not `Name/Arity`,
+`permission_error(modify, table, ...)` from inside a running tabled evaluation. On the v2 and
+v2 fallback engine a malformed argument makes the call fail silently.
+
+### current_table/2
+**Purpose**: Enumerates the tables that currently exist. **`-Djprolog.engine=v4` only** — on the
+other engines it raises `existence_error(procedure, current_table/2)`.
+
+**When to use**: debugging a tabled program, or checking that a table was really discarded.
+
+```prolog
+% Syntax: current_table(?Variant, ?Status)      Status = complete | incomplete
+?- path(a, c), current_table(V, S).
+V = path(a, c), S = complete ;
+V = path(a, _),  S = complete.
+```
+
+`Variant` is unified with each table's call pattern (so a partially instantiated `Variant`
+enumerates every table it matches, as `current_op/3` does); `Status` is `complete` for a table
+whose evaluation has finished and `incomplete` for one still being evaluated (only observable from
+inside a tabled computation).
 
 ---
 
@@ -6250,7 +6744,13 @@ Instance listing, rule definition, rule firing, and reset.
 
 ## 40. Concurrent Execution Predicates (SWI-Prolog Compatible)
 
-Parallel goal execution using Java threads. Requires independent, side-effect-free goals.
+Parallel goal execution using Java threads.
+
+Since v4.0.0 (ISS-2025-0480) every goal here runs on its own resolution machine over the same
+engine: the clause store is shared and thread-safe, the goal is copied so no variable is shared
+between workers, each worker carries the parent's inference budget in its own counter, and
+interrupting the parent cancels the workers. Goals still have to be independent — two workers
+asserting to the same predicate see each other's writes.
 
 ### concurrent/3
 Execute a list of goals using at most N worker threads. All must succeed.
@@ -6264,17 +6764,20 @@ Like maplist/2 but parallel. `call(Goal, Elem)` for each element.
 concurrent_maplist(is_positive, [1, 2, 3, 4, 5])
 ```
 
-### concurrent_maplist3/3
+### concurrent_maplist/3
 Like maplist/3 but parallel. `call(Goal, Elem, Result)` collecting results in order.
 ```prolog
-concurrent_maplist3(square, [1,2,3,4], [1,4,9,16])
+concurrent_maplist(square, [1,2,3,4], [1,4,9,16])
 ```
+(Before v4.0.0 this was registered under the uncallable name `concurrent_maplist3` and
+`concurrent_maplist/3` raised an arity error — ISS-2025-0480.)
 
-### concurrent_maplist4/4
+### concurrent_maplist/4
 Parallel maplist with two input lists.
 ```prolog
-concurrent_maplist4(add, [1,2,3], [10,20,30], [11,22,33])
+concurrent_maplist(add, [1,2,3], [10,20,30], [11,22,33])
 ```
+(Before v4.0.0: `concurrent_maplist4`, likewise uncallable.)
 
 ### first_solution/3
 Run goals in parallel, return bindings from the first to succeed. OR-parallelism.
@@ -7291,6 +7794,150 @@ true.
 true.
 ```
 <!-- END_CHANGE: ISS-2025-0179 -->
+
+---
+
+<!-- START_CHANGE: ISS-2025-0466..0471 - engine v4 wave W6: the module system -->
+
+## 61. Module System (engine v4)
+
+**Engine note.** Everything in this section describes the **default (v4) engine**. Under
+`-Djprolog.engine=v2` the module system is the older `ModuleManager` one: `Module:Goal` reaches
+only user-defined clauses (`lists:append([1],[2],L)` is **false**), declaring a second module
+switches the whole knowledge base into module-manager resolution, there are no library modules and
+no autoload, `meta_predicate/1` is recorded but never consulted, and `current_module/1` does not
+exist. That fallback engine is deleted in 4.1.
+
+### The three kinds of module
+
+| Module | What it holds |
+|---|---|
+| `user` | The default. It **is** the flat knowledge base — the clauses `consult/1`, `assertz/1` and `listing/1` see. |
+| `system` | The built-in predicates (both the v4 natives and the ~400 registry ones). It holds no clauses. `Prolog.enableSafeMode()` removes the host-touching built-ins from it. |
+| library modules | `lists`, `apply`, `pairs`, `coroutining` — written in Prolog, shipped as classpath resources under `prelude/`, and **autoloaded by predicate indicator**: a module is parsed the first time one of its predicates is referenced. |
+
+### Resolution order
+
+For an unqualified call to `f/n` from module `M`:
+
+```
+M's own clauses  ->  M's imports (in import order, exported predicates only)
+                 ->  user (the flat knowledge base)
+                 ->  the autoloaded library modules
+                 ->  system (the built-ins)
+```
+
+Two practical consequences:
+
+- **A definition in the calling context wins over the library.** A program that defines its own
+  `partition/4` gets its own, while `apply:partition/4` stays reachable under its qualified name.
+  A definition inside module `M` overrides only for `M` and the modules that import it.
+- **Built-ins are still not redefinable.** `system` is consulted last in the list above, but the
+  machine checks the built-in tables *before* the clause layers for compatibility, and
+  `consult/1` refuses a clause whose head is a registered built-in
+  (`Cannot redefine built-in predicate f/n`). The library layer is the documented way to override
+  a library predicate.
+
+### Module:Goal
+
+```prolog
+?- lists:append([1], [2], L).      % a library predicate
+L = [1, 2].
+
+?- system:atom_length(abc, N).     % a built-in, explicitly
+N = 3.
+
+?- user:my_fact(X).                % the flat knowledge base, explicitly
+```
+
+- The **innermost** qualification of a nested `a:b:Goal` wins, so `user:lists:append(...)` runs in
+  `lists`.
+- **Export enforcement**: a module that *defines* `f/n` answers a qualified call only if it also
+  exports it. `:- module(secret, []).` followed by `hidden(42).` makes `secret:hidden(X)` fail.
+- A module that does **not** define `f/n` falls through to the ordinary resolution in its own
+  context, which is why `lists:length(L, N)` (a native) and `othermodule:my_user_fact(X)` (a
+  `user` predicate) both work.
+- An unknown module name behaves like `user:`.
+
+### Directives
+
+| Directive | Effect |
+|---|---|
+| `:- module(Name, [f/1, g/2]).` | Declare the current module and its export list. An empty list exports nothing. |
+| `:- use_module(Name).` | Import every predicate `Name` exports into the current module. |
+| `:- use_module(Name, [f/1]).` | Import only the listed predicates. |
+| `:- use_module(library(X)).` | Accepted for the library modules; they autoload anyway, so it is a no-op. |
+| `:- meta_predicate(Spec).` | See below. |
+
+### meta_predicate/1
+
+`:- meta_predicate(maplist(2, ?, ?)).` says that argument 1 of `maplist/3` is a goal that will be
+called with 2 extra arguments. When a predicate with such a declaration is called from module `C`,
+its **module-sensitive** arguments are qualified with `C` before the clause head is unified, so the
+callee's `call/N` runs them in the caller's context.
+
+Argument specifiers: `0`-`9` (a goal called with that many extra arguments), `:` (a
+module-sensitive term), `^`, `//`; `+`, `-`, `?` and anything else are ordinary arguments.
+
+```prolog
+:- module(m1, [go/1]).
+helper(from_m1).
+mk(_, R) :- helper(R).
+go(L) :- maplist(mk, [x], L).      % mk/2 resolves in m1, not in apply and not in user
+```
+
+### current_module/1
+
+```prolog
+?- current_module(lists).
+true.
+
+?- current_module(M).              % enumerates: user first, then the rest, sorted
+M = user ;
+M = apply ;
+M = coroutining ;
+...
+```
+
+### predicate_property/2 module properties
+
+In addition to `built_in`, `dynamic`, `static` and `defined`:
+
+| Property | Meaning |
+|---|---|
+| `defined_in(Module)` | The module whose clauses would answer the call from the current context. |
+| `exported` | That module exports the predicate. |
+| `imported_from(Module)` | The predicate is visible here but defined elsewhere. |
+
+```prolog
+?- predicate_property(append(_, _, _), imported_from(lists)).
+true.
+```
+
+### What the library modules contain
+
+| Module | Predicates |
+|---|---|
+| `lists` | `member/2`, `memberchk/2`, `append/3`, `select/3`, `selectchk/3`, `nth0/3`, `nth1/3`, `last/2`, `reverse/2`, plus `length/2`, `msort/2`, `sort/2`, `sort/4`, `sum_list/2`, `sumlist/2`, `numlist/3`, `permutation/2`, `max_list/2`, `min_list/2`, `subtract/3`, `intersection/3`, `union/3` |
+| `apply` | `maplist/2..7`, `foldl/4..7`, `include/3`, `exclude/3`, `partition/4`, `partition/5` |
+| `pairs` | `pairs_keys_values/3`, `pairs_keys/2`, `pairs_values/2` |
+| `coroutining` | `freeze/2`, `frozen/2`, `when/2`, `dif/2`, `?=/2` |
+
+Most of `lists` is implemented as a native generator for speed (on a 1 000 000-element list a
+Prolog clause walk pushes one choice point per element); `member/2` and `append/3` additionally
+exist as the two-clause Prolog definitions of module `lists`, which is what the qualified form
+runs. The two are observationally identical.
+
+### Behaviour differences from the default engine
+
+- `append(X, Y, Z)` with all three arguments open **enumerates** on v4 (`X = []`, `[_]`, `[_,_]`,
+  ... lazily) where the default engine stops at the single standard solution. A program that
+  relied on that termination will loop.
+- `member(X, PartialList)` **extends** the open tail on v4, and `memberchk(a, L)` binds
+  `L = [a|_]`; both fail on the default engine.
+- `memberchk/2` and `current_module/1` do not exist at all on the default engine.
+
+<!-- END_CHANGE: ISS-2025-0466..0471 -->
 
 ---
 

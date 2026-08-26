@@ -78,7 +78,7 @@ public class ToCodes implements BuiltIn {
         if (sourceTerm instanceof Atom) {
             String atomValue = ((Atom) sourceTerm).getName();
             for (char c : atomValue.toCharArray()) {
-                codes.add(new Number((double) (int) c));
+                codes.add(new Number((long) c)   /* ISS-2025-0424 */);
             }
         } else if (isListTerm(sourceTerm)) {
             // Already a list - check if it's a valid list of codes

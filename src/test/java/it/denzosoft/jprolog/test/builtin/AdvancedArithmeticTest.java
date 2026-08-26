@@ -157,7 +157,11 @@ public class AdvancedArithmeticTest {
         // Test with floating point numbers
         List<Map<String, Term>> solutions = prolog.solve("plus(1.5, 2.5, X)");
         assertFalse("plus(1.5, 2.5, X) should succeed", solutions.isEmpty());
-        assertEquals("4", solutions.get(0).get("X").toString());
+        // START_CHANGE: ISS-2025-0424 - ENG-02: 1.5 + 2.5 is the FLOAT 4.0, not the integer 4.
+        // This assertion encoded the pre-fix bug (Number(double) auto-classified integral doubles
+        // as ISO integers); ISO 9.1.3 forbids that implicit float -> integer conversion.
+        assertEquals("4.0", solutions.get(0).get("X").toString());
+        // END_CHANGE: ISS-2025-0424
         
         solutions = prolog.solve("plus(X, 1.5, 3.7)");
         assertFalse("plus(X, 1.5, 3.7) should succeed", solutions.isEmpty());

@@ -6,7 +6,7 @@
 
     <groupId>it.denzosoft</groupId>
     <artifactId>jprolog</artifactId>
-    <version>3.6.0</version>
+    <version>4.0.0</version>
 
     <properties>
         <maven.compiler.source>1.8</maven.compiler.source>
@@ -52,4 +52,26 @@
             </plugin>
         </plugins>
     </build>
+
+    <!-- START_CHANGE: ISS-2025-0444 - a second CI leg for the other resolution engine.
+         START_CHANGE: ISS-2025-0478 - wave W8 made v4 the DEFAULT, so `mvn test` IS the v4 leg and
+         the second leg is now the OLD engine: `mvn test -Pengine-v2` (this replaces the former
+         `-Pengine-v4`, which is what `mvn test` does today). The v2 MachineSolver stays selectable
+         for one release (design decision 1, B.17). Equivalent one-off form:
+         `mvn test -DargLine="-Djprolog.engine=v2"`.
+         ISS-2025-0484 (wave W9): the `engine-legacy` profile is GONE with the recursive
+         QuerySolver; `-Djprolog.engine=legacy` is no longer a value.
+         NOTE: no surefire version is pinned on purpose. The Maven-default 2.12.4 matches
+         Test*/*Test/*TestCase only; pinning a modern surefire would additionally match *Tests and
+         silently change the test count (BuiltInTests.java holds 10 never-run @Test methods). -->
+    <profiles>
+        <profile>
+            <id>engine-v2</id>
+            <properties>
+                <argLine>-Djprolog.engine=v2</argLine>
+            </properties>
+        </profile>
+    </profiles>
+    <!-- END_CHANGE: ISS-2025-0478 -->
+    <!-- END_CHANGE: ISS-2025-0444 -->
 </project>

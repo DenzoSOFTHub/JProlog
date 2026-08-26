@@ -59,6 +59,7 @@ public class OsPredicates implements BuiltIn {
                 default: return false;
             }
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException(modeName() + ": " + e.getMessage());
         }
     }

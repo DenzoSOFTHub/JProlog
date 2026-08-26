@@ -114,6 +114,7 @@ public class ArithmeticComparison implements BuiltIn {
             throw e;
         // END_CHANGE: ISS-2025-0248
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("Error in arithmetic comparison: " + e.getMessage(), e);
         }
     }

@@ -21,6 +21,20 @@ public class ModuleManager {
     private final Map<String, Module> modules;
     private Module currentModule;
     private Module userModule;
+
+    // START_CHANGE: ISS-2025-0466 - engine v4 wave W6: a monotone modification stamp. The v4
+    // `core.engine.v4.Modules` owner resolves predicates itself (this manager stays the
+    // consult-time RECORDER shared with the legacy and v2 engines) and mirrors the user-defined
+    // modules; the stamp is how it knows when the mirror is stale. Bumped by every write.
+    private volatile long stamp = 1;
+
+    /** Monotone counter bumped by every structural change (v4 mirror invalidation). */
+    public long getStamp() { return stamp; }
+
+    /** Record a change made through a {@link Module} handle this manager cannot observe
+     *  (an export, a {@code meta_predicate} or a {@code module_transparent} declaration). */
+    public void touch() { stamp++; }
+    // END_CHANGE: ISS-2025-0466
     
     /**
      * Create a new module manager with default 'user' module.
@@ -39,6 +53,9 @@ public class ModuleManager {
      * @return The module
      */
     public Module getOrCreateModule(String name) {
+        Module existing = modules.get(name);
+        if (existing != null) return existing;
+        stamp++;                                                  // ISS-2025-0466
         return modules.computeIfAbsent(name, Module::new);
     }
     
@@ -52,6 +69,7 @@ public class ModuleManager {
     public Module createModule(String name, List<PredicateSignature> exportList) {
         Module module = new Module(name, exportList);
         modules.put(name, module);
+        stamp++;                                                  // ISS-2025-0466
         return module;
     }
     
@@ -66,6 +84,7 @@ public class ModuleManager {
             throw new IllegalArgumentException("Module not found: " + moduleName);
         }
         this.currentModule = module;
+        stamp++;                                                  // ISS-2025-0466
     }
     
     /**
@@ -103,6 +122,7 @@ public class ModuleManager {
      */
     public void addRule(Rule rule) {
         currentModule.addRule(rule);
+        stamp++;                                                  // ISS-2025-0466
     }
     
     /**
@@ -121,6 +141,7 @@ public class ModuleManager {
         }
         // END_CHANGE: ISS-2025-0167
         currentModule.importModule(module);
+        stamp++;                                                  // ISS-2025-0466
     }
 
     /**
@@ -140,6 +161,7 @@ public class ModuleManager {
         }
         // END_CHANGE: ISS-2025-0167
         currentModule.importModule(module, predicates);
+        stamp++;                                                  // ISS-2025-0466
     }
 
     // START_CHANGE: ISS-2025-0167 - Name collision detection
@@ -338,6 +360,7 @@ public class ModuleManager {
         userModule = new Module("user");
         modules.put("user", userModule);
         currentModule = userModule;
+        stamp++;                                                  // ISS-2025-0466
     }
     
     @Override

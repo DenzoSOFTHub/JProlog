@@ -17,12 +17,26 @@ public class PrologException extends RuntimeException {
      * 
      * @param errorTerm The Prolog term representing the error
      */
+    // START_CHANGE: ISS-2025-0427 - ENG-08: exceptions are CONTROL FLOW in Prolog (throw/1,
+    // catch/3, and every ISO error), so the error-term constructor must not pay for a Java stack
+    // trace: writableStackTrace=false skips fillInStackTrace, which dominated the cost of
+    // catch(throw(x), _, true). The detail message is also computed lazily (see getMessage): the
+    // eager errorTerm.toString() walked — and on a huge term could overflow on — the whole ball.
+    // The String/Throwable constructors below keep their stack traces: they wrap real Java faults.
     public PrologException(Term errorTerm) {
-        super(errorTerm.toString());
+        super(null, null, true, false);
         this.errorTerm = errorTerm;
         this.isHalt = false;
         this.exitCode = 0;
     }
+
+    @Override
+    public String getMessage() {
+        String m = super.getMessage();
+        if (m != null) return m;
+        return (errorTerm != null) ? errorTerm.toString() : null;
+    }
+    // END_CHANGE: ISS-2025-0427
     
     /**
      * Create a Prolog exception for halt/0 or halt/1.

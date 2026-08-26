@@ -127,7 +127,7 @@ public class NumberCodes implements BuiltIn {
         Term result = new Atom("[]");
         for (int i = str.length() - 1; i >= 0; i--) {
             List<Term> args = new ArrayList<>();
-            args.add(new Number((double) str.charAt(i))); // ASCII code as Number
+            args.add(new Number((long) str.charAt(i))   /* ISS-2025-0424 */); // ASCII code as Number
             args.add(result);
             result = new CompoundTerm(new Atom("."), args);
         }

@@ -72,6 +72,7 @@ public class Is implements BuiltIn {
         } catch (PrologException e) {
             throw e;
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return false;
         }
         // END_CHANGE: ISS-2025-0182

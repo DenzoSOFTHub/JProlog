@@ -146,9 +146,9 @@ public class SubAtom implements BuiltIn {
                                 Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         Map<String, Term> newBindings = new HashMap<>(bindings);
         boolean ok = true;
-        if (ok) ok = beforeTerm.unify(new it.denzosoft.jprolog.core.terms.Number((double) b), newBindings);
-        if (ok) ok = lengthTerm.unify(new it.denzosoft.jprolog.core.terms.Number((double) len), newBindings);
-        if (ok) ok = afterTerm.unify(new it.denzosoft.jprolog.core.terms.Number((double) a), newBindings);
+        if (ok) ok = beforeTerm.unify(new it.denzosoft.jprolog.core.terms.Number((long) b)   /* ISS-2025-0424 */, newBindings);
+        if (ok) ok = lengthTerm.unify(new it.denzosoft.jprolog.core.terms.Number((long) len)   /* ISS-2025-0424 */, newBindings);
+        if (ok) ok = afterTerm.unify(new it.denzosoft.jprolog.core.terms.Number((long) a)   /* ISS-2025-0424 */, newBindings);
         if (ok) ok = subAtomTerm.unify(new Atom(sub), newBindings);
         if (ok) {
             solutions.add(newBindings);

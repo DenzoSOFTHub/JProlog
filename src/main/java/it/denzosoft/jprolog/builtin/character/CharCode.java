@@ -57,6 +57,7 @@ public class CharCode implements BuiltIn {
             throw e;
         // END_CHANGE: ISS-2025-0401
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("char_code/2 error: " + e.getMessage());
         }
     }

@@ -1,10 +1,14 @@
 package it.denzosoft.jprolog.builtin.io;
 
+import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.engine.v4.PrologStream;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.terms.Variable;
 import it.denzosoft.jprolog.core.util.ListUtils;
 
 import java.util.List;
@@ -24,17 +28,13 @@ public class Close implements BuiltIn {
         }
 
         Term streamTerm = query.getArguments().get(0).resolveBindings(bindings);
-        // START_CHANGE: ISS-2025-0377 - raise ISO error/2 terms (8.11.6): instantiation_error for an
-        // unbound stream, domain_error(stream_or_alias, S) for a non-stream term.
+        // START_CHANGE: ISS-2025-0377 - ISO error/2 terms (8.11.6)
         String ctx = "close/" + arity;
-        if (streamTerm instanceof it.denzosoft.jprolog.core.terms.Variable) {
-            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
-                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError(ctx));
+        if (streamTerm instanceof Variable) {
+            throw new PrologException(ISOErrorTerms.instantiationError(ctx));
         }
-        String streamAlias = IOStreamUtils.streamAlias(streamTerm);
-        if (streamAlias == null) {
-            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
-                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.domainError("stream_or_alias", streamTerm, ctx));
+        if (IOStreamUtils.streamAlias(streamTerm) == null && !isStreamTerm(streamTerm)) {
+            throw new PrologException(ISOErrorTerms.domainError("stream_or_alias", streamTerm, ctx));
         }
         // END_CHANGE: ISS-2025-0377
 
@@ -57,23 +57,25 @@ public class Close implements BuiltIn {
         }
         // END_CHANGE: ISS-2025-0253
 
-        if (StreamManager.closeStream(streamAlias)) {
+        // START_CHANGE: ISS-2025-0472 - close the engine's own stream object
+        PrologStream s = StreamManager.stream(streamTerm);
+        if (s != null && StreamManager.streams().close(s)) {
             solutions.add(bindings);
             return true;
         }
         if (force) {
-            // force(true): succeed even if stream not found / already closed
             solutions.add(bindings);
             return true;
         }
-        // START_CHANGE: ISS-2025-0377 - an alias that names no open stream is the ISO
-        // error(existence_error(stream, S), _) (8.11.6); only the system-stream / I/O-failure
-        // case keeps the implementation-specific message.
-        if (!StreamManager.hasStream(streamAlias)) {
-            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
-                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.existenceError("stream", streamTerm, ctx));
+        if (s == null) {
+            throw new PrologException(ISOErrorTerms.existenceError("stream", streamTerm, ctx));
         }
-        // END_CHANGE: ISS-2025-0377
-        throw new PrologEvaluationException("close: Cannot close stream '" + streamAlias + "' (not found or system stream).");
+        throw new PrologEvaluationException("close: Cannot close stream '" + streamTerm + "' (system stream).");
+        // END_CHANGE: ISS-2025-0472
+    }
+
+    private static boolean isStreamTerm(Term t) {
+        return t instanceof CompoundTerm && "$stream".equals(t.getName())
+            && t.getArguments() != null && t.getArguments().size() == 1;
     }
 }

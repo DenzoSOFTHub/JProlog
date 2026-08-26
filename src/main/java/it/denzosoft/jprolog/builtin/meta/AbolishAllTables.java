@@ -2,7 +2,7 @@ package it.denzosoft.jprolog.builtin.meta;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.Term;
 
 import java.util.*;
@@ -14,7 +14,7 @@ import java.util.*;
 public class AbolishAllTables implements BuiltInWithContext {
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query,
+    public boolean executeWithContext(SolverContext solver, Term query,
             Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         solver.getPrologContext().getTableStore().abolishAllTables();
         solutions.add(new HashMap<>(bindings));

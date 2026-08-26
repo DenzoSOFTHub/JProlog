@@ -32,6 +32,7 @@ public final class PrologFormatter {
         try {
             chunks = splitTopLevelClauses(source);
         } catch (RuntimeException e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return source;
         }
         // Each "unit" is the leading comment block (if any) directly above its clause; units are
@@ -48,6 +49,7 @@ public final class PrologFormatter {
                 try {
                     formatted = formatClause(TermReader.parseTerm(clauseSrc, ops), ops);
                 } catch (RuntimeException e) {
+                    it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                     formatted = clauseSrc;            // leave unparseable clauses unchanged
                 }
                 if (u.length() > 0) u.append('\n');

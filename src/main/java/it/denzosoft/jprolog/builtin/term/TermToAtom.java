@@ -36,9 +36,17 @@ public class TermToAtom implements BuiltIn {
                         return true;
                     }
                 }
+            // START_CHANGE: ISS-2025-0473 - a resource error must NEVER become a silent failure
+            } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
+                throw pe;
+            } catch (StackOverflowError so) {
+                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("parser_nesting", "term_to_atom/2"));
             } catch (Exception e) {
+                it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                 return false;
             }
+            // END_CHANGE: ISS-2025-0473
             return false;
         } else if (!atomArg.isGround()) {
             // Term -> Atom: format any term, ground or not (was gated on termArg.isGround())

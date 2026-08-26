@@ -27,15 +27,33 @@ import java.util.Map;
 public final class ArithEvaluator {
 
     private final Map<String, Term> bindings;
+    // START_CHANGE: ISS-2025-0434 - ENG-14: an O(1) per-node dereference hook. The map-based path
+    // called term.resolveBindings(bindings) at EVERY node, and resolveBindings walks the whole
+    // sub-term — so evaluating an expression of n nodes cost O(n^2) term traversals plus a rebuilt
+    // copy of the expression. A deref function only looks through variable bindings at the current
+    // node; evaluate() already recurses into the arguments, so one level is all that is needed.
+    private final java.util.function.UnaryOperator<Term> derefFn;
 
-    public ArithEvaluator(Map<String, Term> bindings) { this.bindings = bindings; }
+    public ArithEvaluator(Map<String, Term> bindings) { this.bindings = bindings; this.derefFn = null; }
+
+    private ArithEvaluator(java.util.function.UnaryOperator<Term> derefFn) {
+        this.bindings = null; this.derefFn = derefFn;
+    }
 
     public static Number eval(Term expr, Map<String, Term> bindings) {
         return new ArithEvaluator(bindings).evaluate(expr);
     }
 
+    /** Evaluate {@code expr} dereferencing each node through {@code deref} (the v2 machine's
+     *  binding store) instead of deep-copying the expression first. */
+    public static Number evalDeref(Term expr, java.util.function.UnaryOperator<Term> deref) {
+        return new ArithEvaluator(deref).evaluate(expr);
+    }
+    // END_CHANGE: ISS-2025-0434
+
     public Number evaluate(Term term) {
-        Term t = (bindings != null) ? term.resolveBindings(bindings) : term;
+        Term t = (derefFn != null) ? derefFn.apply(term)
+               : (bindings != null) ? term.resolveBindings(bindings) : term;
         if (t instanceof Number) return (Number) t;
         if (t instanceof Variable) throw new PrologException(ISOErrorTerms.instantiationError("is/2"));
         if (t instanceof Atom) return constant(((Atom) t).getName());
@@ -116,6 +134,24 @@ public final class ArithEvaluator {
     // ----------------------------------------------------------------- binary
     private Number binary(String op, Number a, Number b) {
         boolean bothInt = a.isInteger() && b.isInteger();
+        // START_CHANGE: ISS-2025-0434 - ENG-14: primitive long fast path for + - *. The BigInteger
+        // path allocated THREE BigIntegers per operation (two operands plus the result) even for
+        // single-digit integers, which dominated arithmetic-heavy programs. Math.*Exact throws on
+        // overflow, so the exact BigInteger path below still handles everything outside long range.
+        if (bothInt && a.fitsInLong() && b.fitsInLong()
+                && ("+".equals(op) || "-".equals(op) || "*".equals(op))) {
+            long x = a.longValue(), y = b.longValue();
+            try {
+                switch (op) {
+                    case "+": return Number.valueOf(Math.addExact(x, y));
+                    case "-": return Number.valueOf(Math.subtractExact(x, y));
+                    default:  return Number.valueOf(Math.multiplyExact(x, y));
+                }
+            } catch (ArithmeticException overflow) {
+                // fall through to the exact BigInteger path
+            }
+        }
+        // END_CHANGE: ISS-2025-0434
         switch (op) {
             // START_CHANGE: ISS-2025-0359 / ISS-2025-0360 - computed floats go through fc()
             case "+": return bothInt ? big(a.bigIntegerValue().add(b.bigIntegerValue())) : fc(a.doubleValue() + b.doubleValue(), "(+)/2", a, b);
@@ -200,9 +236,9 @@ public final class ArithEvaluator {
     }
 
     // ----------------------------------------------------------------- helpers
-    private static Number i(long v) { return new Number(v); }
+    private static Number i(long v) { return Number.valueOf(v); }   // ISS-2025-0434 - ENG-14
     private static Number big(BigInteger v) {
-        return (v.bitLength() <= 63) ? new Number(v.longValueExact()) : new Number(v);
+        return (v.bitLength() <= 63) ? Number.valueOf(v.longValueExact()) : new Number(v);   // ISS-2025-0434
     }
     private static Number f(double v) { return new Number(v, false); }
 

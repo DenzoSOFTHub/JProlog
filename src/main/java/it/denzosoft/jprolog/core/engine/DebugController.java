@@ -11,7 +11,7 @@ import java.util.*;
  * and synchronization between the solver thread and the UI thread.
  *
  * Thread model:
- * - The QuerySolver runs on a background thread
+ * - The solver runs on a background thread
  * - The UI (Swing EDT) calls resume methods
  * - Synchronization via wait/notify on pauseLock
  */
@@ -98,6 +98,19 @@ public class DebugController {
         this.traceEnabled = traceEnabled;
     }
 
+    // START_CHANGE: ISS-2025-0481 - wave W8: the machine now emits ports for its inline built-ins
+    // too, so a controller that is merely RUNNING (CONTINUE, no listener, no breakpoints) must not
+    // make the engine snapshot every goal. The snapshot is a full term copy; it is needed only when
+    // somebody will look at the term later — a trace listener (the IDE renders it on the EDT, after
+    // the bindings have moved on) or a breakpoint/step decision.
+    /** True when the port's goal has to be resolved into a stable snapshot before being reported. */
+    public boolean needsGoalSnapshot() {
+        return (traceEnabled && listener != null)
+            || currentMode != DebugEvent.Action.CONTINUE
+            || !breakpoints.isEmpty();
+    }
+    // END_CHANGE: ISS-2025-0481
+
     public boolean isTraceEnabled() {
         return traceEnabled;
     }
@@ -180,7 +193,7 @@ public class DebugController {
     // ===================== SOLVER HOOKS (called on solver thread) =====================
 
     /**
-     * Called by QuerySolver at each debug port.
+     * Called by the engine at each debug port.
      * May block the solver thread if stepping or breakpoint hit.
      *
      * @throws DebugStopException if the user requested stop
@@ -213,14 +226,17 @@ public class DebugController {
                 break;
         }
 
-        // Build event
-        DebugEvent event = new DebugEvent(port, goal, depth, bindings,
-                new ArrayList<>(callStack));
+        // START_CHANGE: ISS-2025-0481 - build the event LAZILY. It copies the whole call stack,
+        // and since wave W8 the machine emits ports for its inline built-ins too, so an attached
+        // debugger that is only running (CONTINUE, no listener) would pay that copy per inference.
+        DebugEvent event = null;
 
         // Always send trace if enabled
         if (traceEnabled && listener != null) {
+            event = new DebugEvent(port, goal, depth, bindings, new ArrayList<>(callStack));
             listener.onTraceEvent(event);
         }
+        // END_CHANGE: ISS-2025-0481
 
         // START_CHANGE: ISS-2025-0172 - Leash/port filtering for pause decisions
         // Determine whether to pause
@@ -257,6 +273,9 @@ public class DebugController {
         // END_CHANGE: ISS-2025-0172
 
         if (shouldPause) {
+            if (event == null) {   // ISS-2025-0481
+                event = new DebugEvent(port, goal, depth, bindings, new ArrayList<>(callStack));
+            }
             waitForUserAction(event);
         }
     }
@@ -291,6 +310,7 @@ public class DebugController {
             try {
                 if (!conditionEvaluator.holds(cond, bindings)) return false;   // condition not met -> skip
             } catch (RuntimeException e) {
+                it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                 return false;                                          // a broken condition never pauses
             }
         }

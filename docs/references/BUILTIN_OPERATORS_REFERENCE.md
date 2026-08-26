@@ -1,8 +1,9 @@
 # JProlog Built-in Operators Reference
 
-**Version**: JProlog v3.6.0
-**Last Updated**: 2026-03-22
-**Total Operators**: 25+ operators with comprehensive precedence rules, plus dynamic `op/3` support
+**Version**: JProlog v4.0.0
+**Last Updated**: 2026-08-26
+**Total Operators**: 60 default operators (exactly what `current_op/3` reports in a fresh engine),
+plus dynamic `op/3` support
 
 This reference guide organizes JProlog's built-in operators by their function and precedence. Each section includes explanations suitable for users new to Prolog, with detailed examples showing practical applications.
 
@@ -27,15 +28,25 @@ In Prolog, operators have precedence levels (1-1200) that determine evaluation o
 
 ### Precedence Levels Overview
 ```
-1200: ;  (semicolon - disjunction/or)
-1100: -> (if-then)
-1000: , (comma - conjunction/and)
- 700: =, \=, ==, \==, @<, @=<, @>, @>=, =:=, =\=, <, =<, >, >=
- 500: +, - (arithmetic)
- 400: *, /, //, rem, mod, **
- 200: ^ (exponentiation)
+1200: :- --> (rule, DCG rule)   :- ?- (directive, query, prefix)
+1150: dynamic discontiguous multifile module_transparent meta_predicate table (prefix)
+1100: ;  (disjunction / or)
+1050: -> *-> (if-then, soft-cut)
+1000: ,  (conjunction / and)
+ 900: \+ (negation as failure, prefix)
+ 700: = \= == \== @< @=< @> @>= =.. is =:= =\= < =< > >=
+      in ins #= #\= #< #> #=< #>=   (CLP(FD))
+ 600: :  (module qualification)
+ 500: + - /\ \/ xor
+ 450: .. (CLP(FD) domain range)
+ 400: * / // rem mod div rdiv << >>
+ 200: ** (xfx)   ^ (xfy)   + - \ (fy, prefix)
    1: Atoms and numbers
 ```
+
+The authoritative list is the *Operator Precedence Table* at the end of this document, and the
+engine itself: `findall(P-T-N, current_op(P, T, N), L)` in a fresh session returns exactly those
+60 operators.
 
 ### Associativity
 - **Left-associative**: `a op b op c` = `(a op b) op c`
@@ -1468,18 +1479,24 @@ Complete precedence table for JProlog operators:
 |------------|------|-----------|-------------|
 | 1200 | xfx | :- --> | Rule / DCG rule |
 | 1200 | fx  | :- ?- | Directive / Query |
+| 1150 | fx | dynamic discontiguous multifile module_transparent meta_predicate table | Declaration directives (`:- dynamic foo/1.`) |
 | 1100 | xfy | ; | Disjunction (OR) |
 | 1050 | xfy | -> *-> | If-then / Soft-cut |
 | 1000 | xfy | , | Conjunction (AND) |
 | 900 | fy | \\+ | Negation as failure |
 | 700 | xfx | = \\= == \\== | Unification operators |
 | 700 | xfx | @< @=< @> @>= | Term comparison |
+| 700 | xfx | =.. is | Univ, arithmetic evaluation |
 | 700 | xfx | =:= =\\= < =< > >= | Arithmetic comparison |
+| 700 | xfx | in ins #= #\\= #< #> #=< #>= | CLP(FD) constraints (`ins` is reserved: it parses, but there is no `ins/2` predicate — use `in/2` per variable) |
+| 600 | xfy | : | Module qualification (`Module:Goal`) |
 | 500 | yfx | + - | Addition, subtraction |
-| 400 | yfx | * / // rem mod div rdiv << >> | Multiplication, division (`div`/`rdiv` new in v3.0.0), bit shifts |
+| 500 | yfx | /\\ \\/ xor | Bitwise and, or, exclusive or |
+| 450 | xfx | .. | CLP(FD) domain range (`X in 1..9`) |
+| 400 | yfx | * / // rem mod div rdiv << >> | Multiplication, division (`div`/`rdiv` new in v3.0.0), bit shifts. *v3.10.0, engine v4*: `>>` and `/` at this priority are also what makes a `library(yall)` lambda parse — `N/[X,Y]>>Body` reads as `>>( /(N,[X,Y]), Body)`, exactly as yall expects. No extra operator is declared. |
 | 200 | xfx | ** | Exponentiation |
 | 200 | xfy | ^ | Existential quantification |
-| 200 | fy | + - | Unary plus, minus |
+| 200 | fy | + - \\ | Unary plus, unary minus, bitwise NOT |
 
 ### Associativity Types:
 - **xfx**: Non-associative (a op b op c is error)
@@ -1487,6 +1504,27 @@ Complete precedence table for JProlog operators:
 - **yfx**: Left-associative (a op b op c = (a op b) op c)
 - **fy**: Prefix (op a)
 - **yf**: Postfix (a op)
+
+---
+
+## Where operator definitions live (v3.14.0)
+
+There is exactly **one** operator store, and it belongs to the `Prolog` instance
+(`Prolog.getOperatorTable()` / `Prolog.getOps()`). The parser, `op/3`, `current_op/3`, the whole
+`write` family (`write/1`, `writeq/1`, `print/1`, `write_term/2,3`, `portray_clause/1`), the `.jpc`
+binary writer and the IDE's source formatter all read it. Consequences:
+
+- **`current_op/3` sees an operator a consulted file declared.** Before v3.14.0 a
+  `:- op(700, xfx, ===).` directive updated the parser's table but not the table `current_op/3`
+  read, so the operator worked in source and was invisible to the program.
+- **Operators are per engine.** `op/3` in one `Prolog` no longer changes how another `Prolog` in
+  the same JVM parses or prints (LIM-034).
+- **An `op/3` inside a module file is local to that module** for `current_op/3`: a different module
+  does not see it. It is still installed in the shared parser table, because a JProlog session
+  consults everything into one operator space and every already-read clause depends on it —
+  narrowing *parsing* to the declaring module is a cross-engine decision, recorded as a deviation
+  of wave W7 in `docs/reports/report-engine-v4-progress.md`.
+- **`op/3` is undone on backtracking**: `(op(700, xfx, tmp), fail ; true)` leaves no `tmp` operator.
 
 ---
 

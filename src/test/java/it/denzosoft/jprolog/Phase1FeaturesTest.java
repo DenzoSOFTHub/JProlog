@@ -166,7 +166,7 @@ public class Phase1FeaturesTest {
     
     private Term createOpQuery(int precedence, String type, String name) {
         List<Term> args = new ArrayList<>();
-        args.add(new Number((double) precedence));
+        args.add(new Number((long) precedence));   // ISS-2025-0424: precedence is an ISO integer
         args.add(new Atom(type));
         args.add(new Atom(name));
         return new CompoundTerm(new Atom("op"), args);
@@ -174,7 +174,7 @@ public class Phase1FeaturesTest {
     
     private Term createCurrentOpQuery(int precedence, String type, String name) {
         List<Term> args = new ArrayList<>();
-        args.add(new Number((double) precedence));
+        args.add(new Number((long) precedence));   // ISS-2025-0424: precedence is an ISO integer
         args.add(new Atom(type));
         args.add(new Atom(name));
         return new CompoundTerm(new Atom("current_op"), args);

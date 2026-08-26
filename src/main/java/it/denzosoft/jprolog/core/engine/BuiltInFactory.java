@@ -1,15 +1,13 @@
 package it.denzosoft.jprolog.core.engine;
 
 import it.denzosoft.jprolog.builtin.*;
-import it.denzosoft.jprolog.builtin.control.NegationAsFailure;
+import it.denzosoft.jprolog.builtin.control.ControlConstruct;
 import it.denzosoft.jprolog.builtin.control.Unify;
 import it.denzosoft.jprolog.builtin.control.NotUnify;
 import it.denzosoft.jprolog.builtin.control.UnifyWithOccursCheck;
 import it.denzosoft.jprolog.builtin.control.Is;
 import it.denzosoft.jprolog.builtin.control.Cut;
 import it.denzosoft.jprolog.builtin.control.Repeat;
-import it.denzosoft.jprolog.builtin.control.IfThen;
-import it.denzosoft.jprolog.builtin.control.IfThenElse;
 import it.denzosoft.jprolog.builtin.control.Findall;
 import it.denzosoft.jprolog.builtin.control.Bagof;
 import it.denzosoft.jprolog.builtin.control.Setof;
@@ -186,22 +184,25 @@ public class BuiltInFactory {
         registerFactory("cut", Cut::new);
         registerFactory("repeat", Repeat::new);
         
-        // Negation as failure
-        registerFactory("\\+", () -> new NegationAsFailure(null)); // QuerySolver will be injected
-        
-        // Logical operators (context-dependent, need QuerySolver injection)
-        registerFactory("->", () -> new IfThen(null));
-        registerFactory(";", () -> new IfThenElse(null));
-        // START_CHANGE: ISS-2025-0282 - ','/2 is handled authoritatively by QuerySolver.handleConjunction
-        // (intercepted before the built-in registry), so the Conjunction built-in was dead and
-        // shadowed (with its own broken cut semantics). Registration removed.
-        // END_CHANGE: ISS-2025-0282
+        // START_CHANGE: ISS-2025-0485 - wave W9: the ISO control constructs are native in BOTH
+        // surviving engines and were only ever dispatched from the registry by the (now deleted)
+        // recursive solver. They stay REGISTERED as placeholders so isBuiltIn/2 keeps answering
+        // true, which is what makes assert/retract/clause raise permission_error on them.
+        registerFactory("\\+", () -> new ControlConstruct("\\+/1"));
+        registerFactory("->", () -> new ControlConstruct("->/2"));
+        registerFactory(";", () -> new ControlConstruct(";/2"));
+        // ','/2 has never been registered: it is intercepted before the registry by every engine.
+        // END_CHANGE: ISS-2025-0485
 
         // I/O
         registerFactory("write", Write::new);
         registerFactory("writeln", Writeln::new);
         // START_CHANGE: ISS-2025-0378 - print/1,2 (write semantics + numbervars(true))
-        registerFactory("print", it.denzosoft.jprolog.builtin.io.Print::new);
+        registerFactory("print", () -> new it.denzosoft.jprolog.builtin.io.Print(null));
+        // START_CHANGE: ISS-2025-0475 - engine v4 wave W7 (design B.12): the writer-backed family
+        registerFactory("portray_clause", it.denzosoft.jprolog.builtin.io.PortrayClause::new);
+        registerFactory("print_message", it.denzosoft.jprolog.builtin.io.PrintMessage::new);
+        // END_CHANGE: ISS-2025-0475
         // END_CHANGE: ISS-2025-0378
         registerFactory("nl", Nl::new);
         registerFactory("read", Read::new);
@@ -234,11 +235,25 @@ public class BuiltInFactory {
         registerFactory("put_byte", PutByte::new);
         registerFactory("at_end_of_stream", AtEndOfStream::new);
         registerFactory("stream_property", StreamProperty::new);
+        // START_CHANGE: ISS-2025-0473 - engine v4 wave W7 (design B.11): stream introspection
+        registerFactory("set_stream", () -> new it.denzosoft.jprolog.builtin.io.StreamInfo(
+            it.denzosoft.jprolog.builtin.io.StreamInfo.Kind.SET_STREAM));
+        registerFactory("stream_position_data", () -> new it.denzosoft.jprolog.builtin.io.StreamInfo(
+            it.denzosoft.jprolog.builtin.io.StreamInfo.Kind.POSITION_DATA));
+        registerFactory("character_count", () -> new it.denzosoft.jprolog.builtin.io.StreamInfo(
+            it.denzosoft.jprolog.builtin.io.StreamInfo.Kind.CHARACTER_COUNT));
+        registerFactory("line_count", () -> new it.denzosoft.jprolog.builtin.io.StreamInfo(
+            it.denzosoft.jprolog.builtin.io.StreamInfo.Kind.LINE_COUNT));
+        registerFactory("line_position", () -> new it.denzosoft.jprolog.builtin.io.StreamInfo(
+            it.denzosoft.jprolog.builtin.io.StreamInfo.Kind.LINE_POSITION));
+        registerFactory("current_stream", () -> new it.denzosoft.jprolog.builtin.io.StreamInfo(
+            it.denzosoft.jprolog.builtin.io.StreamInfo.Kind.CURRENT_STREAM));
+        // END_CHANGE: ISS-2025-0473
         registerFactory("writeq", WriteQ::new);
         registerFactory("write_canonical", WriteCanonical::new);
         
         // Database
-        registerFactory("listing", Listing0::new); // listing/0 - works with QuerySolver context
+        registerFactory("listing", Listing0::new); // listing/0 - context-dependent
         
         // Atom operations
         registerFactory("atom_length", AtomLength::new);
@@ -269,47 +284,47 @@ public class BuiltInFactory {
         registerFactory("number_string", NumberString::new);
         
         // Collection predicates (context-dependent)
-        registerFactory("findall", () -> new Findall(null)); // QuerySolver will be injected
-        registerFactory("bagof", () -> new Bagof(null)); // QuerySolver will be injected
-        registerFactory("setof", () -> new Setof(null)); // QuerySolver will be injected
+        registerFactory("findall", () -> new Findall(null)); // the context is passed at call time
+        registerFactory("bagof", () -> new Bagof(null)); // the context is passed at call time
+        registerFactory("setof", () -> new Setof(null)); // the context is passed at call time
         // START_CHANGE: ISS-2025-0122 - aggregate_all/3
-        registerFactory("aggregate_all", () -> new it.denzosoft.jprolog.builtin.meta.AggregateAll(null)); // QuerySolver will be injected
+        registerFactory("aggregate_all", () -> new it.denzosoft.jprolog.builtin.meta.AggregateAll(null)); // the context is passed at call time
         // END_CHANGE: ISS-2025-0122
         
         // Exception handling (ISO Prolog)
-        registerFactory("catch", () -> new Catch(null)); // QuerySolver will be injected
+        registerFactory("catch", () -> new ControlConstruct("catch/3"));   // ISS-2025-0485
         registerFactory("throw", Throw::new);
         registerFactory("halt", Halt::new);
         
         // Meta-predicates (ISO Prolog)
-        registerFactory("call", () -> new Call(null)); // QuerySolver will be injected
-        registerFactory("once", () -> new Once(null)); // QuerySolver will be injected
-        registerFactory("ignore", () -> new Ignore(null)); // QuerySolver will be injected
-        registerFactory("forall", () -> new ForAll(null)); // QuerySolver will be injected
+        registerFactory("call", () -> new ControlConstruct("call/N"));     // ISS-2025-0485
+        registerFactory("once", () -> new Once(null)); // the context is passed at call time
+        registerFactory("ignore", () -> new Ignore(null)); // the context is passed at call time
+        registerFactory("forall", () -> new ForAll(null)); // the context is passed at call time
         // START_CHANGE: ISS-2025-0273 - setup_call_cleanup/3 and call_cleanup/2
         registerFactory("setup_call_cleanup", () -> new it.denzosoft.jprolog.builtin.meta.SetupCallCleanup(null));
         registerFactory("call_cleanup", () -> new it.denzosoft.jprolog.builtin.meta.SetupCallCleanup(null));
         // END_CHANGE: ISS-2025-0273
         // START_CHANGE: ISS-2025-0398 - V^Goal as an ordinary goal behaves as call(Goal)
-        registerFactory("^", () -> new it.denzosoft.jprolog.builtin.meta.Caret());
+        registerFactory("^", () -> new ControlConstruct("^/2"));           // ISS-2025-0485
         // END_CHANGE: ISS-2025-0398
         // START_CHANGE: LIM-005 - predicate_property/2 meta-predicate
-        registerFactory("predicate_property", () -> new PredicateProperty(null)); // QuerySolver will be injected
+        registerFactory("predicate_property", () -> new PredicateProperty(null)); // the context is passed at call time
         // END_CHANGE: LIM-005
 
         // Dynamic database operations (ISO Prolog)
         // START_CHANGE: ISS-2025-0023 - Add assert/1 as alias for assertz/1
         registerFactory("assert", () -> new Assertz(null)); // assert/1 is alias for assertz/1
         // END_CHANGE: ISS-2025-0023
-        registerFactory("asserta", () -> new Asserta(null)); // QuerySolver will be injected
-        registerFactory("assertz", () -> new Assertz(null)); // QuerySolver will be injected
-        registerFactory("retract", () -> new Retract(null)); // QuerySolver will be injected
-        registerFactory("retractall", () -> new Retractall(null)); // QuerySolver will be injected
-        registerFactory("abolish", () -> new Abolish(null)); // QuerySolver will be injected
-        registerFactory("current_predicate", () -> new CurrentPredicate(null)); // QuerySolver will be injected
-        registerFactory("clause", () -> new it.denzosoft.jprolog.builtin.database.Clause(null)); // QuerySolver will be injected
+        registerFactory("asserta", () -> new Asserta(null)); // the context is passed at call time
+        registerFactory("assertz", () -> new Assertz(null)); // the context is passed at call time
+        registerFactory("retract", () -> new Retract(null)); // the context is passed at call time
+        registerFactory("retractall", () -> new Retractall(null)); // the context is passed at call time
+        registerFactory("abolish", () -> new Abolish(null)); // the context is passed at call time
+        registerFactory("current_predicate", () -> new CurrentPredicate(null)); // the context is passed at call time
+        registerFactory("clause", () -> new it.denzosoft.jprolog.builtin.database.Clause(null)); // the context is passed at call time
         // START_CHANGE: ISS-2025-0369 - dynamic/1 callable as a runtime goal (was silently failing)
-        registerFactory("dynamic", () -> new it.denzosoft.jprolog.builtin.database.Dynamic(null)); // QuerySolver will be injected
+        registerFactory("dynamic", () -> new it.denzosoft.jprolog.builtin.database.Dynamic(null)); // the context is passed at call time
         // END_CHANGE: ISS-2025-0369
 
         // Debugging predicates (ISO Prolog)
@@ -348,9 +363,9 @@ public class BuiltInFactory {
         // END_CHANGE: ISS-2025-0048
         
         // Advanced I/O predicates (ISO Prolog)
-        registerFactory("read_term", () -> new ReadTerm(null)); // QuerySolver will be injected
-        registerFactory("write_term", () -> new WriteTerm(null)); // QuerySolver will be injected
-        registerFactory("format", () -> new Format(null)); // QuerySolver will be injected
+        registerFactory("read_term", () -> new ReadTerm(null)); // the context is passed at call time
+        registerFactory("write_term", () -> new WriteTerm(null)); // the context is passed at call time
+        registerFactory("format", () -> new Format(null)); // the context is passed at call time
         // START_CHANGE: LIM-007 - Stream Repositioning predicates
         registerFactory("set_stream_position", SetStreamPosition::new);
         registerFactory("stream_position", StreamPosition::new);
@@ -370,7 +385,7 @@ public class BuiltInFactory {
         registerFactory("atomic_list_concat", it.denzosoft.jprolog.builtin.string.JoinString::new);
         
         // DCG predicates (ISO Prolog and DTS 13211-3)
-        registerFactory("phrase", () -> new Phrase(null)); // QuerySolver will be injected (legacy)
+        registerFactory("phrase", () -> new Phrase(null)); // the context is passed at call time (legacy)
         
         // Phase 8: Enhanced DCG predicates per ISO/IEC DTS 13211-3
         registerFactory("enhanced_phrase", it.denzosoft.jprolog.builtin.dcg.EnhancedPhrase::new);
@@ -380,7 +395,7 @@ public class BuiltInFactory {
         registerFactory("dcg_body", it.denzosoft.jprolog.builtin.dcg.DCGUtils.DCGBody::new);
         
         // Additional system predicates
-        registerFactory("statistics", () -> new Statistics(null)); // QuerySolver will be injected
+        registerFactory("statistics", () -> new Statistics(null)); // the context is passed at call time
 
         // START_CHANGE: ISS-2025-0092 - Tabling (memoization) predicates
         registerFactory("table", TableDirective::new);
@@ -551,9 +566,11 @@ public class BuiltInFactory {
 
         // START_CHANGE: ISS-2025-0139 - SWI-Prolog compatible concurrent execution predicates
         registerFactory("concurrent", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.CONCURRENT));
+        // START_CHANGE: ISS-2025-0480 - the registry is keyed by NAME, so concurrent_maplist/2,3,4
+        // must be ONE entry that dispatches on the goal's arity. The former `concurrent_maplist3` /
+        // `concurrent_maplist4` names were not callable from Prolog at all.
         registerFactory("concurrent_maplist", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.CONCURRENT_MAPLIST_2));
-        registerFactory("concurrent_maplist3", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.CONCURRENT_MAPLIST_3));
-        registerFactory("concurrent_maplist4", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.CONCURRENT_MAPLIST_4));
+        // END_CHANGE: ISS-2025-0480
         registerFactory("first_solution", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.FIRST_SOLUTION));
         registerFactory("concurrent_and", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.CONCURRENT_AND));
         registerFactory("concurrent_or", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.CONCURRENT_OR));

@@ -1,5 +1,13 @@
 # Capitolo 4: Lavorare con gli Operatori
 
+> **Nota di implementazione (v4.0.0).** Il codice Java mostrato in questo capitolo descrive il
+> motore *ricorsivo* `QuerySolver`, **eliminato nella 4.0.0** (wave W9, ISS-2025-0484). La
+> semantica del linguaggio descritta qui è invariata e resta valida; le classi no. Il motore
+> ora è `core.engine.v4` (`Machine`, `Unify`, `ClauseStore`, `Bindings`) e un built-in con
+> contesto riceve un `core.engine.SolverContext`, non un oggetto solver. Vedi `CLAUDE.md` e
+> `docs/reports/report-engine-v4-progress.md`.
+
+
 ## Panoramica
 
 Questo capitolo fornisce documentazione completa dell'implementazione di JProlog del sistema degli operatori Prolog. Gli operatori in Prolog permettono espressioni matematiche e logiche più naturali fornendo alternative di notazione infissa, prefissa e postfissa alla notazione tradizionale con funtori. JProlog implementa il sistema degli operatori ISO Prolog con supporto completo per la precedenza degli operatori, l'associatività e la definizione dinamica degli operatori.

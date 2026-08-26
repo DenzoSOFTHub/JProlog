@@ -315,7 +315,27 @@ public class TermParser {
         return true;
     }
 
+    // START_CHANGE: ISS-2025-0473 - engine v4 wave W7 (design B.11): the same deterministic nesting
+    // limit the v2 reader got. Deeply nested input used to blow the Java stack, and the resulting
+    // StackOverflowError surfaced as whatever the nearest catch made of it — inside term_to_atom/2
+    // a plain FAILURE. ISO wants a resource error naming the resource.
+    private static final int MAX_NESTING = 1000;
+    private int nesting = 0;
+
     private Term parseExpression(int maxPrecedence) throws PrologParserException {
+        if (++nesting > MAX_NESTING) {
+            nesting = 0;
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("parser_nesting", "read"));
+        }
+        try {
+            return parseExpression0(maxPrecedence);
+        } finally {
+            nesting--;
+        }
+    }
+
+    private Term parseExpression0(int maxPrecedence) throws PrologParserException {
         // Check for prefix operators first
         int savedPosition = position;
         int savedLine = line;

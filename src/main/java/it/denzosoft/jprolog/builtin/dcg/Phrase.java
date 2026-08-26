@@ -1,8 +1,7 @@
 package it.denzosoft.jprolog.builtin.dcg;
 
 import it.denzosoft.jprolog.builtin.AbstractBuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
-import it.denzosoft.jprolog.core.engine.CutStatus;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.*;
 
 import java.util.*;
@@ -21,7 +20,7 @@ public class Phrase extends AbstractBuiltInWithContext {
      * 
      * @param solver The query solver for context
      */
-    public Phrase(QuerySolver solver) {
+    public Phrase(SolverContext solver) {
         super(solver);
     }
     
@@ -36,7 +35,7 @@ public class Phrase extends AbstractBuiltInWithContext {
     }
     
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+    public boolean executeWithContext(SolverContext solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         this.solver = solver;
 
         // Extract arguments from query
@@ -66,7 +65,7 @@ public class Phrase extends AbstractBuiltInWithContext {
         Term goal = createDCGGoal(ruleSet.resolveBindings(bindings), list, rest, indicator);
         // END_CHANGE: ISS-2025-0394
         List<Map<String, Term>> goalSolutions = new ArrayList<>();
-        boolean success = solver.solve(goal, new HashMap<>(bindings), goalSolutions, CutStatus.notOccurred());
+        boolean success = solver.solveMeta(goal, new HashMap<>(bindings), goalSolutions);   // ISS-2025-0485
         if (success) {
             solutions.addAll(goalSolutions);
             return true;
@@ -76,7 +75,7 @@ public class Phrase extends AbstractBuiltInWithContext {
     }
     
     @Override
-    public boolean solve(QuerySolver solver, Map<String, Term> bindings) {
+    public boolean solve(SolverContext solver, Map<String, Term> bindings) {
         Term[] args = getArguments();
         
         if (args.length == 2) {
@@ -112,7 +111,7 @@ public class Phrase extends AbstractBuiltInWithContext {
             // Solve the DCG goal using a copy of bindings to avoid destructive modification
             Map<String, Term> solveBindings = new HashMap<>(bindings);
             List<Map<String, Term>> solutionList = new ArrayList<>();
-            boolean success = this.solver.solve(goal, solveBindings, solutionList, CutStatus.notOccurred());
+            boolean success = this.solver.solveMeta(goal, solveBindings, solutionList);   // ISS-2025-0485
 
             // Return true if successful and propagate bindings correctly
             if (success && !solutionList.isEmpty()) {
@@ -126,8 +125,10 @@ public class Phrase extends AbstractBuiltInWithContext {
         } catch (it.denzosoft.jprolog.core.exceptions.PrologException e) {
             throw e; // Propagate Prolog exceptions (system errors, etc.)
         } catch (RuntimeException e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw e; // Propagate programming errors
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return false;
         }
     }

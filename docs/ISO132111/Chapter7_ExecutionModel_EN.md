@@ -1,5 +1,13 @@
 # Chapter 7: Execution Model - JProlog Runtime System
 
+> **Implementation note (v4.0.0).** The Java code shown in this chapter describes the *recursive*
+> `QuerySolver` engine, which was **deleted in 4.0.0** (wave W9, ISS-2025-0484). The language
+> semantics described here are unchanged and still hold; the classes are not. The engine is now
+> `core.engine.v4` (`Machine`, `Unify`, `ClauseStore`, `Bindings`) and a context built-in
+> receives a `core.engine.SolverContext`, not a solver object. See `CLAUDE.md` and
+> `docs/reports/report-engine-v4-progress.md`.
+
+
 ## Overview
 
 This chapter provides a comprehensive analysis of JProlog's execution model, covering the complete lifecycle from program loading to goal execution, including database operations, control constructs, I/O handling, and error management. It demonstrates how JProlog implements the ISO Prolog execution semantics with practical examples and detailed implementation insights.

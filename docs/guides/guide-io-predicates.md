@@ -551,15 +551,25 @@ Upper = [72, 69, 76, 76, 79, 32, 87, 79, 82, 76, 68].
 
 ### Stream Information
 
+Since v3.14.0 `stream_property/2` reports the complete ISO set for every stream open in **this**
+engine, and both arguments may be unbound (an unbound `Stream` enumerates the open streams).
+
 ```prolog
 % Check stream properties
 stream_property(Stream, Property)
 
-% Example properties:
-% - input/output
+% Properties:
+% - input / output
 % - file_name(Name)
-% - mode(Mode)
-% - end_of_stream(Status)
+% - mode(read|write|append)
+% - alias(A)                one solution per alias
+% - position(P)             '$stream_position'(CharCount, LineCount, LinePos, ByteCount)
+% - end_of_stream(not|at|past)
+% - eof_action(error|eof_code|reset)
+% - reposition(true|false)
+% - type(text|binary)
+% - encoding(E)
+% - line_count(N)
 
 check_stream_info(Stream) :-
     (   stream_property(Stream, input) ->
@@ -571,6 +581,39 @@ check_stream_info(Stream) :-
     ;   writeln('No file name (console or memory)')
     ).
 ```
+
+### Positions and counters (v3.14.0)
+
+`seek/4` and `set_stream_position/2` are correct on **text** streams: the stream decodes through
+its own buffer, so a reposition really does change what the next `get_char/2` reads, and the
+character / line counters are recomputed.
+
+```prolog
+?- open('data.txt', read, S), get_char(S, C1), seek(S, 0, bof, _), get_char(S, C2).
+C1 = h, C2 = h.          % before v3.14.0 this answered C2 = e
+```
+
+| Predicate | Meaning |
+|---|---|
+| `character_count(+Stream, -N)` | characters read or written so far |
+| `line_count(+Stream, -N)` | current line, 1-based |
+| `line_position(+Stream, -N)` | current column, 0-based |
+| `stream_position_data(+Field, +Pos, ?Data)` | `char_count`, `line_count`, `line_position`, `byte_count` of a `position(P)` term |
+| `set_stream(+Stream, +Property)` | `alias(A)`, `type(T)`, `eof_action(A)`, `encoding(E)` |
+| `current_stream(?File, ?Mode, ?Stream)` | enumerate the open file streams |
+
+### Streams belong to the engine (v3.14.0)
+
+The stream table, its aliases and `current_input`/`current_output` belong to the `Prolog` instance —
+and the *current* streams additionally to the calling thread. A stream opened by one engine is
+invisible to another, and `set_output/1` on one thread does not redirect another thread's output.
+`open/3,4` unifies `Stream` with the canonical term `'$stream'(N)`; every stream argument also
+accepts an atom alias, the `stream_<id>` handle, and `user_input` / `user_output` / `user_error` /
+`current_input` / `current_output`.
+
+`with_output_to/2` and `format/3` with `atom(A)` / `string(S)` / `codes(C)` / `chars(C)` capture
+through a per-thread output override and no longer swap `System.out`, so two threads can capture at
+the same time (LIM-025 closed).
 
 ---
 

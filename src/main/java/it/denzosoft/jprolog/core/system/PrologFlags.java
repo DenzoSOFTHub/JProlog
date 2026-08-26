@@ -13,14 +13,98 @@ import java.util.Set;
  * Prolog flags control various aspects of the system behavior.
  */
 public class PrologFlags {
-    private static final Map<String, Term> FLAGS = new HashMap<>();
-    
-    static {
-        // Initialize standard ISO Prolog flags
-        initializeStandardFlags();
+
+    // START_CHANGE: ISS-2025-0437 - ENG-06: the flag store is PER ENGINE, not per JVM.
+    // FLAGS used to be a static HashMap, so set_prolog_flag(unknown, fail),
+    // set_prolog_flag(double_quotes, codes) or set_prolog_flag(occurs_check, true) in ONE Prolog
+    // instance silently changed the behaviour of every other instance in the JVM — which
+    // undermined the v3.4.0 sandbox guidance ("use a fresh Prolog per security domain"): sandboxed
+    // code could flip `unknown` or `occurs_check` for the host's other engines. Concurrent access
+    // to the plain HashMap could also corrupt it.
+    //
+    // Each {@link it.denzosoft.jprolog.core.engine.Prolog} now owns a PrologFlags instance and
+    // installs it as the thread-current store around solve/consult, so the (unchanged) static API
+    // used by built-ins and the parsers routes to the right engine. Code with no engine in scope —
+    // a directly-instantiated parser, a unit test — sees a process-wide default store, exactly as
+    // before.
+    private final Map<String, Term> flags = new HashMap<>();
+
+    /** The store used when no engine is current on this thread (standalone parser use, tests). */
+    private static final PrologFlags DEFAULT = new PrologFlags();
+    private static final ThreadLocal<PrologFlags> CURRENT = new ThreadLocal<>();
+
+    public PrologFlags() {
+        initializeStandardFlags(this.flags);
     }
-    
-    private static void initializeStandardFlags() {
+
+    /** The flag store in effect on this thread. */
+    public static PrologFlags current() {
+        PrologFlags f = CURRENT.get();
+        return (f != null) ? f : DEFAULT;
+    }
+
+    /** Install {@code f} as this thread's store (null restores the process-wide default).
+     *  Returns the previous store so a caller can restore it in a finally block. */
+    public static PrologFlags setCurrent(PrologFlags f) {
+        PrologFlags prev = CURRENT.get();
+        if (f == null) CURRENT.remove(); else CURRENT.set(f);
+        return prev;
+    }
+
+    // Fast path for the unification hot path: occurs_check is off in essentially every program, so
+    // a single volatile read answers isOccursCheck() without touching the ThreadLocal. The flag is
+    // only ever turned ON here, so a false reading is always authoritative.
+    private static volatile boolean anyOccursCheck = false;
+    private boolean occursCheck = false;
+
+    /** True when THIS engine has occurs_check enabled. */
+    public boolean isOccursCheck() { return occursCheck; }
+
+    /** True when the engine current on this thread has occurs_check enabled. */
+    public static boolean isOccursCheckEnabled() {
+        return anyOccursCheck && current().occursCheck;
+    }
+
+    /** Set occurs_check on the thread-current store (used by Variable.setOccursCheckEnabled). */
+    public static void setOccursCheckEnabled(boolean enabled) {
+        current().setOccursCheck(enabled);
+    }
+
+    // START_CHANGE: ISS-2025-0437 - ENG-06: trace/0 state is per engine too. Trace.tracingEnabled
+    // was a process-global static, so `trace.` in one engine turned four-port tracing on for every
+    // engine in the JVM (and notrace/0 in one turned it off for all). Same volatile fast path as
+    // occurs_check: tracing is off in essentially every run, and MachineSolver consults it on the
+    // hot path (debugTraceActive()).
+    private static volatile boolean anyTracing = false;
+    private boolean tracing = false;
+
+    public boolean isTracing() { return tracing; }
+
+    public void setTracing(boolean enabled) {
+        this.tracing = enabled;
+        if (enabled) anyTracing = true;
+        flags.put("trace", new Atom(enabled ? "on" : "off"));
+    }
+
+    /** True when the engine current on this thread has four-port tracing enabled. */
+    public static boolean isTracingEnabled() {
+        return anyTracing && current().tracing;
+    }
+
+    /** Enable/disable tracing on the engine current on this thread. */
+    public static void setTracingEnabled(boolean enabled) {
+        current().setTracing(enabled);
+    }
+    // END_CHANGE: ISS-2025-0437
+
+    void setOccursCheck(boolean enabled) {
+        this.occursCheck = enabled;
+        if (enabled) anyOccursCheck = true;
+        flags.put("occurs_check", new Atom(enabled ? "true" : "false"));
+    }
+    // END_CHANGE: ISS-2025-0437
+
+    private static void initializeStandardFlags(Map<String, Term> FLAGS) {
         // bounded/1 - Whether integers are bounded
         FLAGS.put("bounded", new Atom("true"));
         
@@ -113,7 +197,12 @@ public class PrologFlags {
      * @return The flag value, or null if the flag doesn't exist
      */
     public static Term getFlag(String flagName) {
-        return FLAGS.get(flagName);
+        return current().get(flagName);              // ISS-2025-0437 - ENG-06
+    }
+
+    /** Instance accessor: the value of {@code flagName} in THIS engine's store. */
+    public Term get(String flagName) {
+        return flags.get(flagName);
     }
     
     /**
@@ -123,6 +212,11 @@ public class PrologFlags {
      * @return true if the flag was set successfully, false if read-only or invalid
      */
     public static boolean setFlag(String flagName, Term value) {
+        return current().set(flagName, value);       // ISS-2025-0437 - ENG-06
+    }
+
+    /** Instance mutator: set {@code flagName} in THIS engine's store. */
+    public boolean set(String flagName, Term value) {
         // Some flags are read-only
         if (isReadOnlyFlag(flagName)) {
             return false;
@@ -133,15 +227,18 @@ public class PrologFlags {
             return false;
         }
         
-        FLAGS.put(flagName, value);
+        flags.put(flagName, value);
         // START_CHANGE: ISS-2025-0246 - Wire occurs_check flag into actual unification.
-        // Previously the flag was only stored; Variable.unify consults
-        // Variable.occursCheckEnabled, which was never updated from here, so
-        // set_prolog_flag(occurs_check, true) had no effect.
+        // START_CHANGE: ISS-2025-0437 - ENG-06: per-engine, not a process-wide static.
         if ("occurs_check".equals(flagName) && value instanceof Atom) {
-            it.denzosoft.jprolog.core.terms.Variable.setOccursCheckEnabled(
-                "true".equals(((Atom) value).getName()));
+            // ISS-2025-0441: `error` also turns the check ON; the v4 unifier then raises instead of
+            // failing (it re-reads the flag VALUE to tell the two apart). Set the boolean here
+            // rather than through setOccursCheck(), which would overwrite the stored atom with
+            // true/false and lose the third mode.
+            this.occursCheck = !"false".equals(((Atom) value).getName());
+            if (this.occursCheck) anyOccursCheck = true;
         }
+        // END_CHANGE: ISS-2025-0437
         // END_CHANGE: ISS-2025-0246
         return true;
     }
@@ -152,7 +249,7 @@ public class PrologFlags {
      * @return true if the flag exists
      */
     public static boolean hasFlag(String flagName) {
-        return FLAGS.containsKey(flagName);
+        return current().flags.containsKey(flagName);   // ISS-2025-0437 - ENG-06
     }
     
     /**
@@ -160,7 +257,7 @@ public class PrologFlags {
      * @return Set of all flag names
      */
     public static Set<String> getAllFlagNames() {
-        return FLAGS.keySet();
+        return current().flags.keySet();                // ISS-2025-0437 - ENG-06
     }
     
     /**
@@ -210,8 +307,15 @@ public class PrologFlags {
             case "trace":
                 return "on".equals(atomValue) || "off".equals(atomValue);
                 
-            // Boolean-style flags (true/false)
+            // START_CHANGE: ISS-2025-0441 - ISO 7.11.2.4 gives occurs_check three values, not two:
+            // true (check and fail), false (no check) and ERROR (check and raise
+            // representation_error(cyclic_term)). The third one was rejected, which left no way to
+            // ask for the ISO behaviour now that the v4 engine supports rational trees by default
+            // (design decision 2). On the v2/legacy engines `error` behaves like `true` (it fails);
+            // only the v4 unifier raises.
             case "occurs_check":
+                return "true".equals(atomValue) || "false".equals(atomValue) || "error".equals(atomValue);
+            // END_CHANGE: ISS-2025-0441
             case "character_escapes":
             case "initialization":
             case "strict_iso":

@@ -1,5 +1,13 @@
 # Capitolo 8: Predicati Built-in - Libreria Standard JProlog
 
+> **Nota di implementazione (v4.0.0).** Il codice Java mostrato in questo capitolo descrive il
+> motore *ricorsivo* `QuerySolver`, **eliminato nella 4.0.0** (wave W9, ISS-2025-0484). La
+> semantica del linguaggio descritta qui è invariata e resta valida; le classi no. Il motore
+> ora è `core.engine.v4` (`Machine`, `Unify`, `ClauseStore`, `Bindings`) e un built-in con
+> contesto riceve un `core.engine.SolverContext`, non un oggetto solver. Vedi `CLAUDE.md` e
+> `docs/reports/report-engine-v4-progress.md`.
+
+
 ## Panoramica
 
 Questo capitolo fornisce documentazione completa della libreria di predicati built-in di JProlog, coprendo l'implementazione completa dei predicati standard ISO Prolog. JProlog implementa oltre 100 predicati built-in organizzati in categorie logiche includendo unificazione termini, test tipi, aritmetica, operazioni I/O, manipolazione database e meta-predicati. Ogni predicato è documentato con esempi dettagliati di implementazione, gestione errori e scenari di utilizzo pratici.

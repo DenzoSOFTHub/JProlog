@@ -1,5 +1,627 @@
 # JProlog - Release Notes
 
+## Release 4.0.0 - 2026-08-26
+
+### Wave W9: retirement — the recursive engine is deleted
+
+Ninth and last wave of the clean-room resolution core designed in
+`docs/reports/report-engine-v4-design-2026-08-25.md` (section B.16 row W9, decision 1 of B.17),
+ISS-2025-0484..0488. Handoff: `docs/reports/report-engine-v4-progress.md` section 15.
+
+**1214/1214 JUnit tests on the default engine (v4) AND under `-Pengine-v2`**, **20/20 example
+programs on both engines**. `src/main` is 1 409 lines and 9 files smaller.
+
+#### Upgrading
+
+Nothing to do unless you name the old engine or the old API.
+
+```
+-Djprolog.engine=legacy    GONE. The recursive QuerySolver is deleted; the property value no
+                           longer selects anything (it is simply not "v2", so you get v4).
+-Pengine-legacy            GONE (the Maven profile).
+Prolog.solveLegacy(Q)      GONE. Use Prolog.solve(Q) — it runs the selected engine.
+Prolog.getQuerySolver()    GONE. Use Prolog.getEngineContext(): same DebugController wiring
+                           (setDebugController/getDebugController), same ResourceGuard accessors.
+BuiltInWithContext         executeWithContext now takes a core.engine.SolverContext, not a
+                           QuerySolver. A custom built-in that ran a sub-goal with
+                           solver.solve(G, Bindings, Sols, CutStatus) calls
+                           solver.solveMeta(G, Bindings, Sols) instead; CutStatus is gone.
+-Djprolog.engine=v2        still selects the v2 MachineSolver, for THIS release only.
+```
+
+Everything else is unchanged: `solve/1`, `solveStream/2`, `consult`, `consultWithDiagnostics`,
+`compileFile`, `enableSafeMode`, `setInferenceBudget`, the `Map<String,Term>` result shape, the
+trust model and the IDE debugger contract.
+
+#### What is new in this release
+
+- **The recursive engine is gone.** With it: `CutStatus`, `MutableCutStatus`, `LayeredMap`,
+  `CollectionBuiltInAdapter`, `BuiltInHelper` and the seven ISO control constructs that only it
+  dispatched (`,/2`, `;/2`, `->/2`, `\+/1`, `call/N`, `catch/3`, `^/2` are native in both surviving
+  machines). Their registry entries stay as placeholders, so `assertz(call(x))` still raises
+  `permission_error(modify, static_procedure, call/1)`.
+- **A worker can answer its creator.** `thread_send_message(main, Term)` and
+  `thread_get_message(Term)` from the main thread now work, as in SWI: every thread that touches
+  the message-queue predicates owns a queue, and the first one to do so claims the alias `main`.
+- **Tabling is thread-safe.** An evaluation is claimed by one thread on both engines, so several
+  workers of one query can call a tabled predicate: the first produces the table, the rest read it
+  complete. Previously they interleaved and some workers saw a half-produced answer set. A
+  producer that cannot finish within 60 s surfaces as `resource_error(tabling_busy)` instead of
+  hanging.
+- **Two bugs the manual found**: `stream_property/2` with an unbound stream used to **hang** on an
+  interactive terminal (it peeked `user_input` to decide `end_of_stream`), and an answer printed a
+  user-declared operator in canonical form (`Y = is_bigger(a,b)` instead of `Y = (a is_bigger b)`)
+  because the answer is rendered after the engine's state has left the thread.
+- **Seven more predicates are native on v4**: `sort/4`, `predsort/3`, `max_list/2`, `min_list/2`,
+  `current_op/3` (lazy now — it used to build the whole operator list before the first solution),
+  `nb_getval/2` and `b_getval/2`; and the CLP(FD) posting predicates `in/2`, `#=`, `#\=`, `#<`,
+  `#>`, `#=<`, `#>=`, `all_different/1`, `all_distinct/1` bind determined variables through
+  attributed cells. Semantics, including every ISO error term, are unchanged.
+
+#### Known limitations after this wave
+
+- Roughly 310 of the 416 registered predicates still run on the eager built-in bridge
+  (`LegacyBuiltinAdapter`): the atom/string/character library, the I/O family, the
+  assert/retract/listing family and the whole extended library (CSV, JSON, XML, HTTP, JDBC, …).
+  None is on a measured hot path; migrating them is a 4.1 item (LIM-037, limit L-08).
+- The v2 `MachineSolver` is still selectable and still has every gap the v4 default has closed
+  (LIM-027 and the list in LIM-037). It is deleted in 4.1.
+
+---
+
+### Engine v4 is now the default — wave W8: default switch, threads, debugger
+
+Eighth wave of the clean-room resolution core designed in
+`docs/reports/report-engine-v4-design-2026-08-25.md` (sections B.6 and B.13, ISS-2025-0478..0483).
+**Every query now runs on `core.engine.v4`.** Handoff:
+`docs/reports/report-engine-v4-progress.md` section 14.
+
+**1204/1204 JUnit tests on the default engine (v4) AND under `-Pengine-v2`** (1158 pre-existing +
+46 new in `EngineV4ThreadsTest`, `EngineV4TraceTest` and `PrologCliBatchTest`), **20/20 example
+programs on both engines.**
+
+#### Upgrading
+
+Nothing to do — but read this if you depend on the old engine's exact behaviour.
+
+```
+-Djprolog.engine=v2       the previous default (core.engine.v2.MachineSolver), kept for ONE release
+Prolog.setUseV4Engine(false)   the same as =v2, at runtime
+mvn test -Pengine-v2      the second CI leg (the former -Pengine-v4 is what `mvn test` now does)
+```
+
+What changes for a program that does nothing:
+
+| | before (v2) | now (v4) |
+|---|---|---|
+| `X = f(X), Y = f(Y), X = Y` | hangs / `representation_error(cyclic_term)` | succeeds (rational trees; `set_prolog_flag(occurs_check, error)` restores the ISO error) |
+| `setup_call_cleanup/3`, `call_cleanup/2` | `Cleanup` after the FIRST solution | after the LAST solution (ISO/SWI) |
+| `append(X, Y, Z)` fully open | one eager answer | enumerates |
+| `member(X, PartialList)` | stops at the open tail | extends it |
+| a coroutine left by a finished query | can fire in the next one | cannot |
+| tabling on a left-recursive chain | wrong answers | correct |
+| `lists:append/3`, `meta_predicate/1`, yall lambdas, `partition/4`, `memberchk/2`, `frozen/2`, `unifiable/3`, `current_table/2`, `current_module/1` | `existence_error` or ignored | work |
+| `when/2` woken goal's bindings | lost | propagate |
+| memory of a long deterministic loop | O(bindings) — `loop(10000000)` runs out | O(1) — 64 MB |
+| a user's own list predicate over 1 M elements | 7.2 s | 1.2 s |
+
+#### What is new in this release
+
+- **Threads really run their goals.** `thread_create/2` used to start a thread that slept 10 ms and
+  recorded `completed(<goal>)` — the goal never ran, and it had to be an atom. A worker now runs on
+  its own machine over the same engine: shared clause store (so `assertz`/`retract` from two threads
+  are visible to both), shared flags and operators, its own current streams, its own inference
+  budget counter carrying the parent's limit, and a copied goal so no variable is shared between
+  threads. New `thread_create/3` (`alias/1`, `detached/1`); `thread_join/2` reports `true`,
+  `false`, `exception(Ball)` or `cancelled`; `thread_self/1` reports the worker's own id; message
+  queues carry **terms** rather than atoms; every thread owns a queue, so
+  `thread_send_message/2` accepts a queue id, a thread id or an alias, and `thread_get_message/1`
+  reads your own.
+- **`concurrent_maplist/3` and `/4` are callable at all** — they were registered under names no
+  Prolog goal could reach. The whole `concurrent_*` family, plus `first_solution/3`, now runs on
+  per-thread machines, and interrupting the parent cancels the workers.
+- **The debugger no longer changes how your program runs.** Attaching a debugger used to reroute
+  `=/2`, `is/2`, the comparisons and the type checks through a slower bridge; they keep their fast
+  paths now and the engine reports their ports itself. A merely running debugger costs nothing
+  measurable (`nrev` went from 5.8x slower to 1.1x).
+- **Tracing is usable on real programs.** It used to be quadratic: `loop(N)` under `trace/0` took
+  1.9 s, 8.4 s and 33 s at N = 20 000, 50 000 and 100 000, and never finished at N = 1 000 000 with
+  a gigabyte of heap. It is linear now — 0.48 s, 0.48 s, 0.74 s and **4.6 s** — and `nrev` went
+  from 567x slower than untraced to ~10-18x. Two visible differences: the inline built-ins
+  (`X = 1`, `Y is X+2`, `Y > 2`, `integer(Y)`, ...) now appear in the trace, and a goal that exited
+  deterministically no longer prints a phantom `Fail` afterwards. The depth in parentheses is the
+  real call depth now, so the trace nests properly; the indentation is capped at 40 levels.
+- **A piped console no longer eats your queries.** With stdin redirected, the CLI printed the first
+  solution, wrote ` ;` and read the NEXT QUERY as your answer. It now prints every solution at once
+  (separated by ` ;`, terminated by `.`) whenever stdin is not a terminal, or when you pass
+  `--batch` / `-q`. Interactive use is unchanged.
+
+## Release 3.14.0 - 2026-08-26
+
+### Engine v4 — wave W7: engine state (streams, operators, writer)
+
+Seventh wave of the clean-room resolution core designed in
+`docs/reports/report-engine-v4-design-2026-08-25.md` (sections B.11 and B.12, ISS-2025-0472..0477).
+**Unlike waves W1-W6 this one is mostly engine-neutral**: the state it moves and the writer it
+introduces are used by the default v2 engine and the legacy engine too, so most of it applies
+whether or not you select `-Djprolog.engine=v4`. The default engine is still v2 — it becomes v4 in
+wave W8. Handoff: `docs/reports/report-engine-v4-progress.md` section 13.
+
+**1157/1157 JUnit tests on the default engine AND on v4** (1112 pre-existing + 46 new in
+`EngineV4StreamsTest` and `EngineV4WriterTest`), **20/20 example programs on both engines,
+byte-identical between the two engines.**
+
+#### Heads-up: the console prints answers differently
+
+Approved as design decision 5 (B.17). The top level now prints answers in quoted operator notation
+with `_A`-style variable names, and shows the constraints an answer still carries:
+
+```
+?- X = 'a b'-1.            before:  X = -(a b, 1).        now:  X = 'a b'-1.
+?- Body = (p,q).           before:  Body = ,(p, q).       now:  Body = (p,q).
+?- PI = foo/1.             before:  PI = /(foo, 1).       now:  PI = foo/1.
+?- A = '42'.               before:  A = 42.               now:  A = '42'.
+?- X = f(Y).               before:  X = f(Y), Y = Y.      now:  X = f(Y).
+?- dif(X, a).              before:  X = _G12.             now:  dif(X,a).          (v4)
+?- X in 1..3.              before:  X = _G12.             now:  X in 1..3.         (v4)
+```
+
+Seven of the sixteen example programs that produce bindings print different text as a result; the
+change is either a quoting/operator improvement or the removal of a spurious `Var = Var` line. If
+you compare CLI output byte-for-byte in your own tests, re-baseline once.
+
+#### What is new
+
+- **Repositioning a text stream works.** `get_char(S,C1), seek(S,0,bof,_), get_char(S,C2)` used to
+  answer `C2 = e` after `C1 = h`, because the seek moved the file channel while `get_char/2` kept
+  reading a `PushbackReader`'s stale 8 KB buffer. A stream now decodes through its own buffer, which
+  tracks byte position, character count, line number and line position, and a reposition flushes it.
+  `read/1,2`, `read_term/2,3`, `get_char/2` and `seek/4` finally agree about where the stream is.
+- **`stream_property/2` is complete** — `file_name`, `mode`, `input`/`output`, `alias`, `position`,
+  `end_of_stream`, `eof_action`, `reposition`, `type`, `encoding`, `line_count` — and it accepts an
+  alias as the stream argument (it was simply false for every stream opened with `alias(A)`).
+- **New I/O predicates**: `set_stream/2`, `stream_position_data/3`, `character_count/2`,
+  `line_count/2`, `line_position/2`, `current_stream/3`; `read_term/2,3` gained
+  `term_position(Pos)`.
+- **`current_op/3` sees the operators a consulted file declared.** A `:- op(700, xfx, ===).`
+  directive used to work in source and stay invisible to the program. There is one operator store
+  now, read by the parser, `op/3`, `current_op/3`, the writer, the `.jpc` writer and the IDE
+  formatter; an `op/3` inside a module file is local to that module.
+- **`write_term/2,3` implements the whole ISO option set**: `quoted`, `ignore_ops`, `numbervars`,
+  `max_depth`, `portray`, `cycles`, `variable_names`, `spacing(next_argument)`. `print/1,2` gained
+  the `portray/1` hook it used to document as unsupported, and `portray_clause/1,2` and
+  `print_message/2` are new.
+- **Printing terminates and scales.** The writer is iterative — a 1 000 000-element list and a
+  200 000-deep structure print at the default JVM stack — and cycle-safe: a rational tree prints as
+  `f(...)`, or as `@(_S1,[_S1=f(_S1)])` under `cycles(true)`, instead of looping.
+- **Two engines in one JVM are properly isolated.** Streams and their aliases, operators, spy points
+  and profiler counters belong to the `Prolog` instance (LIM-034 closed), and
+  `current_input`/`current_output` are per thread within an engine — `set_output/1` on one thread no
+  longer redirects another's.
+- **Output capture no longer touches `System.out`.** `with_output_to/2` and `format/3` with
+  `atom/string/codes/chars` capture through a per-thread override, so concurrent captures are safe
+  (LIM-025 closed).
+- **Deeply nested input raises a resource error** — `error(resource_error(parser_nesting), _)` past
+  1000 levels — instead of blowing the Java stack or, inside `term_to_atom/2`, failing silently.
+
+#### Upgrading
+
+- `open/3,4` unifies `Stream` with `'$stream'(N)` instead of an atom. Every stream argument still
+  accepts an atom alias, the `stream_<id>` handle and the reserved names, so ordinary
+  `open(F, read, S), ..., close(S)` code is unaffected; code that compared `S` to an atom is not.
+- `OperatorDefinition.setSharedOperatorTable(...)` is a deprecated no-op — the table belongs to the
+  `Prolog` instance (`getOperatorTable()`).
+- Java code that read spy points or profiler counters through the `Spy` / `Profiler` statics while
+  no engine was current on the thread now sees a process-wide default store, not the engine's;
+  use `Prolog.getEngineState()`.
+
+---
+
+## Release 3.13.0 - 2026-08-26
+
+### Engine v4 (opt-in) — wave W6: modules and the Prolog prelude
+
+Sixth wave of the clean-room resolution core designed in
+`docs/reports/report-engine-v4-design-2026-08-25.md` (section B.10, ISS-2025-0466..0471). Select it
+with `-Djprolog.engine=v4` or `Prolog.setUseV4Engine(true)`. **The default engine is unchanged** —
+v4 becomes the default in wave W8. Handoff: `docs/reports/report-engine-v4-progress.md` section 12.
+
+**1112/1112 JUnit tests on the default engine AND on v4** (1083 pre-existing + 29 new in
+`EngineV4ModulesTest`), **20/20 example programs on both engines, byte-identical output.**
+
+What wave W6 changes, for a user:
+
+- **A module system that actually resolves.** Every predicate belongs to a module. `system` holds
+  the built-ins, **`user` is the ordinary flat knowledge base** (declaring a second module no
+  longer changes how anything in `user` is found — before this wave it did, silently), and the
+  library modules `lists`, `apply`, `pairs` and `coroutining` are Prolog files shipped inside the
+  jar. An unqualified call from module `M` resolves `M` -> `M`'s imports -> `user` -> the
+  autoloaded libraries -> the built-ins.
+- **`Module:Goal` works for built-ins and libraries.** `lists:append([1],[2],L)` was *false* on
+  every JProlog engine before today; `system:atom_length(abc, N)` and `user:foo(X)` work too, and
+  `a:b:Goal` runs in the innermost module. Export enforcement is unchanged: a module that defines
+  a predicate answers a qualified call only if it exports it.
+- **`meta_predicate/1` is honoured.** A library predicate that does `call(G, X)` now runs `G` in
+  the module that called the library, so two modules with a helper of the same name each get their
+  own — `maplist/3` called from `m1` and from `m2` no longer collide.
+- **Libraries load when they are first used**, not at engine construction: `new Prolog()` plus a
+  first query costs **1.4 ms** instead of 8.0 ms.
+- **`append/3` and `member/2` are complete relations.** `append(X, Y, Z)` with all three arguments
+  open now enumerates lazily (so `append(X, Y, Z), length(X, 2)` terminates) instead of stopping
+  at the single standard solution, `member(X, L)` extends an unbound `L`, and `memberchk(a, L)`
+  binds `L = [a|_]`. **This is a deliberate divergence from the default engine**, where those
+  goals still terminate after one answer: a program that relied on the failure now loops.
+- **New on v4**: `current_module/1`, and `predicate_property(Head, defined_in(M))` /
+  `exported` / `imported_from(M)`.
+- **CLP(FD) labeling no longer goes through variable names.** `label/1` and `labeling/2` are
+  cell-based v4 generators; functionally determined variables (`C in 1..3, D #= C*2+1, label([C])`
+  reports `D`) are still bound, and the `labeling/2` options behave exactly as before.
+- **Performance**: on a 1 000 000-element list v4 now matches or beats the default engine on every
+  list operation measured (`length/2` 693 ms vs 1084, `append/3` 881 vs 1171, `msort/2` 1325 vs
+  2362, `copy_term/2` 1246 vs 1842); a *user-written* recursive list predicate is 6x faster on v4
+  than on v2 (1162 ms vs 7205 ms for a 1M-element `myappend/3`).
+
+Nothing in the default engine changed: `ModuleManager` gained a modification stamp, `Module` a
+getter and `ClpfdV2Bridge` one method, all additive.
+
+---
+
+## Release 3.12.0 - 2026-08-26
+
+### Engine v4 (opt-in) — wave W5: tabling
+
+Fifth wave of the clean-room resolution core designed in
+`docs/reports/report-engine-v4-design-2026-08-25.md` (section B.8, ISS-2025-0463..0465). Select it
+with `-Djprolog.engine=v4` or `Prolog.setUseV4Engine(true)`. **The default engine is unchanged** —
+v4 becomes the default in wave W8. Handoff: `docs/reports/report-engine-v4-progress.md` section 11.
+
+**1083/1083 JUnit tests on the default engine AND on v4** (1065 pre-existing + 18 new in
+`EngineV4TablingTest`), **20/20 example programs on both engines, byte-identical output.**
+
+What wave W5 changes, for a user:
+
+- **Tabling answers correctly.** The default engine's tabling is a bounded re-evaluation loop
+  (100 iterations, eager, name-keyed) and returns *wrong answers* for a left-recursive predicate:
+  on the classic 3 000-edge chain, `path(1, 3001)` and `path(1, 51)` both **fail**. On v4 they
+  succeed, together with `findall(Y, path(1,Y), L), length(L, 3000)`. The same holds for the
+  right-recursive and the doubly recursive (`path(X,Y) :- path(X,Z), path(Z,Y)`) formulations, for
+  mutual recursion across two tabled predicates, and for cyclic graphs. The design's benchmark —
+  a **100 000-edge chain, `path(1, 100001)`** — answers in **868 ms** (target: correct in <= 2 s);
+  on v2 it fails in 40 ms.
+- **Tabled evaluation is inside the engine, not beside it.** A tabled call is a generator/consumer
+  choice point on the machine, so there is no per-subgoal Java recursion (the old driver inherited
+  the recursive solver's 2 000-deep cap), the four-port trace and the IDE debugger see a tabled
+  call like any other predicate, and the **inference budget and the Stop button reach inside the
+  fixpoint** — a runaway tabled query is now abortable.
+- **Robust under failure.** An evaluation abandoned by an exception, a cut or the resource guard
+  discards its half-built tables, so the next call recomputes instead of reading a partial answer
+  set; no table can be left half-finished between queries.
+- **The tabling built-ins observe the real store.** `abolish_all_tables/0` and `abolish_table/1`
+  clear the v4 answer tables (and the legacy declarations, as before); `abolish_table/1` now
+  raises `instantiation_error` / `type_error(predicate_indicator, T)` on a malformed argument
+  instead of failing silently, and both raise `permission_error(modify, table, ...)` if called
+  from inside a running tabled evaluation. New **`current_table(?Variant, ?Status)`** (v4 only).
+- **Invalidation policy** (documented in `docs/references/BUILTIN_PREDICATES_REFERENCE.md`):
+  asserting to or retracting from a tabled predicate drops that predicate's tables. A change to a
+  *non-tabled* predicate that a tabled one depends on is not tracked — call
+  `abolish_all_tables/0`, as in XSB. Tables persist across queries; two safety caps
+  (100 000 tables, 4 000 000 answers) drop the oldest completed tables at a query boundary.
+- **`tnot/1` is not implemented** and raises `existence_error(procedure, tnot/1)` rather than
+  behaving like `\+/1`.
+
+Known cost, unchanged by any tabling system: the doubly recursive definition
+`path(X,Y) :- path(X,Z), path(Z,Y)` builds one table per node and joins O(n) answers with O(n)
+answers per table, so its full closure is cubic in the chain length (10.4 s at 400 edges on this
+VM). Use the left- or right-recursive formulation for long chains.
+
+## Release 3.11.0 - 2026-08-25
+
+### Engine v4 (opt-in) — wave W4: coroutining and attributed variables
+
+Fourth wave of the clean-room resolution core designed in
+`docs/reports/report-engine-v4-design-2026-08-25.md` (section B.9, ISS-2025-0457..0462). Select it
+with `-Djprolog.engine=v4` or `Prolog.setUseV4Engine(true)`. **The default engine is unchanged** —
+v4 becomes the default in wave W8. Handoff: `docs/reports/report-engine-v4-progress.md` section 10.
+
+**1065/1065 JUnit tests on the default engine AND on v4** (1043 pre-existing + 22 new in
+`EngineV4CoroutiningTest`), **20/20 example programs on both engines, byte-identical output.**
+
+What wave W4 changes, for an embedder:
+
+- **A woken goal is a real goal.** Binding an attributed variable pushes its suspended goals onto
+  the machine's wake queue, and the drive loop runs them before the next goal in the *current*
+  binding context. So the bindings a woken goal makes propagate (`when(nonvar(X), Y = done),
+  X = 1, Y == done` now succeeds — ISS-2025-0336, which still stands on the default v2 engine), it
+  is traced through the four ports, the inference budget and the Stop button can abort it, and an
+  exception it throws reaches the enclosing `catch/3`.
+- **`freeze/2`, `frozen/2`, `when/2`, `dif/2` and `?=/2` are Prolog**, in
+  `prelude/coroutining.pl`, on top of `put_attr/3`, `get_attr/3` and `attr_unify_hook`. A program
+  that defines its own `freeze/2` therefore replaces the library one, as with `maplist/3` in W3.
+  `when/2` now validates its condition (`instantiation_error`,
+  `domain_error(when_condition, C)`) and fires exactly once for a disjunctive condition;
+  `dif/2` re-suspends on the remaining unifier variables, so it decides
+  `dif(f(X), f(Y)), X = 1, Y = 1` correctly.
+- **The SWI attributed-variable protocol is available**: `put_attr/3`, `get_attr/3`, `del_attr/2`,
+  `attvar/1`, `term_attvars/2`, `copy_term/3` and `unifiable/3`, with a user-definable
+  `Module:attr_unify_hook(AttValue, Other)` called through the normal goal stack. Write your own
+  constraint library in Prolog and it participates in unification.
+- **CLP(FD) variables are ordinary attributed cells.** The v2 CLP(FD) bridge is a client of the
+  same hook, which let the last compatibility shim of waves W1-W3 (the engine-wide name->cell
+  index in `Machine`) be deleted. No behaviour change: `C in 1..3, D #= C*2+1, label([C])` still
+  reports `D`, and `X in 1..3, X = 5` still fails.
+- **Cross-query coroutining is gone on v4** (approved design decision 3). A query's variables die
+  with the query, so a suspension left behind by a finished query can never fire in a later one:
+  `when(nonvar(X), throw(leak))` followed by `X = 1` succeeds silently on v4 and throws `leak` on
+  v2. If you relied on the v2.9.4 session behaviour, stay on the default engine — nothing in the
+  IDE or the CLI used it.
+- **New API: `Prolog.residualGoals(solution)`** — the constraints still attached to an answer
+  (`freeze/2`, `when/2`, `dif/2`, CLP(FD) `in/2`, `put_attr/3`). Call it right after the `solve`
+  that produced the answer. The CLI and the IDE start printing residual goals in wave W7.
+
+---
+
+## Release 3.10.0 - 2026-08-25
+
+### Engine v4 (opt-in) — wave W3: native library and meta-calls
+
+Third wave of the clean-room resolution core designed in
+`docs/reports/report-engine-v4-design-2026-08-25.md` (ISS-2025-0450..0456). Select it with
+`-Djprolog.engine=v4` or `Prolog.setUseV4Engine(true)`. **The default engine is unchanged** — v4
+becomes the default in wave W8. Handoff: `docs/reports/report-engine-v4-progress.md` section 9.
+
+**1043/1043 JUnit tests on the default engine AND on v4** (1024 pre-existing + 19 new in
+`EngineV4LibraryTest`), **20/20 example programs on both engines, byte-identical output.**
+
+What wave W3 changes, for an embedder:
+
+- **No built-in on v4 falls back to the recursive solver any more.** The four-argument
+  `SolverFacade.solve(...)` — the entry point `phrase/2,3`, the DCG helpers, `format ~p`/`~@` and
+  the persistence transactions call — now runs on the machine. The 2 000-deep Java recursion cap
+  those predicates inherited is gone (the only remaining exception is a sub-solve submitted to a
+  worker thread by `concurrent/3` and friends, which W8 moves onto its own machine).
+- **DCG parsing scales.** `numlist(1, 1000000, L), phrase(digits(D), L)` parses a **million tokens
+  in ~2.9 s at the default JVM stack**; on v2 the same query raises
+  `resource_error(stack_overflow)` even with `-Xss4m`. The inference budget and the Stop button now
+  work *inside* a parse.
+- **The 1 M-element list operations are now faster on v4 than on v2**, where waves W1/W2 left them
+  1.3-2x slower. Same session, best-of-3, v2 -> v4: `length` 1466 -> 1001 ms, `msort`
+  1257 -> 1064 ms, `copy_term` 1571 -> 1273 ms, `==` 709 -> 405 ms, `findall+member`
+  2341 -> 1499 ms, `sum_list` 734 -> 318 ms, `reverse` 1147 -> 692 ms, `append` 2900 -> 1208 ms.
+  The cause was never the core: it was the bridge dereferencing the goal and indexing its cells by
+  name on every call. Those predicates are native now.
+- **`member/2`, `append/3`, `select/3`, `nth0/3`, `nth1/3`, `clause/2`, `sub_atom/5`,
+  `sub_string/5`, `bagof/3` and `setof/3` are lazy**: one solution per redo, O(1) memory, and the
+  enumeration stops the moment the caller cuts. `once(member(X, MillionElementList))` no longer
+  builds a million solution maps first.
+- **`library(yall)` lambdas work**: `maplist([X,Y]>>(Y is X*2), [1,2,3], L)`,
+  `foldl([X,A0,A]>>(A is A0+X), L, 0, S)`, and `N/[X,Y]>>Body` to share a free variable. On v2 these
+  raise `existence_error(procedure, >>/4)`.
+- **`maplist/2..7`, `foldl/4..7`, `include/3`, `exclude/3`, `partition/4,5` are Prolog clauses**
+  loaded from `prelude/apply.pl`. They are linear, traceable and cancellable, and **a program that
+  defines its own `partition/4` or `maplist/3` overrides them** — the library is consulted only
+  when the knowledge base has no clause for that indicator. `maplist(dbl, L, L2)` over 200 000
+  elements: 1634 ms on v2, **729 ms** on v4. `partition/4` is available again on v4.
+- **`format/2,3` gains `~@`** (on both engines): `format("~@", [Goal])` runs Goal and inserts its
+  output.
+- **`with_output_to/2` supports `atom/1`, `string/1`, `codes/1` and `chars/1`** on v4 and captures
+  through the thread-local stream, restoring whatever the IDE had installed.
+- **Two correctness fixes**: `subsumes_term(f(X), f(Y))` answered *false* on v4 (ISS-2025-0456);
+  and `sub_atom(Atom, B, L, A, '')` — which spins forever on v2 until the heap dies — terminates
+  on v4.
+
+Budget and cancellation coverage over seven long-running goal shapes, measured in one session:
+the inference budget aborts **7/7** on v4 (4/7 on v2) and a thread interrupt cancels **4/4** on v4
+(2/4 on v2).
+
+---
+
+## Release 3.9.0 - 2026-08-25
+
+### Engine v4 (opt-in) — waves W1 (foundations) and W2 (clause store)
+
+First two waves of the clean-room resolution core designed in
+`docs/reports/report-engine-v4-design-2026-08-25.md` (ISS-2025-0438..0447). Select it with
+`-Djprolog.engine=v4` or `Prolog.setUseV4Engine(true)`. **The default engine is unchanged** — v4
+becomes the default in wave W8. Handoff and file map:
+`docs/reports/report-engine-v4-progress.md`.
+
+**1024/1024 JUnit tests on the default engine AND on v4** (989 pre-existing + 35 new),
+**20/20 example programs on both engines, byte-identical output.**
+
+What v4 changes, for an embedder:
+
+- **Long deterministic computations no longer grow the heap.** Bindings live in the variable cell
+  instead of a name-keyed map that never reclaims anything, so the JVM collects them as soon as the
+  call that made them is finished. `loop(10000000)` runs in a **64 MB heap** (v2: OutOfMemoryError),
+  and `loop2(1000000)` — one library built-in per iteration — takes **1.6 s** where v2 also OOMs.
+  This is LIM-033, resolved on v4.
+- **Six times faster on `nrev`**: ~2 008 KLIPS against ~316 KLIPS for v2 in the same session,
+  because a clause is compiled once into a skeleton and activation no longer copies it or invents
+  variable names.
+- **Cyclic terms work instead of hanging.** `X = f(X), Y = f(Y), X = Y` succeeds in milliseconds;
+  on v2 it hangs and cannot be interrupted or stopped by the inference budget — a denial of service
+  reachable from untrusted code. `cyclic_term/1` and `acyclic_term/1` are real tests, and
+  `set_prolog_flag(occurs_check, error)` (now an accepted flag value, as ISO requires) restores the
+  ISO error behaviour. This is LIM-032, resolved on v4.
+- **The database scales.** 100 000 interleaved `assertz` + call in **1.0 s** (v2: 7.3 s): clauses
+  carry birth/death generations, so `assertz` appends, `retract` marks, and no per-write snapshot is
+  rebuilt. The first-argument index is incremental and needs no bucket cap. A 20 000-clause lookup
+  with the first argument bound costs 118-259 ns.
+- **`setup_call_cleanup/3` and `call_cleanup/2` are real cleanup frames**: `Cleanup` runs exactly
+  once — on deterministic exit, on failure, when the frame is cut away, or when an exception
+  unwinds past it, always before the ball propagates.
+- **`OutOfMemoryError` and a built-in's `StackOverflowError` become catchable ISO
+  `resource_error/1` terms** *before* the query unwinds, so the running program's `catch/3` can see
+  them.
+- Everything else is unchanged: the same `Map<String,Term>` results, the same ISO errors, the same
+  four-port trace (byte-identical output), the same IDE debugger contract, the same
+  `enableSafeMode()` and `setInferenceBudget()` behaviour and the same trust model
+  (`InferenceLimitException` / `QueryCancelledException` / `DebugStopException` are never
+  catchable from Prolog).
+
+Two deliberate behaviour differences on v4 (approved in design B.17): rational trees are supported,
+and `setup_call_cleanup/3` runs `Cleanup` after the goal's LAST solution rather than eagerly after
+the first. Both are called out above and pinned by engine-aware tests.
+
+Two v4-only regressions found by the independent verification of these waves were fixed before the
+release (both were correct on the default engine):
+
+- **`findall/3` is opaque again** (ISS-2025-0448). The template variable kept the binding of the
+  last solution, so `findall(X, member(X,[1,2]), L), var(X)` failed. The nested drive undid its
+  bindings one step too late — after closing the forced-trail extent, by which point the trail had
+  already been reclaimed. Every construct with the same shape was corrected as well: `\=/2`, a
+  non-matching `catch/3` catcher, `subsumes_term/2`, and every meta-call sub-query
+  (`bagof`, `setof`, `aggregate_all`, …).
+- **Retract/assert loops are linear again** (ISS-2025-0449). Dead clauses waited for the query to
+  end before being reclaimed, so a `retract`+`assertz` counter loop was quadratic:
+  `cnt(100000)` took ~60 s. Compaction now happens as soon as the dead clauses outnumber the live
+  ones — **0.56 s**, against 1.39 s on the default engine.
+
+**1024/1024 JUnit tests on both engines** after these fixes.
+
+Also in this release, on **every** engine:
+
+- `.jpc` format 0x03: clause variables are serialised by index (a clause read back from a compiled
+  file used to get one distinct variable object per occurrence of the same name) and each clause
+  records its source line, so IDE line breakpoints work on compiled sources.
+- `Variable.copy()` of a named variable returns the variable itself. Ten built-ins (`arg/3`,
+  `member/2`, `nth0/nth1`, `select/3`, `aggregate_all/3`, …) copy a term and then unify with the
+  copy, relying on the copy aliasing the original; the old "same name, different object" copy
+  happened to satisfy that only because bindings were name-keyed.
+- `set_prolog_flag(occurs_check, error)` is accepted (ISO 7.11.2.4 defines three values).
+- `compare/3` validates its `Order` argument on v4 (`domain_error(order, _)` /
+  `type_error(atom, _)`).
+- New Maven profiles: `mvn test -Pengine-v4` and `mvn test -Pengine-legacy`.
+
+## Release 3.8.0 - 2026-08-25
+
+### Engine deep analysis — wave 5: clause selection, arithmetic and housekeeping
+
+Fifth wave over `docs/reports/report-engine-deep-analysis-2026-08-24.md` (ISS-2025-0433..0436).
+**983/983 JUnit tests, 20/20 example programs.** Timings are best-of-3 in a warmed JVM, against
+the v3.7.0 build on the same machine.
+
+- **Large fact tables are ~1200x faster to query** (ENG-13). A lookup in a 20 000-fact table went
+  from **2.358 ms to 0.002 ms per call**. Each predicate now keeps a versioned immutable clause
+  snapshot (no per-call copy, no lock), the choice point pulls one clause per redo instead of
+  pre-building every alternative, only the clause *head* is renamed before unification (a ground
+  fact is not renamed at all), and **first-argument indexing is back on the default engine** with a
+  type-faithful key — so `1` and `1.0` no longer share an index bucket.
+- **Arithmetic is ~20% faster** (ENG-14): `is/2` no longer deep-copies its expression, `+`/`-`/`*`
+  take a primitive `long` path (exact `BigInteger` on overflow), comparisons compare primitives,
+  and small integers come from a cache. `nrev` throughput **266 → 324 KLIPS**.
+- **Housekeeping** (ENG-15/ENG-17): `collectVars` no longer O(n²); the Stop interrupt is polled
+  every 1024 steps instead of every step; the dead `CompiledClause` and `Interpreter` classes and
+  the never-read multi-argument clause index are gone (the latter was maintained on every
+  assert/retract).
+
+No user-visible semantic changes: clause order, the logical update view, ISO error terms and
+arithmetic results (including exactness beyond 64 bits) are all unchanged and pinned by tests.
+
+### Engine deep analysis — wave 6: per-engine state isolation
+
+**989/989 JUnit tests, 20/20 example programs.**
+
+- **One engine can no longer change another engine's behaviour** (ENG-06). ISO flags
+  (`unknown`, `double_quotes`, …), `occurs_check` and `trace/0` used to live in process-global
+  statics, so `set_prolog_flag/2` or `trace.` in a sandboxed engine silently reconfigured every
+  other `Prolog` instance in the JVM. Each engine now owns its flag store; new
+  `Prolog.getFlags()`, `Prolog.setTracing(boolean)` and `Prolog.isTracing()`.
+- `current_input` / `current_output` are per thread, like the output capture the IDE already used:
+  `set_output/1` on one thread no longer redirects output for all of them.
+- CLP(FD) temporary variable names are generated atomically (two threads could previously get the
+  same name and alias unrelated constraint variables).
+
+**Behaviour change for embedders**: `it.denzosoft.jprolog.builtin.debug.Trace.isTracingEnabled()`
+and `Variable.isOccursCheckEnabled()` now report the engine *current on the calling thread*. Code
+that toggles tracing from outside a query (an IDE button, a REPL command) must call
+`Prolog.setTracing(boolean)` on its own engine. Still process-global: the operator table, spy
+points and the profiler counters — see **LIM-034**.
+
+## Release 3.7.0 - 2026-08-25
+
+### Engine deep analysis — wave 3: the machine's memory model
+
+Third wave over `docs/reports/report-engine-deep-analysis-2026-08-24.md` (ISS-2025-0429/0430).
+**966/966 JUnit tests, 20/20 example programs.**
+
+- **Deterministic recursion no longer leaks choice points or trail** (ENG-10). An exhausted choice
+  point is dropped as soon as its last alternative is taken, and the trail is reclaimed whenever
+  nothing can undo it. `loop(20000)` now ends with an empty choice-point stack and an empty trail.
+  `loop(1000000)` fits in 256 MB (was an out-of-memory error) and is 1.5x faster at 2 GB;
+  `loop(3000000)` completes for the first time.
+- **Calling a built-in is no longer quadratic** (ENG-11). Built-ins receive a *resolved* goal and
+  an empty binding map instead of a full copy of every binding in the query, `resolve` shares
+  unchanged sub-terms, and a deterministic built-in gets no choice point at all. A loop with one
+  `atom_length/2` per iteration went from *out of memory after 27 s at 2 GB* (N = 10 000) to
+  **157 ms**, and 200 000 iterations now run in 639 ms inside a 128 MB heap.
+  `nrev` throughput: **188 → 350 KLIPS**.
+- `setarg/3` / `nb_setarg/3` keep the old identity-preserving call path.
+
+### Engine deep analysis — wave 4: meta-calls and generators on the machine
+
+**974/974 JUnit tests, 20/20 example programs.**
+
+- **Security fix (ENG-04)**: the inference budget and the Stop button were bypassed by every
+  meta-call. `once(Loop)`, `ignore(Loop)`, `aggregate_all(count, Loop, C)` and
+  `setup_call_cleanup(true, Loop, true)` used to run forever with a budget set, and
+  `forall/2` did not charge a single step. A shared `ResourceGuard` now covers both engines, 122
+  broad `catch` clauses in the library no longer swallow (or re-wrap into a catchable
+  `PrologException`) a budget/Stop abort, and the meta-calls run on the fast machine instead of
+  the recursive legacy solver. Every escape now aborts in tens of milliseconds, uncatchable by
+  `catch/3`. The budget and Stop now also apply under `-Djprolog.engine=legacy`.
+- **Meta-calls got much faster**: `once(loop(100000))` 438 ms (it previously took 1.78 s for only
+  5 000 iterations); `maplist(integer, L)` over 200 000 elements went from out-of-memory to
+  ~0.5 s — **LIM-030** is largely resolved.
+- **`between/3` is lazy (ENG-12)**: `between(1,2000000,X), X >= 2000000` went from exhausting a
+  256 MB heap to **368 ms in 64 MB**, and `between(1, inf, X)` is no longer capped at a million
+  solutions.
+
+Known limitation added: **LIM-033** — query memory is still O(number of bindings) because the
+binding store is name-keyed and never reclaims dead variables (ENG-16, architecture track).
+
+## Release 3.6.2 - 2026-08-25
+
+### Engine deep analysis — wave 2: the deep-structure limit
+
+Second wave over `docs/reports/report-engine-deep-analysis-2026-08-24.md` (ISS-2025-0428).
+**961/961 JUnit tests, 20/20 example programs.**
+
+- **Long lists and deep terms just work.** Every term walker is now tail-iterative on the last
+  argument, so a **1 000 000-element** list survives `length/2`, `sum_list/2`, `==/2`,
+  `copy_term/2`, `msort/2`, `sort/2`, `ground/1`, `assertz/1`, `reverse/2`, `append/3`,
+  `term_to_atom/2` and `write/1` at the **default** JVM stack size. Before, the same operations
+  raised `resource_error(stack_overflow)` at roughly 20 000–30 000 elements even with `-Xss4m`,
+  and a 50 000-deep `f(f(…))` failed outright (200 000 now works).
+- Side effects of the rewrite: compound unification snapshots the bindings map once per top-level
+  call instead of once per nesting level, and printing a long list no longer allocates one string
+  per element.
+- Still memory-bound (later waves): `maplist/2..5` over a million elements (LIM-030) and
+  `member/2` inside `findall/3`.
+
+## Release 3.6.1 - 2026-08-24
+
+### Engine deep analysis — wave 1: correctness quick wins
+
+First wave over `docs/reports/report-engine-deep-analysis-2026-08-24.md` (ISS-2025-0423..0427).
+**956/956 JUnit tests, 20/20 example programs.**
+
+- **`repeat/0` is infinite again** (ENG-01): it used to stop after exactly 1000 redos, so
+  `repeat, …, Done, !` driver loops silently failed. Native lazy choice point, O(1) memory.
+- **Floats stay floats** (ENG-02): `sum_list([1.5,1.5], S)` is `3.0`, not `3`; JSON/CSV/SQL
+  decimals keep their type. 58 audited call sites; integer-valued built-ins (codes, indices,
+  lengths, arities, precedences, counters) explicitly return ISO integers.
+- **`length/2` enumerates** (ENG-03): `length(L, N), N >= 3, !` and `length([a|T], N)` work.
+- **Built-in crashes are no longer swallowed** (ENG-05): a Java fault in a built-in surfaces as
+  `system_error` instead of `existence_error`/silent failure, and budget/cancel/debug-stop
+  exceptions can no longer be lost inside the bridge.
+- **Minor** (ENG-08): unknown-procedure warnings reach the IDE console; `throw/1` copies the ball
+  once; `PrologException` no longer captures a Java stack trace (exceptions are control flow).
+
+Behavior changes: integral float results now print as `3.0` and fail `integer/1`; `length(L, N)`
+with both arguments unbound is a generator (SWI semantics), not a failure; buggy built-ins report
+`system_error`. New limitations recorded: LIM-031 (legacy `repeat` bound), LIM-032 (cyclic terms).
+
 ## Release 3.6.0 - 2026-06-10
 
 ### Audit wave 3 — remaining 27 confirmed findings fixed

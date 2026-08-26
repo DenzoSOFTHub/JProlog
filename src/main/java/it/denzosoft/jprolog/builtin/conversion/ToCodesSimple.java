@@ -115,7 +115,7 @@ public class ToCodesSimple implements BuiltIn {
         Term result = new Atom("[]");
         for (int i = str.length() - 1; i >= 0; i--) {
             char c = str.charAt(i);
-            Number code = new Number((double) (int) c);
+            Number code = new Number((long) c)   /* ISS-2025-0424 */;
             
             List<Term> args = new ArrayList<>();
             args.add(code);

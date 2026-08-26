@@ -40,6 +40,17 @@ public final class TermReader {
     /** Variables shared within the term being read (one scope per top-level term/clause). */
     private final Map<String, Variable> varScope = new HashMap<>();
 
+    // START_CHANGE: ISS-2025-0473 - engine v4 wave W7 (design B.11): an explicit nesting limit.
+    // The reader is recursive descent, so deeply nested input used to blow the Java stack; the
+    // resulting StackOverflowError was converted to resource_error(stack_overflow) by whichever
+    // frame happened to catch it (and, inside term_to_atom/2 or read_term/2,3, could surface as a
+    // plain failure). ISO wants a resource error naming the real resource, and the design requires
+    // it never to be a silent failure: raise resource_error(parser_nesting) at a fixed depth well
+    // below the JVM's own limit, so the error is deterministic and identical on every path.
+    private static final int MAX_NESTING = 1000;
+    private int depth = 0;
+    // END_CHANGE: ISS-2025-0473
+
     public TermReader(List<Lexer.Token> tokens, OperatorTable ops) {
         this.tokens = tokens;
         this.ops = ops != null ? ops : OperatorTable.getDefault();
@@ -127,6 +138,20 @@ public final class TermReader {
     }
 
     private Parsed parse(int maxPrec) {
+        // ISS-2025-0473: deterministic nesting limit (see MAX_NESTING)
+        if (++depth > MAX_NESTING) {
+            depth = 0;
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("parser_nesting", "read"));
+        }
+        try {
+            return parse0(maxPrec);
+        } finally {
+            depth--;
+        }
+    }
+
+    private Parsed parse0(int maxPrec) {
         Parsed left = parsePrimary(maxPrec);
         return parseOperators(left, maxPrec);
     }

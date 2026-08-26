@@ -55,6 +55,7 @@ public class NotUnifiable implements BuiltIn {
             
         // START_CHANGE: ISS-2025-0188 - Let real exceptions propagate
         } catch (RuntimeException e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw e;
         }
         // END_CHANGE: ISS-2025-0188

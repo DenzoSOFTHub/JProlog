@@ -60,6 +60,7 @@ public class Halt implements BuiltIn {
                 )
             );
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return new it.denzosoft.jprolog.core.terms.Atom("instantiation_error");
         }
     }
@@ -80,6 +81,7 @@ public class Halt implements BuiltIn {
                 )
             );
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return new it.denzosoft.jprolog.core.terms.Atom("type_error");
         }
     }

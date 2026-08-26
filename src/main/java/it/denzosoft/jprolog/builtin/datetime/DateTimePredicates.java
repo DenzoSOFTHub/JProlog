@@ -191,8 +191,10 @@ public class DateTimePredicates implements BuiltIn {
     private LocalDateTime parseDateTime(String s) {
         try { return LocalDateTime.parse(s); }
         catch (Exception e1) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e1);   // ISS-2025-0431
             try { return LocalDate.parse(s).atStartOfDay(); }
             catch (Exception e2) {
+                it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e2);   // ISS-2025-0431
                 throw new PrologEvaluationException("Cannot parse datetime: " + s);
             }
         }

@@ -1,5 +1,13 @@
 # Chapter 4: Working with Operators
 
+> **Implementation note (v4.0.0).** The Java code shown in this chapter describes the *recursive*
+> `QuerySolver` engine, which was **deleted in 4.0.0** (wave W9, ISS-2025-0484). The language
+> semantics described here are unchanged and still hold; the classes are not. The engine is now
+> `core.engine.v4` (`Machine`, `Unify`, `ClauseStore`, `Bindings`) and a context built-in
+> receives a `core.engine.SolverContext`, not a solver object. See `CLAUDE.md` and
+> `docs/reports/report-engine-v4-progress.md`.
+
+
 ## Overview
 
 This chapter provides comprehensive documentation of JProlog's implementation of the Prolog operator system. Operators in Prolog allow for more natural mathematical and logical expressions by providing infix, prefix, and postfix notation alternatives to traditional functor notation. JProlog implements the ISO Prolog operator system with full support for operator precedence, associativity, and dynamic operator definition.

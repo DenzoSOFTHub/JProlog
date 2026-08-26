@@ -2,8 +2,7 @@
 package it.denzosoft.jprolog.builtin.control;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.CutStatus;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -30,14 +29,14 @@ public class When implements BuiltInWithContext {
 
     public static final String WHEN_MODULE = "when";
 
-    private final QuerySolver solver;
+    private final SolverContext solver;
 
-    public When(QuerySolver solver) {
+    public When(SolverContext solver) {
         this.solver = solver;
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings,
+    public boolean executeWithContext(SolverContext solver, Term query, Map<String, Term> bindings,
                                       List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
         if (args == null || args.size() != 2) return false;
@@ -50,8 +49,7 @@ public class When implements BuiltInWithContext {
             // Execute goal immediately
             Term resolvedGoal = goal.resolveBindings(bindings);
             List<Map<String, Term>> goalSolutions = new ArrayList<>();
-            CutStatus cutStatus = CutStatus.notOccurred();
-            if (solver.solve(resolvedGoal, bindings, goalSolutions, cutStatus)) {
+            if (solver.solveMeta(resolvedGoal, bindings, goalSolutions)) {   // ISS-2025-0485
                 solutions.addAll(goalSolutions);
                 return true;
             }
@@ -114,7 +112,7 @@ public class When implements BuiltInWithContext {
     /**
      * Check if a when-condition is satisfied given the attribute's stored condition and current bindings.
      */
-    public static boolean executeWhenGoal(QuerySolver solver, Term whenTerm, Map<String, Term> bindings) {
+    public static boolean executeWhenGoal(SolverContext solver, Term whenTerm, Map<String, Term> bindings) {
         if (whenTerm instanceof CompoundTerm) {
             CompoundTerm ct = (CompoundTerm) whenTerm;
             if ("when".equals(ct.getName()) && ct.getArguments() != null && ct.getArguments().size() == 2) {
@@ -124,8 +122,7 @@ public class When implements BuiltInWithContext {
                 if (isConditionSatisfied(condition, bindings)) {
                     Term resolvedGoal = goal.resolveBindings(bindings);
                     List<Map<String, Term>> solutions = new ArrayList<>();
-                    CutStatus cutStatus = CutStatus.notOccurred();
-                    return solver.solve(resolvedGoal, bindings, solutions, cutStatus);
+                    return solver.solveMeta(resolvedGoal, bindings, solutions);   // ISS-2025-0485
                 }
                 // START_CHANGE: v2.9.4 - re-suspend with RESOLVED condition + goal so cross-solve hooks still see prior bindings
                 Term resolvedCondition = condition.resolveBindings(bindings);

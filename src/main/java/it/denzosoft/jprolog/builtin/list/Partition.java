@@ -2,8 +2,7 @@
 package it.denzosoft.jprolog.builtin.list;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.CutStatus;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -22,7 +21,7 @@ import java.util.Map;
 public class Partition implements BuiltInWithContext {
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query,
+    public boolean executeWithContext(SolverContext solver, Term query,
                                        Map<String, Term> bindings,
                                        List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 4) return false;
@@ -39,7 +38,7 @@ public class Partition implements BuiltInWithContext {
         for (Term elem : elements) {
             Term callGoal = new CompoundTerm(new Atom("call"), Arrays.asList(goal, elem));
             List<Map<String, Term>> temp = new ArrayList<>();
-            boolean ok = solver.solve(callGoal, new HashMap<>(currentBindings), temp, CutStatus.notOccurred());
+            boolean ok = solver.solveMeta(callGoal, new HashMap<>(currentBindings), temp)   /* ISS-2025-0431 - ENG-04 */;
             if (ok && !temp.isEmpty()) {
                 included.add(elem);
                 currentBindings = new HashMap<>(temp.get(0));

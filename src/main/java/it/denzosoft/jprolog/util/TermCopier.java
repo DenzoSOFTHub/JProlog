@@ -140,12 +140,37 @@ public class TermCopier {
             if (compound.isGround()) {
                 return compound;
             }
-            List<Term> copiedArgs = new ArrayList<>(compound.getArguments().size());
-            for (Term arg : compound.getArguments()) {
-                copiedArgs.add(copyTermInternal(arg, variableMap, prefix));
+            // START_CHANGE: ISS-2025-0428 - ENG-09: iterative on the LAST argument. A list of N
+            // cells is N nested './2' terms, so recursing into the tail needed N Java frames:
+            // copy_term/2 (and every rule copy) died with StackOverflowError past ~20-30k elements.
+            // Phase 1 collects the last-argument spine, phase 2 rebuilds it bottom-up.
+            ArrayList<CompoundTerm> spine = new ArrayList<>();
+            CompoundTerm cur = compound;
+            while (true) {
+                spine.add(cur);
+                List<Term> as = cur.getArguments();
+                if (as.isEmpty()) break;
+                Term last = as.get(as.size() - 1);
+                // a ground sub-spine is reused wholesale, so stop descending into it
+                if (!(last instanceof CompoundTerm) || ((CompoundTerm) last).isGround()) break;
+                cur = (CompoundTerm) last;
             }
-            // Reuse the functor Atom since it's immutable
-            return new CompoundTerm(compound.getFunctor(), copiedArgs);
+            Term below = null;
+            for (int k = spine.size() - 1; k >= 0; k--) {
+                CompoundTerm node = spine.get(k);
+                List<Term> as = node.getArguments();
+                int n = as.size();
+                List<Term> copiedArgs = new ArrayList<>(n);
+                for (int i = 0; i < n - 1; i++) copiedArgs.add(copyTermInternal(as.get(i), variableMap, prefix));
+                if (n > 0) {
+                    copiedArgs.add(k < spine.size() - 1
+                        ? below : copyTermInternal(as.get(n - 1), variableMap, prefix));
+                }
+                // Reuse the functor Atom since it's immutable
+                below = new CompoundTerm(node.getFunctor(), copiedArgs);
+            }
+            return below;
+            // END_CHANGE: ISS-2025-0428
         // END_CHANGE: ISS-2025-0103
             
         } else {

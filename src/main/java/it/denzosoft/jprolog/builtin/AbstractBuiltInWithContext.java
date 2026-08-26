@@ -1,7 +1,7 @@
 package it.denzosoft.jprolog.builtin;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.Term;
 
 // START_CHANGE: ISS-2025-0352 - report success through the solutions list
@@ -11,11 +11,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Abstract base class for built-in predicates that need QuerySolver context.
+ * Abstract base class for built-in predicates that need SolverContext context.
  */
 public abstract class AbstractBuiltInWithContext implements BuiltInWithContext {
     
-    protected QuerySolver solver;
+    protected SolverContext solver;
     protected Term[] arguments;
     
     /**
@@ -23,7 +23,7 @@ public abstract class AbstractBuiltInWithContext implements BuiltInWithContext {
      * 
      * @param solver The query solver
      */
-    public AbstractBuiltInWithContext(QuerySolver solver) {
+    public AbstractBuiltInWithContext(SolverContext solver) {
         this.solver = solver;
     }
     
@@ -46,7 +46,7 @@ public abstract class AbstractBuiltInWithContext implements BuiltInWithContext {
     }
     
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+    public boolean executeWithContext(SolverContext solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         this.solver = solver;
         
         // Extract arguments from query
@@ -77,5 +77,5 @@ public abstract class AbstractBuiltInWithContext implements BuiltInWithContext {
      * @param bindings Variable bindings
      * @return true if successful
      */
-    public abstract boolean solve(QuerySolver solver, Map<String, Term> bindings);
+    public abstract boolean solve(SolverContext solver, Map<String, Term> bindings);
 }

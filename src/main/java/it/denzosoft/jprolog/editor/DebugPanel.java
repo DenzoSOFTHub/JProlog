@@ -453,17 +453,19 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         // re-entrant pausing). Runs on the solver thread during the pause decision.
         debugController.setConditionEvaluator((cond, bindings) -> {
             Prolog engine = ide.getPrologEngine();
-            if (engine == null || engine.getQuerySolver() == null) return false;
+            if (engine == null || engine.getEngineContext() == null) return false;
             String goal = buildWatchGoal(cond, bindings);
-            DebugController saved = engine.getQuerySolver().getDebugController();
+            DebugController saved = engine.getEngineContext().getDebugController();
             try {
-                engine.getQuerySolver().setDebugController(null);
-                List<Map<String, Term>> sols = engine.solveLegacy(goal);
+                engine.getEngineContext().setDebugController(null);
+                // ISS-2025-0484 - wave W9: the recursive engine (and solveLegacy) is gone; the
+                // detached sub-solve runs on the SELECTED engine with the controller nulled.
+                List<Map<String, Term>> sols = engine.solve(goal);
                 return sols != null && !sols.isEmpty();
             } catch (RuntimeException e) {
                 return false;
             } finally {
-                engine.getQuerySolver().setDebugController(saved);
+                engine.getEngineContext().setDebugController(saved);
             }
         });
 
@@ -475,7 +477,7 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         // Wire to query solver
         Prolog engine = ide.getPrologEngine();
         if (engine != null) {
-            engine.getQuerySolver().setDebugController(debugController);
+            engine.getEngineContext().setDebugController(debugController);
         }
 
         updateButtonStates(true, false);
@@ -508,7 +510,7 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         // Unwire from solver
         Prolog engine = ide.getPrologEngine();
         if (engine != null) {
-            engine.getQuerySolver().setDebugController(null);
+            engine.getEngineContext().setDebugController(null);
         }
 
         debugMode = false;
@@ -923,13 +925,14 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
         // Detach the debug controller for this nested solve: we are on the EDT while the
         // solver thread is blocked at a pause; re-entering the debugger here would attempt
         // to pause again and deadlock. Restore it afterwards.
-        DebugController saved = (engine.getQuerySolver() != null)
-            ? engine.getQuerySolver().getDebugController() : null;
+        DebugController saved = (engine.getEngineContext() != null)
+            ? engine.getEngineContext().getDebugController() : null;
         try {
-            if (engine.getQuerySolver() != null) {
-                engine.getQuerySolver().setDebugController(null);
+            if (engine.getEngineContext() != null) {
+                engine.getEngineContext().setDebugController(null);
             }
-            List<Map<String, Term>> sols = engine.solveLegacy(goal);
+            // ISS-2025-0484 - wave W9: solveLegacy is gone; run on the selected engine.
+            List<Map<String, Term>> sols = engine.solve(goal);
             if (sols == null || sols.isEmpty()) {
                 return "false";
             }
@@ -942,7 +945,8 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
                 // Only show variables the user actually wrote in the watch expression.
                 if (!mentionsVariable(expr, key)) continue;
                 if (sb.length() > 0) sb.append(", ");
-                sb.append(key).append(" = ").append(e.getValue());
+                // ISS-2025-0476 - wave W7: render through the engine's writer (quoted, operators)
+                sb.append(key).append(" = ").append(display(e.getValue()));
             }
             if (sb.length() == 0) {
                 return "true" + (sols.size() > 1 ? " (" + sols.size() + " solutions)" : "");
@@ -952,8 +956,8 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
             return "<error: " + ex.getMessage() + ">";
         } finally {
             // Re-attach the debug controller so stepping/continue still work.
-            if (engine.getQuerySolver() != null) {
-                engine.getQuerySolver().setDebugController(saved);
+            if (engine.getEngineContext() != null) {
+                engine.getEngineContext().setDebugController(saved);
             }
         }
     }
@@ -990,7 +994,18 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
      * lists, compounds), so it round-trips through the parser.
      */
     private String termToSource(Term t) {
-        return (t == null) ? "_" : t.toString();
+        // ISS-2025-0476 - wave W7: writeq semantics, so 'a b' round-trips through the parser
+        // (Term.toString() dropped the quotes and produced unparseable source).
+        return (t == null) ? "_"
+            : it.denzosoft.jprolog.core.engine.v4.Writer.format(
+                  t, it.denzosoft.jprolog.core.engine.v4.Writer.Options.writeq());
+    }
+
+    /** Render a term for the debugger's variable views: quoted, operator notation. */
+    private static String display(Term t) {
+        return (t == null) ? "_"
+            : it.denzosoft.jprolog.core.engine.v4.Writer.format(
+                  t, it.denzosoft.jprolog.core.engine.v4.Writer.Options.writeq());
     }
 
     /**
@@ -1042,7 +1057,7 @@ public class DebugPanel extends JPanel implements DebugController.DebugListener 
             appendTraceLine(event, true);
 
             // Update status bar with current goal
-            String goalStr = event.getGoal().toString();
+            String goalStr = display(event.getGoal());   // ISS-2025-0476
             if (goalStr.length() > 60) goalStr = goalStr.substring(0, 57) + "...";
             updateStatusBar("Debug: PAUSED at [" + event.getDepth() + "] "
                 + event.getPort().toString().toUpperCase() + " " + goalStr);

@@ -33,31 +33,32 @@ public class GroundCheck implements BuiltIn {
         }
     }
     
+    // START_CHANGE: ISS-2025-0428 - ENG-09: iterative with an explicit work stack. The recursive
+    // walk needed one Java frame per list cell, so ground/1 on a list of a few tens of thousands of
+    // elements raised resource_error(stack_overflow).
     /**
-     * Recursively checks if a term is ground (contains no unbound variables).
+     * Checks if a term is ground (contains no unbound variables), dereferencing through
+     * {@code bindings}. A {@code seen} set makes circular variable chains terminate.
      */
     private boolean isGroundTerm(Term term, Map<String, Term> bindings) {
-        if (term instanceof Variable) {
-            Variable var = (Variable) term;
-            Term boundValue = bindings.get(var.getName());
-            if (boundValue == null) {
-                return false; // Unbound variable found
+        java.util.ArrayDeque<Term> work = new java.util.ArrayDeque<>();
+        java.util.Set<String> seen = null;                     // allocated only if variables appear
+        work.push(term);
+        while (!work.isEmpty()) {
+            Term t = work.pop();
+            if (t instanceof Variable) {
+                String name = ((Variable) t).getName();
+                Term boundValue = bindings.get(name);
+                if (boundValue == null) return false;          // unbound variable found
+                if (seen == null) seen = new java.util.HashSet<>();
+                if (!seen.add(name)) continue;                 // already expanded / circular chain
+                work.push(boundValue);
+            } else if (t instanceof CompoundTerm) {
+                for (Term arg : ((CompoundTerm) t).getArguments()) work.push(arg);
             }
-            // Check if the bound value is also ground
-            return isGroundTerm(boundValue, bindings);
+            // Atoms, numbers, and strings are always ground
         }
-        
-        if (term instanceof CompoundTerm) {
-            CompoundTerm compound = (CompoundTerm) term;
-            // All arguments must be ground
-            for (Term arg : compound.getArguments()) {
-                if (!isGroundTerm(arg, bindings)) {
-                    return false;
-                }
-            }
-        }
-        
-        // Atoms, numbers, and strings are always ground
         return true;
     }
+    // END_CHANGE: ISS-2025-0428
 }

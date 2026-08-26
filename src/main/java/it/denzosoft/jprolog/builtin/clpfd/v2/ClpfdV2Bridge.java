@@ -26,6 +26,14 @@ public final class ClpfdV2Bridge {
     private static final class Ctx {
         final ClpStore store = new ClpStore();
         final Map<String, FdVar> vars = new HashMap<>();
+        // START_CHANGE: ISS-2025-0460 - engine v4 wave W4: the ENGINE CELL behind each FD variable.
+        // On v4 a variable is an object, so a solution map keyed by name (exportSingletons/1 reports
+        // functionally-determined variables the goal never mentions) needs a way back to the cell.
+        // The bridge owns that mapping because the bridge is what attributed the cell in the first
+        // place; it replaces Machine.nameIndex, the engine-wide shim of waves W1-W3, and it is reset
+        // with the rest of the context at every top-level query.
+        final Map<String, Variable> cells = new HashMap<>();
+        // END_CHANGE: ISS-2025-0460
         // START_CHANGE: ISS-2025-0358 - counter for auxiliary difference variables
         int aux = 0;
         // END_CHANGE: ISS-2025-0358
@@ -56,6 +64,7 @@ public final class ClpfdV2Bridge {
             // default domain: a wide but finite interval (CLP(FD) requires bounded domains here)
             fv = c.store.newVar(v.getName(), IntervalDomain.interval(-100_000_000L, 100_000_000L));
             c.vars.put(v.getName(), fv);
+            c.cells.put(v.getName(), v);                 // ISS-2025-0460
             // START_CHANGE: ISS-2025-0355 - mark the engine variable as FD-constrained so binding it
             // fires onBind/onAlias; the registration is trailed, so backtracking out of the goal that
             // created the FdVar restores plain-variable semantics.
@@ -63,6 +72,7 @@ public final class ClpfdV2Bridge {
             final Ctx fc = c; final String name = v.getName(); final Variable fvv = v;
             it.denzosoft.jprolog.core.engine.Trail.record(() -> {
                 fc.vars.remove(name);
+                fc.cells.remove(name);                   // ISS-2025-0460
                 fvv.removeAttribute(CLPFD_ATTR);
             });
             // END_CHANGE: ISS-2025-0355
@@ -117,10 +127,12 @@ public final class ClpfdV2Bridge {
         final FdVar fb = c.vars.get(to.getName());
         if (fb == null) {
             c.vars.put(to.getName(), fa);
+            c.cells.put(to.getName(), to);               // ISS-2025-0460
             to.putAttribute(CLPFD_ATTR, FD_MARKER);
             final String name = to.getName(); final Variable tv = to;
             it.denzosoft.jprolog.core.engine.Trail.record(() -> {
                 c.vars.remove(name);
+                c.cells.remove(name);                    // ISS-2025-0460
                 tv.removeAttribute(CLPFD_ATTR);
             });
             return true;
@@ -129,6 +141,91 @@ public final class ClpfdV2Bridge {
         return guardedPost(() -> c.store.addConstraint(new Constraint.Cmp(fa, Constraint.Rel.EQ, fb)));
     }
     // END_CHANGE: ISS-2025-0355
+
+    // START_CHANGE: ISS-2025-0460 - engine v4 wave W4 (design B.9): the bridge is an ordinary
+    // attributed-cell client of the v4 machine. The attribute on the cell is what makes the machine
+    // wake '$clpfd_unify_hook'(VarName, Other) when the cell is bound; these three entry points are
+    // what that hook, and the v4 solution installer, call.
+    // START_CHANGE: ISS-2025-0486 - wave W9: the v4 hook takes the CELL, not a name. `cellFor(String)`
+    // and `onBindByName(String, Term)` are deleted with the last name-keyed hop in the engine: the
+    // machine already has the attributed cell when it queues the wake goal, so it hands it over.
+    /** v4 attribute hook: the FD-constrained cell {@code self} was bound to {@code value}. */
+    public static boolean onBindCell(Variable self, Term value) {
+        final Ctx c = ctx();
+        final FdVar fv = c.vars.get(self.getName());
+        if (fv == null) return true;                      // not (or no longer) FD-constrained
+        if (value instanceof Variable && ((Variable) value).ref == null) {
+            return onAlias(self, (Variable) value);
+        }
+        if (!(value instanceof Number) || !((Number) value).isInteger()) return false;
+        if (((Number) value).bigIntegerValue().bitLength() > 63) return false;   // outside FD range
+        final long val = ((Number) value).longValue();
+        return guardedPost(() -> ctx().store.narrow(fv, IntervalDomain.singleton(val))
+                              && ctx().store.propagate());
+    }
+    // END_CHANGE: ISS-2025-0486
+
+    /** The current domain of an FD-constrained cell as a term, or null when it is not one. This is
+     *  the residual goal an answer printer shows for a CLP(FD) variable (design B.12 / W7). */
+    public static Term domainTermForCell(Variable v) {
+        FdVar fv = ctx().vars.get(v.getName());
+        if (fv == null) return null;
+        IntervalDomain d = ctx().store.dom(fv);
+        return (d == null) ? null : domainToTerm(d);
+    }
+    // END_CHANGE: ISS-2025-0460
+
+    // START_CHANGE: ISS-2025-0471 - engine v4 wave W6: labeling over CELLS.
+    /**
+     * Label {@code varTerms} (already dereferenced by the machine) and return one
+     * cell -> value assignment per solution.
+     *
+     * <p>This is the cell-model twin of {@link #label(List, Map, Labeler.VarSel, Labeler.ValOrder)}:
+     * it never builds a {@code Map<String,Term>} and therefore never needs
+     * {@link #exportSingletons(Map)} or the {@link #cellFor(String)} hop back from a name to an
+     * engine variable. Functionally determined variables are still reported — every FD variable of
+     * the query whose domain is a singleton under the assignment is included, which is what
+     * {@code C in 1..3, D #= C*2+1, label([C])} needs (ISS-2025-0357) — but they are reported as
+     * the cells the bridge itself created, not as names.
+     *
+     * @return one insertion-ordered {@code cell -> value} map per solution
+     */
+    public static List<Map<Variable, Long>> labelCells(List<Term> varTerms,
+                                                       Labeler.VarSel varSel,
+                                                       Labeler.ValOrder valOrder) {
+        final Ctx c = ctx();
+        List<FdVar> fdVars = new ArrayList<>();
+        for (Term r : varTerms) {
+            if (r instanceof Variable) {
+                fdVars.add(varFor((Variable) r));
+            } else if (!(r instanceof Number) || !((Number) r).isInteger()) {
+                throw new PrologException(ISOErrorTerms.typeError("integer", r, "label/1"));
+            }
+        }
+        final List<Map<Variable, Long>> out = new ArrayList<>();
+        try {
+            Labeler.label(c.store, fdVars, varSel, valOrder, sol -> {
+                Map<Variable, Long> one = new java.util.LinkedHashMap<>();
+                for (Map.Entry<String, FdVar> e : c.vars.entrySet()) {
+                    Variable cell = c.cells.get(e.getKey());
+                    if (cell == null || cell.ref != null) continue;      // already bound
+                    Long v = sol.get(e.getValue());
+                    if (v == null) {
+                        IntervalDomain d = c.store.dom(e.getValue());
+                        if (d == null || !d.isSingleton()) continue;
+                        v = Long.valueOf(d.value());
+                    }
+                    one.put(cell, v);
+                }
+                out.add(one);
+                return true;
+            });
+        } catch (Labeler.TooLargeToLabel e) {
+            throw new PrologException(ISOErrorTerms.resourceError("clpfd_label_domain_too_large", "label/1"));
+        }
+        return out;
+    }
+    // END_CHANGE: ISS-2025-0471
 
     // START_CHANGE: ISS-2025-0357 - propagation that fixes a domain must bind the Prolog variable
     /** Add a binding for every engine variable whose domain is a singleton and which is not already
@@ -142,6 +239,28 @@ public final class ClpfdV2Bridge {
         }
     }
     // END_CHANGE: ISS-2025-0357
+
+    // START_CHANGE: ISS-2025-0486 - wave W9: the cell-model twin of exportSingletons/1. A v4 native
+    // posts a constraint and then binds the FD CELLS whose domain propagation has determined,
+    // instead of naming them in a Map<String,Term> that LegacyBuiltinAdapter had to translate back
+    // into cells through cellFor/1. That translation was the last name-keyed hop in the engine.
+    /**
+     * Every FD cell that is still unbound and whose domain is now a singleton, in registration
+     * order. This is what makes {@code C in 1..3, D #= C*2+1, C #= 1} bind {@code D} even though
+     * the goal {@code #=(C, 1)} never mentions it (ISS-2025-0357).
+     */
+    public static Map<Variable, Long> determinedCells() {
+        Ctx c = ctx();
+        Map<Variable, Long> out = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, FdVar> e : c.vars.entrySet()) {
+            Variable cell = c.cells.get(e.getKey());
+            if (cell == null || cell.ref != null) continue;      // already bound
+            IntervalDomain d = c.store.dom(e.getValue());
+            if (d != null && d.isSingleton()) out.put(cell, Long.valueOf(d.value()));
+        }
+        return out;
+    }
+    // END_CHANGE: ISS-2025-0486
 
     // ----------------------------------------------------------------- domain posting
 
@@ -348,6 +467,12 @@ public final class ClpfdV2Bridge {
         } else {
             return null;
         }
+        return domainToTerm(d);
+    }
+
+    /** {@code N}, {@code Lo..Hi} or {@code A \\/ B} for a domain (ISS-2025-0460: shared with
+     *  {@link #domainTermForCell}). */
+    private static Term domainToTerm(IntervalDomain d) {
         if (d.isEmpty()) return new Atom("{}");
         long[][] rs = d.rangeArray();
         Term acc = null;

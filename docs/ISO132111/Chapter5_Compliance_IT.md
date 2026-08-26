@@ -1,5 +1,13 @@
 # Capitolo 5: Conformità - Implementazione JProlog
 
+> **Nota di implementazione (v4.0.0).** Il codice Java mostrato in questo capitolo descrive il
+> motore *ricorsivo* `QuerySolver`, **eliminato nella 4.0.0** (wave W9, ISS-2025-0484). La
+> semantica del linguaggio descritta qui è invariata e resta valida; le classi no. Il motore
+> ora è `core.engine.v4` (`Machine`, `Unify`, `ClauseStore`, `Bindings`) e un built-in con
+> contesto riceve un `core.engine.SolverContext`, non un oggetto solver. Vedi `CLAUDE.md` e
+> `docs/reports/report-engine-v4-progress.md`.
+
+
 ## Panoramica
 
 Questo capitolo fornisce un'analisi completa della conformità di JProlog con lo standard Prolog ISO/IEC 13211-1:1995. Esamina come JProlog implementa ogni aspetto dello standard, documentando sia le caratteristiche conformi che le deviazioni, con esempi di implementazione dettagliati e applicazioni pratiche.

@@ -23,7 +23,7 @@ public class Prolog {
     
     private final KnowledgeBase knowledgeBase;
     private final BuiltInRegistry builtInRegistry;
-    private final QuerySolver querySolver;
+    private final EngineContext engineContext;   // ISS-2025-0484
     private final Parser parser;
     private final ModuleManager moduleManager;
     private final DCGTransformer dcgTransformer;
@@ -65,15 +65,85 @@ public class Prolog {
     public static boolean isUsingV2Dcg() { return USE_V2_DCG; }
     // END_CHANGE: ISS-2025-0304
 
-    // START_CHANGE: ISS-2025-0311 - route queries through the clean-room v2 resolution engine by default
-    // (MachineSolver: iterative SLD — no StackOverflow on deep recursion — mutable bindings + trail,
-    // lazy enumeration). Passes the full suite (675/675 + 20/20 examples). Fall back to the legacy
-    // recursive solver with -Djprolog.engine=legacy.
-    private static volatile boolean USE_V2_ENGINE =
-        !"legacy".equalsIgnoreCase(System.getProperty("jprolog.engine", "v2"));
-    public static void setUseV2Engine(boolean v2) { USE_V2_ENGINE = v2; }
-    public static boolean isUsingV2Engine() { return USE_V2_ENGINE; }
+    // START_CHANGE: ISS-2025-0311 - route queries through the clean-room v2 resolution engine
+    // (MachineSolver: iterative SLD, mutable bindings + trail, lazy enumeration).
+    // START_CHANGE: ISS-2025-0478 - wave W8: v4 is the DEFAULT engine; v2 is the one-release
+    // fallback selected by -Djprolog.engine=v2 (design decision 1, B.17).
+    // START_CHANGE: ISS-2025-0484 - wave W9: the recursive solver is DELETED, so there is no
+    // `legacy` value any more and there is only ONE flag. `isUsingV2Engine()` is simply
+    // "not v4", and `setUseV2Engine(b)` is the inverse of `setUseV4Engine(b)`; both are kept
+    // because tests and embedders written for 3.x call them.
+    /** The literal value of {@code -Djprolog.engine}, read once ({@code v4} when unset). */
+    private static final String ENGINE_PROPERTY = System.getProperty("jprolog.engine", "v4");
+    public static void setUseV2Engine(boolean v2) { USE_V4_ENGINE = !v2; }
+    public static boolean isUsingV2Engine() { return !USE_V4_ENGINE; }
+    // END_CHANGE: ISS-2025-0484
+    // END_CHANGE: ISS-2025-0478
     // END_CHANGE: ISS-2025-0311
+
+    // START_CHANGE: ISS-2025-0444 - engine v4 (design B.16 wave W1).
+    // The clean-room v4 core (core.engine.v4): variables are mutable cells, clauses are compiled
+    // skeletons, unification is cycle-safe and cancellable, the clause store keeps birth/death
+    // generations.
+    // START_CHANGE: ISS-2025-0478 - wave W8: this is now the DEFAULT engine. Only the literal
+    // property value `v2` turns it off (`-Djprolog.engine=anythingelse` is still v4), and
+    // `Prolog.setUseV4Engine(false)` drops to the v2 MachineSolver. The flag is re-read on every
+    // call, so the static setter works at runtime.
+    // ISS-2025-0484 - wave W9: `legacy` is gone with the recursive solver; this is the ONE engine
+    // flag now.
+    private static volatile boolean USE_V4_ENGINE =
+        !"v2".equalsIgnoreCase(ENGINE_PROPERTY);
+    public static void setUseV4Engine(boolean v4) { USE_V4_ENGINE = v4; }
+    public static boolean isUsingV4Engine() { return USE_V4_ENGINE; }
+    // END_CHANGE: ISS-2025-0478
+
+    /** This engine's v4 context (clause store, built-in tables); created on first v4 query. */
+    private volatile it.denzosoft.jprolog.core.engine.v4.Engine v4Engine;
+
+    /** The v4 engine context of this {@code Prolog} instance (created on demand). */
+    public it.denzosoft.jprolog.core.engine.v4.Engine getV4Engine() {
+        it.denzosoft.jprolog.core.engine.v4.Engine e = v4Engine;
+        if (e == null) {
+            synchronized (this) {
+                e = v4Engine;
+                if (e == null) {
+                    e = new it.denzosoft.jprolog.core.engine.v4.Engine(
+                        this, knowledgeBase, builtInRegistry, engineContext, moduleManager, tableStore);
+                    v4Engine = e;
+                }
+            }
+        }
+        return e;
+    }
+
+    /** Run one query on the v4 machine (fresh machine per query, like the v2 engine). */
+    private List<Map<String, Term>> solveWithV4Engine(Term query) {
+        final List<Map<String, Term>> out = new ArrayList<>();
+        solveStreamWithV4Engine(query, sol -> { out.add(sol); return true; });
+        return out;
+    }
+
+    private void solveStreamWithV4Engine(Term query, java.util.function.Predicate<Map<String, Term>> sink) {
+        // START_CHANGE: ISS-2025-0461 - wave W4: v4 has its own wake queue (core.engine.v4.Coroutining),
+        // so the process-wide LEGACY attribute hook is explicitly UNINSTALLED for the duration of a v4
+        // query. Leaving it installed would let a legacy built-in's internal Term.unify(Term, Map) fire
+        // freeze/when/dif against a throw-away binding map behind the machine's back.
+        Variable.AttributeUnifyHook prevHook = Variable.getAttributeUnifyHook();
+        Variable.setAttributeUnifyHook(null);
+        // END_CHANGE: ISS-2025-0461
+        try {
+            it.denzosoft.jprolog.core.engine.v4.Machine m =
+                new it.denzosoft.jprolog.core.engine.v4.Machine(getV4Engine(), new ResourceGuard(inferenceBudget));
+            m.solve(query, sink::test);
+        } catch (StackOverflowError e) {
+            // The v4 core is iterative; this can only come from a legacy built-in deep in a term.
+            throw new PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("stack_overflow", "solve"));
+        } finally {
+            Variable.setAttributeUnifyHook(prevHook);
+        }
+    }
+    // END_CHANGE: ISS-2025-0444
     private boolean traceEnabled = false;
 
     /**
@@ -85,15 +155,17 @@ public class Prolog {
         this.moduleManager = new ModuleManager();
         this.dcgTransformer = new DCGTransformer();
         // START_CHANGE: ISS-2025-0085 - Create shared OperatorTable
-        this.operatorTable = new OperatorTable();
+        // START_CHANGE: ISS-2025-0474 - wave W7 (design B.12): the operator table is the engine's
+        // own store, not a process-global one handed to OperatorDefinition. op/3, current_op/3, the
+        // parser, write_term/2,3 and the .jpc writer all read this one object (LIM-034).
+        this.operatorTable = engineState.ops().globalTable();
         this.parser = new Parser(operatorTable);
-        OperatorDefinition.setSharedOperatorTable(operatorTable);
+        // END_CHANGE: ISS-2025-0474
         // END_CHANGE: ISS-2025-0085
         // START_CHANGE: ISS-2025-0092 - Initialize table store
         this.tableStore = new TableStore();
         // END_CHANGE: ISS-2025-0092
-        this.querySolver = new QuerySolver(knowledgeBase, builtInRegistry);
-        this.querySolver.setPrologContext(this);
+        this.engineContext = new EngineContext(this, knowledgeBase, builtInRegistry);   // ISS-2025-0484
         registerBuiltInPredicates();
         // START_CHANGE: ISS-2025-0294 - optionally make the clean-room v2 CLP(FD) the default
         // (enable with -Djprolog.clpfd=v2 or Prolog.setUseV2Clpfd(true)).
@@ -137,11 +209,17 @@ public class Prolog {
                          name.equals("db_snapshot") || name.equals("db_restore") || name.equals("db_clear") ||
                          // END_CHANGE: ISS-2025-0126
                          // START_CHANGE: ISS-2025-0139 - Concurrent execution predicates
-                         name.equals("concurrent") || name.equals("concurrent_maplist") ||
-                         name.equals("concurrent_maplist3") || name.equals("concurrent_maplist4") ||
-                         name.equals("first_solution") || name.equals("concurrent_and") ||
-                         name.equals("concurrent_or") ||
-                         // END_CHANGE: ISS-2025-0139
+                         // START_CHANGE: ISS-2025-0480 - wave W8: the concurrency predicates are
+                         // NO LONGER wrapped in a CollectionBuiltInAdapter. The adapter pins the
+                         // solver at registration time (this engine's shared, recursive
+                         // recursive solver), which is exactly the object a worker must not use: on v4
+                         // the built-in has to receive the per-query SolverFacade so its
+                         // solveInWorker runs the goal on a fresh Machine over the same Engine
+                         // (LIM-024). Every dispatcher — LegacyBuiltinAdapter (v4),
+                         // MachineSolver.bridgeBuiltin (v2) and the recursive solver (legacy)
+                         // — already handles a BuiltInWithContext directly and passes the right
+                         // solver, so dropping the wrapper changes nothing on v2/legacy.
+                         // END_CHANGE: ISS-2025-0480
                          // START_CHANGE: LIM-003 - Global variable predicates (context-dependent)
                          name.equals("nb_setval") || name.equals("nb_getval") ||
                          name.equals("nb_current") || name.equals("nb_delete") ||
@@ -155,8 +233,16 @@ public class Prolog {
                          name.equals("freeze") || name.equals("when") || name.equals("dif")
                          // END_CHANGE: LIM-001
                          )) {
-                        // Special handling for context-dependent predicates
-                        builtInRegistry.registerBuiltIn(name, new CollectionBuiltInAdapter((BuiltInWithContext) builtIn, querySolver));
+                        // START_CHANGE: ISS-2025-0485 - wave W9: CollectionBuiltInAdapter is
+                        // DELETED. It wrapped a BuiltInWithContext so it could be called through
+                        // the plain BuiltIn interface, pinning ONE solver (the engine's shared
+                        // recursive solver) at registration time — which is exactly the
+                        // object a per-query context must not be. Every dispatcher that survives
+                        // (v4 LegacyBuiltinAdapter, v2 MachineSolver.bridgeBuiltin) handles a
+                        // BuiltInWithContext directly and passes the RIGHT context, so the
+                        // built-in is now registered unwrapped. Invariant 43 becomes structural.
+                        builtInRegistry.registerBuiltIn(name, builtIn);
+                        // END_CHANGE: ISS-2025-0485
                     } else if (name.equals("listing")) {
                         // Handle overloaded listing predicate
                         if (builtIn instanceof it.denzosoft.jprolog.builtin.database.Listing0) {
@@ -168,10 +254,12 @@ public class Prolog {
                         builtInRegistry.registerBuiltIn(name, builtIn);
                     }
                 } catch (Exception e) {
+                    it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                     LOGGER.log(Level.WARNING, "Failed to register built-in predicate: " + name, e);
                 }
             });
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             LOGGER.log(Level.SEVERE, "Error registering built-in predicates", e);
             throw new PrologException("Error registering built-in predicates: " + e.getMessage(), e);
         }
@@ -183,7 +271,13 @@ public class Prolog {
      * @param program The Prolog program as a string.
      */
     // START_CHANGE: ISS-2025-0168 - Multi-error parser recovery: collect all errors instead of stopping at first
+    // ISS-2025-0437 - ENG-06
     public void consult(String program) {
+        State prev = enterState();
+        try { consultGuarded(program); } finally { exitState(prev); }
+    }
+
+        private void consultGuarded(String program) {
         // START_CHANGE: ISS-2025-0293 - default to the v2 parser
         if (USE_V2_PARSER) { consultV2(program); return; }
         // END_CHANGE: ISS-2025-0293
@@ -233,6 +327,7 @@ public class Prolog {
                     errors.add("Error processing clause: '" + trimmed + "' - " + pe.getMessage());
                 // END_CHANGE: ISS-2025-0346
                 } catch (Exception e) {
+                    it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                     errors.add("Error processing clause: '" + trimmed + "' - " + e.getMessage());
                     // Continue with next clause
                 }
@@ -249,6 +344,7 @@ public class Prolog {
             errors.add("Error extracting clauses: " + pe.getMessage());
         // END_CHANGE: ISS-2025-0346
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             errors.add("Error extracting clauses: " + e.getMessage());
         }
 
@@ -276,7 +372,7 @@ public class Prolog {
         try {
             it.denzosoft.jprolog.core.parser.v2.TermReader reader =
                 new it.denzosoft.jprolog.core.parser.v2.TermReader(
-                    it.denzosoft.jprolog.core.parser.v2.Lexer.tokenize(program), operatorTable);
+                    it.denzosoft.jprolog.core.parser.v2.Lexer.tokenize(program), engineState.ops().table());
             // START_CHANGE: ISS-2025-0295 - per-clause error recovery: a parse error on one clause
             // must NOT drop the rest of the file (matches the legacy consult). Resync to the next '.'.
             for (;;) {
@@ -284,6 +380,7 @@ public class Prolog {
                 try {
                     clauseTerm = reader.nextClause();
                 } catch (RuntimeException pe) {
+                    it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(pe);   // ISS-2025-0431
                     errors.add("Parse error (v2): " + pe.getMessage());
                     reader.recover();
                     if (reader.atEof()) break;
@@ -317,6 +414,7 @@ public class Prolog {
                     errors.add("Error processing clause '" + clauseTerm + "': " + pe.getMessage());
                 // END_CHANGE: ISS-2025-0346
                 } catch (Exception e) {
+                    it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                     errors.add("Error processing clause '" + clauseTerm + "': " + e.getMessage());
                 }
             }
@@ -329,6 +427,7 @@ public class Prolog {
             errors.add("Parse error (v2): " + pe.getMessage());
         // END_CHANGE: ISS-2025-0346
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             errors.add("Parse error (v2): " + e.getMessage());
         }
         if (!errors.isEmpty()) {
@@ -412,8 +511,9 @@ public class Prolog {
                 switch (functor) {
                     case "module":
                         if (moduleManager.parseModuleDirective(directive)) {
-                            // START_CHANGE: R2 - publish current module name to OperatorDefinition for op visibility
-                            it.denzosoft.jprolog.builtin.system.OperatorDefinition.setCurrentModuleContext(
+                            // START_CHANGE: R2 - publish current module name for op/3 visibility
+                            // ISS-2025-0474: the operator store is per engine now (design B.12)
+                            engineState.ops().setModuleContext(
                                 moduleManager.getCurrentModule() != null
                                     ? moduleManager.getCurrentModule().getName()
                                     : "user");
@@ -539,7 +639,7 @@ public class Prolog {
      */
     private void executeGoalDirective(Term goal) {
         try {
-            List<Map<String, Term>> solutions = querySolver.solve(goal);
+            List<Map<String, Term>> solutions = solve(goal);   // ISS-2025-0484: the selected engine
             if (solutions.isEmpty()) {
                 // START_CHANGE: ISS-2025-0288 - surface a failed directive (was logged only at FINE)
                 System.err.println("Warning: goal directive failed: " + goal);
@@ -559,6 +659,7 @@ public class Prolog {
             LOGGER.log(Level.WARNING, "Goal directive error: " + goal + " - " + pe.getMessage());
         // END_CHANGE: ISS-2025-0346
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             System.err.println("Warning: goal directive raised an error: " + goal + " - " + e.getMessage());
             LOGGER.log(Level.WARNING, "Goal directive error: " + goal + " - " + e.getMessage());
         }
@@ -683,24 +784,24 @@ public class Prolog {
                 java.lang.String name = ((Atom) nameTerm).getName();
 
                 try {
-                    if (precedence == 0) {
-                        // Remove operator — remove all definitions with this name
-                        for (it.denzosoft.jprolog.core.operator.Operator op : operatorTable.getOperators(name)) {
-                            operatorTable.removeOperator(op.getPrecedence(), op.getType(), name);
-                        }
-                    } else {
-                        it.denzosoft.jprolog.core.operator.Operator.Type opType =
-                            it.denzosoft.jprolog.core.operator.Operator.parseType(type);
-                        operatorTable.defineOperator(precedence, opType, name);
+                    // START_CHANGE: ISS-2025-0474 - wave W7 (design B.12): go through the engine's
+                    // operator store, so current_op/3 SEES an operator declared by a consulted
+                    // `:- op/3` directive (it saw none before: this method only ever touched the
+                    // parser's OperatorTable, which current_op/3 did not read) and so an operator
+                    // declared inside a module file stays local to that module.
+                    engineState.ops().define(precedence, type, name);
+                    if (precedence != 0) {
                         // START_CHANGE: ISS-2025-0167 - Per-module operator scope
                         it.denzosoft.jprolog.core.module.Module currentMod = moduleManager.getCurrentModule();
-                        if (!"user".equals(currentMod.getName())) {
+                        if (currentMod != null && !"user".equals(currentMod.getName())) {
                             currentMod.defineOperator(precedence, type, name);
                         }
                         // END_CHANGE: ISS-2025-0167
                     }
+                    // END_CHANGE: ISS-2025-0474
                     LOGGER.log(Level.INFO, "Operator directive processed: op(" + precedence + ", " + type + ", " + name + ")");
                 } catch (Exception e) {
+                    it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                     LOGGER.log(Level.WARNING, "Failed to process op directive: " + e.getMessage());
                 }
             }
@@ -886,7 +987,70 @@ public class Prolog {
     /** Per-Prolog map of variable name → Variable instance, ONLY for vars with pending attribute goals. */
     private final Map<String, Variable> attributedSessionVars = new HashMap<>();
 
+    // START_CHANGE: ISS-2025-0437 - ENG-06: this engine's OWN ISO flag store (unknown,
+    // double_quotes, occurs_check, trace, ...). It is installed as the thread-current store around
+    // every solve/consult entry point, so the static PrologFlags API used by the built-ins and the
+    // parsers routes to the right engine; the previous store is restored afterwards, so an engine
+    // invoked from inside another engine's built-in cannot leave its flags behind.
+    private final it.denzosoft.jprolog.core.system.PrologFlags prologFlags = new it.denzosoft.jprolog.core.system.PrologFlags();
+
+    /** This engine's ISO flag store. Flags set here affect only this {@code Prolog} instance. */
+    public it.denzosoft.jprolog.core.system.PrologFlags getFlags() { return prologFlags; }
+
+    /** Enable/disable four-port call tracing for THIS engine (safe to call from another thread,
+     *  e.g. the IDE's Trace toggle or the CLI's {@code :trace} command). */
+    public void setTracing(boolean enabled) { prologFlags.setTracing(enabled); }
+
+    /** True when four-port call tracing is enabled for this engine. */
+    public boolean isTracing() { return prologFlags.isTracing(); }
+
+    // END_CHANGE: ISS-2025-0437
+
+    // START_CHANGE: ISS-2025-0472 - engine v4 wave W7 (design B.11/B.12): this engine's OWN stream
+    // table, operator store, spy points and profiler counters. Installed as the thread-current
+    // state around every solve/consult entry point exactly as the flag store is, so the unchanged
+    // static facades (StreamManager, OperatorDefinition, Spy, Profiler) used by the ~400 legacy
+    // built-ins route to the right engine on both engines (design decision 1, B.17).
+    private final it.denzosoft.jprolog.core.engine.v4.EngineState engineState =
+        new it.denzosoft.jprolog.core.engine.v4.EngineState();
+
+    /** This engine's per-engine state: streams, operators, spy points, profiler counters. */
+    public it.denzosoft.jprolog.core.engine.v4.EngineState getEngineState() { return engineState; }
+
+    /** This engine's stream table (design B.11). */
+    public it.denzosoft.jprolog.core.engine.v4.Streams getStreams() { return engineState.streams(); }
+
+    /** This engine's operator store (design B.12). */
+    public it.denzosoft.jprolog.core.engine.v4.Ops getOps() { return engineState.ops(); }
+
+    /** Enter this engine's state on the calling thread; the caller restores it in a finally. */
+    private State enterState() {
+        return new State(it.denzosoft.jprolog.core.system.PrologFlags.setCurrent(prologFlags),
+                         it.denzosoft.jprolog.core.engine.v4.EngineState.setCurrent(engineState));
+    }
+
+    private void exitState(State previous) {
+        it.denzosoft.jprolog.core.system.PrologFlags.setCurrent(previous.flags);
+        it.denzosoft.jprolog.core.engine.v4.EngineState.setCurrent(previous.state);
+    }
+
+    /** The saved thread-current engine state of an enclosing engine. */
+    private static final class State {
+        final it.denzosoft.jprolog.core.system.PrologFlags flags;
+        final it.denzosoft.jprolog.core.engine.v4.EngineState state;
+        State(it.denzosoft.jprolog.core.system.PrologFlags f, it.denzosoft.jprolog.core.engine.v4.EngineState s) {
+            this.flags = f; this.state = s;
+        }
+    }
+    // END_CHANGE: ISS-2025-0472
+
+    // ISS-2025-0437 - ENG-06: run under this engine's own flag store
     public List<Map<String, Term>> solve(String queryString) {
+        State prev = enterState();
+        try { return solveGuarded(queryString); } finally { exitState(prev); }
+    }
+
+        private List<Map<String, Term>> solveGuarded(String queryString) {
         try {
             // START_CHANGE: ISS-2025-0252 - reset transient per-query state (CLP(FD) store)
             resetTransientQueryState();
@@ -898,27 +1062,29 @@ public class Prolog {
             Term query;
             if (USE_V2_PARSER) {
                 try {
-                    query = it.denzosoft.jprolog.core.parser.v2.TermReader.parseTerm(queryString, operatorTable);
+                    query = it.denzosoft.jprolog.core.parser.v2.TermReader.parseTerm(queryString, engineState.ops().table());
                 } catch (StackOverflowError e) {   // ISS-2025-0341: deeply nested untrusted input
                     throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("parser_nesting", "read"));
                 } catch (RuntimeException e) {
+                    it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                     throw new PrologException("Error parsing query: " + e.getMessage(), e);
                 }
             } else {
                 query = parser.parseTerm(queryString);
             }
             // END_CHANGE: ISS-2025-0293
+            // START_CHANGE: ISS-2025-0461 - wave W4, design decision 3 (B.17, approved): on v4 a
+            // query's variables die with the query. No session-scoped attributed-variable splicing,
+            // so a suspended goal of a FINISHED query can never fire in a later one. The v2/legacy
+            // behaviour (v2.9.4 cross-solve identity) is unchanged.
+            if (USE_V4_ENGINE) {
+                return solveWithV4Engine(query);
+            }
+            // END_CHANGE: ISS-2025-0461
             // Splice any previously-suspended attributed variables (by name)
             query = spliceAttributedSessionVars(query);
-            // START_CHANGE: ISS-2025-0311 - opt-in v2 engine (already returns query-var-keyed solutions)
-            if (USE_V2_ENGINE) {
-                return solveWithV2Engine(query);
-            }
-            // END_CHANGE: ISS-2025-0311
-            List<Map<String, Term>> solutions = querySolver.solve(query);
-            // After solve: refresh session map — keep only currently-attributed (unbound) named vars
-            refreshAttributedSessionVars(query, solutions);
-            return mapInternalVariablesToQueryVariables(query, solutions);
+            // ISS-2025-0311 / ISS-2025-0484: the v2 fallback is the only other engine there is.
+            return solveWithV2Engine(query);
         } catch (DebugController.DebugStopException e) {
             throw e;
         } catch (PrologParserException e) {
@@ -932,10 +1098,10 @@ public class Prolog {
         // goals when an attributed variable is bound; refresh the attributed-session vars afterwards
         // so coroutines suspended in one query survive into the next.
         Variable.AttributeUnifyHook prevHook = Variable.getAttributeUnifyHook();
-        Variable.setAttributeUnifyHook(querySolver::handleAttributeUnification);
+        Variable.setAttributeUnifyHook(engineContext::handleAttributeUnification);
         try {
             it.denzosoft.jprolog.core.engine.v2.MachineSolver m =
-                new it.denzosoft.jprolog.core.engine.v2.MachineSolver(knowledgeBase, builtInRegistry, querySolver, moduleManager, tableStore);
+                new it.denzosoft.jprolog.core.engine.v2.MachineSolver(knowledgeBase, builtInRegistry, engineContext, moduleManager, tableStore);
             m.setInferenceBudget(inferenceBudget);   // ISS-2025-0339
             List<Map<String, Term>> out = new ArrayList<>();
             m.solve(query, sol -> { out.add(sol); return true; });
@@ -954,65 +1120,50 @@ public class Prolog {
     // START_CHANGE: ISS-2025-0321 - streaming solve: deliver solutions one at a time to a sink that
     // returns false to stop (lazy + bounded + cancellable). Lets the IDE cap result counts and avoid
     // buffering every solution of a high-/infinite-solution query. Mirrors the solve(String) setup.
-    /**
-     * Solve a query through the LEGACY recursive engine regardless of the {@code -Djprolog.engine}
-     * default. Since v3.3.0 (ISS-2025-0331) the default v2 engine fires the four-port
-     * {@code DebugController} events itself, so the IDE debugger runs on plain {@link #solve(String)};
-     * this entry point remains for detached sub-solves (e.g. breakpoint-condition evaluation,
-     * ISS-2025-0333) and for explicitly exercising the legacy solver.
-     */
-    public List<Map<String, Term>> solveLegacy(String queryString) {
-        resetTransientQueryState();
-        if (queryString.endsWith(".")) queryString = queryString.substring(0, queryString.length() - 1);
-        Term query;
-        try {
-            query = USE_V2_PARSER
-                ? it.denzosoft.jprolog.core.parser.v2.TermReader.parseTerm(queryString, operatorTable)
-                : parser.parseTerm(queryString);
-        } catch (StackOverflowError e) {   // ISS-2025-0341: deeply nested untrusted input
-            throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("parser_nesting", "read"));
-        } catch (RuntimeException e) {
-            throw new PrologException("Error parsing query: " + e.getMessage(), e);
-        }
-        query = spliceAttributedSessionVars(query);
-        List<Map<String, Term>> solutions = querySolver.solve(query);
-        refreshAttributedSessionVars(query, solutions);
-        return solutions;
+    // START_CHANGE: ISS-2025-0484 - wave W9: `solveLegacy(String)`, `solveLegacyGuarded` and
+    // `solveWithGuard` are DELETED with the recursive engine they drove. The IDE used
+    // `solveLegacy` for detached breakpoint-condition sub-solves; it uses `solve` with the debug
+    // controller temporarily nulled instead (DebugPanel).
+    // END_CHANGE: ISS-2025-0484
+
+    // ISS-2025-0437 - ENG-06
+    public void solveStream(String queryString, java.util.function.Predicate<Map<String, Term>> sink) {
+        State prev = enterState();
+        try { solveStreamGuarded(queryString, sink); } finally { exitState(prev); }
     }
 
-    public void solveStream(String queryString, java.util.function.Predicate<Map<String, Term>> sink) {
+        private void solveStreamGuarded(String queryString, java.util.function.Predicate<Map<String, Term>> sink) {
         resetTransientQueryState();
         if (queryString.endsWith(".")) queryString = queryString.substring(0, queryString.length() - 1);
         Term query;
         try {
             query = USE_V2_PARSER
-                ? it.denzosoft.jprolog.core.parser.v2.TermReader.parseTerm(queryString, operatorTable)
+                ? it.denzosoft.jprolog.core.parser.v2.TermReader.parseTerm(queryString, engineState.ops().table())
                 : parser.parseTerm(queryString);
         } catch (StackOverflowError e) {   // ISS-2025-0341: deeply nested untrusted input
             throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("parser_nesting", "read"));
         } catch (RuntimeException e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologException("Error parsing query: " + e.getMessage(), e);
         }
+        // ISS-2025-0444 - opt-in v4 engine: the native streaming path (lazy + cancellable)
+        // ISS-2025-0461 - no cross-query coroutining on v4 (design decision 3)
+        if (USE_V4_ENGINE) {
+            solveStreamWithV4Engine(query, sink);
+            return;
+        }
         query = spliceAttributedSessionVars(query);
-        if (USE_V2_ENGINE) {
-            Variable.AttributeUnifyHook prevHook = Variable.getAttributeUnifyHook();
-            Variable.setAttributeUnifyHook(querySolver::handleAttributeUnification);
-            try {
-            {
-                it.denzosoft.jprolog.core.engine.v2.MachineSolver m =
-                    new it.denzosoft.jprolog.core.engine.v2.MachineSolver(
-                        knowledgeBase, builtInRegistry, querySolver, moduleManager, tableStore);
-                m.setInferenceBudget(inferenceBudget);   // ISS-2025-0339
-                m.solve(query, sink::test);              // sink returns false to stop the search
-            }
-            } finally {
-                Variable.setAttributeUnifyHook(prevHook);
-            }
-        } else {
-            // legacy engine is eager: replay its (already-materialised) solutions through the sink
-            for (Map<String, Term> sol : querySolver.solve(query)) {
-                if (!sink.test(sol)) break;
-            }
+        // ISS-2025-0484: the v2 fallback is the only other engine; it streams natively.
+        Variable.AttributeUnifyHook prevHook = Variable.getAttributeUnifyHook();
+        Variable.setAttributeUnifyHook(engineContext::handleAttributeUnification);
+        try {
+            it.denzosoft.jprolog.core.engine.v2.MachineSolver m =
+                new it.denzosoft.jprolog.core.engine.v2.MachineSolver(
+                    knowledgeBase, builtInRegistry, engineContext, moduleManager, tableStore);
+            m.setInferenceBudget(inferenceBudget);   // ISS-2025-0339
+            m.solve(query, sink::test);              // sink returns false to stop the search
+        } finally {
+            Variable.setAttributeUnifyHook(prevHook);
         }
     }
     // END_CHANGE: ISS-2025-0311
@@ -1062,11 +1213,35 @@ public class Prolog {
         }
     }
 
-    /** Clear cross-solve attributed-var state (used by tests / REPL restart). */
+    /** Clear cross-solve attributed-var state (used by tests / REPL restart). On the v4 engine
+     *  there is no such state to clear — see {@link #residualGoals(Map)} and ISS-2025-0461. */
     public void clearSession() {
         attributedSessionVars.clear();
     }
     // END_CHANGE: v2.9.4
+
+    // START_CHANGE: ISS-2025-0462 - engine v4 wave W4 (design B.9 / B.12, limit L-11): the residual
+    // goals of an answer. An answer whose variables are still constrained is only half printed
+    // without them — SWI shows `freeze(X, Goal)`, `dif(X, Y)` and `X in 1..3` after the bindings.
+    // This is the accessor the CLI and the IDE will print in wave W7; nothing prints it yet.
+    /**
+     * The residual goals still attached to the variables of {@code solution}: frozen goals
+     * ({@code freeze/2}), pending {@code when/2} conditions, {@code dif/2} constraints and CLP(FD)
+     * domains ({@code in/2}), plus {@code put_attr/3} for an attribute module with no known
+     * rendering. Empty when the answer is unconstrained.
+     *
+     * <p>Call it right after the {@code solve} that produced the answer: the CLP(FD) part reads the
+     * per-query constraint store, which the next top-level query resets. Meaningful on the v4
+     * engine, where attributes live in the answer's variable cells; on the legacy and v2 engines an
+     * answer is a name-keyed map of resolved terms and this returns whatever attributes those terms
+     * still carry.
+     */
+    public List<Term> residualGoals(Map<String, Term> solution) {
+        if (solution == null || solution.isEmpty()) return new ArrayList<>();
+        return it.denzosoft.jprolog.core.engine.v4.Coroutining.residualGoals(
+            new ArrayList<>(solution.values()));
+    }
+    // END_CHANGE: ISS-2025-0462
     
     /**
      * Map internal variable names (created by TermCopier) back to original query variable names.
@@ -1138,7 +1313,13 @@ public class Prolog {
      * @param query The query term
      * @return List of all solutions
      */
+    // ISS-2025-0437 - ENG-06
     public List<Map<String, Term>> solve(Term query) {
+        State prev = enterState();
+        try { return solveTermGuarded(query); } finally { exitState(prev); }
+    }
+
+        private List<Map<String, Term>> solveTermGuarded(Term query) {
         // START_CHANGE: ISS-2025-0252 - reset transient per-query state (CLP(FD) store)
         resetTransientQueryState();
         // END_CHANGE: ISS-2025-0252
@@ -1146,12 +1327,15 @@ public class Prolog {
         // solve(String): the default v2 MachineSolver with the inference budget applied and
         // StackOverflowError converted to resource_error. Previously this overload silently ran
         // the legacy engine with no budget, bypassing the v3.4.0 DoS protection (ISS-2025-0339).
-        query = spliceAttributedSessionVars(query);
-        if (USE_V2_ENGINE) {
-            return solveWithV2Engine(query);
+        // ISS-2025-0444 - the Term overload routes to v4 as well, budget included
+        // ISS-2025-0461 - ... and, like solve(String), with no cross-query coroutining on v4
+        if (USE_V4_ENGINE) {
+            return solveWithV4Engine(query);
         }
+        query = spliceAttributedSessionVars(query);
         // END_CHANGE: ISS-2025-0345
-        return querySolver.solve(query);
+        // ISS-2025-0484: solve(Term) runs the SELECTED engine; there is no legacy path left.
+        return solveWithV2Engine(query);
     }
 
     // START_CHANGE: ISS-2025-0252 - Reset process-wide transient state at the start of each
@@ -1189,8 +1373,9 @@ public class Prolog {
      * @param traceEnabled true to enable tracing
      */
     public void setTraceEnabled(boolean traceEnabled) {
+        // ISS-2025-0484: the recursive solver's LOGGER.info trace (an unrelated mechanism to
+        // trace/0) went away with it; the four-port tracer is Prolog.setTracing / the engine flag.
         this.traceEnabled = traceEnabled;
-        querySolver.setTraceEnabled(traceEnabled);
     }
 
     // START_CHANGE: ISS-2025-0168 - Occurs check flag support
@@ -1439,12 +1624,15 @@ public class Prolog {
     }
     
     /**
-     * Get the query solver (for debug controller integration).
+     * The durable per-engine execution context: this is where the IDE installs its
+     * {@link DebugController} and where the running machine publishes the query's
+     * {@link ResourceGuard}.
      *
-     * @return The query solver
+     * <p>ISS-2025-0484 (wave W9) replaced the old solver accessor with this: the recursive
+     * solver it used to return no longer exists.
      */
-    public QuerySolver getQuerySolver() {
-        return querySolver;
+    public EngineContext getEngineContext() {
+        return engineContext;
     }
 
     /** The built-in predicate registry (used by the v2 engine bridge). */
@@ -1457,13 +1645,20 @@ public class Prolog {
      *  database, persistence). Removed by {@link #enableSafeMode()}. */
     private static final String[] UNSAFE_BUILTIN_PACKAGES = {
         ".builtin.os.", ".builtin.ffi.", ".builtin.filesystem.", ".builtin.network.",
-        ".builtin.http.", ".builtin.jdbc.", ".builtin.persistence."
+        ".builtin.http.", ".builtin.jdbc.", ".builtin.persistence.",
+        // START_CHANGE: ISS-2025-0479 - wave W8 made thread_create/2,3 and the concurrent_* family
+        // run REAL goals on REAL threads. A JVM thread is a host resource exactly like a process or
+        // a socket, and an untrusted program that can spawn them escapes the inference budget (each
+        // worker gets its own counter). They were harmless before — thread_create did not run its
+        // goal — so the package had never needed to be denied.
+        ".builtin.threading."
+        // END_CHANGE: ISS-2025-0479
     };
     private boolean safeMode = false;
 
     /**
      * Remove all host-touching built-ins (OS shell, Java FFI, filesystem, network, HTTP, JDBC,
-     * persistence) from THIS engine, so a subsequently consulted/queried (untrusted) program cannot
+     * persistence, threads) from THIS engine, so a subsequently consulted/queried (untrusted) program cannot
      * execute processes, reflect into the JVM, or read/write files, sockets or databases. Irreversible
      * for this instance. Returns the number of predicates removed. Use a fresh {@link Prolog} per
      * security domain. NOTE: this is a deny-by-package sandbox, not a full resource sandbox — combine
@@ -1490,7 +1685,12 @@ public class Prolog {
     /** Abort any subsequent query by throwing {@link InferenceLimitException} after this many
      *  resolution steps. Deliberately NOT a PrologException, so an untrusted {@code catch/3}
      *  cannot trap it — the Java embedder must catch it. Bounds CPU on untrusted/runaway
-     *  queries (v2 engine only). 0 disables it. */
+     *  queries (v2 engine only). 0 disables it.
+     *
+     *  <p>ISS-2025-0427 / ENG-08 — the unit is a MACHINE STEP (one drive-loop iteration), not a
+     *  logical inference: conjunction splits, {@code true}, cut and the machine's internal action
+     *  goals each consume one. Treat it as a runaway guard with a 2-4x safety factor over the
+     *  predicate-call count, not as a metering device. */
     public void setInferenceBudget(long steps) { this.inferenceBudget = steps; }
     public long getInferenceBudget() { return inferenceBudget; }
     // END_CHANGE: ISS-2025-0338
@@ -1554,7 +1754,13 @@ public class Prolog {
      * @param filename The source file name (for error reporting)
      * @return CompilationResult with success flag and error list
      */
+    // ISS-2025-0437 - ENG-06
     public CompilationResult consultWithDiagnostics(String program, String filename) {
+        State prev = enterState();
+        try { return consultWithDiagnosticsGuarded(program, filename); } finally { exitState(prev); }
+    }
+
+        private CompilationResult consultWithDiagnosticsGuarded(String program, String filename) {
         // START_CHANGE: ISS-2025-0302 - honor the default v2 parser for IDE diagnostics too
         if (USE_V2_PARSER) return consultWithDiagnosticsV2(program, filename);
         // END_CHANGE: ISS-2025-0302
@@ -1596,6 +1802,7 @@ public class Prolog {
                     }
                     clauseCount++;
                 } catch (Exception e) {
+                    it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                     errors.add(new CompilationError(filename, lineEstimate, e.getMessage(), "error"));
                 }
 
@@ -1605,6 +1812,7 @@ public class Prolog {
                 }
             }
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             errors.add(new CompilationError(filename, 1, e.getMessage(), "error"));
         }
 
@@ -1619,13 +1827,14 @@ public class Prolog {
         try {
             it.denzosoft.jprolog.core.parser.v2.TermReader reader =
                 new it.denzosoft.jprolog.core.parser.v2.TermReader(
-                    it.denzosoft.jprolog.core.parser.v2.Lexer.tokenize(program), operatorTable);
+                    it.denzosoft.jprolog.core.parser.v2.Lexer.tokenize(program), engineState.ops().table());
             for (;;) {
                 int line = reader.peekLine();
                 Term clauseTerm;
                 try {
                     clauseTerm = reader.nextClause();
                 } catch (RuntimeException pe) {
+                    it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(pe);   // ISS-2025-0431
                     errors.add(new CompilationError(filename, line, pe.getMessage(), "error"));
                     reader.recover();
                     if (reader.atEof()) break;
@@ -1650,11 +1859,13 @@ public class Prolog {
                     }
                     clauseCount++;
                 } catch (Exception e) {
+                    it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                     errors.add(new CompilationError(filename, line, e.getMessage(), "error"));
                 }
             }
             runPendingInitializationGoals();
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             errors.add(new CompilationError(filename, 1, e.getMessage(), "error"));
         }
         return new CompilationResult(errors.isEmpty(), errors, clauseCount);
@@ -1700,10 +1911,14 @@ public class Prolog {
         try {
             List<Rule> rules = new ArrayList<>();
             List<java.lang.String> clauses = parser.extractClauses(source);
-            for (java.lang.String clause : clauses) {
-                java.lang.String trimmed = clause.trim();
+            // ISS-2025-0447 - stamp each clause with its source line so the .jpc file (format 0x03)
+            // carries it and IDE line breakpoints work on compiled sources too.
+            List<Integer> lines = parser.getLastClauseLines();
+            for (int ci = 0; ci < clauses.size(); ci++) {
+                java.lang.String trimmed = clauses.get(ci).trim();
                 if (trimmed.isEmpty()) continue;
                 Rule rule = parser.parseRule(trimmed);
+                if (ci < lines.size() && lines.get(ci) != null) rule.setSourceLine(lines.get(ci));
                 if (isDirective(rule)) {
                     processDirective(rule);
                 }
@@ -1818,6 +2033,7 @@ public class Prolog {
                     return;
                 }
             } catch (Exception e) {
+                it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                 LOGGER.log(Level.WARNING, "Failed to load compiled file, falling back to source: " + e.getMessage());
             }
         }
@@ -1831,6 +2047,7 @@ public class Prolog {
             compileFile(sourceFile);
             LOGGER.log(Level.INFO, "Compiled: " + jpcFile);
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             LOGGER.log(Level.WARNING, "Failed to compile: " + e.getMessage());
         }
     }

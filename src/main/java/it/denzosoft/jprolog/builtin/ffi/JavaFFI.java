@@ -125,6 +125,7 @@ public class JavaFFI implements BuiltIn {
             }
             return result;
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return false;
         }
     }
@@ -428,7 +429,7 @@ public class JavaFFI implements BuiltIn {
         if (array == null || !array.getClass().isArray()) return false;
 
         int length = Array.getLength(array);
-        Term resultTerm = new Number((double) length);
+        Term resultTerm = new Number((long) length)   /* ISS-2025-0424 */;
         return unifyTerms(lengthTerm, resultTerm, bindings);
     }
 
@@ -639,17 +640,17 @@ public class JavaFFI implements BuiltIn {
         } else if (obj instanceof Boolean) {
             return new Atom(obj.toString());
         } else if (obj instanceof Integer) {
-            return new Number((double) (int) obj);
+            return new Number((long) (int) (Integer) obj)   /* ISS-2025-0424 */;
         } else if (obj instanceof Long) {
-            return new Number((double) (long) obj);
+            return new Number((long) (Long) obj)   /* ISS-2025-0424 */;
         } else if (obj instanceof Float) {
             return new Number((double) (float) obj, false);
         } else if (obj instanceof Double) {
             return new Number((double) obj, false);
         } else if (obj instanceof Short) {
-            return new Number((double) (short) obj);
+            return new Number((long) (short) (Short) obj)   /* ISS-2025-0424 */;
         } else if (obj instanceof Byte) {
-            return new Number((double) (byte) obj);
+            return new Number((long) (byte) (Byte) obj)   /* ISS-2025-0424 */;
         } else if (obj instanceof Character) {
             return new Atom(obj.toString());
         } else if (obj instanceof String) {

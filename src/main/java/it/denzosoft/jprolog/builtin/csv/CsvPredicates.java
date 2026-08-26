@@ -90,13 +90,15 @@ public class CsvPredicates implements BuiltIn {
             List<String> fields = parseCsvLine(trimmed);
             List<Term> fieldTerms = new ArrayList<>();
             for (String field : fields) {
-                // Try to parse as number
-                try {
-                    double val = Double.parseDouble(field);
-                    fieldTerms.add(new Number(val));
-                } catch (NumberFormatException e) {
+                // START_CHANGE: ISS-2025-0424 - ENG-02: a CSV field "1.0" is a FLOAT and "1" an
+                // INTEGER; Double.parseDouble + Number(double) collapsed both to the integer 1.
+                Number val = it.denzosoft.jprolog.builtin.conversion.AtomNumber.parseNumberToken(field);
+                if (val != null) {
+                    fieldTerms.add(val);
+                } else {
                     fieldTerms.add(new Atom(field));
                 }
+                // END_CHANGE: ISS-2025-0424
             }
             rows.add(new CompoundTerm(new Atom("row"), fieldTerms));
         }

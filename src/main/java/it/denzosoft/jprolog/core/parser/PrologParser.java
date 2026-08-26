@@ -150,6 +150,11 @@ public class PrologParser {
 
     private Number parseNumber() throws PrologParserException {
         String numberString = nextToken();
+        // START_CHANGE: ISS-2025-0424 - ENG-02: the legacy parser must keep integer tokens
+        // integral. Number(double) no longer auto-classifies, so parse the token strictly.
+        Number tok = it.denzosoft.jprolog.builtin.conversion.AtomNumber.parseNumberToken(numberString);
+        if (tok != null) return tok;
+        // END_CHANGE: ISS-2025-0424
         try {
             double value = Double.parseDouble(numberString);
             return new Number(value);

@@ -2,7 +2,7 @@ package it.denzosoft.jprolog.builtin.database;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.Prolog;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Term;
 
@@ -13,7 +13,7 @@ import java.util.Map;
 public class Listing0 implements BuiltInWithContext {
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+    public boolean executeWithContext(SolverContext solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         // Expect zero arguments for this predicate
         if (query.getArguments() != null && query.getArguments().size() != 0) {
             throw new PrologEvaluationException("listing/0 takes no arguments.");

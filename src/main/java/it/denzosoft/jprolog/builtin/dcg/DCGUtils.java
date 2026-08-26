@@ -2,8 +2,7 @@ package it.denzosoft.jprolog.builtin.dcg;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.CutStatus;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.*;
 
@@ -23,7 +22,7 @@ public class DCGUtils {
     // difference list Input -> Output, solves it via the engine, and propagates all solutions.
     public static class CallDCG implements BuiltInWithContext {
         @Override
-        public boolean executeWithContext(QuerySolver solver, Term query,
+        public boolean executeWithContext(SolverContext solver, Term query,
                                           Map<String, Term> bindings,
                                           List<Map<String, Term>> solutions) {
             if (query.getArguments().size() != 3) {
@@ -46,7 +45,7 @@ public class DCGUtils {
                     new CompoundTerm(new Atom("="), Arrays.asList(s, outputTerm))))));
 
             List<Map<String, Term>> goalSolutions = new ArrayList<>();
-            boolean ok = solver.solve(goal, new HashMap<>(bindings), goalSolutions, CutStatus.notOccurred());
+            boolean ok = solver.solveMeta(goal, new HashMap<>(bindings), goalSolutions);   // ISS-2025-0485
             if (ok) {
                 solutions.addAll(goalSolutions);
                 return true;
@@ -84,6 +83,7 @@ public class DCGUtils {
                     return true;
                 }
             } catch (Exception e) {
+                it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                 throw new PrologEvaluationException("DCG translation error: " + e.getMessage());
             }
             

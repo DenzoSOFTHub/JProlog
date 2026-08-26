@@ -4,7 +4,7 @@
 
 JProlog's concurrent execution library provides SWI-Prolog compatible predicates for parallel goal evaluation. These predicates allow you to execute multiple Prolog goals simultaneously using Java's `ExecutorService` thread pool, achieving real CPU-level parallelism for independent tasks.
 
-The implementation is in **`ConcurrentPredicates`** (`it.denzosoft.jprolog.builtin.threading.ConcurrentPredicates`), which implements `BuiltInWithContext` for access to the `QuerySolver`. All predicates create fresh bindings maps per thread to avoid data races, while sharing read-only access to the `KnowledgeBase`.
+The implementation is in **`ConcurrentPredicates`** (`it.denzosoft.jprolog.builtin.threading.ConcurrentPredicates`), which implements `BuiltInWithContext` for access to the `SolverContext`. Every goal is submitted through `SolverContext.solveInWorker`, which on the default engine runs it on a **fresh machine over the same engine** with the goal copied in and each answer copied out, so no variable cell is shared between threads.
 
 **Key architectural features**:
 - Uses `CachedThreadPool` with daemon threads — threads are reused across calls and don't prevent JVM shutdown.
@@ -67,11 +67,15 @@ Like `maplist/2` but executes Goal on each element in parallel. Succeeds if `cal
 
 ---
 
-### concurrent_maplist3/3
+### concurrent_maplist/3
 
 ```prolog
-concurrent_maplist3(:Goal, +List, -ResultList)
+concurrent_maplist(:Goal, +List, -ResultList)
 ```
+
+> Renamed in v4.0.0 (ISS-2025-0480). It used to be registered as `concurrent_maplist3`, a name no
+> Prolog goal could reach, and `concurrent_maplist/3` raised an arity error. One registry entry now
+> dispatches arities 2, 3 and 4.
 
 Like `maplist/3` but executes Goal on each element in parallel. Calls `Goal(Elem, Result)` for each element, collecting results in order.
 
@@ -89,11 +93,13 @@ Like `maplist/3` but executes Goal on each element in parallel. Calls `Goal(Elem
 
 ---
 
-### concurrent_maplist4/4
+### concurrent_maplist/4
 
 ```prolog
-concurrent_maplist4(:Goal, +List1, +List2, -ResultList)
+concurrent_maplist(:Goal, +List1, +List2, -ResultList)
 ```
+
+> Renamed in v4.0.0 (ISS-2025-0480), like `concurrent_maplist/3` above.
 
 Parallel maplist with two input lists. Calls `Goal(E1, E2, Result)` for corresponding elements.
 
@@ -255,7 +261,7 @@ heavy_computation(X, Result) :-
 
 % Process a batch of inputs in parallel
 process_batch(Inputs, Results) :-
-    concurrent_maplist3(heavy_computation, Inputs, Results).
+    concurrent_maplist(heavy_computation, Inputs, Results).
 
 % Usage:
 % ?- numlist(1, 1000, Inputs),

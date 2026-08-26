@@ -68,6 +68,7 @@ public class CodeType implements BuiltIn {
         } catch (PrologEvaluationException e) {
             throw e;
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("code_type/2 error: " + e.getMessage());
         }
     }

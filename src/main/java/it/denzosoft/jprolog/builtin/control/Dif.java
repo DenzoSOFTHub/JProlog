@@ -2,8 +2,7 @@
 package it.denzosoft.jprolog.builtin.control;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.CutStatus;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -27,14 +26,14 @@ public class Dif implements BuiltInWithContext {
 
     public static final String DIF_MODULE = "dif";
 
-    private final QuerySolver solver;
+    private final SolverContext solver;
 
-    public Dif(QuerySolver solver) {
+    public Dif(SolverContext solver) {
         this.solver = solver;
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings,
+    public boolean executeWithContext(SolverContext solver, Term query, Map<String, Term> bindings,
                                       List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
         if (args == null || args.size() != 2) return false;
@@ -83,7 +82,7 @@ public class Dif implements BuiltInWithContext {
      * Called by the attribute unification hook.
      * @return true if the constraint still holds or is still delayed, false if violated
      */
-    public static boolean checkDifConstraint(QuerySolver solver, Term difTerm, Map<String, Term> bindings) {
+    public static boolean checkDifConstraint(SolverContext solver, Term difTerm, Map<String, Term> bindings) {
         if (difTerm instanceof CompoundTerm) {
             CompoundTerm ct = (CompoundTerm) difTerm;
             if ("dif".equals(ct.getName()) && ct.getArguments() != null && ct.getArguments().size() == 2) {

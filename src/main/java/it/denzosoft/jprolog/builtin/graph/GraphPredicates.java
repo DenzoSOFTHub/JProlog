@@ -196,6 +196,7 @@ public class GraphPredicates implements BuiltIn {
             return new Number(l);
         } catch (NumberFormatException e1) {
             try {
+                // ISS-2025-0424 - ENG-02: reached only when Long.parseLong failed, so a genuine float
                 double d = Double.parseDouble(name);
                 return new Number(d);
             } catch (NumberFormatException e2) {

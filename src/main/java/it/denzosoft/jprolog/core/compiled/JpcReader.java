@@ -86,13 +86,18 @@ public class JpcReader {
         int ruleCount = readVarint(dis);
         List<Rule> rules = new ArrayList<>(ruleCount);
         for (int i = 0; i < ruleCount; i++) {
-            Term head = readTerm(dis, strings);
+            // START_CHANGE: ISS-2025-0447 - one shared Variable per index, per CLAUSE (format 0x03)
+            List<Variable> frame = new ArrayList<>();
+            Term head = readTerm(dis, strings, frame);
             int bodyCount = readVarint(dis);
             List<Term> body = new ArrayList<>(bodyCount);
             for (int j = 0; j < bodyCount; j++) {
-                body.add(readTerm(dis, strings));
+                body.add(readTerm(dis, strings, frame));
             }
-            rules.add(new Rule(head, body));
+            Rule r = new Rule(head, body);
+            r.setSourceLine(readVarint(dis) - 1);
+            rules.add(r);
+            // END_CHANGE: ISS-2025-0447
         }
 
         return new CompiledProgram(sourceHash, operators, rules);
@@ -101,7 +106,7 @@ public class JpcReader {
     // ---------- internals ----------
 
     // START_CHANGE: ISS-2025-0190 - Add bounds checking on string table indices
-    private Term readTerm(DataInputStream dis, String[] strings) throws IOException {
+    private Term readTerm(DataInputStream dis, String[] strings, List<Variable> frame) throws IOException {
         byte type = dis.readByte();
         switch (type) {
             case JpcFormat.TERM_ATOM: {
@@ -130,9 +135,16 @@ public class JpcReader {
                 // END_CHANGE: ISS-2025-0261
             }
             case JpcFormat.TERM_VARIABLE: {
+                // START_CHANGE: ISS-2025-0447 - index first, then the name; one cell per index.
+                int slot = readVarint(dis);
                 int idx = readVarint(dis);
                 checkStringIndex(idx, strings.length, "variable");
-                return new Variable(strings[idx]);
+                if (slot < 0 || slot > 1_000_000) throw new IOException("Invalid variable slot: " + slot);
+                while (frame.size() <= slot) frame.add(null);
+                Variable v = frame.get(slot);
+                if (v == null) { v = new Variable(strings[idx]); frame.set(slot, v); }
+                return v;
+                // END_CHANGE: ISS-2025-0447
             }
             case JpcFormat.TERM_COMPOUND: {
                 int functorIdx = readVarint(dis);
@@ -140,7 +152,7 @@ public class JpcReader {
                 int argCount = readVarint(dis);
                 List<Term> args = new ArrayList<>(argCount);
                 for (int i = 0; i < argCount; i++) {
-                    args.add(readTerm(dis, strings));
+                    args.add(readTerm(dis, strings, frame));
                 }
                 return new CompoundTerm(new Atom(strings[functorIdx]), args);
             }

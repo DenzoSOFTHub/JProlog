@@ -4,7 +4,7 @@ import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.Clause;
 import it.denzosoft.jprolog.core.engine.Prolog;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -24,14 +24,14 @@ import java.util.Map;
  */
 public class Asserta implements BuiltInWithContext {
     
-    private final QuerySolver querySolver;
+    private final SolverContext querySolver;
     
-    public Asserta(QuerySolver querySolver) {
+    public Asserta(SolverContext querySolver) {
         this.querySolver = querySolver;
     }
     
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, 
+    public boolean executeWithContext(SolverContext solver, Term query, 
                                     Map<String, Term> bindings, 
                                     List<Map<String, Term>> solutions) {
         
@@ -73,6 +73,7 @@ public class Asserta implements BuiltInWithContext {
             return true;
             
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologException(createSystemError("asserta/1: " + e.getMessage()));
         }
     }
@@ -108,6 +109,7 @@ public class Asserta implements BuiltInWithContext {
                 )
             );
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return new Atom("instantiation_error");
         }
     }
@@ -128,6 +130,7 @@ public class Asserta implements BuiltInWithContext {
                 )
             );
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return new Atom("type_error");
         }
     }
@@ -142,6 +145,7 @@ public class Asserta implements BuiltInWithContext {
                 )
             );
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return new Atom("system_error");
         }
     }

@@ -3,7 +3,7 @@ package it.denzosoft.jprolog.builtin.database;
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.Prolog;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
@@ -24,14 +24,14 @@ import java.util.Map;
  */
 public class Abolish implements BuiltInWithContext {
     
-    private final QuerySolver querySolver;
+    private final SolverContext querySolver;
     
-    public Abolish(QuerySolver querySolver) {
+    public Abolish(SolverContext querySolver) {
         this.querySolver = querySolver;
     }
     
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, 
+    public boolean executeWithContext(SolverContext solver, Term query, 
                                     Map<String, Term> bindings, 
                                     List<Map<String, Term>> solutions) {
         
@@ -100,6 +100,7 @@ public class Abolish implements BuiltInWithContext {
             }
             
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologException(createSystemError("abolish/1: " + e.getMessage()));
         }
     }
@@ -119,6 +120,7 @@ public class Abolish implements BuiltInWithContext {
                 )
             );
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return new Atom("instantiation_error");
         }
     }
@@ -139,6 +141,7 @@ public class Abolish implements BuiltInWithContext {
                 )
             );
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return new Atom("type_error");
         }
     }
@@ -159,6 +162,7 @@ public class Abolish implements BuiltInWithContext {
                 )
             );
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return new Atom("domain_error");
         }
     }
@@ -173,6 +177,7 @@ public class Abolish implements BuiltInWithContext {
                 )
             );
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return new Atom("system_error");
         }
     }

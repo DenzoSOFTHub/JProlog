@@ -41,6 +41,7 @@ public class EnhancedPhrase implements BuiltIn {
                 return phrase3(dcgBody, inputList, restList, bindings, solutions);
             }
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("phrase error: " + e.getMessage());
         }
     }

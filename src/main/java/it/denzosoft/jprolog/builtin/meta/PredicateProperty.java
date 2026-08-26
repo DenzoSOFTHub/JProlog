@@ -3,7 +3,7 @@ package it.denzosoft.jprolog.builtin.meta;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.Prolog;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
@@ -30,14 +30,14 @@ import java.util.Set;
  */
 public class PredicateProperty implements BuiltInWithContext {
 
-    private final QuerySolver querySolver;
+    private final SolverContext querySolver;
 
-    public PredicateProperty(QuerySolver querySolver) {
+    public PredicateProperty(SolverContext querySolver) {
         this.querySolver = querySolver;
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query,
+    public boolean executeWithContext(SolverContext solver, Term query,
                                      Map<String, Term> bindings,
                                      List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
@@ -142,7 +142,7 @@ public class PredicateProperty implements BuiltInWithContext {
     /**
      * Enumerate all predicates (both built-in and user-defined) and their properties.
      */
-    private boolean enumerateAllPredicates(QuerySolver solver, Variable headVar,
+    private boolean enumerateAllPredicates(SolverContext solver, Variable headVar,
                                            Term propertyTerm,
                                            Map<String, Term> bindings,
                                            List<Map<String, Term>> solutions) {

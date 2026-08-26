@@ -2,11 +2,55 @@
 
 **A Full-Featured Prolog System with Engine, IDE, CLI, and Comprehensive Built-ins**
 
-[![Version](https://img.shields.io/badge/version-3.6.0-blue.svg)](https://github.com/DenzoSOFTHub/JProlog/releases/tag/v3.6.0) [![Java](https://img.shields.io/badge/java-1.8%2B-orange.svg)]() [![ISO](https://img.shields.io/badge/ISO%2013211--1-100%25%20core-green.svg)]()
+[![Version](https://img.shields.io/badge/version-4.0.0-blue.svg)](https://github.com/DenzoSOFTHub/JProlog/releases/tag/v4.0.0) [![Java](https://img.shields.io/badge/java-1.8%2B-orange.svg)]() [![ISO](https://img.shields.io/badge/ISO%2013211--1-100%25%20core-green.svg)]()
 
-**Current version**: `3.6.0` — see [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/DenzoSOFTHub/JProlog/releases).
+**Current version**: `4.0.0` — see [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/DenzoSOFTHub/JProlog/releases).
 
-### 🆕 New in 3.0.0 – 3.6.0
+### 🆕 New in 3.9.0 – 4.0.0: **engine v4 is the default, and the old one is gone**
+
+- **Engine v4 (`core.engine.v4`) replaces the v2 machine as the default resolution engine in 4.0.0**
+  — nine months of design in `docs/reports/report-engine-v4-design-2026-08-25.md`, built over nine
+  waves (ISS-2025-0438..0488) and shipped only once the whole suite was green on it. Variables are
+  mutable cells with a trail, clauses are compiled skeletons, every term walker is iterative and
+  cycle-safe, and the clause store keeps birth/death generations. What you get:
+  **`nrev` ~2 MLIPS (v2: ~316 KLIPS)**, `loop(10000000)` in 64 MB where v2 runs out of memory,
+  a user's own list predicate over 1 M elements 6x faster, rational trees (`X = f(X)`) that succeed
+  and print, **correct tabling** (left recursion over a 100 000-edge chain in 868 ms — v2 answers
+  *wrong* in 40 ms), a real coroutining wake queue (`when/2` bindings propagate), a proper module
+  system with autoloaded Prolog library modules and `meta_predicate/1`, per-engine streams and
+  operators, and an ISO term writer behind the whole write family.
+  **The previous engine stays selectable for one release**: `-Djprolog.engine=v2`. See
+  *Engine/Parser Toggles* below.
+- **The recursive engine is deleted (4.0.0, wave W9)** — the original `QuerySolver` that JProlog ran
+  on until 3.0.0, together with `CutStatus`, the binding map, the built-in adapter and the seven
+  Java control constructs the newer machines implement natively: 1 434 lines and 13 classes gone.
+  `BuiltInWithContext` now takes a small `SolverContext` interface instead of a solver class, so an
+  embedded built-in can no longer accidentally run on a recursive sub-solver.
+  Removed with it: `-Djprolog.engine=legacy`, the `engine-legacy` Maven profile,
+  `Prolog.solveLegacy` and `Prolog.getQuerySolver` (use `Prolog.getEngineContext()`).
+- **Tabling is thread-safe, and a worker can answer its creator (4.0.0)**: several workers of one
+  query may call the same tabled predicate — the first produces the table, the rest read it
+  complete (they used to interleave and some saw half a table). `thread_send_message(main, T)` and
+  `thread_get_message(T)` from the main thread work, as in SWI.
+- **Threads run real goals on real machines (4.0.0)**: `thread_create/2,3` used to start a thread
+  that slept 10 ms and never ran the goal. Each worker now gets its own machine over the same
+  engine — shared clause store, shared flags, its own streams and inference budget, and a copied
+  goal so no variable is shared across threads. `concurrent_maplist/3,4` are callable at all for
+  the first time, message queues carry terms, and interrupting the parent cancels the workers.
+- **Debugging and tracing that you can leave switched on (4.0.0)**: attaching a debugger no longer
+  reroutes `=/2`, `is/2`, the comparisons and the type checks through a slower bridge — the engine
+  keeps its fast paths and reports the four ports itself, so a running debugger costs nothing
+  measurable (5.8x -> 1.1x on `nrev`). Textual tracing stopped being quadratic: `loop(1000000)`
+  under `trace/0` finishes in 4.6 s instead of not finishing at all, and `nrev` went from 567x
+  slower than untraced to ~10-18x.
+- **A piped console no longer eats your queries (4.0.0)**: with stdin redirected the CLI used to
+  read the *next query* as the answer to its "more solutions?" prompt. It now prints every solution
+  at once when stdin is not a terminal, or with `--batch` / `-q`.
+
+### 🆕 New in 3.0.0 – 3.8.0
+
+- **Engine hardening waves (3.7.0 / 3.8.0)**: a deep engine analysis (`docs/reports/report-engine-deep-analysis-2026-08-24.md`) drove 15 fixes (ISS-2025-0423..0437): lists of **1,000,000 elements** work at the default JVM stack (all term walkers are tail-iterative), deterministic recursion runs in bounded memory (choice points popped when exhausted, trail released), built-in calls no longer copy the whole binding map, **`between/3`, `repeat/0` and `length/2` are lazy generators**, the **inference budget and Stop are enforced inside `once/ignore/forall/aggregate_all/bagof/setof/setup_call_cleanup`** and on the legacy engine (`ResourceGuard`), first-argument indexing is back (20 000-fact lookups ~2000× faster), arithmetic runs on primitive `long` fast paths, and ISO flags / `trace/0` / `current_output` are **isolated per engine and per thread**. Correctness: `repeat/0` past 1000 iterations, floats no longer collapse to integers (`sum_list([1.5,1.5],S)` gives `3.0`), Java failures inside built-ins surface as `system_error`. Baseline **989/989 tests, 20/20 example programs**; `nrev` 188 → ~440 KLIPS.
+- **Reference Manual (PDF)**: `docs/guides/guide-builtin-manual.pdf` documents every default operator and built-in predicate with verified examples (regenerate with `tools/build-manual.sh`).
 
 - **ISO-conformance audit waves (3.5.0 / 3.6.0)**: a multi-agent empirical audit ran ISO-conformance queries against the build; **80 confirmed defects fixed** (ISS-2025-0342..0422) — cut/catch semantics, ISO error terms for undefined procedures and bad arguments, ISO end-token `read/1`, strict `format/2,3`, ISO-correct `writeq`/float output, `setof/3` ordering, re-executable `retract/1`, list-predicate modes, `phrase/2,3` full body translation, CLP(FD) soundness, and more.
 - **Production hardening (3.4.0)**: a **sandbox** — `Prolog.enableSafeMode()` removes all host-touching built-ins (OS shell, Java FFI, filesystem, network, HTTP, JDBC, persistence) — and a **CPU budget** — `Prolog.setInferenceBudget(steps)` aborts runaway queries with an uncatchable `InferenceLimitException`. Deep terms and deeply nested input now raise a catchable `resource_error` instead of crashing. Correctness fixes: `sort`/`msort`/`sort_4` on lists with variables, `freeze/2` binding propagation, ISO errors for `call/1` & `=../2`. (Driven by a multi-agent production-readiness audit — `docs/reports/report-production-readiness-audit-2026-06-09.md`.)
@@ -55,7 +99,7 @@ The heart of JProlog - a complete Prolog inference engine with:
 - **Exception handling**: Comprehensive error management with ISO-compliant error terms
 - **Module system**: Namespace management with module-qualified calls (`Module:Goal`)
 
-**Key Classes**: `Prolog.java`, `QuerySolver.java`, `KnowledgeBase.java`, `DCGTransformer.java`, `JpcWriter.java`, `JpcReader.java`
+**Key Classes**: `Prolog.java`, `core/engine/v4/Machine.java`, `core/engine/v4/Unify.java`, `core/engine/v4/ClauseStore.java`, `KnowledgeBase.java`, `EngineContext.java`, `core/dcg/v2/DCGTranslator.java`, `JpcWriter.java`, `JpcReader.java`
 
 ### 2. 🖥️ Integrated Development Environment (`editor/`)
 
@@ -214,6 +258,7 @@ JProlog provides comprehensive documentation for all aspects of the system:
 ### 🚀 **User Guides**
 - **[docs/guides/guide-quick-start.md](docs/guides/guide-quick-start.md)**: 5-minute setup guide for immediate productivity
 - **[docs/guides/guide-user-manual.md](docs/guides/guide-user-manual.md)**: Complete user guide for all components
+- [Reference Manual — built-in predicates and operators](docs/guides/guide-builtin-manual.md) — every default predicate and operator with verified examples; also as [PDF](docs/guides/guide-builtin-manual.pdf)
 - **[docs/guides/guide-cli-usage.md](docs/guides/guide-cli-usage.md)**: Dedicated command-line interface guide
 - **[docs/guides/guide-ide-usage.md](docs/guides/guide-ide-usage.md)**: Integrated Development Environment usage guide
 - **[docs/guides/guide-prolog-intro.md](docs/guides/guide-prolog-intro.md)**: Introduction to Prolog programming
@@ -251,18 +296,19 @@ JProlog provides comprehensive documentation for all aspects of the system:
 
 ## 📊 **Quality Metrics & Compliance**
 
-### 🎯 **Current Status (Version 3.6.0)**
-- **Unit Tests**: 935 tests, 0 failures, 0 errors
-- **Core Test Success Rate**: 100% (20/20 example programs pass)
+### 🎯 **Current Status (Version 4.0.0)**
+- **Unit Tests**: 1214 tests, 0 failures, 0 errors — on the default engine (v4) **and** on the v2 fallback (`mvn test -Pengine-v2`)
+- **Core Test Success Rate**: 100% (20/20 example programs pass, on both engines)
 - **ISO Prolog Compliance**: 100% ISO 13211-1 core predicate coverage (111/111); ~50 ISO/correctness fixes in v3.0.0 plus 80 audit-confirmed conformance defects fixed across v3.5.0/v3.6.0
-- **Built-in Predicate Coverage**: 280+ predicates including I/O, CLP(FD), FFI, crypto, networking
+- **Built-in Predicate Coverage**: 416 registered predicates including I/O, CLP(FD), FFI, crypto, networking — 63 native to the v4 engine, ~40 more handled inline by the machine, the rest on the built-in bridge
+- **Resolution Engine**: clean-room **v4** core (`core.engine.v4`, default since 4.0.0) — mutable variable cells + trail, compiled clause skeletons, first-argument indexing, iterative cycle-safe walkers, linear tabling with completion, native coroutining, per-engine modules/streams/operators; the v2 `MachineSolver` is the one-release fallback (`-Djprolog.engine=v2`)
 - **Parser**: Clean-room single-pass v2 parser (`core.parser.v2`, default) with unified operator table and dynamic `op/3` support; legacy parser via `-Djprolog.parser=legacy`
 - **Binary Format**: `.jpc` compiled format with string interning for fast loading
 - **DCG Support**: complete (clean-room v2 translator passes the comprehensive 20/20 DCG program suite)
 - **Module Support**: Module framework with module-qualified calls (`Module:Goal`) wired into execution
 
 ### 🧪 **Testing Framework**
-- **935 Unit Tests**: JUnit test suite covering all engine components
+- **1214 Unit Tests**: JUnit test suite covering all engine components (incl. `EngineHardeningTest` and the ten `EngineV4*Test` wave suites)
 - **130 Total Prolog Programs**: Comprehensive test suite in `examples/` directory
 - **74 Systematic Test Programs**: `test_*.pl` programs covering all language features
 - **20 DCG Test Programs**: Complete DCG testing from `test_dcg_01` to `test_dcg_20`
@@ -299,7 +345,7 @@ Clean-room rewrites (now default) and ~50 in-place ISO/correctness fixes resolve
 - CHR (basic simplification/propagation), rational numbers (`rdiv`), number literal notation (`0'a`, `0xFF`, `0o77`, `0b1010`)
 - Multi-argument indexing, compiled clause cache, atom garbage collection
 
-Tracked limitations LIM-001 through LIM-030 are recorded in [docs/tracking/track-limitations.md](docs/tracking/track-limitations.md) (LIM-001–022 resolved; the remaining open items are narrow: legacy-engine-only gaps, threading isolation, `with_output_to/2` stream handling, bounded open-tail list modes).
+Tracked limitations are recorded in [docs/tracking/track-limitations.md](docs/tracking/track-limitations.md). After 4.0.0 the open list is short: **LIM-037** (~310 of the 416 registered predicates still run on the eager built-in bridge — none on a measured hot path), **LIM-036** (`.jpc` source lines come from the legacy parser) and **LIM-027** (bounded open-tail list modes, on the v2 fallback only).
 
 ---
 
@@ -324,7 +370,8 @@ JProlog/
 │   ├── core/                         # 🧠 Core Prolog Engine
 │   │   ├── engine/                   # Main engine components
 │   │   │   ├── Prolog.java           # Primary Prolog engine
-│   │   │   ├── QuerySolver.java      # Query resolution and backtracking
+│   │   │   ├── EngineContext.java    # Durable per-engine context (debugger, budget)
+│   │   │   ├── v4/                   # The resolution engine (Machine, Unify, ClauseStore, ...)
 │   │   │   ├── KnowledgeBase.java    # Fact/rule storage system
 │   │   │   └── BuiltInRegistry.java  # Built-in predicate registry
 │   │   ├── parser/                   # Prolog syntax parsing
@@ -377,7 +424,7 @@ JProlog/
 
 ### Comprehensive Testing Suite
 ```bash
-# JUnit tests (935 tests)
+# JUnit tests (989 tests)
 mvn test
 
 # Run all 20 example programs (comprehensive testing)
@@ -400,16 +447,28 @@ mvn test
 
 ### Engine/Parser Toggles (system properties)
 
-v3.0.0 makes the clean-room rewrites the default. Revert to a legacy implementation per subsystem:
+The clean-room implementations are the defaults. Select an older one per subsystem:
+
+| Subsystem | default | fallback |
+|---|---|---|
+| Resolution engine | **`core.engine.v4`** (since 4.0.0) | `-Djprolog.engine=v2` (the 3.x `core.engine.v2.MachineSolver`, kept for **one release**). The recursive `QuerySolver` and `=legacy` were deleted in 4.0.0. |
+| Parser | `core.parser.v2` | `-Djprolog.parser=legacy` |
+| DCG translator | `core.dcg.v2` | `-Djprolog.dcg=legacy` |
+| CLP(FD) solver | `builtin.clpfd.v2` | `-Djprolog.clpfd=legacy` |
 
 ```bash
--Djprolog.parser=legacy   # legacy parser instead of core.parser.v2 (default: v2)
--Djprolog.dcg=legacy      # legacy DCG transformer instead of core.dcg.v2 (default: v2)
--Djprolog.clpfd=legacy    # legacy CLP(FD) store instead of builtin.clpfd.v2 (default: v2)
--Djprolog.engine=legacy   # legacy recursive solver instead of core.engine.v2 (default: v2)
+-Djprolog.engine=v2       # the previous default engine (core.engine.v2.MachineSolver)
+-Djprolog.parser=legacy   # legacy parser instead of core.parser.v2
+-Djprolog.dcg=legacy      # legacy DCG transformer instead of core.dcg.v2
+-Djprolog.clpfd=legacy    # legacy CLP(FD) store instead of builtin.clpfd.v2
 ```
 
-(Programmatic equivalents: `Prolog.setUseV2Parser(false)`, `setUseV2Dcg(false)`, `setUseV2Clpfd(false)`, `setUseV2Engine(false)`.)
+Only those literal values select a fallback — `-Djprolog.engine=anythingelse` (including the
+retired `=legacy`) is still v4. Programmatic equivalents: `Prolog.setUseV4Engine(false)` (drops to
+v2, and `setUseV2Engine(true)` is the same thing), `setUseV2Parser(false)`, `setUseV2Dcg(false)`,
+`setUseV2Clpfd(false)`.
+The parser, DCG and engine flags are re-read on every call; the CLP(FD) one is read in the `Prolog`
+constructor. Maven: `mvn test` runs the suite on v4, `mvn test -Pengine-v2` on the fallback.
 
 ### IDE Settings
 Settings stored in `~/.jprolog-ide.properties`:
@@ -477,13 +536,13 @@ mvn clean compile
 
 Copyright © 2024-2026 DenzoSOFT. All rights reserved.
 
-Version 3.6.0 - Released June 2026
+Version 4.0.0 - Released August 2026
 
 ## 🌐 **Project Information**
 
 - **Repository**: https://github.com/DenzoSOFTHub/JProlog
 - **Website**: https://denzosoft.it
-- **Latest Release**: v3.6.0 with the ISO-conformance audit waves (80 defects fixed across v3.5.0/v3.6.0), clean-room v2 engine/parser/CLP(FD)/DCG (default), binary compiled format, and 935 passing tests
+- **Latest Release**: v4.0.0 — **engine v4 is the default** (threads on per-thread machines, a debugger that no longer changes how your program runs, usable tracing, a non-interactive console); v3.9.0-v3.14.0 built engine v4 wave by wave; v3.7.0/v3.8.0 brought the engine hardening waves (15 fixes: bounded-memory execution, million-element lists, lazy generators, budget enforced in meta-calls, first-argument indexing, per-engine flags) and the new Reference Manual; v3.5.0/v3.6.0 brought the ISO-conformance audit waves (80 defects fixed), clean-room v2 engine/parser/CLP(FD)/DCG (default), binary compiled format, and 935 passing tests
 - **License**: Proprietary (DenzoSOFT)
 
 ---
@@ -497,7 +556,7 @@ Version 3.6.0 - Released June 2026
 ✅ **Professional Tools**: Full-featured IDE with debugging capabilities
 ✅ **Complete Grammar Processing**: clean-room ISO DCG translator with full construct coverage
 ✅ **Easy Integration**: Simple Java API for embedding Prolog logic with `compile()` and `consultSmart()`
-✅ **935 Passing Tests**: Comprehensive JUnit test suite with 0 failures  
+✅ **989 Passing Tests**: Comprehensive JUnit test suite with 0 failures  
 
 **Start your Prolog journey with a robust, professional-grade implementation!**
 

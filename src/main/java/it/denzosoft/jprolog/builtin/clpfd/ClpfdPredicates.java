@@ -2,7 +2,7 @@
 package it.denzosoft.jprolog.builtin.clpfd;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.*;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.builtin.clpfd.ConstraintStore.*;
@@ -34,14 +34,14 @@ public class ClpfdPredicates implements BuiltInWithContext {
         FD_SIZE         // fd_size(X, Size)
     }
 
-    private final QuerySolver solver;
+    private final SolverContext solver;
     private final OperationType opType;
 
     // START_CHANGE: ISS-2025-0263 - cap on an explicitly-enumerated finite domain range.
     private static final long MAX_ENUMERATED_DOMAIN = 10_000_000L;
     // END_CHANGE: ISS-2025-0263
 
-    public ClpfdPredicates(QuerySolver solver, OperationType opType) {
+    public ClpfdPredicates(SolverContext solver, OperationType opType) {
         this.solver = solver;
         this.opType = opType;
     }
@@ -53,7 +53,7 @@ public class ClpfdPredicates implements BuiltInWithContext {
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query,
+    public boolean executeWithContext(SolverContext solver, Term query,
                                       Map<String, Term> bindings,
                                       List<Map<String, Term>> solutions) {
         Term resolved = query.resolveBindings(bindings);
@@ -790,10 +790,14 @@ public class ClpfdPredicates implements BuiltInWithContext {
     // Helper: variable and list utilities
     // ================================================================
 
-    private static int tempVarCounter = 0;
+    // ISS-2025-0437 - ENG-06: a non-atomic static int handed out DUPLICATE temporary variable
+    // names when two threads (or two engines) posted constraints at the same time, silently
+    // aliasing unrelated CLP(FD) variables.
+    private static final java.util.concurrent.atomic.AtomicLong tempVarCounter =
+        new java.util.concurrent.atomic.AtomicLong();
 
     private static String freshVar() {
-        return "_clpfd_tmp_" + (++tempVarCounter);
+        return "_clpfd_tmp_" + tempVarCounter.incrementAndGet();
     }
 
     /**

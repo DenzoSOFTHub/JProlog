@@ -92,7 +92,7 @@ public class Succ implements BuiltIn {
             // END_CHANGE: ISS-2025-0190
 
             Map<String, Term> newBindings = new HashMap<>(bindings);
-            if (query.getArguments().get(0).unify(new it.denzosoft.jprolog.core.terms.Number((double) int1Value), newBindings)) {
+            if (query.getArguments().get(0).unify(new it.denzosoft.jprolog.core.terms.Number((long) int1Value)   /* ISS-2025-0424 */, newBindings)) {
                 solutions.add(newBindings);
                 return true;
             } else {
@@ -115,7 +115,7 @@ public class Succ implements BuiltIn {
             // END_CHANGE: ISS-2025-0190
             
             Map<String, Term> newBindings = new HashMap<>(bindings);
-            if (query.getArguments().get(1).unify(new it.denzosoft.jprolog.core.terms.Number((double) int2Value), newBindings)) {
+            if (query.getArguments().get(1).unify(new it.denzosoft.jprolog.core.terms.Number((long) int2Value)   /* ISS-2025-0424 */, newBindings)) {
                 solutions.add(newBindings);
                 return true;
             } else {

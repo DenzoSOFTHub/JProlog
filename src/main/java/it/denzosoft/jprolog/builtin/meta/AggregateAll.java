@@ -5,8 +5,7 @@ package it.denzosoft.jprolog.builtin.meta;
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 // END_CHANGE: ISS-2025-0383/ISS-2025-0384
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.CutStatus;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 // START_CHANGE: ISS-2025-0383 - re-throw Prolog error balls unchanged
 import it.denzosoft.jprolog.core.exceptions.PrologException;
@@ -38,9 +37,9 @@ import java.util.*;
  */
 public class AggregateAll implements BuiltInWithContext {
 
-    private final QuerySolver querySolver;
+    private final SolverContext querySolver;
 
-    public AggregateAll(QuerySolver querySolver) {
+    public AggregateAll(SolverContext querySolver) {
         this.querySolver = querySolver;
     }
 
@@ -50,9 +49,9 @@ public class AggregateAll implements BuiltInWithContext {
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings,
+    public boolean executeWithContext(SolverContext solver, Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
-        QuerySolver qs = solver != null ? solver : this.querySolver;
+        SolverContext qs = solver != null ? solver : this.querySolver;
         if (qs == null) throw new PrologEvaluationException("aggregate_all/3: no query solver available.");
 
         List<Term> args = query.getArguments();
@@ -75,7 +74,7 @@ public class AggregateAll implements BuiltInWithContext {
         // Solve the goal
         List<Map<String, Term>> goalSolutions = new ArrayList<>();
         try {
-            qs.solve(goal, bindings, goalSolutions, CutStatus.notOccurred());
+            qs.solveMeta(goal, bindings, goalSolutions)   /* ISS-2025-0431 - ENG-04 */;
         // START_CHANGE: ISS-2025-0383 - let ISO error balls from the goal propagate unchanged
         // (mirrors CollectionUtils.genericListCollector) instead of flattening the error term
         // into an uncatchable message string.
@@ -83,6 +82,7 @@ public class AggregateAll implements BuiltInWithContext {
             throw e;
         // END_CHANGE: ISS-2025-0383
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("aggregate_all/3: error solving goal: " + e.getMessage());
         }
 

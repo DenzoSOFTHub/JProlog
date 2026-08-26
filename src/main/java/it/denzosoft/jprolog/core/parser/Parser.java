@@ -76,6 +76,14 @@ public class Parser {
     public List<String> extractClauses(String program) {
         List<String> clauses = new ArrayList<>();
         StringBuilder currentClause = new StringBuilder();
+        // START_CHANGE: ISS-2025-0447 - record each clause's 1-based start line alongside its text,
+        // so Prolog.compile() can stamp Rule.sourceLine and the .jpc format (v0x03) can carry it:
+        // without this a .jpc-loaded file had no line information and the IDE's line breakpoints
+        // silently did nothing on compiled sources.
+        lastClauseLines.clear();
+        int line = 1;
+        int clauseStartLine = -1;
+        // END_CHANGE: ISS-2025-0447
         
         boolean inMultilineComment = false;
         boolean inSingleLineComment = false;
@@ -89,10 +97,16 @@ public class Parser {
             // Handle newlines - end single line comments
             if (c == '\n') {
                 inSingleLineComment = false;
+                line++;                                            // ISS-2025-0447
                 if (!inMultilineComment && !inQuotedString) {
                     currentClause.append(' '); // Replace newline with space to preserve structure
                 }
                 continue;
+            }
+            // ISS-2025-0447 - the clause starts at the first non-blank character after the last '.'
+            if (clauseStartLine < 0 && !inSingleLineComment && !inMultilineComment
+                    && !Character.isWhitespace(c) && c != '%') {
+                clauseStartLine = line;
             }
             
             // Skip content inside comments
@@ -157,8 +171,10 @@ public class Parser {
                     String clause = currentClause.toString().trim();
                     if (!clause.isEmpty()) {
                         clauses.add(clause);
+                        lastClauseLines.add(clauseStartLine < 0 ? -1 : clauseStartLine);   // ISS-2025-0447
                     }
                     currentClause = new StringBuilder();
+                    clauseStartLine = -1;                                                  // ISS-2025-0447
                 }
             } else {
                 currentClause.append(c);
@@ -169,10 +185,21 @@ public class Parser {
         String remaining = currentClause.toString().trim();
         if (!remaining.isEmpty()) {
             clauses.add(remaining);
+            lastClauseLines.add(clauseStartLine < 0 ? -1 : clauseStartLine);               // ISS-2025-0447
         }
         
         return clauses;
     }
+
+    // START_CHANGE: ISS-2025-0447 - 1-based start line of each clause returned by the LAST
+    // extractClauses() call on this Parser (same size and order as that list; -1 when unknown).
+    private final List<Integer> lastClauseLines = new ArrayList<>();
+
+    /** Start lines of the clauses returned by the most recent {@link #extractClauses} call. */
+    public List<Integer> getLastClauseLines() {
+        return java.util.Collections.unmodifiableList(new ArrayList<>(lastClauseLines));
+    }
+    // END_CHANGE: ISS-2025-0447
 
     /**
      * Parse a single clause string into a Rule.
@@ -231,6 +258,7 @@ public class Parser {
                 Rule transformedRule = transformer.transformDCGRule((CompoundTerm) dcgTerm);
                 return transformedRule;
             } catch (Exception e) {
+                it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                 throw new PrologParserException("Error transforming DCG rule: " + e.getMessage(), e);
             }
             // END_CHANGE: ISS-2025-0008

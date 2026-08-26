@@ -18,6 +18,11 @@ public class Repeat implements BuiltIn {
         // START_CHANGE: ISS-2025-0052 - Fix repeat/0 to generate multiple choice points
         // ISO Prolog: repeat/0 generates infinite solutions on backtracking.
         // Since the architecture collects solutions eagerly, provide a large bound.
+        // START_CHANGE: ISS-2025-0423 - ENG-01: this bound is LEGACY-ENGINE ONLY (LIM-031). The
+        // default v2 engine never reaches this class: MachineSolver.repeat() handles repeat/0 as a
+        // genuinely infinite lazy choice point. Removing the bound here is not possible without the
+        // lazy built-in contract (ENG-12) — the eager BuiltIn protocol must return a finite list.
+        // END_CHANGE: ISS-2025-0423
         for (int i = 0; i < 1000; i++) {
             solutions.add(new HashMap<>(bindings));
         }

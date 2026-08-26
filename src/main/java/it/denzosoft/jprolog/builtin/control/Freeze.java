@@ -2,8 +2,7 @@
 package it.denzosoft.jprolog.builtin.control;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.CutStatus;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -28,14 +27,14 @@ public class Freeze implements BuiltInWithContext {
     /** The module key used to store freeze goals as attributes. */
     public static final String FREEZE_MODULE = "freeze";
 
-    private final QuerySolver solver;
+    private final SolverContext solver;
 
-    public Freeze(QuerySolver solver) {
+    public Freeze(SolverContext solver) {
         this.solver = solver;
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings,
+    public boolean executeWithContext(SolverContext solver, Term query, Map<String, Term> bindings,
                                       List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
         if (args == null || args.size() != 2) return false;
@@ -62,8 +61,7 @@ public class Freeze implements BuiltInWithContext {
             // Variable is already bound — execute the goal immediately
             Term resolvedGoal = goal.resolveBindings(bindings);
             List<Map<String, Term>> goalSolutions = new ArrayList<>();
-            CutStatus cutStatus = CutStatus.notOccurred();
-            if (solver.solve(resolvedGoal, bindings, goalSolutions, cutStatus)) {
+            if (solver.solveMeta(resolvedGoal, bindings, goalSolutions)) {   // ISS-2025-0485
                 solutions.addAll(goalSolutions);
                 return true;
             }
@@ -78,10 +76,9 @@ public class Freeze implements BuiltInWithContext {
      * @param bindings current bindings
      * @return true if the goal succeeded
      */
-    public static boolean executeFrozenGoal(QuerySolver solver, Term goal, Map<String, Term> bindings) {
+    public static boolean executeFrozenGoal(SolverContext solver, Term goal, Map<String, Term> bindings) {
         List<Map<String, Term>> solutions = new ArrayList<>();
-        CutStatus cutStatus = CutStatus.notOccurred();
-        return solver.solve(goal, bindings, solutions, cutStatus);
+        return solver.solveMeta(goal, bindings, solutions);   // ISS-2025-0485
     }
 
     /**

@@ -20,6 +20,7 @@ import static org.junit.Assert.*;
 public class DebuggingTest {
     
     private Prolog prolog;
+    private it.denzosoft.jprolog.core.engine.v4.EngineState.Spies spies;
     private ByteArrayOutputStream outputStream;
     private PrintStream originalOut;
     
@@ -32,32 +33,35 @@ public class DebuggingTest {
         System.setOut(new PrintStream(outputStream));
         
         // Reset debugging state
-        Trace.setTracingEnabled(false);
-        Spy.clearAllSpyPoints();
+        prolog.setTracing(false);   // ISS-2025-0437: tracing is per ENGINE now
+        // ISS-2025-0477: spy points are per ENGINE now (wave W7, the tail of LIM-034), so the
+        // assertions below read THIS engine's set rather than a process-global one.
+        spies = prolog.getEngineState().spies();
+        spies.clear();
     }
     
     @Test
     public void testTrace() {
         // Test enabling trace
-        assertFalse("Tracing should be disabled initially", Trace.isTracingEnabled());
+        assertFalse("Tracing should be disabled initially", prolog.isTracing());
         
         List<Map<String, Term>> solutions = prolog.solve("trace");
         assertFalse("trace should succeed", solutions.isEmpty());
-        assertTrue("Tracing should be enabled after trace", Trace.isTracingEnabled());
+        assertTrue("Tracing should be enabled after trace", prolog.isTracing());
         assertTrue("Should output trace message", outputStream.toString().contains("Tracing enabled"));
     }
     
     @Test
     public void testNoTrace() {
         // Enable tracing first
-        Trace.setTracingEnabled(true);
-        assertTrue("Tracing should be enabled", Trace.isTracingEnabled());
+        prolog.setTracing(true);    // ISS-2025-0437: tracing is per ENGINE now
+        assertTrue("Tracing should be enabled", prolog.isTracing());
         
         outputStream.reset();
         
         List<Map<String, Term>> solutions = prolog.solve("notrace");
         assertFalse("notrace should succeed", solutions.isEmpty());
-        assertFalse("Tracing should be disabled after notrace", Trace.isTracingEnabled());
+        assertFalse("Tracing should be disabled after notrace", prolog.isTracing());
         assertTrue("Should output notrace message", outputStream.toString().contains("Tracing disabled"));
     }
     
@@ -65,24 +69,24 @@ public class DebuggingTest {
     public void testTraceNoTraceSequence() {
         // Test sequence of trace/notrace
         prolog.solve("trace");
-        assertTrue("Tracing should be enabled", Trace.isTracingEnabled());
+        assertTrue("Tracing should be enabled", prolog.isTracing());
         
         prolog.solve("notrace");
-        assertFalse("Tracing should be disabled", Trace.isTracingEnabled());
+        assertFalse("Tracing should be disabled", prolog.isTracing());
         
         prolog.solve("trace");
-        assertTrue("Tracing should be enabled again", Trace.isTracingEnabled());
+        assertTrue("Tracing should be enabled again", prolog.isTracing());
     }
     
     @Test
     public void testSpy() {
         // Test setting spy points
-        assertTrue("No spy points should be set initially", Spy.getSpyPoints().isEmpty());
+        assertTrue("No spy points should be set initially", spies.snapshot().isEmpty());
         
         List<Map<String, Term>> solutions = prolog.solve("spy(/(member, 2))");
         assertFalse("spy(/(member, 2)) should succeed", solutions.isEmpty());
         
-        assertTrue("Spy point should be set", Spy.hasSpyPoint("member", 2));
+        assertTrue("Spy point should be set", spies.has("member", 2));
         assertTrue("Should output spy message", outputStream.toString().contains("Spy point set on member/2"));
         
         outputStream.reset();
@@ -91,8 +95,8 @@ public class DebuggingTest {
         solutions = prolog.solve("spy(/(append, 3))");
         assertFalse("spy(/(append, 3)) should succeed", solutions.isEmpty());
         
-        assertTrue("Spy point should be set", Spy.hasSpyPoint("append", 3));
-        assertEquals("Should have 2 spy points", 2, Spy.getSpyPoints().size());
+        assertTrue("Spy point should be set", spies.has("append", 3));
+        assertEquals("Should have 2 spy points", 2, spies.snapshot().size());
     }
     
     @Test
@@ -100,7 +104,7 @@ public class DebuggingTest {
         // Set up spy points
         prolog.solve("spy(/(member, 2))");
         prolog.solve("spy(/(append, 3))");
-        assertEquals("Should have 2 spy points", 2, Spy.getSpyPoints().size());
+        assertEquals("Should have 2 spy points", 2, spies.snapshot().size());
         
         outputStream.reset();
         
@@ -108,9 +112,9 @@ public class DebuggingTest {
         List<Map<String, Term>> solutions = prolog.solve("nospy(/(member, 2))");
         assertFalse("nospy(/(member, 2)) should succeed", solutions.isEmpty());
         
-        assertFalse("member/2 spy point should be removed", Spy.hasSpyPoint("member", 2));
-        assertTrue("append/3 spy point should remain", Spy.hasSpyPoint("append", 3));
-        assertEquals("Should have 1 spy point", 1, Spy.getSpyPoints().size());
+        assertFalse("member/2 spy point should be removed", spies.has("member", 2));
+        assertTrue("append/3 spy point should remain", spies.has("append", 3));
+        assertEquals("Should have 1 spy point", 1, spies.snapshot().size());
         assertTrue("Should output nospy message", outputStream.toString().contains("Spy point removed from member/2"));
     }
     
@@ -120,7 +124,7 @@ public class DebuggingTest {
         prolog.solve("spy(/(member, 2))");
         prolog.solve("spy(/(append, 3))");
         prolog.solve("spy(/(length, 2))");
-        assertEquals("Should have 3 spy points", 3, Spy.getSpyPoints().size());
+        assertEquals("Should have 3 spy points", 3, spies.snapshot().size());
         
         outputStream.reset();
         
@@ -128,7 +132,7 @@ public class DebuggingTest {
         List<Map<String, Term>> solutions = prolog.solve("nospy(X)");
         assertFalse("nospy(X) should succeed", solutions.isEmpty());
         
-        assertTrue("All spy points should be removed", Spy.getSpyPoints().isEmpty());
+        assertTrue("All spy points should be removed", spies.snapshot().isEmpty());
         assertTrue("Should output all spy points removed message", 
                   outputStream.toString().contains("All spy points removed"));
     }
@@ -142,11 +146,11 @@ public class DebuggingTest {
         solutions = prolog.solve("spy(/(test, 2))");
         assertFalse("spy(/(test, 2)) should succeed", solutions.isEmpty());
         
-        assertTrue("test/1 spy point should be set", Spy.hasSpyPoint("test", 1));
-        assertTrue("test/2 spy point should be set", Spy.hasSpyPoint("test", 2));
-        assertFalse("test/3 spy point should not be set", Spy.hasSpyPoint("test", 3));
+        assertTrue("test/1 spy point should be set", spies.has("test", 1));
+        assertTrue("test/2 spy point should be set", spies.has("test", 2));
+        assertFalse("test/3 spy point should not be set", spies.has("test", 3));
         
-        assertEquals("Should have 2 spy points", 2, Spy.getSpyPoints().size());
+        assertEquals("Should have 2 spy points", 2, spies.snapshot().size());
     }
     
     @Test
@@ -166,15 +170,15 @@ public class DebuggingTest {
         List<Map<String, Term>> solutions = prolog.solve("trace, spy(/(member, 2))");
         assertFalse("Combined debugging should succeed", solutions.isEmpty());
         
-        assertTrue("Tracing should be enabled", Trace.isTracingEnabled());
-        assertTrue("Spy point should be set", Spy.hasSpyPoint("member", 2));
+        assertTrue("Tracing should be enabled", prolog.isTracing());
+        assertTrue("Spy point should be set", spies.has("member", 2));
         
         // Turn off debugging
         solutions = prolog.solve("notrace, nospy(X)");
         assertFalse("Combined cleanup should succeed", solutions.isEmpty());
         
-        assertFalse("Tracing should be disabled", Trace.isTracingEnabled());
-        assertTrue("All spy points should be removed", Spy.getSpyPoints().isEmpty());
+        assertFalse("Tracing should be disabled", prolog.isTracing());
+        assertTrue("All spy points should be removed", spies.snapshot().isEmpty());
     }
     
     @org.junit.After
@@ -183,7 +187,10 @@ public class DebuggingTest {
             System.setOut(originalOut);
         }
         // Reset debugging state
-        Trace.setTracingEnabled(false);
-        Spy.clearAllSpyPoints();
+        prolog.setTracing(false);   // ISS-2025-0437: tracing is per ENGINE now
+        // ISS-2025-0477: spy points are per ENGINE now (wave W7, the tail of LIM-034), so the
+        // assertions below read THIS engine's set rather than a process-global one.
+        spies = prolog.getEngineState().spies();
+        spies.clear();
     }
 }

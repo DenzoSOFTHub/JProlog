@@ -2,8 +2,7 @@ package it.denzosoft.jprolog.builtin.threading;
 
 // START_CHANGE: ISS-2025-0139 - SWI-Prolog compatible concurrent execution predicates
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.CutStatus;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.*;
 import it.denzosoft.jprolog.core.terms.Number;
@@ -25,11 +24,23 @@ import java.util.concurrent.atomic.AtomicReference;
  *   concurrent_or/2        - concurrent_or(+Goals, -FirstSolution)
  *
  * All predicates use Java's ExecutorService for real thread-level parallelism.
- * Goals are executed via QuerySolver.solve() in separate threads.
+ *
+ * START_CHANGE: ISS-2025-0480 - engine v4 wave W8, design B.13: every worker goal now goes through
+ * {@code SolverContext.solveInWorker}, which on v4 runs it on a FRESH Machine over the SAME Engine
+ * (core.engine.v4.Workers): shared clause store (thread-safe by birth/death generations), shared
+ * flags and operators, per-thread current streams, one ResourceGuard per worker carrying the
+ * parent's inference budget, and a copy_term'd goal so no Variable cell is shared between machines.
+ * That closes LIM-024 on v4 and removes the last path from a v4 query into
+ * SolverContext.solveInternal. On the v2 and legacy engines solveInWorker keeps its default — the
+ * shared recursive solver — i.e. exactly the behaviour those engines had before.
+ * Interrupting the parent (IDE Stop, embedder cancel) cancels the workers: the parent's blocking
+ * get() throws InterruptedException, every future is cancelled (which interrupts its worker, whose
+ * own guard then raises QueryCancelledException) and the parent re-raises QueryCancelledException.
+ * END_CHANGE: ISS-2025-0480
  *
  * Thread safety:
  * - Each thread gets its own copy of bindings (HashMap copy)
- * - QuerySolver.solve() is reentrant for read-only KB access
+ * - SolverContext.solve() is reentrant for read-only KB access
  * - Results are collected via thread-safe ConcurrentLinkedQueue or Future
  * - ExecutorService uses a cached thread pool (threads recycled)
  */
@@ -62,15 +73,28 @@ public class ConcurrentPredicates implements BuiltInWithContext {
 
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        throw new UnsupportedOperationException("Concurrent predicates require context (QuerySolver)");
+        throw new UnsupportedOperationException("Concurrent predicates require context (SolverContext)");
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query,
+    public boolean executeWithContext(SolverContext solver, Term query,
                                       Map<String, Term> bindings,
                                       List<Map<String, Term>> solutions) {
         try {
-            switch (opType) {
+            // START_CHANGE: ISS-2025-0480 - wave W8: concurrent_maplist/2,3,4 are ONE registry
+            // entry (the registry is keyed by name), so the arity of the actual goal decides which
+            // form runs. Before this, `concurrent_maplist3`/`concurrent_maplist4` were registered
+            // under those literal (uncallable) names and concurrent_maplist/3,4 threw an arity error.
+            OperationType op = opType;
+            if (op == OperationType.CONCURRENT_MAPLIST_2 || op == OperationType.CONCURRENT_MAPLIST_3
+                    || op == OperationType.CONCURRENT_MAPLIST_4) {
+                int n = (query.getArguments() == null) ? 0 : query.getArguments().size();
+                if (n == 3) op = OperationType.CONCURRENT_MAPLIST_3;
+                else if (n == 4) op = OperationType.CONCURRENT_MAPLIST_4;
+                else op = OperationType.CONCURRENT_MAPLIST_2;
+            }
+            // END_CHANGE: ISS-2025-0480
+            switch (op) {
                 case CONCURRENT:           return doConcurrent(solver, query, bindings, solutions);
                 case CONCURRENT_MAPLIST_2: return doConcurrentMaplist2(solver, query, bindings, solutions);
                 case CONCURRENT_MAPLIST_3: return doConcurrentMaplist3(solver, query, bindings, solutions);
@@ -83,6 +107,7 @@ public class ConcurrentPredicates implements BuiltInWithContext {
         } catch (PrologEvaluationException e) {
             throw e;
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException(opType.name().toLowerCase() + ": " + e.getMessage());
         }
     }
@@ -92,7 +117,7 @@ public class ConcurrentPredicates implements BuiltInWithContext {
     // Execute a list of goals using at most N worker threads.
     // All goals must succeed for concurrent/3 to succeed.
     // =========================================================================
-    private boolean doConcurrent(QuerySolver solver, Term query,
+    private boolean doConcurrent(SolverContext solver, Term query,
                                   Map<String, Term> bindings,
                                   List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 3, "concurrent/3");
@@ -121,15 +146,20 @@ public class ConcurrentPredicates implements BuiltInWithContext {
                 final Map<String, Term> bindingsCopy = new HashMap<>(bindings);
                 futures.add(localPool.submit(() -> {
                     List<Map<String, Term>> temp = new ArrayList<>();
-                    return solver.solve(g, bindingsCopy, temp, CutStatus.notOccurred());
+                    return solver.solveInWorker(g, bindingsCopy, temp, 1);
                 }));
             }
 
             // All goals must succeed
-            for (Future<Boolean> f : futures) {
-                if (!f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                    return false;
+            try {
+                for (Future<Boolean> f : futures) {
+                    if (!f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                        cancelAll(futures);                 // ISS-2025-0480
+                        return false;
+                    }
                 }
+            } catch (InterruptedException ie) {
+                throw parentCancelled(futures);             // ISS-2025-0480
             }
 
             solutions.add(new HashMap<>(bindings));
@@ -144,7 +174,7 @@ public class ConcurrentPredicates implements BuiltInWithContext {
     // Like maplist/2 but executes Goal on each element in parallel.
     // Succeeds if Goal succeeds for all elements.
     // =========================================================================
-    private boolean doConcurrentMaplist2(QuerySolver solver, Term query,
+    private boolean doConcurrentMaplist2(SolverContext solver, Term query,
                                           Map<String, Term> bindings,
                                           List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 2, "concurrent_maplist/2");
@@ -163,14 +193,19 @@ public class ConcurrentPredicates implements BuiltInWithContext {
             Map<String, Term> bc = new HashMap<>(bindings);
             futures.add(POOL.submit(() -> {
                 List<Map<String, Term>> temp = new ArrayList<>();
-                return solver.solve(callGoal, bc, temp, CutStatus.notOccurred());
+                return solver.solveInWorker(callGoal, bc, temp, 1);
             }));
         }
 
-        for (Future<Boolean> f : futures) {
-            if (!f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                return false;
+        try {
+            for (Future<Boolean> f : futures) {
+                if (!f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                    cancelAll(futures);                     // ISS-2025-0480
+                    return false;
+                }
             }
+        } catch (InterruptedException ie) {
+            throw parentCancelled(futures);                 // ISS-2025-0480
         }
 
         solutions.add(new HashMap<>(bindings));
@@ -182,7 +217,7 @@ public class ConcurrentPredicates implements BuiltInWithContext {
     // Like maplist/3 but executes Goal on each element in parallel.
     // Goal is called as call(Goal, Elem, Result) for each element.
     // =========================================================================
-    private boolean doConcurrentMaplist3(QuerySolver solver, Term query,
+    private boolean doConcurrentMaplist3(SolverContext solver, Term query,
                                           Map<String, Term> bindings,
                                           List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 3, "concurrent_maplist/3");
@@ -210,7 +245,7 @@ public class ConcurrentPredicates implements BuiltInWithContext {
             final String resVarName = resultHolder.getName();
             futures.add(POOL.submit(() -> {
                 List<Map<String, Term>> temp = new ArrayList<>();
-                boolean ok = solver.solve(callGoal, bc, temp, CutStatus.notOccurred());
+                boolean ok = solver.solveInWorker(callGoal, bc, temp, 1);
                 if (ok && !temp.isEmpty()) {
                     Term res = temp.get(0).get(resVarName);
                     return res != null ? res.resolveBindings(temp.get(0)) : null;
@@ -221,10 +256,14 @@ public class ConcurrentPredicates implements BuiltInWithContext {
 
         // Collect results in order
         List<Term> resultTerms = new ArrayList<>();
-        for (Future<Term> f : futures) {
-            Term res = f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-            if (res == null) return false;
-            resultTerms.add(res);
+        try {
+            for (Future<Term> f : futures) {
+                Term res = f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                if (res == null) { cancelAll(futures); return false; }   // ISS-2025-0480
+                resultTerms.add(res);
+            }
+        } catch (InterruptedException ie) {
+            throw parentCancelled(futures);                 // ISS-2025-0480
         }
 
         // Build result list and unify
@@ -241,7 +280,7 @@ public class ConcurrentPredicates implements BuiltInWithContext {
     // concurrent_maplist(:Goal, +L1, +L2, -ResultList)
     // Parallel maplist with two input lists.
     // =========================================================================
-    private boolean doConcurrentMaplist4(QuerySolver solver, Term query,
+    private boolean doConcurrentMaplist4(SolverContext solver, Term query,
                                           Map<String, Term> bindings,
                                           List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 4, "concurrent_maplist/4");
@@ -274,7 +313,7 @@ public class ConcurrentPredicates implements BuiltInWithContext {
             final String resVarName = resultHolder.getName();
             futures.add(POOL.submit(() -> {
                 List<Map<String, Term>> temp = new ArrayList<>();
-                boolean ok = solver.solve(callGoal, bc, temp, CutStatus.notOccurred());
+                boolean ok = solver.solveInWorker(callGoal, bc, temp, 1);
                 if (ok && !temp.isEmpty()) {
                     Term res = temp.get(0).get(resVarName);
                     return res != null ? res.resolveBindings(temp.get(0)) : null;
@@ -284,10 +323,14 @@ public class ConcurrentPredicates implements BuiltInWithContext {
         }
 
         List<Term> resultTerms = new ArrayList<>();
-        for (Future<Term> f : futures) {
-            Term res = f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-            if (res == null) return false;
-            resultTerms.add(res);
+        try {
+            for (Future<Term> f : futures) {
+                Term res = f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                if (res == null) { cancelAll(futures); return false; }   // ISS-2025-0480
+                resultTerms.add(res);
+            }
+        } catch (InterruptedException ie) {
+            throw parentCancelled(futures);                 // ISS-2025-0480
         }
 
         Term resultList = buildPrologList(resultTerms);
@@ -305,7 +348,7 @@ public class ConcurrentPredicates implements BuiltInWithContext {
     // succeeds first. Cancel remaining goals.
     // SWI-Prolog compatible: Goals is a list of goal terms.
     // =========================================================================
-    private boolean doFirstSolution(QuerySolver solver, Term query,
+    private boolean doFirstSolution(SolverContext solver, Term query,
                                      Map<String, Term> bindings,
                                      List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 3, "first_solution/3");
@@ -326,7 +369,7 @@ public class ConcurrentPredicates implements BuiltInWithContext {
             futures.add(cs.submit(() -> {
                 if (found.get()) return null;
                 List<Map<String, Term>> temp = new ArrayList<>();
-                boolean ok = solver.solve(g, bc, temp, CutStatus.notOccurred());
+                boolean ok = solver.solveInWorker(g, bc, temp, 1);
                 if (ok && !temp.isEmpty() && !found.get()) {
                     return temp.get(0);
                 }
@@ -337,7 +380,13 @@ public class ConcurrentPredicates implements BuiltInWithContext {
         try {
             // Wait for the first successful result
             for (int i = 0; i < futures.size(); i++) {
-                Future<Map<String, Term>> completed = cs.poll(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                Future<Map<String, Term>> completed;
+                try {
+                    completed = cs.poll(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException ie) {
+                    found.set(true);
+                    throw parentCancelled(futures);         // ISS-2025-0480
+                }
                 if (completed == null) break;
                 Map<String, Term> result = completed.get();
                 if (result != null) {
@@ -372,7 +421,7 @@ public class ConcurrentPredicates implements BuiltInWithContext {
     // Run all goals in parallel. Succeed only if ALL goals succeed.
     // Like concurrent/3 but uses the global thread pool.
     // =========================================================================
-    private boolean doConcurrentAnd(QuerySolver solver, Term query,
+    private boolean doConcurrentAnd(SolverContext solver, Term query,
                                      Map<String, Term> bindings,
                                      List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 2, "concurrent_and/2");
@@ -389,14 +438,19 @@ public class ConcurrentPredicates implements BuiltInWithContext {
             Map<String, Term> bc = new HashMap<>(bindings);
             futures.add(POOL.submit(() -> {
                 List<Map<String, Term>> temp = new ArrayList<>();
-                return solver.solve(goal, bc, temp, CutStatus.notOccurred());
+                return solver.solveInWorker(goal, bc, temp, 1);
             }));
         }
 
-        for (Future<Boolean> f : futures) {
-            if (!f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                return false;
+        try {
+            for (Future<Boolean> f : futures) {
+                if (!f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                    cancelAll(futures);                     // ISS-2025-0480
+                    return false;
+                }
             }
+        } catch (InterruptedException ie) {
+            throw parentCancelled(futures);                 // ISS-2025-0480
         }
 
         solutions.add(new HashMap<>(bindings));
@@ -408,7 +462,7 @@ public class ConcurrentPredicates implements BuiltInWithContext {
     // Run goals in parallel; succeed with the first goal that succeeds.
     // Unifies FirstSolution with the index (1-based) of the winning goal.
     // =========================================================================
-    private boolean doConcurrentOr(QuerySolver solver, Term query,
+    private boolean doConcurrentOr(SolverContext solver, Term query,
                                     Map<String, Term> bindings,
                                     List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 2, "concurrent_or/2");
@@ -429,14 +483,20 @@ public class ConcurrentPredicates implements BuiltInWithContext {
             futures.add(cs.submit(() -> {
                 if (found.get()) return -1;
                 List<Map<String, Term>> temp = new ArrayList<>();
-                boolean ok = solver.solve(g, bc, temp, CutStatus.notOccurred());
+                boolean ok = solver.solveInWorker(g, bc, temp, 1);
                 return (ok && !found.get()) ? index : -1;
             }));
         }
 
         try {
             for (int i = 0; i < futures.size(); i++) {
-                Future<Integer> completed = cs.poll(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                Future<Integer> completed;
+                try {
+                    completed = cs.poll(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException ie) {
+                    found.set(true);
+                    throw parentCancelled(futures);         // ISS-2025-0480
+                }
                 if (completed == null) break;
                 int idx = completed.get();
                 if (idx > 0) {
@@ -460,6 +520,20 @@ public class ConcurrentPredicates implements BuiltInWithContext {
     // =========================================================================
     // Utility methods
     // =========================================================================
+
+    // START_CHANGE: ISS-2025-0480 - cancelling the parent must cancel the workers. Future.cancel(true)
+    // interrupts the worker thread; its own ResourceGuard then raises QueryCancelledException, which
+    // is a plain RuntimeException (the trust model) and cannot be swallowed by untrusted catch/3.
+    private static void cancelAll(List<? extends Future<?>> futures) {
+        for (Future<?> f : futures) f.cancel(true);
+    }
+
+    private static RuntimeException parentCancelled(List<? extends Future<?>> futures) {
+        cancelAll(futures);
+        Thread.currentThread().interrupt();
+        return new it.denzosoft.jprolog.core.engine.QueryCancelledException();
+    }
+    // END_CHANGE: ISS-2025-0480
 
     private void checkArity(Term query, int expected, String name) {
         if (query.getArguments() == null || query.getArguments().size() != expected) {

@@ -140,9 +140,9 @@ public class SubString implements BuiltIn {
                                 Map<java.lang.String, Term> bindings, List<Map<java.lang.String, Term>> solutions) {
         Map<java.lang.String, Term> newBindings = new HashMap<>(bindings);
         boolean ok = true;
-        if (ok) ok = beforeTerm.unify(new Number((double) b), newBindings);
-        if (ok) ok = lengthTerm.unify(new Number((double) len), newBindings);
-        if (ok) ok = afterTerm.unify(new Number((double) a), newBindings);
+        if (ok) ok = beforeTerm.unify(new Number((long) b)   /* ISS-2025-0424 */, newBindings);
+        if (ok) ok = lengthTerm.unify(new Number((long) len)   /* ISS-2025-0424 */, newBindings);
+        if (ok) ok = afterTerm.unify(new Number((long) a)   /* ISS-2025-0424 */, newBindings);
         if (ok) ok = subStringTerm.unify(new PrologString(sub), newBindings);
         if (ok) {
             solutions.add(newBindings);

@@ -44,6 +44,7 @@ public class UpCase implements BuiltIn {
             
             return false;
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("upcase_atom/2 error: " + e.getMessage());
         }
     }

@@ -63,6 +63,7 @@ public class JoinString implements BuiltIn {
                 throw new PrologEvaluationException("atomic_list_concat/3: either List or Atom must be instantiated");
             }
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("atomic_list_concat/3 error: " + e.getMessage());
         }
     }

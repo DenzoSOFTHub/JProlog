@@ -1,7 +1,7 @@
 package it.denzosoft.jprolog.builtin.system;
 
 import it.denzosoft.jprolog.builtin.AbstractBuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.*;
 import it.denzosoft.jprolog.util.TermUtils;
 
@@ -17,6 +17,10 @@ import java.util.Arrays;
  * 
  * statistics(+Key, -Value) - Get system statistics
  */
+// START_CHANGE: ISS-2025-0424 - ENG-02: statistics/2 keys report counters, byte counts and
+// millisecond counts, which are ISO INTEGERS; they used to rely on Number(double) auto-classifying
+// integral doubles as integers, which no longer happens.
+// END_CHANGE: ISS-2025-0424
 public class Statistics extends AbstractBuiltInWithContext {
     
     private final MemoryMXBean memoryBean;
@@ -28,7 +32,7 @@ public class Statistics extends AbstractBuiltInWithContext {
      * 
      * @param solver The query solver
      */
-    public Statistics(QuerySolver solver) {
+    public Statistics(SolverContext solver) {
         super(solver);
         this.memoryBean = ManagementFactory.getMemoryMXBean();
         this.runtimeBean = ManagementFactory.getRuntimeMXBean();
@@ -46,7 +50,7 @@ public class Statistics extends AbstractBuiltInWithContext {
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+    public boolean executeWithContext(SolverContext solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         this.solver = solver;
         if (query instanceof it.denzosoft.jprolog.core.terms.CompoundTerm) {
             it.denzosoft.jprolog.core.terms.CompoundTerm compound = (it.denzosoft.jprolog.core.terms.CompoundTerm) query;
@@ -66,7 +70,7 @@ public class Statistics extends AbstractBuiltInWithContext {
     // END_CHANGE: ISS-2025-0085
     
     @Override
-    public boolean solve(QuerySolver solver, Map<String, Term> bindings) {
+    public boolean solve(SolverContext solver, Map<String, Term> bindings) {
         Term[] args = getArguments();
         if (args.length != 2) {
             return false;
@@ -116,7 +120,7 @@ public class Statistics extends AbstractBuiltInWithContext {
             case "heapused":
                 // Heap memory used
                 long heapUsed = memoryBean.getHeapMemoryUsage().getUsed();
-                return new it.denzosoft.jprolog.core.terms.Number((double) heapUsed);
+                return new it.denzosoft.jprolog.core.terms.Number((long) heapUsed);
                 
             case "heap":
                 // [HeapUsed, HeapFree]
@@ -128,7 +132,7 @@ public class Statistics extends AbstractBuiltInWithContext {
             case "localused":
                 // Local (non-heap) memory used
                 long localUsed = memoryBean.getNonHeapMemoryUsage().getUsed();
-                return new it.denzosoft.jprolog.core.terms.Number((double) localUsed);
+                return new it.denzosoft.jprolog.core.terms.Number((long) localUsed);
                 
             case "local":
                 // [LocalUsed, LocalFree]
@@ -140,7 +144,7 @@ public class Statistics extends AbstractBuiltInWithContext {
             case "globalused":
                 // Global memory used (total heap)
                 long globalUsed = memoryBean.getHeapMemoryUsage().getUsed();
-                return new it.denzosoft.jprolog.core.terms.Number((double) globalUsed);
+                return new it.denzosoft.jprolog.core.terms.Number((long) globalUsed);
                 
             case "global":
                 // [GlobalUsed, GlobalFree]
@@ -148,7 +152,7 @@ public class Statistics extends AbstractBuiltInWithContext {
                 
             case "trailused":
                 // Trail stack used (approximated)
-                return new it.denzosoft.jprolog.core.terms.Number(0.0);
+                return new it.denzosoft.jprolog.core.terms.Number(0L);
                 
             case "trail":
                 // [TrailUsed, TrailFree]
@@ -163,32 +167,33 @@ public class Statistics extends AbstractBuiltInWithContext {
                         .mapToInt(bean -> (int) bean.getCollectionCount())
                         .sum();
                 } catch (Exception e) {
+                    it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                     // Ignore
                 }
-                return new it.denzosoft.jprolog.core.terms.Number((double) gcCount);
+                return new it.denzosoft.jprolog.core.terms.Number((long) gcCount);
                 
             case "atoms":
                 // Number of atoms (approximated)
-                return new it.denzosoft.jprolog.core.terms.Number(1000.0);
+                return new it.denzosoft.jprolog.core.terms.Number(1000L);
                 
             case "functors":
                 // Number of functors (approximated)
-                return new it.denzosoft.jprolog.core.terms.Number(500.0);
+                return new it.denzosoft.jprolog.core.terms.Number(500L);
                 
             case "predicates":
                 // Number of predicates
                 int predicateCount = solver != null ? 100 : 0;
-                return new it.denzosoft.jprolog.core.terms.Number((double) predicateCount);
+                return new it.denzosoft.jprolog.core.terms.Number((long) predicateCount);
                 
             case "modules":
                 // Number of modules
                 int moduleCount = solver != null ? 1 : 1;
-                return new it.denzosoft.jprolog.core.terms.Number((double) moduleCount);
+                return new it.denzosoft.jprolog.core.terms.Number((long) moduleCount);
                 
             case "threads":
                 // Number of threads
                 int threadCount = Thread.activeCount();
-                return new it.denzosoft.jprolog.core.terms.Number((double) threadCount);
+                return new it.denzosoft.jprolog.core.terms.Number((long) threadCount);
                 
             default:
                 return null; // Unknown statistic
@@ -199,8 +204,8 @@ public class Statistics extends AbstractBuiltInWithContext {
      * Create a time pair [Total, SinceLast].
      */
     private Term createTimePair(long total, long sinceLast) {
-        Term totalTerm = new it.denzosoft.jprolog.core.terms.Number((double) total);
-        Term sinceLastTerm = new it.denzosoft.jprolog.core.terms.Number((double) sinceLast);
+        Term totalTerm = new it.denzosoft.jprolog.core.terms.Number((long) total);
+        Term sinceLastTerm = new it.denzosoft.jprolog.core.terms.Number((long) sinceLast);
         return createList(totalTerm, sinceLastTerm);
     }
     
@@ -208,8 +213,8 @@ public class Statistics extends AbstractBuiltInWithContext {
      * Create a memory pair [Used, Free].
      */
     private Term createMemoryPair(long used, long free) {
-        Term usedTerm = new it.denzosoft.jprolog.core.terms.Number((double) used);
-        Term freeTerm = new it.denzosoft.jprolog.core.terms.Number((double) free);
+        Term usedTerm = new it.denzosoft.jprolog.core.terms.Number((long) used);
+        Term freeTerm = new it.denzosoft.jprolog.core.terms.Number((long) free);
         return createList(usedTerm, freeTerm);
     }
     

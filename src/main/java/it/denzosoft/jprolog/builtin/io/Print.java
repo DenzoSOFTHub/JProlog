@@ -1,43 +1,54 @@
 package it.denzosoft.jprolog.builtin.io;
 
-import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.builtin.AbstractBuiltInWithContext;
+import it.denzosoft.jprolog.core.engine.SolverContext;
+import it.denzosoft.jprolog.core.engine.v4.Writer;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Term;
 
+import java.io.PrintStream;
 import java.util.List;
 import java.util.Map;
 
 // START_CHANGE: ISS-2025-0378 - print/1,2 (universal SWI/GNU/SICStus practice)
 /**
- * print(+Term) - write Term to the current output with numbervars(true) semantics.
- * print(+Stream, +Term) - write Term to Stream.
+ * print(+Term) / print(+Stream, +Term).
  *
- * Equivalent to write_term(Term, [numbervars(true)]) (the portray/1 hook is not supported).
+ * <p>{@code write_term(Term, [portray(true), numbervars(true)])} — ISS-2025-0475 (wave W7) added
+ * the {@code portray/1} hook that the first implementation documented as unsupported.
  */
-public class Print implements BuiltIn {
+public class Print extends AbstractBuiltInWithContext {
+
+    public Print() { super(null); }
+
+    public Print(SolverContext solver) { super(solver); }
 
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        int arity = (query.getArguments() == null) ? 0 : query.getArguments().size();
-        if (arity != 1 && arity != 2) {
+        return executeWithContext(solver, query, bindings, solutions);
+    }
+
+    @Override
+    public boolean solve(SolverContext solver, Map<String, Term> bindings) {
+        Term[] args = getArguments();
+        if (args.length != 1 && args.length != 2) {
             throw new PrologEvaluationException("print/1 or print/2 expected.");
         }
-
-        java.io.PrintStream out;
+        PrintStream out;
         Term termToWrite;
-        if (arity == 1) {
+        if (args.length == 1) {
             out = StreamManager.out();
-            termToWrite = query.getArguments().get(0);
+            termToWrite = args[0];
         } else {
-            out = IOStreamUtils.resolveOutputStream(query.getArguments().get(0), bindings, "print/2");
-            termToWrite = query.getArguments().get(1);
+            out = IOStreamUtils.resolveOutputStream(args[0], bindings, "print/2");
+            termToWrite = args[1];
         }
-        Term resolvedTerm = termToWrite.resolveBindings(bindings);
-        // write semantics (unquoted, operators honoured) with numbervars(true)
-        out.print(it.denzosoft.jprolog.core.util.TermFormatter.format(resolvedTerm, false, false, true, 1200));
+        Writer.Options o = new Writer.Options();
+        o.numbervars = true;
+        o.portray = true;
+        o.portrayHook = WriteOptions.portrayHook(solver, bindings);
+        out.print(Writer.format(termToWrite.resolveBindings(bindings), o, 1200));
         out.flush();
-
-        solutions.add(bindings);
         return true;
     }
 }

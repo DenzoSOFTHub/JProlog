@@ -64,6 +64,7 @@ public class WriteQ implements BuiltIn {
                 throw new PrologEvaluationException("Cannot write to current output stream: " + currentOutputAlias);
             }
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("I/O error in writeq/1: " + e.getMessage());
         }
     }
@@ -88,6 +89,7 @@ public class WriteQ implements BuiltIn {
                 throw new PrologEvaluationException("Stream does not exist: " + streamAlias);
             }
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("I/O error in writeq/2: " + e.getMessage());
         }
     }

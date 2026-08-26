@@ -1,7 +1,6 @@
 package it.denzosoft.jprolog.test.builtin;
 
 import it.denzosoft.jprolog.core.engine.Prolog;
-import it.denzosoft.jprolog.core.engine.LayeredMap;
 import it.denzosoft.jprolog.core.terms.*;
 import it.denzosoft.jprolog.core.terms.Number;
 import org.junit.Before;
@@ -535,27 +534,8 @@ public class BugFixVerificationTest {
         assertFalse("Rational should not unify with float", r.unify(n, bindings));
     }
 
-    @Test
-    public void testISS0189_layeredMapIsEmpty() {
-        // LayeredMap.isEmpty should account for removed keys
-        Map<String, Term> parent = new HashMap<>();
-        parent.put("X", new Atom("hello"));
-        LayeredMap map = new LayeredMap(parent);
-        assertFalse("Map with parent entry should not be empty", map.isEmpty());
-
-        map.remove("X");
-        assertTrue("Map with all parent entries removed should be empty", map.isEmpty());
-    }
-
-    @Test
-    public void testISS0189_layeredMapIsEmptyWithLocal() {
-        Map<String, Term> parent = new HashMap<>();
-        parent.put("X", new Atom("a"));
-        LayeredMap map = new LayeredMap(parent);
-        map.remove("X");
-        map.put("Y", new Atom("b"));
-        assertFalse("Map with local entries should not be empty", map.isEmpty());
-    }
+    // ISS-2025-0189's two LayeredMap tests were REMOVED in wave W9 (ISS-2025-0484):
+    // core.engine.LayeredMap was the recursive QuerySolver's binding map and is deleted with it.
 
     @Test
     public void testISS0189_arithmeticComparisonIntegerExact() {
@@ -819,21 +799,8 @@ public class BugFixVerificationTest {
         assertEquals(1, solutions.size());
     }
 
-    // #4-5 LayeredMap rollback correctness
-    @Test
-    public void testISS0190_layeredMapRollback() {
-        it.denzosoft.jprolog.core.engine.LayeredMap map =
-            new it.denzosoft.jprolog.core.engine.LayeredMap(new java.util.HashMap<>());
-        map.put("A", new it.denzosoft.jprolog.core.terms.Atom("original"));
-        int mark = map.mark();
-        map.put("B", new it.denzosoft.jprolog.core.terms.Atom("added"));
-        map.put("A", new it.denzosoft.jprolog.core.terms.Atom("overwritten"));
-        assertEquals("overwritten", map.get("A").toString());
-        assertEquals("added", map.get("B").toString());
-        map.rollbackToMark(mark);
-        assertEquals("original", map.get("A").toString());
-        assertNull(map.get("B"));
-    }
+    // #4-5 ISS-2025-0190's LayeredMap rollback test was REMOVED in wave W9 (ISS-2025-0484)
+    // together with core.engine.LayeredMap itself.
 
     // #6 Rational equals/hashCode contract
     @Test
@@ -1971,10 +1938,22 @@ public class BugFixVerificationTest {
     // START_CHANGE: ISS-2025-0273 - setup_call_cleanup/3 and call_cleanup/2
     @Test
     public void testISS0273_setupCallCleanup() {
-        // Cleanup runs after the goal succeeds; goal remains multi-solution.
-        List<Map<String, Term>> s = prolog.solve(
-            "setup_call_cleanup(true, member(X,[1,2]), assertz(scc_ok)), scc_ok.");
-        assertEquals(2, s.size());
+        // START_CHANGE: ISS-2025-0442 - engine v4 implements setup_call_cleanup/3 with a real
+        // CLEANUP FRAME (design B.6): Cleanup runs when Goal has no alternatives left, i.e. after
+        // its LAST solution, not eagerly after the first. The legacy built-in the v2 engine bridges
+        // to is eager (it materialises every solution, then runs Cleanup), so `..., scc_ok` sees
+        // the assert on the first solution there and only on the second one here. The ISO/SWI
+        // behaviour is v4's; the assertion is therefore engine-dependent.
+        List<Map<String, Term>> s;
+        if (it.denzosoft.jprolog.core.engine.Prolog.isUsingV4Engine()) {
+            assertEquals("both solutions are produced, and Cleanup ran by the end", 1, prolog.solve(
+                "findall(X, setup_call_cleanup(true, member(X,[1,2]), assertz(scc_ok)), L), "
+                + "L == [1,2], scc_ok.").size());
+        } else {
+            s = prolog.solve("setup_call_cleanup(true, member(X,[1,2]), assertz(scc_ok)), scc_ok.");
+            assertEquals(2, s.size());
+        }
+        // END_CHANGE: ISS-2025-0442
 
         // Cleanup runs even when the goal fails.
         s = prolog.solve("(setup_call_cleanup(true, fail, assertz(scc_f)) ; true), scc_f.");
@@ -1986,8 +1965,13 @@ public class BugFixVerificationTest {
         assertEquals(1, s.size());
 
         // call_cleanup/2.
-        s = prolog.solve("call_cleanup(member(X,[a,b]), assertz(scc_cc)), scc_cc.");
-        assertEquals(2, s.size());
+        if (it.denzosoft.jprolog.core.engine.Prolog.isUsingV4Engine()) {
+            assertEquals("call_cleanup runs Cleanup once, after the last solution", 1, prolog.solve(
+                "findall(X, call_cleanup(member(X,[a,b]), assertz(scc_cc)), L), L == [a,b], scc_cc.").size());
+        } else {
+            s = prolog.solve("call_cleanup(member(X,[a,b]), assertz(scc_cc)), scc_cc.");
+            assertEquals(2, s.size());
+        }
     }
     // END_CHANGE: ISS-2025-0273
 
@@ -2122,10 +2106,10 @@ public class BugFixVerificationTest {
         dc.reset();
         dc.addBreakpoint("parent/2", new java.util.HashSet<>(java.util.Arrays.asList("CALL")), condition, ignore);
         dc.setConditionEvaluator((c, b) -> {
-            it.denzosoft.jprolog.core.engine.DebugController saved = p.getQuerySolver().getDebugController();
-            try { p.getQuerySolver().setDebugController(null); return !p.solve(c).isEmpty(); }
+            it.denzosoft.jprolog.core.engine.DebugController saved = p.getEngineContext().getDebugController();
+            try { p.getEngineContext().setDebugController(null); return !p.solve(c).isEmpty(); }
             catch (RuntimeException e) { return false; }
-            finally { p.getQuerySolver().setDebugController(saved); }
+            finally { p.getEngineContext().setDebugController(saved); }
         });
         final int[] hits = {0};
         dc.setListener(new it.denzosoft.jprolog.core.engine.DebugController.DebugListener() {
@@ -2138,11 +2122,11 @@ public class BugFixVerificationTest {
             public void onTraceEvent(it.denzosoft.jprolog.core.engine.DebugEvent e) {}
             public void onDebugFinished() {}
         });
-        p.getQuerySolver().setDebugController(dc);
+        p.getEngineContext().setDebugController(dc);
         Thread t = new Thread(() -> p.solve("grandparent(tom, R)."));
         t.start(); t.join(8000);
         if (t.isAlive()) { dc.stop(); t.join(2000); }
-        p.getQuerySolver().setDebugController(null);
+        p.getEngineContext().setDebugController(null);
         return hits[0];
     }
     // END_CHANGE: ISS-2025-0333
@@ -2164,14 +2148,14 @@ public class BugFixVerificationTest {
             public void onTraceEvent(it.denzosoft.jprolog.core.engine.DebugEvent e) {}
             public void onDebugFinished() {}
         });
-        p.getQuerySolver().setDebugController(dc);
+        p.getEngineContext().setDebugController(dc);
         final List<Map<String, Term>>[] sols = new List[1];
         Thread t = new Thread(() -> sols[0] = p.solve("grandparent(tom, R)."));
         try {
             t.start();
             t.join(10000);
         } finally {
-            p.getQuerySolver().setDebugController(null);
+            p.getEngineContext().setDebugController(null);
         }
         assertFalse("the v2 debug session must finish", t.isAlive());
         assertTrue("v2 engine must fire CALL ports", ports.contains("CALL"));
@@ -2203,15 +2187,8 @@ public class BugFixVerificationTest {
     }
     // END_CHANGE: ISS-2025-0329
 
-    // START_CHANGE: ISS-2025-0328 - solveLegacy forces the legacy engine (carries the debugger hooks)
-    @Test
-    public void testISS0328_SolveLegacyWorks() {
-        Prolog p = new Prolog();
-        p.consult("color(red). color(green). color(blue).");
-        List<Map<String, Term>> sols = p.solveLegacy("color(X).");
-        assertEquals("legacy engine must enumerate all solutions", 3, sols.size());
-    }
-    // END_CHANGE: ISS-2025-0328
+    // ISS-2025-0328's testISS0328_SolveLegacyWorks was REMOVED in wave W9 (ISS-2025-0484):
+    // Prolog.solveLegacy and the recursive engine it forced no longer exist.
 
     // START_CHANGE: ISS-2025-0322 - line -> predicate mapping for line-accurate IDE breakpoints
     @Test
@@ -2583,18 +2560,8 @@ public class BugFixVerificationTest {
         assertTrue(prolog.solve("rdyn0347(x).").isEmpty());
     }
 
-    @Test
-    public void testISS0347_LegacyEngineAlsoRaisesExistenceError() {
-        try {
-            prolog.solveLegacy("undefined_leg_0347(1).");
-            fail("the legacy engine must also honour unknown=error");
-        } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
-            assertNotNull(pe.getErrorTerm());
-            assertTrue(pe.getErrorTerm().toString().contains("existence_error"));
-        }
-        // control constructs resolved via KB miss (fail/0) are NOT unknown procedures
-        assertTrue(prolog.solveLegacy("fail.").isEmpty());
-    }
+    // ISS-2025-0347's legacy-engine twin was REMOVED in wave W9 (ISS-2025-0484): only the
+    // sibling test above remains, and it runs on whichever engine the suite leg selects.
     // END_CHANGE: ISS-2025-0347
 
     @Test
@@ -2657,6 +2624,11 @@ public class BugFixVerificationTest {
         // ==/\==/atomic for strings on the legacy engine (the v2 engine inlines its own
         // structural equality in core.engine.v2.MachineSolver — tracked separately).
         boolean wasV2 = Prolog.isUsingV2Engine();
+        // START_CHANGE: ISS-2025-0478 - v4 is the default since wave W8 and wins over the v2 flag;
+        // reaching the LEGACY recursive solver means turning both off.
+        boolean wasV4 = Prolog.isUsingV4Engine();
+        Prolog.setUseV4Engine(false);
+        // END_CHANGE: ISS-2025-0478
         Prolog.setUseV2Engine(false);
         try {
             Prolog legacy = new Prolog();
@@ -2667,6 +2639,7 @@ public class BugFixVerificationTest {
             assertEquals("strings are atomic", 1, legacy.solve("atomic(\"abc\").").size());
         } finally {
             Prolog.setUseV2Engine(wasV2);
+            Prolog.setUseV4Engine(wasV4);   // ISS-2025-0478
         }
     }
 
@@ -3120,8 +3093,6 @@ public class BugFixVerificationTest {
     public void testISS0363_ThrowUnboundRaisesInstantiationError() {
         assertEquals("throw(_) must raise instantiation_error (ISO 7.8.10.3)", 1, prolog.solve(
             "catch(throw(_), error(instantiation_error, _), true).").size());
-        assertEquals("legacy engine must agree", 1, prolog.solveLegacy(
-            "catch(throw(_), error(instantiation_error, _), true).").size());
     }
 
     @Test
@@ -3217,13 +3188,7 @@ public class BugFixVerificationTest {
             1, s.size());
     }
 
-    @Test
-    public void testISS0366_RetractValidationOnLegacyEngine() {
-        assertEquals(1, prolog.solveLegacy(
-            "catch(retract(_X), error(instantiation_error, _), true).").size());
-        assertEquals(1, prolog.solveLegacy(
-            "catch(retract(1), error(type_error(callable, 1), _), true).").size());
-    }
+    // ISS-2025-0366's legacy-engine twin was REMOVED in wave W9 (ISS-2025-0484).
 
     // ======================== ISS-2025-0367: built-in procedures are static ========================
 
@@ -3260,12 +3225,7 @@ public class BugFixVerificationTest {
         assertEquals(1, prolog.solve("atom_length(abc, 3).").size());
     }
 
-    @Test
-    public void testISS0367_AssertOnBuiltInRaisesOnLegacyEngine() {
-        assertEquals(1, prolog.solveLegacy(
-            "catch(assertz(atom_length(zzz, 99)), "
-            + "error(permission_error(modify, static_procedure, atom_length/2), _), true).").size());
-    }
+    // ISS-2025-0367's legacy-engine twin was REMOVED in wave W9 (ISS-2025-0484).
 
     @Test
     public void testISS0367_UserPredicatesRemainModifiable() {
@@ -3309,13 +3269,7 @@ public class BugFixVerificationTest {
         assertEquals(1, prolog.solve("assertz((iss0368_v :- _G)).").size());
     }
 
-    @Test
-    public void testISS0368_AssertValidationOnLegacyEngine() {
-        assertEquals(1, prolog.solveLegacy(
-            "catch(assertz(1), error(type_error(callable, 1), _), true).").size());
-        assertEquals(1, prolog.solveLegacy(
-            "catch(asserta((iss0368_leg :- 7)), error(type_error(callable, 7), _), true).").size());
-    }
+    // ISS-2025-0368's legacy-engine twin was REMOVED in wave W9 (ISS-2025-0484).
 
     @Test
     public void testISS0368_NoGarbageEntryAfterRejectedAssert() {
@@ -3617,6 +3571,20 @@ public class BugFixVerificationTest {
 
     @Test
     public void testISS0379_AppendFullyOpenDoesNotThrow() {
+        // START_CHANGE: ISS-2025-0468 - engine v4 wave W6 pays off the W3 deviation: append/3 is
+        // the real two-clause Prolog definition of prelude/lists.pl, so the fully-open mode
+        // ENUMERATES (X = [], X = [_], X = [_,_], ...) instead of stopping at the one standard
+        // solution the eager Java built-in could produce. Collecting every solution of an infinite
+        // relation is therefore no longer a meaningful assertion on v4 — the guarantee becomes
+        // "the first solution is X = [], and it arrives without throwing".
+        if (it.denzosoft.jprolog.core.engine.Prolog.isUsingV4Engine()) {
+            List<Map<String, Term>> v4 = prolog.solve("append(X,Y,Z), X == [], !.");
+            assertFalse("append(X,Y,Z) must produce the X=[] solution, not throw", v4.isEmpty());
+            assertEquals("fully open append/3 must enumerate lazily on v4",
+                1, prolog.solve("append(X, _, _), length(X, 2), !.").size());
+            return;
+        }
+        // END_CHANGE: ISS-2025-0468
         // Fully-open append(X,Y,Z): the eager builtin protocol cannot enumerate the infinite
         // relation; it must at least produce the first standard solution X=[], Z=Y without throwing.
         List<Map<String, Term>> solutions = prolog.solve("append(X,Y,Z), X == [].");
@@ -4017,9 +3985,11 @@ public class BugFixVerificationTest {
     }
 
     @Test
-    public void testISS0396_LegacyEngineRetractStillEnumerates() {
-        prolog.solveLegacy("assertz(lr0396(1)), assertz(lr0396(2)).");
-        List<Map<String, Term>> s = prolog.solveLegacy("findall(X, retract(lr0396(X)), L).");
+    public void testISS0396_RetractInFindallStillEnumerates() {
+        // ISS-2025-0484 - wave W9: was testISS0396_LegacyEngineRetractStillEnumerates, on the
+        // deleted recursive engine. It now runs on whichever engine the suite leg selects.
+        prolog.solve("assertz(lr0396(1)), assertz(lr0396(2)).");
+        List<Map<String, Term>> s = prolog.solve("findall(X, retract(lr0396(X)), L).");
         assertEquals(1, s.size());
         assertEquals("[1, 2]", s.get(0).get("L").toString());
     }
@@ -4045,6 +4015,17 @@ public class BugFixVerificationTest {
     public void testISS0397_RealCyclicTermProtectionUntouched() {
         // ISS-2025-0313: a rational tree (X = f(X) with occurs_check off) must STILL raise the
         // controlled representation_error, not be weakened by the var-var skip.
+        // START_CHANGE: ISS-2025-0441 - engine v4 SUPPORTS rational trees (design decision 2,
+        // approved): the same query succeeds there and cyclic_term/1 is a real test. The ISO
+        // "error" policy remains available on v4 through set_prolog_flag(occurs_check, error).
+        if (it.denzosoft.jprolog.core.engine.Prolog.isUsingV4Engine()) {
+            assertEquals("v4 supports rational trees: X = f(X), Y = X succeeds", 1,
+                prolog.solve("X = f(X), Y = X.").size());
+            assertEquals("and the term is genuinely cyclic", 1,
+                prolog.solve("X = f(X), cyclic_term(X).").size());
+            return;
+        }
+        // END_CHANGE: ISS-2025-0441
         try {
             prolog.solve("X = f(X), Y = X.");
             fail("X = f(X) must still raise representation_error(cyclic_term)");
@@ -4073,8 +4054,9 @@ public class BugFixVerificationTest {
     }
 
     @Test
-    public void testISS0398_CaretGoalOnLegacyEngine() {
-        assertEquals(2, prolog.solveLegacy("Y^member(X, [1, 2]).").size());
+    public void testISS0398_CaretGoalAsPlainGoal() {
+        // ISS-2025-0484 - wave W9: was testISS0398_CaretGoalOnLegacyEngine.
+        assertEquals(2, prolog.solve("Y^member(X, [1, 2]).").size());
     }
 
     @Test
@@ -4199,9 +4181,6 @@ public class BugFixVerificationTest {
     public void testISS0416_FindallThirdArgTypeCheck() {
         assertEquals("findall(X, fail, a) must raise type_error(list, a)", 1, prolog.solve(
             "catch(findall(X, fail, a), error(type_error(list, a), _), true).").size());
-        // the legacy engine path (CollectionUtils) must raise it too
-        assertEquals("findall(X, fail, a) must raise type_error(list, a) on the legacy engine", 1,
-            prolog.solveLegacy("catch(findall(X, fail, a), error(type_error(list, a), _), true).").size());
         // a partial list stays legal, as do variables and proper lists
         assertEquals(1, prolog.solve("findall(X, member(X, [1, 2]), [A|T]), A == 1, T == [2].").size());
         assertEquals(1, prolog.solve("findall(X, fail, L), L == [].").size());

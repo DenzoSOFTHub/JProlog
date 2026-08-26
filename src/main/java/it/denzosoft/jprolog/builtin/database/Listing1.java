@@ -2,7 +2,7 @@ package it.denzosoft.jprolog.builtin.database;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.Prolog;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
@@ -14,7 +14,7 @@ import java.util.Map;
 public class Listing1 implements BuiltInWithContext {
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+    public boolean executeWithContext(SolverContext solver, Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 1) {
             throw new PrologEvaluationException("listing/1 requires exactly one argument.");
         }

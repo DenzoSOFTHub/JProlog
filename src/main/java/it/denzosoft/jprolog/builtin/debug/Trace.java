@@ -22,8 +22,13 @@ import java.util.Map;
  */
 public class Trace implements BuiltIn {
     
-    // Global tracing state (simplified implementation)
-    private static boolean tracingEnabled = false;
+    // START_CHANGE: ISS-2025-0437 - ENG-06: tracing state moved into the engine's PrologFlags store
+    // (see PrologFlags.isTracingEnabled). It used to be a process-global static here, so `trace.`
+    // in one Prolog instance enabled four-port tracing for every instance in the JVM. The static
+    // accessors below are kept and simply route to the engine current on this thread; callers that
+    // toggle tracing from OUTSIDE a query (the IDE Run panel, the CLI ':trace' command) must use
+    // Prolog.setTracing(boolean) on their own engine instead.
+    // END_CHANGE: ISS-2025-0437
     
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
@@ -31,7 +36,7 @@ public class Trace implements BuiltIn {
             throw new PrologEvaluationException("trace/0 takes no arguments");
         }
         
-        tracingEnabled = true;
+        it.denzosoft.jprolog.core.system.PrologFlags.setTracingEnabled(true);   // ISS-2025-0437
         it.denzosoft.jprolog.builtin.io.StreamManager.out().println("% Tracing enabled");
         
         solutions.add(bindings);
@@ -42,13 +47,13 @@ public class Trace implements BuiltIn {
      * Check if tracing is currently enabled.
      */
     public static boolean isTracingEnabled() {
-        return tracingEnabled;
+        return it.denzosoft.jprolog.core.system.PrologFlags.isTracingEnabled();   // ISS-2025-0437
     }
     
     /**
      * Set the tracing state (used by notrace/0).
      */
     public static void setTracingEnabled(boolean enabled) {
-        tracingEnabled = enabled;
+        it.denzosoft.jprolog.core.system.PrologFlags.setTracingEnabled(enabled);   // ISS-2025-0437
     }
 }

@@ -1,6 +1,7 @@
 package it.denzosoft.jprolog.builtin.io;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.engine.v4.PrologStream;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -8,110 +9,54 @@ import it.denzosoft.jprolog.core.terms.Term;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Implementation of get_char/1 predicate.
- * 
- * get_char(?Char)
- * 
- * Reads a single character from standard input and unifies it with Char.
- * If end of stream is reached, unifies with the atom 'end_of_file'.
- * 
- * Examples:
- * ?- get_char(X).
- * a
- * X = a.
- * 
- * ?- get_char(end_of_file).
- * % Succeeds if at end of input stream
+ * get_char/1 - get_char(?Char) — read one character from the current input.
+ * get_char/2 - get_char(+Stream, ?Char) — ISO 8.12.1.
+ *
+ * <p>Reads through the stream's own decoder (ISS-2025-0472, wave W7), so a preceding
+ * {@code peek_char/2} or {@code seek/4} is honoured exactly.
  */
 public class GetChar implements BuiltIn {
-    
+
     // START_CHANGE: ISS-2025-0173 - Make stdin reader final to prevent reassignment and document non-closure
     /** Cached BufferedReader for System.in - must not be closed as that would close System.in */
-    private static final BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+    private static final BufferedReader STDIN = new BufferedReader(new InputStreamReader(System.in));
     // END_CHANGE: ISS-2025-0173
-    
+
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         int arity = query.getArguments() == null ? 0 : query.getArguments().size();
         if (arity != 1 && arity != 2) {
             throw new PrologEvaluationException("get_char/1 or get_char/2 expected");
         }
+        String ctx = "get_char/" + arity;
+        Term charTerm = query.getArguments().get(arity - 1);
+        Term streamArg = (arity == 2) ? query.getArguments().get(0) : null;
 
-        // START_CHANGE: R3 - get_char/2 dispatches to named stream with eof_action + encoding support
-        String streamAlias = null;
-        Term charTerm;
-        if (arity == 1) {
-            charTerm = query.getArguments().get(0);
-        } else {
-            Term sTerm = query.getArguments().get(0).resolveBindings(bindings);
-            if (!(sTerm instanceof Atom)) {
-                throw new PrologEvaluationException("get_char/2: stream must be atom");
-            }
-            streamAlias = ((Atom) sTerm).getName();
-            charTerm = query.getArguments().get(1);
-        }
-        // END_CHANGE: R3
-        // START_CHANGE: ISS-2025-0375 - honour set_input/1: get_char/1 (and an explicit current_input)
-        // must read from the CURRENT input stream, not always from System.in. Only when the current
-        // input is user_input do we fall back to the cached stdin reader below.
-        if (streamAlias == null || "current_input".equals(streamAlias)) {
-            String cur = StreamManager.getCurrentInput();
-            streamAlias = (cur == null || "user_input".equals(cur)) ? null : cur;
-        }
-        // END_CHANGE: ISS-2025-0375
-
+        // START_CHANGE: ISS-2025-0472 - one code path for both arities, over the engine's stream
+        PrologStream s = IOStreamUtils.inputStream(streamArg, bindings, ctx);
         try {
-            int charCode;
-            // START_CHANGE: R3 - read via Reader when stream alias known (encoding-aware)
-            if (streamAlias != null && !"user_input".equals(streamAlias) && !"current_input".equals(streamAlias)) {
-                java.io.Reader r = StreamManager.getReader(streamAlias);
-                if (r == null) {
-                    throw new PrologEvaluationException("existence_error(stream, " + streamAlias + ")");
-                }
-                charCode = r.read();
-                if (charCode == -1) {
-                    String eofAction = StreamManager.getProperty(streamAlias, StreamManager.PROP_EOF_ACTION);
-                    if ("error".equals(eofAction)) {
-                        throw new PrologEvaluationException("permission_error(input, past_end_of_stream, " + streamAlias + ")");
-                    }
-                    // default eof_code: bind end_of_file atom
-                }
+            int cp = IOStreamUtils.isStdin(s) ? STDIN.read() : s.getCodePoint();
+            Term value;
+            if (cp < 0) {
+                IOStreamUtils.checkPastEof(s, ctx);
+                value = new Atom("end_of_file");
             } else {
-                charCode = reader.read();
+                value = new Atom(new String(Character.toChars(cp)));
             }
-            // END_CHANGE: R3
-
-            Term charValue;
-            if (charCode == -1) {
-                charValue = new Atom("end_of_file");
-            } else {
-                // codepoint-aware: high surrogate handling
-                if (Character.isHighSurrogate((char) charCode)) {
-                    java.io.Reader r2 = (streamAlias != null) ? StreamManager.getReader(streamAlias) : reader;
-                    int low = r2 != null ? r2.read() : -1;
-                    if (low != -1) {
-                        int cp = Character.toCodePoint((char) charCode, (char) low);
-                        charValue = new Atom(new String(Character.toChars(cp)));
-                    } else {
-                        charValue = new Atom(String.valueOf((char) charCode));
-                    }
-                } else {
-                    charValue = new Atom(String.valueOf((char) charCode));
-                }
-            }
-
-            if (charTerm.unify(charValue, bindings)) {
-                solutions.add(bindings);
+            Map<String, Term> nb = new HashMap<>(bindings);
+            if (charTerm.unify(value, nb)) {
+                solutions.add(nb);
                 return true;
             }
             return false;
-
         } catch (IOException e) {
             throw new PrologEvaluationException("get_char: I/O error - " + e.getMessage());
         }
+        // END_CHANGE: ISS-2025-0472
     }
 }

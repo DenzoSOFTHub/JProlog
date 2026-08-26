@@ -43,7 +43,7 @@ This guide provides technical details for developers working on JProlog's except
 ├─────────────────────────────────────────────────────────────────┤
 │  Core Engine Integration                                        │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐  │
-│  │ QuerySolver │───▶│BuiltInImpl  │───▶│  PrologException    │  │
+│  │   Machine   │───▶│BuiltInImpl  │───▶│  PrologException    │  │
 │  └─────────────┘    └─────────────┘    └─────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -125,7 +125,7 @@ public class Catch extends AbstractBuiltInWithContext {
         
         try {
             // Execute the goal
-            return context.getQuerySolver().solve(goal);
+            return context.solveMeta(goal, bindings, solutions);
             
         } catch (PrologException exception) {
             Term exceptionTerm = exception.getExceptionTerm();
@@ -136,7 +136,7 @@ public class Catch extends AbstractBuiltInWithContext {
             if (unification != null) {
                 // Exception caught - execute recovery with bindings
                 Term boundRecovery = recovery.substitute(unification);
-                return context.getQuerySolver().solve(boundRecovery);
+                return context.solveMeta(boundRecovery, bindings, solutions);
                 
             } else {
                 // Exception not caught - propagate upward
@@ -212,8 +212,8 @@ public class ISOErrorTerms {
 ### Exception Propagation Mechanism
 
 ```java
-// In QuerySolver.java (conceptual integration)
-public class QuerySolver {
+// Conceptual integration inside the engine
+public class Machine {
     
     public Term solve(Term goal) throws PrologException {
         try {

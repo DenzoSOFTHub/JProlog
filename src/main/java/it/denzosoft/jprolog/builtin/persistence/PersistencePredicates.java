@@ -2,9 +2,8 @@ package it.denzosoft.jprolog.builtin.persistence;
 
 // START_CHANGE: ISS-2025-0126 - Persistence package for saving/loading clause database
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.CutStatus;
 import it.denzosoft.jprolog.core.engine.Prolog;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.engine.Rule;
 import it.denzosoft.jprolog.core.engine.KnowledgeBase;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
@@ -77,7 +76,7 @@ public class PersistencePredicates implements BuiltInWithContext {
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings,
+    public boolean executeWithContext(SolverContext solver, Term query, Map<String, Term> bindings,
                                      List<Map<String, Term>> solutions) {
         Prolog engine = solver.getPrologContext();
         if (engine == null) {
@@ -377,7 +376,7 @@ public class PersistencePredicates implements BuiltInWithContext {
      * db_transaction(Goal): Takes a snapshot, calls Goal. On success, commits any
      * buffered writes. On failure or exception, rolls back to the snapshot.
      */
-    private boolean doDbTransaction(Prolog engine, QuerySolver solver, Term query,
+    private boolean doDbTransaction(Prolog engine, SolverContext solver, Term query,
                                      Map<String, Term> bindings,
                                      List<Map<String, Term>> solutions) {
         checkArity(query, 1, "db_transaction/1");
@@ -398,7 +397,7 @@ public class PersistencePredicates implements BuiltInWithContext {
         try {
             // Execute the goal using the solver
             List<Map<String, Term>> goalSolutions = new ArrayList<>();
-            success = solver.solve(goal, new HashMap<>(bindings), goalSolutions, CutStatus.notOccurred());
+            success = solver.solveMeta(goal, new HashMap<>(bindings), goalSolutions);   // ISS-2025-0485
 
             if (success && !goalSolutions.isEmpty()) {
                 // Commit: flush any pending buffered writes
@@ -410,6 +409,7 @@ public class PersistencePredicates implements BuiltInWithContext {
                 rollbackTransaction(engine, handle);
             }
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             // Rollback on exception
             rollbackTransaction(engine, handle);
             throw e;
@@ -499,7 +499,7 @@ public class PersistencePredicates implements BuiltInWithContext {
      * at once into the database. More efficient than individual assert calls
      * as it constructs the Prolog text in one pass and consults it.
      */
-    private boolean doDbBatchAssert(Prolog engine, QuerySolver solver, Term query,
+    private boolean doDbBatchAssert(Prolog engine, SolverContext solver, Term query,
                                      Map<String, Term> bindings,
                                      List<Map<String, Term>> solutions) {
         checkArity(query, 1, "db_batch_assert/1");
@@ -636,6 +636,7 @@ public class PersistencePredicates implements BuiltInWithContext {
             field.setAccessible(true);
             return (KnowledgeBase) field.get(engine);
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("Cannot access knowledge base: " + e.getMessage());
         }
     }

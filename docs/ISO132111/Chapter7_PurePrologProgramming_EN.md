@@ -1,5 +1,13 @@
 # Chapter 7: Programming in Pure Prolog - JProlog Programming Principles
 
+> **Implementation note (v4.0.0).** The Java code shown in this chapter describes the *recursive*
+> `QuerySolver` engine, which was **deleted in 4.0.0** (wave W9, ISS-2025-0484). The language
+> semantics described here are unchanged and still hold; the classes are not. The engine is now
+> `core.engine.v4` (`Machine`, `Unify`, `ClauseStore`, `Bindings`) and a context built-in
+> receives a `core.engine.SolverContext`, not a solver object. See `CLAUDE.md` and
+> `docs/reports/report-engine-v4-progress.md`.
+
+
 ## Overview
 
 This chapter explores the fundamental principles of programming in pure Prolog using JProlog, focusing on the declarative aspects of logic programming without side effects or extra-logical predicates. Pure Prolog programming emphasizes logical relationships, proper use of unification, and declarative problem solving. This chapter covers rule order, termination conditions, goal ordering strategies, handling redundant solutions, recursive programming techniques, and the theoretical foundations that make Prolog a powerful logic programming language.

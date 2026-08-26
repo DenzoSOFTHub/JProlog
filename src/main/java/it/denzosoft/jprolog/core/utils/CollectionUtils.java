@@ -4,8 +4,7 @@ package it.denzosoft.jprolog.core.utils;
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 // END_CHANGE: ISS-2025-0384
 import it.denzosoft.jprolog.builtin.list.Sort;
-import it.denzosoft.jprolog.core.engine.CutStatus;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
@@ -45,7 +44,7 @@ public final class CollectionUtils {
      * @return true if successful
      */
     public static boolean genericListCollector(String collectorType, Term query, Map<String, Term> bindings,
-                                               List<Map<String, Term>> solutions, QuerySolver querySolver) {
+                                               List<Map<String, Term>> solutions, SolverContext querySolver) {
         if (query.getArguments().size() != 3) {
             throw new PrologEvaluationException(collectorType + "/3 requires exactly 3 arguments.");
         }
@@ -84,13 +83,14 @@ public final class CollectionUtils {
 
         List<Map<String, Term>> tempSolutions = new ArrayList<>();
         try {
-            querySolver.solve(goal, bindings, tempSolutions, CutStatus.notOccurred());
+            querySolver.solveMeta(goal, bindings, tempSolutions)   /* ISS-2025-0431 - ENG-04 */;
             if (tempSolutions.isEmpty() && !isFindall) {
                 return false;
             }
         } catch (PrologException e) {
             throw e;
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("Error solving goal in " + collectorType + ": " + e.getMessage(), e);
         }
 

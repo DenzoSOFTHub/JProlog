@@ -3,11 +3,10 @@ package it.denzosoft.jprolog.core.engine.v2;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.BuiltInRegistry;
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.CutStatus;
 import it.denzosoft.jprolog.core.engine.DebugController;
 import it.denzosoft.jprolog.core.engine.DebugEvent;
 import it.denzosoft.jprolog.core.engine.KnowledgeBase;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.EngineContext;
 import it.denzosoft.jprolog.core.engine.Rule;
 import it.denzosoft.jprolog.core.engine.TableStore;
 import it.denzosoft.jprolog.core.module.Module;
@@ -28,7 +27,7 @@ import java.util.Map;
 
 /**
  * Clean-room prototype of a new resolution engine core, addressing the architectural debt of the
- * eager {@code QuerySolver} (LIM-023/024). Three design changes, validated by {@code MachineSolverTest}:
+ * eager recursive solver (LIM-023/024). Three design changes, validated by {@code MachineSolverTest}:
  *
  * <ol>
  *   <li><b>Mutable bindings + trail</b> instead of copying a {@code Map<String,Term>} substitution
@@ -43,7 +42,7 @@ import java.util.Map;
  * </ol>
  *
  * <p>Since v3.1.0 this is the DEFAULT resolution engine ({@code -Djprolog.engine=legacy} falls back
- * to the recursive {@code QuerySolver}): {@code Prolog.solve} builds a fresh MachineSolver per query
+ * to the recursive solver): {@code Prolog.solve} builds a fresh MachineSolver per query
  * over the live KnowledgeBase/BuiltInRegistry, with native dispatch for the control constructs and
  * frequent built-ins, registry delegation for the rest, four-port debug events (ISS-2025-0331),
  * the inference budget (ISS-2025-0339), and CLP(FD)/attribute hooks.
@@ -54,17 +53,39 @@ public final class MachineSolver {
     private final Map<String, List<Rule>> kb = new HashMap<>();   // used when liveKb == null
     private final KnowledgeBase liveKb;        // when set, clause lookup + assert/retract delegate here
     private final BuiltInRegistry registry;    // nullable: when set, non-native goals delegate here
-    private final QuerySolver contextSolver;   // nullable: solver handed to BuiltInWithContext builtins
+    private final EngineContext contextSolver;   // nullable: context handed to BuiltInWithContext builtins
     private final ModuleManager modules;       // nullable: when set, clause lookup is module-aware
     private final TableStore tableStore;       // nullable: when set, tabled predicates delegate to the legacy solver
     private DebugController debugController;    // ISS-2025-0331: nullable; when set, fire four-port debug events
     private long inferenceBudget = 0;          // ISS-2025-0339: max resolution steps (0 = unlimited)
-    private long steps = 0;
+    // START_CHANGE: ISS-2025-0431 - ENG-04: the step counter lives in a ResourceGuard shared with
+    // the engine context for the duration of the query, so budget and cancellation also apply
+    // to the sub-solves that BuiltInWithContext built-ins run there.
+    private it.denzosoft.jprolog.core.engine.ResourceGuard guard =
+        new it.denzosoft.jprolog.core.engine.ResourceGuard(0);
+    // END_CHANGE: ISS-2025-0431
     private int renameCounter = 0;
 
-    /** Abort the query by throwing {@link it.denzosoft.jprolog.core.engine.InferenceLimitException}
-     *  (uncatchable by {@code catch/3}) after this many resolution steps (0 = unlimited). */
+    /**
+     * Abort the query by throwing {@link it.denzosoft.jprolog.core.engine.InferenceLimitException}
+     * (a plain RuntimeException, so {@code catch/3} cannot trap it) after this many machine steps
+     * (0 = unlimited).
+     *
+     * <p><b>Unit</b> (ISS-2025-0427 / ENG-08): a "step" is one iteration of the drive loop, not one
+     * logical inference. Conjunction splits, {@code true}, cut and the internal action goals the
+     * machine pushes for if-then-else, tracing and cleanup each consume a step, so the count is an
+     * upper bound on — and typically 2-4x larger than — the number of predicate calls. It is a
+     * runaway-query guard, not a metering device: do not derive LIPS from it.
+     */
     public void setInferenceBudget(long budget) { this.inferenceBudget = budget; }
+
+    // START_CHANGE: ISS-2025-0431 - ENG-04: a nested machine (EngineContext.solveMeta) must charge the
+    // OUTER query's counter, not start a fresh budget of its own.
+    private it.denzosoft.jprolog.core.engine.ResourceGuard inheritedGuard;
+
+    /** Run the next {@link #solve} against {@code g} instead of a fresh guard (null = fresh). */
+    public void setResourceGuard(it.denzosoft.jprolog.core.engine.ResourceGuard g) { this.inheritedGuard = g; }
+    // END_CHANGE: ISS-2025-0431
 
     public MachineSolver(List<Rule> rules) { this(rules, null); }
 
@@ -79,7 +100,7 @@ public final class MachineSolver {
 
     /** Engine-integrated mode: read clauses from and assert/retract to the live {@link KnowledgeBase}
      *  (module-aware via {@code modules}); delegate {@link BuiltInWithContext} built-ins to {@code contextSolver}. */
-    public MachineSolver(KnowledgeBase liveKb, BuiltInRegistry registry, QuerySolver contextSolver,
+    public MachineSolver(KnowledgeBase liveKb, BuiltInRegistry registry, EngineContext contextSolver,
                          ModuleManager modules, TableStore tableStore) {
         this.liveKb = liveKb;
         this.registry = registry;
@@ -104,19 +125,28 @@ public final class MachineSolver {
                 try {
                     return modules.getRulesForPredicate(lookup);    // unqualified: current module + imports
                 } catch (RuntimeException e) {
+                    it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                     return null;
                 }
             }
         }
         if (liveKb != null) {
-            String f; int ar;
+            // START_CHANGE: ISS-2025-0433 - ENG-13: FIRST-ARGUMENT INDEXING re-landed on the v2 path,
+            // over versioned immutable snapshots. Two things made this safe after the ISS-2025-0340
+            // revert: ISS-2025-0344 fixed index maintenance and made an index miss degrade to the
+            // FULL clause list, and KnowledgeBase.getClauseSnapshot now always merges the
+            // variable-headed bucket and falls back to the full list for any first argument it
+            // cannot key (unbound, string, ...). Together with the snapshot cache this removes both
+            // the O(#clauses) list copy and the O(#clauses) head unifications per call.
+            String f; int ar; Term firstArg = null;
             if (lookup instanceof Atom) { f = ((Atom) lookup).getName(); ar = 0; }
-            else { CompoundTerm c = (CompoundTerm) lookup; f = c.getName(); ar = c.getArguments().size(); }
-            // ISS-2025-0340: first-arg indexing was reverted (silent clause drops on index misses).
-            // ISS-2025-0344 has since fixed index maintenance and made getRulesWithFirstArgIndex
-            // degrade to the full clause list on a miss, so re-landing indexing here is now feasible
-            // (perf opportunity, not done yet).
-            return liveKb.getRulesForPredicate(f, ar);
+            else {
+                CompoundTerm c = (CompoundTerm) lookup;
+                f = c.getName(); ar = c.getArguments().size();
+                if (ar > 0) firstArg = deref(c.getArguments().get(0));
+            }
+            return liveKb.getClauseSnapshot(f, ar, firstArg);
+            // END_CHANGE: ISS-2025-0433
         }
         return kb.get(key(lookup));
     }
@@ -162,7 +192,35 @@ public final class MachineSolver {
         if (m < trail.size()) trail.subList(m, trail.size()).clear();
     }
     // END_CHANGE: ISS-2025-0343
-    private void bind(String var, Term val) { binding.put(var, val); trail.add(var); }
+    // START_CHANGE: ISS-2025-0429 - ENG-10: CONDITIONAL TRAILING. bind() used to append to the trail
+    // unconditionally, even when there was no choice point to undo to — a deterministic recursion of
+    // N steps left an N-entry trail behind for nothing. A binding only needs trailing when some
+    // future undo() can reach it, i.e. when a choice point (or catch frame) exists, or while an
+    // explicit mark/undo extent is open (findall/3, \=/2, the catcher unification): those bracket
+    // themselves with forceTrail. Bindings made before the newest choice point was pushed are NOT
+    // undone by it (its trailMark is the current trail size), so skipping them is sound.
+    private int forceTrail = 0;
+
+    private void bind(String var, Term val) {
+        binding.put(var, val);
+        if (forceTrail > 0 || !cps.isEmpty()) trail.add(var);
+    }
+
+    /**
+     * Drop the whole trail once nothing can undo it. Every {@code undo(mark)} in the machine takes
+     * its mark either from a choice point / catch frame on {@code cps} or from an explicit
+     * mark-undo extent (which brackets itself with {@code forceTrail}); when both are gone no live
+     * mark exists, so the accumulated entries are pure garbage.
+     *
+     * <p>This replaces the serial-based conditional trailing proposed by ENG-10 (trail only
+     * variables older than the newest choice point). It needs no per-variable serial number, is
+     * easier to prove correct, and reclaims MORE: it drops entries made before the last choice
+     * point disappeared, not just the ones a serial test would have skipped.
+     */
+    private void reclaimTrailIfUnreachable() {
+        if (forceTrail == 0 && cps.isEmpty() && !trail.isEmpty()) trail.clear();
+    }
+    // END_CHANGE: ISS-2025-0429
 
     private Term deref(Term t) {
         while (t instanceof Variable) {
@@ -239,16 +297,25 @@ public final class MachineSolver {
         }
         if (a instanceof Atom && b instanceof Atom) return ((Atom) a).getName().equals(((Atom) b).getName());
         if (a instanceof Number && b instanceof Number) return a.equals(b);
-        if (a instanceof CompoundTerm && b instanceof CompoundTerm) {
+        // START_CHANGE: ISS-2025-0428 - ENG-09: iterate down the LAST argument instead of
+        // recursing into it. A list of N cells needed N Java frames here.
+        while (a instanceof CompoundTerm && b instanceof CompoundTerm) {
             CompoundTerm ca = (CompoundTerm) a, cb = (CompoundTerm) b;
-            if (!ca.getName().equals(cb.getName())) return false;
-            if (ca.getArguments().size() != cb.getArguments().size()) return false;
-            for (int i = 0; i < ca.getArguments().size(); i++) {
-                if (!unify(ca.getArguments().get(i), cb.getArguments().get(i))) return false;
+            List<Term> aa = ca.getArguments(), ba = cb.getArguments();
+            if (!ca.getName().equals(cb.getName()) || aa.size() != ba.size()) return false;
+            int n = aa.size();
+            for (int i = 0; i < n - 1; i++) {
+                if (!unify(aa.get(i), ba.get(i))) return false;
             }
-            return true;
+            if (n == 0) return true;
+            a = deref(aa.get(n - 1));
+            b = deref(ba.get(n - 1));
+            if (!(a instanceof CompoundTerm) || !(b instanceof CompoundTerm)) {
+                return unify(a, b);                       // leaf / variable: one recursion
+            }
         }
         return false;
+        // END_CHANGE: ISS-2025-0428
     }
 
     // ----------------------------------------------------------------- machine state
@@ -263,6 +330,18 @@ public final class MachineSolver {
     private interface Alt { Goal apply(); }
     private static final Goal FAILED = new Goal(null, -1, null);
 
+    // START_CHANGE: ISS-2025-0423 - ENG-01/ENG-03: a LAZY, possibly infinite alternative supply.
+    // {@code next()} returns the goal stack for the next alternative, {@link #FAILED} to skip it,
+    // or {@link #EXHAUSTED} when the generator is spent. (It must NOT use null for that: null is a
+    // perfectly good goal stack — it is what an empty continuation looks like when the generator is
+    // the query's last goal.) Choice points built on a Gen never materialise
+    // their alternatives, so repeat/0 and length/2's enumeration cost O(1) memory per redo
+    // instead of pre-building a (bounded!) list of solutions.
+    private interface Gen { Goal next(CP cp); }
+    /** Sentinel returned by a {@link Gen} that has no more alternatives. */
+    private static final Goal EXHAUSTED = new Goal(null, -2, null);
+    // END_CHANGE: ISS-2025-0423
+
     private static final class CP {
         final List<Alt> alts; int idx; final int trailMark;
         final int legacyMark;   // ISS-2025-0316: snapshot of the legacy backtrackable Trail (b_setval, op/3, setarg)
@@ -274,13 +353,26 @@ public final class MachineSolver {
         // END_CHANGE: ISS-2025-0343
         Term traceGoal = null; int traceDepth = 0;   // ISS-2025-0329: 4-port trace (Redo/Fail) for this goal
         boolean traceDebug = false;                   // ISS-2025-0331: also notify the DebugController
+        // START_CHANGE: ISS-2025-0423 - ENG-01/ENG-03: lazy alternative supply (null for list CPs)
+        final Gen gen;
+        // ISS-2025-0433 - ENG-13: set by a Gen that has just handed out its LAST alternative, so
+        // advance() can trust-me pop the frame exactly as it does for a list choice point.
+        boolean genExhausted = false;
+        // END_CHANGE: ISS-2025-0423
         CP(List<Alt> alts, int trailMark) {
-            this.alts = alts; this.trailMark = trailMark;
+            this.alts = alts; this.trailMark = trailMark; this.gen = null;
             this.legacyMark = it.denzosoft.jprolog.core.engine.Trail.mark();
             this.isCatch = false; this.catcher = null; this.recovery = null; this.cont = null; this.cutBarrier = 0;
         }
+        // START_CHANGE: ISS-2025-0423 - lazy-generator choice point
+        CP(Gen gen, int trailMark) {
+            this.alts = null; this.trailMark = trailMark; this.gen = gen;
+            this.legacyMark = it.denzosoft.jprolog.core.engine.Trail.mark();
+            this.isCatch = false; this.catcher = null; this.recovery = null; this.cont = null; this.cutBarrier = 0;
+        }
+        // END_CHANGE: ISS-2025-0423
         CP(int trailMark, Term catcher, Term recovery, Goal cont, int cutBarrier) {
-            this.alts = null; this.trailMark = trailMark;
+            this.alts = null; this.trailMark = trailMark; this.gen = null;
             this.legacyMark = it.denzosoft.jprolog.core.engine.Trail.mark();
             this.isCatch = true; this.catcher = catcher; this.recovery = recovery; this.cont = cont; this.cutBarrier = cutBarrier;
         }
@@ -289,18 +381,41 @@ public final class MachineSolver {
     private Goal goalStack;
     private final ArrayList<CP> cps = new ArrayList<>();
 
+    // START_CHANGE: ISS-2025-0429 - ENG-10: test hooks pinning the machine's memory invariants
+    // (deterministic execution must leave neither choice points nor trail entries behind).
+    /** Number of live choice points (including catch frames). Package-private: test hook. */
+    int choicePointCount() { return cps.size(); }
+    /** Number of live trail entries. Package-private: test hook. */
+    int trailSize() { return trail.size(); }
+    // END_CHANGE: ISS-2025-0429
+
     public interface SolutionSink { boolean onSolution(Map<String, Term> solution); }
 
     /** Solve {@code query}, streaming each solution; the sink returns false to stop. */
     public void solve(Term query, SolutionSink sink) {
         binding.clear(); trail.clear(); cps.clear(); woken.clear();
-        // ISS-2025-0331: pick up the IDE debugger (set on the shared QuerySolver) so the v2 engine
+        forceTrail = 0;                                            // ISS-2025-0429 - ENG-10
+        // ISS-2025-0331: pick up the IDE debugger (set on the shared EngineContext) so the v2 engine
         // fires four-port CALL/EXIT/FAIL/REDO events and honours breakpoints/stepping.
         debugController = (contextSolver != null) ? contextSolver.getDebugController() : null;
         List<String> queryVars = new ArrayList<>();
         collectVars(query, queryVars);
         goalStack = new Goal(query, 0, null);
-        drive(() -> sink.onSolution(snapshot(queryVars)), 0);
+        // START_CHANGE: ISS-2025-0431 - ENG-04: publish this query's budget/cancellation guard on the
+        // shared EngineContext so every nested sub-solve charges the SAME counter and sees the SAME
+        // interrupt. Restored afterwards (a BuiltInWithContext built-in may re-enter the machine).
+        guard = (inheritedGuard != null)                           // ISS-2025-0431 - ENG-04
+            ? inheritedGuard
+            : new it.denzosoft.jprolog.core.engine.ResourceGuard(inferenceBudget);
+        it.denzosoft.jprolog.core.engine.ResourceGuard prevGuard =
+            (contextSolver != null) ? contextSolver.getResourceGuard() : null;
+        if (contextSolver != null) contextSolver.setResourceGuard(guard);
+        try {
+            drive(() -> sink.onSolution(snapshot(queryVars)), 0);
+        } finally {
+            if (contextSolver != null) contextSolver.setResourceGuard(prevGuard);
+        }
+        // END_CHANGE: ISS-2025-0431
     }
 
     private interface Driver { boolean onSolution(); }
@@ -311,12 +426,13 @@ public final class MachineSolver {
         while (true) {
           // Cancellation: the IDE Stop button interrupts the solver thread; abort the query promptly
           // (a non-PrologException so user catch/3 cannot trap it). (ISS-2025-0320)
-          if (Thread.currentThread().isInterrupted()) throw new it.denzosoft.jprolog.core.engine.QueryCancelledException();
           // Inference budget: hard per-query step cap. Thrown as a NON-PrologException so untrusted
           // catch/3 cannot trap it and loop forever — it propagates to the embedder. (ISS-2025-0339)
-          if (inferenceBudget > 0 && ++steps > inferenceBudget) {
-              throw new it.denzosoft.jprolog.core.engine.InferenceLimitException(inferenceBudget);
-          }
+          // ISS-2025-0431 - ENG-04: both now go through the guard shared with the legacy solver.
+          // ISS-2025-0435 - ENG-15: step() polls Thread.isInterrupted() once every 1024 steps
+          // instead of on every single drive iteration; at engine speed that is still sub-millisecond
+          // latency for the Stop button, and it takes a volatile read off the hottest path.
+          guard.step();
           try {
             if (!woken.isEmpty()) {                                    // freeze-woken goals run next (ISS-0336)
                 for (int i = woken.size() - 1; i >= 0; i--) goalStack = new Goal(woken.get(i), cps.size(), goalStack);
@@ -337,6 +453,13 @@ public final class MachineSolver {
                 if ("true".equals(n)) continue;
                 if ("fail".equals(n) || "false".equals(n)) { if (!backtrack(floor)) return; continue; }
                 if ("!".equals(n)) { cut(g.cutBarrier); continue; }
+                // START_CHANGE: ISS-2025-0423 - ENG-01: repeat/0 is an INFINITE choice point.
+                // The registry built-in materialised exactly 1000 copies of the binding map, so
+                // `repeat, ..., Done, !` silently FAILED after 1000 iterations (and cost 1000 full
+                // map copies up front). Handled natively here — including while debugging, where
+                // the bridge would otherwise reintroduce the bound — with the four ports emitted.
+                if ("repeat".equals(n)) { repeat(t); continue; }
+                // END_CHANGE: ISS-2025-0423
                 int rb0 = bridgeBuiltin(t, n, 0);
                 if (rb0 == 1) continue;
                 if (rb0 == 0) { if (!backtrack(floor)) return; continue; }
@@ -434,8 +557,11 @@ public final class MachineSolver {
                         throw new it.denzosoft.jprolog.core.exceptions.PrologException(
                             it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError("throw/1"));
                     }
-                    throw new it.denzosoft.jprolog.core.exceptions.PrologException(   // caught by drive()
-                        rename(ball, renameCounter++, new HashMap<>()));
+                    // START_CHANGE: ISS-2025-0427 - ENG-08: the ball was renamed HERE and again in
+                    // drive()'s catch clause (which renames every ball it routes). One copy is
+                    // enough; resolve() already detached it from the bindings that unwind.
+                    throw new it.denzosoft.jprolog.core.exceptions.PrologException(ball);  // caught by drive()
+                    // END_CHANGE: ISS-2025-0427
                     // END_CHANGE: ISS-2025-0363
                 }
                 if (("assertz".equals(f) || "assert".equals(f)) && a.size() == 1) { assertClause(a.get(0), false); continue; }
@@ -447,6 +573,49 @@ public final class MachineSolver {
                     // END_CHANGE: ISS-2025-0396
                     continue;
                 }
+                // START_CHANGE: ISS-2025-0431 - ENG-04: the common meta-calls run NATIVELY on the
+                // machine instead of being bridged to the recursive legacy solver. On the
+                // legacy path they were eager, ~70x slower per inference, and (before the
+                // ResourceGuard) invisible to the budget, the Stop interrupt and the v2 trace.
+                // Expressed with the machine's own control constructs, which already give them the
+                // right cut opacity: a `!` inside the goal is local to it.
+                //   once(G)     == (G -> true)
+                //   ignore(G)   == (G -> true ; true)
+                //   forall(C,A) == \+ (C, \+ A)
+                // While debugging/tracing the goals keep going through the registry bridge so the
+                // four ports fire exactly as before (same rule as the =/2 and solveBuiltin fast
+                // paths); the ResourceGuard bounds that path regardless.
+                if (!debugTraceActive()) {
+                    if ("once".equals(f) && a.size() == 1) {
+                        ite(a.get(0), ATOM_TRUE, ATOM_FAIL, g.cutBarrier);
+                        continue;
+                    }
+                    if ("ignore".equals(f) && a.size() == 1) {
+                        ite(a.get(0), ATOM_TRUE, ATOM_TRUE, g.cutBarrier);
+                        continue;
+                    }
+                    if ("forall".equals(f) && a.size() == 2) {
+                        Term negAction = new CompoundTerm(new Atom("\\+"),
+                            java.util.Collections.singletonList(a.get(1)));
+                        Term conj = new CompoundTerm(new Atom(","), Arrays.asList(a.get(0), negAction));
+                        ite(conj, ATOM_FAIL, ATOM_TRUE, g.cutBarrier);
+                        continue;
+                    }
+                    // ENG-12: between/3 as a LAZY generator (see betweenNative)
+                    if ("between".equals(f) && a.size() == 3) {
+                        int rb2 = betweenNative(t, a);
+                        if (rb2 == 1) continue;
+                        if (rb2 == 0) { if (!backtrack(floor)) return; continue; }
+                    }
+                }
+                // END_CHANGE: ISS-2025-0431
+                // START_CHANGE: ISS-2025-0425 - ENG-03: length/2 in the (partial list, unbound
+                // length) mode enumerates N = Prefix, Prefix+1, ... as a lazy infinite choice point
+                // (ISO/SWI). The Java built-in only handles (proper list, _) and (_, integer) and
+                // returned false for every other mode, so `length(L,N), N >= 3, !` and
+                // `length([a|T], N)` failed. The deterministic modes still go to the built-in.
+                if ("length".equals(f) && a.size() == 2 && lengthEnumerate(t, a)) continue;
+                // END_CHANGE: ISS-2025-0425
                 if (debugController == null) {                    // fast-path native builtins (skipped
                     int r = solveBuiltin(t, f, a);               // while debugging so they trace via the bridge)
                     if (r == 1) continue;
@@ -480,6 +649,7 @@ public final class MachineSolver {
     // ----------------------------------------------------------------- control
     private void cut(int barrier) {
         while (cps.size() > barrier) cps.remove(cps.size() - 1);
+        reclaimTrailIfUnreachable();          // ISS-2025-0429 - ENG-10
     }
 
     private void disjunction(Term left, Term right, int cutBarrier) {
@@ -525,6 +695,119 @@ public final class MachineSolver {
         advance(cp);
     }
 
+    // START_CHANGE: ISS-2025-0423 - ENG-01: repeat/0 as an infinite choice point.
+    /** {@code repeat} — succeed now and on every redo, forever, in O(1) memory. */
+    private void repeat(Term goal) {
+        final Goal cont = goalStack;
+        final boolean traced = debugTraceActive();
+        final int depth = cps.size();
+        if (traced) portCall(goal, depth);
+        final Goal body = traced ? new Goal(() -> portExit(goal, depth), cont) : cont;
+        CP cp = new CP(unused -> body, mark());
+        if (traced) { cp.traceGoal = goal; cp.traceDepth = depth; cp.traceDebug = (debugController != null); }
+        cps.add(cp);
+        advance(cp);                                              // an infinite generator never fails
+    }
+    // END_CHANGE: ISS-2025-0423
+
+    // START_CHANGE: ISS-2025-0431 - ENG-04: shared atoms for the native meta-call expansions
+    private static final Atom ATOM_TRUE = new Atom("true");
+    private static final Atom ATOM_FAIL = new Atom("fail");
+    // END_CHANGE: ISS-2025-0431
+
+    // START_CHANGE: ISS-2025-0432 - ENG-12: between/3 as a lazy generator.
+    /**
+     * {@code between(+Low, +High, -Value)} in the ENUMERATION mode, as a lazy choice point: one
+     * {@code Number} per redo instead of the eager built-in's up-front list of every solution
+     * (each a full binding-map copy). {@code between(1,2000000,X), X >= 2000000} used to exhaust a
+     * 256 MB heap before producing its first solution; {@code between(1, inf, X)} was silently
+     * capped at a million solutions. Returns 1 = succeeded, 0 = failed, -1 = mode not handled here
+     * (the registry built-in keeps every other mode and all the ISO error cases).
+     */
+    private int betweenNative(Term goal, List<Term> a) {
+        Term lo = deref(a.get(0)), hi = deref(a.get(1)), v = deref(a.get(2));
+        if (!(v instanceof Variable)) return -1;                    // check mode -> built-in
+        if (!(lo instanceof Number) || !((Number) lo).isInteger() || !((Number) lo).fitsInLong()) return -1;
+        long low = ((Number) lo).longValue();
+        long high;
+        if (hi instanceof Atom) {
+            String hn = ((Atom) hi).getName();
+            if (!"inf".equals(hn) && !"infinite".equals(hn)) return -1;   // -> built-in raises type_error
+            high = Long.MAX_VALUE;
+        } else if (hi instanceof Number && ((Number) hi).isInteger() && ((Number) hi).fitsInLong()) {
+            high = ((Number) hi).longValue();
+        } else {
+            return -1;
+        }
+        if (low > high) return 0;
+        final Term value = v;
+        final Goal cont = goalStack;
+        final long last = high;
+        final long[] next = {low};
+        CP cp = new CP(self -> {
+            if (next[0] > last) return EXHAUSTED;                   // generator spent
+            long i = next[0]++;
+            if (next[0] > last) self.genExhausted = true;           // ISS-2025-0433: last value
+            return unify(value, Number.valueOf(i)) ? cont : FAILED;   // ISS-2025-0434
+        }, mark());
+        cps.add(cp);
+        if (advance(cp)) return 1;
+        cps.remove(cps.size() - 1);
+        return 0;
+    }
+    // END_CHANGE: ISS-2025-0432
+
+    // START_CHANGE: ISS-2025-0425 - ENG-03: length/2 enumeration for partial lists.
+    private static final Atom DOT = new Atom(".");
+    private static final Atom NIL = new Atom("[]");
+    private int lenVarCounter = 0;
+
+    /**
+     * {@code length(PartialList, Var)} — enumerate the list length. Returns false (leaving the goal
+     * to the deterministic Java built-in) unless the length is unbound AND the list's spine ends in
+     * an unbound tail; in that mode it installs a lazy, infinite choice point binding
+     * {@code Tail = []}, {@code [_]}, {@code [_,_]}, … and the length accordingly.
+     */
+    private boolean lengthEnumerate(Term goal, List<Term> a) {
+        Term lenT = deref(a.get(1));
+        if (!(lenT instanceof Variable)) return false;            // length known -> deterministic mode
+        Term cur = deref(a.get(0));
+        int prefix = 0;
+        java.util.IdentityHashMap<Term, Boolean> seen = new java.util.IdentityHashMap<>();
+        while (cur instanceof CompoundTerm && ".".equals(((CompoundTerm) cur).getName())
+                && ((CompoundTerm) cur).getArguments().size() == 2) {
+            if (seen.put(cur, Boolean.TRUE) != null) return false;         // cyclic spine
+            prefix++;
+            cur = deref(((CompoundTerm) cur).getArguments().get(1));
+        }
+        if (!(cur instanceof Variable)) return false;             // proper list or non-list tail
+        if (cur == lenT || ((Variable) cur).getName().equals(((Variable) lenT).getName())) return false;
+        final Term tail = cur, lenVar = lenT;
+        final int base = prefix;
+        final Goal cont = goalStack;
+        final boolean traced = debugTraceActive();
+        final int depth = cps.size();
+        if (traced) portCall(goal, depth);
+        final Goal after = traced ? new Goal(() -> portExit(goal, depth), cont) : cont;
+        final int[] extra = {0};
+        CP cp = new CP(unused -> {
+            int k = extra[0]++;
+            Term list = NIL;
+            for (int i = k - 1; i >= 0; i--) {
+                list = new CompoundTerm(DOT, Arrays.asList(
+                    (Term) new Variable("_Len" + (lenVarCounter++)), list));
+            }
+            if (!unify(tail, list)) return FAILED;
+            if (!unify(lenVar, Number.valueOf(base + k))) return FAILED;   // ISS-2025-0434
+            return after;
+        }, mark());
+        if (traced) { cp.traceGoal = goal; cp.traceDepth = depth; cp.traceDebug = (debugController != null); }
+        cps.add(cp);
+        advance(cp);                                              // an infinite generator never fails
+        return true;
+    }
+    // END_CHANGE: ISS-2025-0425
+
     /** Deterministic builtins: 1 = succeeded, 0 = failed, -1 = not a builtin (try user clauses). */
     private int solveBuiltin(Term t, String f, List<Term> a) {
         int n = a.size();
@@ -535,7 +818,13 @@ public final class MachineSolver {
                     return numRel(f, evalNum(a.get(0)), evalNum(a.get(1))) ? 1 : 0;
                 case "==":   return structuralEqual(resolve(a.get(0)), resolve(a.get(1))) ? 1 : 0;
                 case "\\==": return structuralEqual(resolve(a.get(0)), resolve(a.get(1))) ? 0 : 1;
-                case "\\=": { int m = mark(); boolean u = unify(a.get(0), a.get(1)); undo(m); return u ? 0 : 1; }
+                // ISS-2025-0429 - ENG-10: an explicit mark/undo extent must trail unconditionally
+                case "\\=": {
+                    int m = mark(); forceTrail++;
+                    boolean u;
+                    try { u = unify(a.get(0), a.get(1)); } finally { forceTrail--; }
+                    undo(m); return u ? 0 : 1;
+                }
                 default: return -1;
             }
         }
@@ -559,14 +848,33 @@ public final class MachineSolver {
         return -1;
     }
 
+    // START_CHANGE: ISS-2025-0434 - ENG-14: evaluate against the binding store directly. evalNum
+    // used to deep-copy the expression with resolve() (allocating a spine walk plus a CompoundTerm
+    // per node) and then hand ArithEvaluator an empty HashMap — which STILL called
+    // resolveBindings() at every node, walking each sub-term once per level. Now a one-level deref
+    // hook is passed instead: no copy, no map, O(1) per node.
+    private final java.util.function.UnaryOperator<Term> derefFn = this::deref;
+
     private Number evalNum(Term t) {
-        return it.denzosoft.jprolog.core.arith.v2.ArithEvaluator.eval(resolve(t), new HashMap<>());
+        return it.denzosoft.jprolog.core.arith.v2.ArithEvaluator.evalDeref(t, derefFn);
     }
+    // END_CHANGE: ISS-2025-0434
 
     /** ISO arithmetic comparison with IEEE float semantics (-0.0 =:= 0.0, NaN =\= NaN). Integers
      *  compare exactly via BigInteger; otherwise primitive double comparison. */
     private boolean numRel(String op, Number a, Number b) {
         if (a.isInteger() && b.isInteger()) {
+            // START_CHANGE: ISS-2025-0434 - ENG-14: compare small integers as primitives.
+            // bigIntegerValue() allocates a BigInteger per operand on every comparison, and the
+            // arithmetic comparisons are among the hottest goals in any Prolog program.
+            if (a.fitsInLong() && b.fitsInLong()) {
+                long x = a.longValue(), y = b.longValue();
+                switch (op) {
+                    case "<": return x < y;   case ">": return x > y;   case "=<": return x <= y;
+                    case ">=": return x >= y; case "=:=": return x == y; case "=\\=": return x != y;
+                }
+            }
+            // END_CHANGE: ISS-2025-0434
             int c = a.bigIntegerValue().compareTo(b.bigIntegerValue());
             switch (op) {
                 case "<": return c < 0;  case ">": return c > 0;  case "=<": return c <= 0;
@@ -582,6 +890,9 @@ public final class MachineSolver {
     }
 
     private boolean structuralEqual(Term a, Term b) {
+        // ISS-2025-0434 - ENG-14: `L == L` on a big list is the common case and resolve() is now
+        // structure-sharing, so both sides are literally the same object: answer in O(1).
+        if (a == b) return true;
         if (a instanceof Variable && b instanceof Variable) return ((Variable) a).getName().equals(((Variable) b).getName());
         if (a instanceof Atom && b instanceof Atom) return ((Atom) a).getName().equals(((Atom) b).getName());
         if (a instanceof Number && b instanceof Number) return a.equals(b);
@@ -590,16 +901,34 @@ public final class MachineSolver {
             return ((PrologString) a).getStringValue().equals(((PrologString) b).getStringValue());
         }
         // END_CHANGE: ISS-2025-0348
-        if (a instanceof CompoundTerm && b instanceof CompoundTerm) {
+        // START_CHANGE: ISS-2025-0428 - ENG-09: iterative on the last argument
+        while (a instanceof CompoundTerm && b instanceof CompoundTerm) {
             CompoundTerm ca = (CompoundTerm) a, cb = (CompoundTerm) b;
-            if (!ca.getName().equals(cb.getName()) || ca.getArguments().size() != cb.getArguments().size()) return false;
-            for (int i = 0; i < ca.getArguments().size(); i++) {
-                if (!structuralEqual(ca.getArguments().get(i), cb.getArguments().get(i))) return false;
+            List<Term> aa = ca.getArguments(), ba = cb.getArguments();
+            if (!ca.getName().equals(cb.getName()) || aa.size() != ba.size()) return false;
+            int n = aa.size();
+            for (int i = 0; i < n - 1; i++) {
+                if (!structuralEqual(aa.get(i), ba.get(i))) return false;
             }
-            return true;
+            if (n == 0) return true;
+            a = aa.get(n - 1);
+            b = ba.get(n - 1);
+        }
+        return (a instanceof CompoundTerm || b instanceof CompoundTerm) ? false : structuralEqualLeaf(a, b);
+        // END_CHANGE: ISS-2025-0428
+    }
+
+    // START_CHANGE: ISS-2025-0428 - ENG-09: leaf comparison, extracted so the spine loop can call it
+    private boolean structuralEqualLeaf(Term a, Term b) {
+        if (a instanceof Variable && b instanceof Variable) return ((Variable) a).getName().equals(((Variable) b).getName());
+        if (a instanceof Atom && b instanceof Atom) return ((Atom) a).getName().equals(((Atom) b).getName());
+        if (a instanceof Number && b instanceof Number) return a.equals(b);
+        if (a instanceof PrologString && b instanceof PrologString) {
+            return ((PrologString) a).getStringValue().equals(((PrologString) b).getStringValue());
         }
         return false;
     }
+    // END_CHANGE: ISS-2025-0428
 
     /**
      * Delegate a non-native goal to the existing {@link BuiltInRegistry} (reusing the 200+ builtin
@@ -608,6 +937,12 @@ public final class MachineSolver {
      * Context-dependent builtins (findall/catch/…) throw without a solver and fall through (-1) for
      * now — they will be handled natively by the machine in a later step.
      */
+    // START_CHANGE: ISS-2025-0430 - ENG-11: built-ins that mutate a bound term in place and therefore
+    // need the ORIGINAL term objects, not a dereferenced copy (ISS-2025-0317).
+    private static final java.util.Set<String> IDENTITY_BUILTINS =
+        new java.util.HashSet<>(Arrays.asList("setarg", "nb_setarg"));
+    // END_CHANGE: ISS-2025-0430
+
     private int bridgeBuiltin(Term goal, String functor, int arity) {
         if (registry == null || !registry.isBuiltIn(functor, arity)) return -1;
         BuiltIn b = registry.getBuiltIn(functor);
@@ -617,26 +952,71 @@ public final class MachineSolver {
         // point carries the goal so backtrack emits Redo/Fail for nondeterministic builtins.
         final int dd = debugTraceActive() ? cps.size() : -1;
         if (dd >= 0) portCall(goal, dd);
-        // Pass the goal UNRESOLVED (with the bindings map) rather than a deep copy: built-ins resolve
-        // their own arguments via resolveBindings, which preserves shared term objects — so destructive
-        // built-ins (setarg/3, nb_setarg) mutate the actual bound term, not a copy (ISS-2025-0317).
-        Map<String, Term> inMap = new HashMap<>(binding);
+        // START_CHANGE: ISS-2025-0430 - ENG-11: hand the built-in a RESOLVED goal and an EMPTY map.
+        //
+        // The old contract passed the goal unresolved together with `new HashMap<>(binding)` — a full
+        // copy of every binding in the query, per built-in call. Each built-in then returned solution
+        // maps that were copies of that copy (Member copies twice per element), applySolution walked
+        // the whole returned map, and the exhausted choice point retained every copy: memory and time
+        // were Sigma(bindings at call i) = O(N^2). One `atom_length(abc,_)` per iteration was enough to
+        // exhaust a 2 GB heap at N = 10 000.
+        //
+        // A resolved goal carries all the information the built-in needs (resolve() is now
+        // structure-sharing, so unchanged sub-terms are not copied) and every variable still in it is
+        // unbound — so an empty map is a faithful view and the built-in returns only the bindings it
+        // creates. Variable OBJECTS and names survive resolve(), so applySolution installs them into
+        // the real store unchanged.
+        //
+        // Exception (ISS-2025-0317): the destructive built-ins need object identity to mutate the
+        // actual bound term rather than a dereferenced copy, so they keep the old handoff.
+        final boolean needsIdentity = IDENTITY_BUILTINS.contains(functor);
+        final Term callGoal = needsIdentity ? goal : resolve(goal);
+        Map<String, Term> inMap = needsIdentity ? new HashMap<>(binding) : new HashMap<>();
+        // END_CHANGE: ISS-2025-0430
         List<Map<String, Term>> sols = new ArrayList<>();
         boolean ok;
         try {
             // BuiltInWithContext builtins (findall-adapter, setup_call_cleanup, predsort, format, ...)
             // need a solver to run their sub-goals; hand them the engine's solver (ISS-2025-0312).
             if (b instanceof BuiltInWithContext && contextSolver != null) {
-                ok = ((BuiltInWithContext) b).executeWithContext(contextSolver, goal, inMap, sols);
+                ok = ((BuiltInWithContext) b).executeWithContext(contextSolver, callGoal, inMap, sols);
             } else {
-                ok = b.execute(goal, inMap, sols);
+                ok = b.execute(callGoal, inMap, sols);
             }
         } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
             throw pe;    // ISS-2025-0309: a real ISO error must reach catch/3, not be swallowed
+        // START_CHANGE: ISS-2025-0426 - ENG-05: `catch (RuntimeException e) { return -1; }` turned
+        // EVERY Java failure inside a built-in (NPE, ClassCastException, IndexOutOfBounds, ...) into
+        // "not a built-in", which then fell through to callUser -> existence_error or silent failure.
+        // Worse, it swallowed the three engine-control exceptions raised inside a nested sub-solve.
+        // Policy now: (a) the control exceptions propagate untouched — the trust model requires that
+        // untrusted catch/3 cannot trap them; (b) only an explicit NeedsSolverContextException means
+        // "not bridgeable"; (c) anything else becomes a catchable system_error naming the culprit.
+        } catch (it.denzosoft.jprolog.core.engine.InferenceLimitException
+               | it.denzosoft.jprolog.core.engine.QueryCancelledException
+               | it.denzosoft.jprolog.core.engine.DebugController.DebugStopException control) {
+            throw control;
+        } catch (it.denzosoft.jprolog.core.engine.NeedsSolverContextException nsc) {
+            return -1;   // genuinely not bridgeable here -> let the caller try user clauses
         } catch (RuntimeException e) {
-            return -1;   // needs solver context / not bridgeable yet -> let the caller try user clauses
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
+            if (dd >= 0) portFail(goal, dd);
+            throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.systemError(
+                    e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage()),
+                    functor + "/" + arity));
+        // END_CHANGE: ISS-2025-0426
         }
         if (!ok || sols.isEmpty()) { if (dd >= 0) portFail(goal, dd); return 0; }
+        // START_CHANGE: ISS-2025-0430 - ENG-11: a DETERMINISTIC built-in (exactly one solution) gets
+        // no choice point at all — no CP object, no Alt closure, nothing for backtracking to walk
+        // past. Its bindings are undone by the enclosing choice point's trail mark, exactly as
+        // before. While tracing the choice-point path is kept so Redo/Fail ports still fire.
+        if (sols.size() == 1 && dd < 0) {
+            applySolution(sols.get(0));
+            return 1;
+        }
+        // END_CHANGE: ISS-2025-0430
         final Goal cont = goalStack;
         final int fdd = dd;
         List<Alt> alts = new ArrayList<>(sols.size());
@@ -664,9 +1044,11 @@ public final class MachineSolver {
         int m = mark();
         List<Term> results = new ArrayList<>();
         goalStack = new Goal(goal, floor, null);
+        forceTrail++;                                              // ISS-2025-0429 - ENG-10
         try {
             drive(() -> { results.add(rename(resolve(template), renameCounter++, new HashMap<>())); return true; }, floor);
         } finally {
+            forceTrail--;
             // restore even if a ball unwinds through the nested drive (ISS-2025-0308)
             undo(m);                                               // findall is opaque: discard Goal's bindings
             goalStack = savedGoals;
@@ -690,7 +1072,10 @@ public final class MachineSolver {
                 undo(top.trailMark);
                 it.denzosoft.jprolog.core.engine.Trail.rollbackTo(top.legacyMark);   // ISS-0316
                 int m = mark();
-                if (unify(top.catcher, ball)) {
+                forceTrail++;                                     // ISS-2025-0429 - ENG-10
+                boolean matched;
+                try { matched = unify(top.catcher, ball); } finally { forceTrail--; }
+                if (matched) {
                     goalStack = new Goal(top.recovery, top.cutBarrier, top.cont);
                     return true;
                 }
@@ -744,14 +1129,15 @@ public final class MachineSolver {
     // goal is legal (converted to call/1 at call time), as is any atom/compound.
     private void checkBodyGoals(Term body, String context) {
         Term b = deref(body);
-        if (b instanceof CompoundTerm && ((CompoundTerm) b).getArguments().size() == 2) {
+        // START_CHANGE: ISS-2025-0428 - ENG-09: a long right-nested conjunction (maplist expansion,
+        // generated clauses) is a last-argument spine; iterate on it, recurse only on the left.
+        while (b instanceof CompoundTerm && ((CompoundTerm) b).getArguments().size() == 2) {
             String f = ((CompoundTerm) b).getName();
-            if (",".equals(f) || ";".equals(f) || "->".equals(f)) {
-                checkBodyGoals(((CompoundTerm) b).getArguments().get(0), context);
-                checkBodyGoals(((CompoundTerm) b).getArguments().get(1), context);
-                return;
-            }
+            if (!",".equals(f) && !";".equals(f) && !"->".equals(f)) break;
+            checkBodyGoals(((CompoundTerm) b).getArguments().get(0), context);
+            b = deref(((CompoundTerm) b).getArguments().get(1));
         }
+        // END_CHANGE: ISS-2025-0428
         if (b instanceof Number || b instanceof PrologString) {
             throw new it.denzosoft.jprolog.core.exceptions.PrologException(
                 it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("callable", b, context));
@@ -928,7 +1314,7 @@ public final class MachineSolver {
             CompoundTerm c = (CompoundTerm) goal;
             List<Term> args = new ArrayList<>(c.getArguments());
             args.addAll(extra);
-            return new CompoundTerm(new Atom(c.getName()), args);
+            return new CompoundTerm(c.getFunctor(), args);   // ISS-2025-0429 - ENG-10: reuse the Atom
         }
         return goal;
     }
@@ -937,13 +1323,19 @@ public final class MachineSolver {
      *  be a {@code Module:Goal} term); {@code unifyGoal} is the (unqualified) goal each clause head
      *  unifies with. For ordinary calls the two are identical. */
     private boolean callUser(Term unifyGoal, Term lookup) {
-        // ISS-2025-0319: tabled predicates (:- table p/n) need SLG resolution (memoization + loop
-        // detection). Delegate the whole call to the legacy solver, which implements tabling, and
-        // surface its solutions as a choice point — the v2 iterative SLD has no tabling.
-        if (tableStore != null && contextSolver != null && isTabled(deref(unifyGoal))) {
-            return tabledDelegate(deref(unifyGoal));
+        // ISS-2025-0319: tabled predicates (:- table p/n) need variant tabling (memoization + loop
+        // detection); the v2 iterative SLD has none, so the call goes to the driver below and its
+        // answers are surfaced as a choice point.
+        // ISS-2025-0484 - wave W9: `bypassTablingOnce` is how the driver's PRODUCE phase runs the
+        // goal's own clauses without re-entering itself (see tabledAnswers/produceTabled).
+        if (tableStore != null && isTabled(deref(unifyGoal))) {
+            if (bypassTablingOnce) {
+                bypassTablingOnce = false;
+            } else {
+                return tabledDelegate(deref(unifyGoal));
+            }
         }
-        // ISS-2025-0315: feed the profiler (zero overhead when disabled), like the legacy QuerySolver
+        // ISS-2025-0315: feed the profiler (zero overhead when disabled), like the legacy solver
         if (it.denzosoft.jprolog.core.engine.Profiler.isEnabled()) {
             Term gg = deref(unifyGoal);
             if (gg instanceof Atom) it.denzosoft.jprolog.core.engine.Profiler.recordCall(((Atom) gg).getName(), 0);
@@ -959,6 +1351,15 @@ public final class MachineSolver {
         if (debugging) debugPort(DebugEvent.Port.CALL, unifyGoal, tdepth);
         List<Rule> rules = clausesFor(lookup);
         if (rules == null || rules.isEmpty()) {
+            // START_CHANGE: ISS-2025-0433 - ENG-13: with first-argument indexing an empty candidate
+            // list usually means "this predicate has clauses, but none can match this first
+            // argument" — a plain FAILURE. Only a predicate with NO clauses at all is unknown.
+            if (predicateHasClauses(lookup)) {
+                if (tracing) tracePort("Fail", unifyGoal, tdepth);
+                if (debugging) debugPort(DebugEvent.Port.FAIL, unifyGoal, tdepth);
+                return false;
+            }
+            // END_CHANGE: ISS-2025-0433
             // START_CHANGE: ISS-2025-0347 - unknown procedure: honour the 'unknown' flag (ISO 7.7.7
             // + 7.11.2.4): error -> existence_error(procedure, Name/Arity); warning -> warn + fail;
             // fail -> silent failure. Dynamic procedures (declared or implied by assert) just fail.
@@ -972,23 +1373,45 @@ public final class MachineSolver {
         final int barrier = cps.size();                               // this CP's index = cut target for the body
         final Term g = unifyGoal;
         final boolean ftrace = tracing, fdebug = debugging;
-        List<Alt> alts = new ArrayList<>(rules.size());
-        for (Rule rule : rules) {
-            final Rule fr = rule;
-            alts.add(() -> {
-                Rule r = renameRule(fr);
-                if (!unify(r.getHead(), g)) return FAILED;
-                Goal after = cont;
-                if (ftrace || fdebug) {
-                    after = new Goal(() -> {
-                        if (ftrace) tracePort("Exit", g, tdepth);
-                        if (fdebug) debugPort(DebugEvent.Port.EXIT, g, tdepth);
-                    }, cont);
-                }
-                return pushBody(r.getBody(), barrier, after);
-            });
-        }
-        CP cp = new CP(alts, mark());
+        // START_CHANGE: ISS-2025-0433 - ENG-13: a LAZY choice point over the clause snapshot.
+        // The old code allocated one Alt closure per candidate clause BEFORE the first head
+        // unification (20 000 lambdas for a 20 000-fact table) and renamed head AND body of every
+        // candidate before even looking at the head. Now the frame holds (snapshot, index) and
+        // pulls one clause per redo; renaming is head-first (the body is renamed only after the
+        // head unifies, sharing the same variable map) and skipped entirely for a ground fact.
+        final List<Rule> candidates = rules;
+        final int candidateCount = candidates.size();
+        final int[] nextClause = {0};
+        CP cp = new CP(self -> {
+            if (nextClause[0] >= candidateCount) return EXHAUSTED;
+            Rule fr = candidates.get(nextClause[0]++);
+            if (nextClause[0] >= candidateCount) self.genExhausted = true;
+            int id;
+            Map<String, Variable> vmap;
+            Term head;
+            if (fr.isGroundFact()) {          // no variables in the head: nothing to rename
+                id = -1; vmap = null; head = fr.getHead();
+            } else {
+                id = renameCounter++;
+                vmap = new HashMap<>();
+                head = rename(fr.getHead(), id, vmap);
+            }
+            if (!unify(head, g)) return FAILED;
+            Goal after = cont;
+            if (ftrace || fdebug) {
+                after = new Goal(() -> {
+                    if (ftrace) tracePort("Exit", g, tdepth);
+                    if (fdebug) debugPort(DebugEvent.Port.EXIT, g, tdepth);
+                }, cont);
+            }
+            List<Term> body = fr.getBody();
+            if (body.isEmpty()) return after;
+            if (vmap == null) { id = renameCounter++; vmap = new HashMap<>(); }   // ground head, var body
+            List<Term> renamedBody = new ArrayList<>(body.size());
+            for (Term b : body) renamedBody.add(rename(b, id, vmap));
+            return pushBody(renamedBody, barrier, after);
+        }, mark());
+        // END_CHANGE: ISS-2025-0433
         if (tracing || debugging) {                                   // for Redo/Fail on backtracking
             cp.traceGoal = g; cp.traceDepth = tdepth; cp.traceDebug = debugging;
         }
@@ -999,6 +1422,24 @@ public final class MachineSolver {
         if (debugging) debugPort(DebugEvent.Port.FAIL, g, tdepth);
         return false;
     }
+
+    // START_CHANGE: ISS-2025-0433 - ENG-13: does this predicate have ANY clause (ignoring the
+    // first-argument filter)? Used only on the empty-candidate path, so the extra lookup is rare.
+    private boolean predicateHasClauses(Term lookup) {
+        if (liveKb == null) return false;
+        Term g = deref(lookup);
+        String f; int ar;
+        if (g instanceof Atom) { f = ((Atom) g).getName(); ar = 0; }
+        else if (g instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) g;
+            if (":".equals(c.getName()) && c.getArguments().size() == 2) return false;   // Module:Goal
+            f = c.getName(); ar = c.getArguments().size();
+        } else {
+            return false;
+        }
+        return !liveKb.getClauseSnapshot(f, ar).isEmpty();
+    }
+    // END_CHANGE: ISS-2025-0433
 
     // START_CHANGE: ISS-2025-0347 - existence_error(procedure, Name/Arity) for unknown procedures
     /** Apply the ISO {@code unknown} flag (7.7.7/7.11.2.4) to a call with no clauses: throw an
@@ -1022,9 +1463,14 @@ public final class MachineSolver {
         Term mode = it.denzosoft.jprolog.core.system.PrologFlags.getFlag("unknown");
         String m = (mode instanceof Atom) ? ((Atom) mode).getName() : "error";
         if ("fail".equals(m)) return;
-        Term pi = new CompoundTerm(new Atom("/"), Arrays.asList(new Atom(f), new Number((double) ar)));
+        Term pi = new CompoundTerm(new Atom("/"), Arrays.asList(new Atom(f), new Number((long) ar)   /* ISS-2025-0424 */));
         if ("warning".equals(m)) {
-            System.err.println("Warning: unknown procedure " + f + "/" + ar);
+            // START_CHANGE: ISS-2025-0427 - ENG-08: write through the thread-local StreamManager
+            // (output discipline) so the IDE Run console and captured output see the warning;
+            // System.err bypassed both.
+            it.denzosoft.jprolog.builtin.io.StreamManager.out()
+                .println("Warning: unknown procedure " + f + "/" + ar);
+            // END_CHANGE: ISS-2025-0427
             return;
         }
         throw new it.denzosoft.jprolog.core.exceptions.PrologException(
@@ -1059,7 +1505,9 @@ public final class MachineSolver {
             for (int i = 0; i < depth; i++) sb.append("  ");
             String g = it.denzosoft.jprolog.core.util.TermFormatter.format(resolve(goal), false, false, false, 1200);
             it.denzosoft.jprolog.builtin.io.StreamManager.out().println(sb + port + ": (" + depth + ") " + g);
-        } catch (RuntimeException ignored) { /* tracing must never break resolution */ }
+        } catch (RuntimeException ignored) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(ignored);   // ISS-2025-0431
+            /* tracing must never break resolution */ }
     }
 
     private boolean isTabled(Term goal) {
@@ -1068,14 +1516,39 @@ public final class MachineSolver {
         return false;
     }
 
-    /** Run a tabled call through the legacy solver (SLG) and expose its solutions as a choice point.
-     *  Uses the top-level {@code solve(Term)}, which establishes the tabling context (loop detection +
-     *  memoization) the recursive solve does not. */
+    // START_CHANGE: ISS-2025-0484 - wave W9: the recursive solver is gone, and with it
+    // `solveWithTabling`, the variant-tabling driver this method used to delegate to
+    // (`contextSolver.solve(...)` reached it through the top-level recursive solve). The driver is
+    // ported here, unchanged in behaviour: variant normalisation over the resolved goal, a memo
+    // cache, the in-progress partial cache that makes LEFT RECURSION terminate, and the bounded
+    // fixpoint iteration. The PRODUCE phase runs the goal on a nested MachineSolver with the
+    // tabling interception suppressed for its own first tabled call - the exact analogue of the
+    // recursive driver calling `solveAgainstKnowledgeBase` for this call while nested calls to the
+    // same variant still went through `solveInternal` and hit the partial cache.
+    //
+    // The v4 engine does NOT use any of this: it has real linear tabling with completion
+    // (core.engine.v4.Tabling, wave W5) and no iteration cap.
+    // START_CHANGE: ISS-2025-0488 - LIM-039: production is serialised on the TableStore, so two
+    // worker threads producing on one engine can no longer corrupt the shared in-progress map.
+
+    /** True while THIS machine must skip the tabling interception for its first tabled call. */
+    private boolean bypassTablingOnce = false;
+
+    /** Run a tabled call: memo cache, loop detection, fixpoint production; expose the answers as a
+     *  choice point. */
     private boolean tabledDelegate(Term goal) {
         List<Map<String, Term>> sols;
         try {
-            sols = contextSolver.solve(resolve(goal));   // ground the known args; sets up tabling
+            // ISS-2025-0488 (LIM-039): one thread at a time evaluates on this store; a second
+            // waits and then reads the completed table.
+            tableStore.enterCall();
+            try {
+                sols = tabledAnswers(resolve(goal));   // ground the known args; sets up tabling
+            } finally {
+                tableStore.exitCall();
+            }
         } catch (RuntimeException e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return false;
         }
         if (sols.isEmpty()) return false;
@@ -1092,13 +1565,132 @@ public final class MachineSolver {
         return false;
     }
 
+    /** The answers of one tabled variant, computing them (with a fixpoint) if they are not cached. */
+    private List<Map<String, Term>> tabledAnswers(Term resolvedGoal) {
+        it.denzosoft.jprolog.core.engine.TableStore.NormalizedGoal norm = tableStore.normalize(resolvedGoal);
+        String key = norm.cacheKey;
+        synchronized (tableStore) {
+            List<Map<String, Term>> cached = tableStore.getCachedSolutions(key);
+            if (cached != null) return replayTabled(cached, norm);
+            if (tableStore.isInProgress(key)) {
+                // A variant already being produced (left recursion): hand back what it has so far.
+                List<Map<String, Term>> partial = tableStore.getPartialCache(key);
+                return (partial == null) ? new ArrayList<Map<String, Term>>() : replayTabled(partial, norm);
+            }
+            tableStore.markInProgress(key);
+            tableStore.setPartialCache(key, new ArrayList<Map<String, Term>>());
+        }
+        try {
+            List<Map<String, Term>> aggregated = new ArrayList<>();
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            final int maxIters = 100;
+            for (int iter = 0; iter < maxIters; iter++) {
+                // Produce against the NORMALISED pattern, whose variables are _TV0, _TV1, ...
+                // Two reasons: the answers come back already canonical (no name mapping needed to
+                // record them), and — the bug this fixes — the caller's variable names may collide
+                // with the fresh machine's clause-renaming scheme (`_R1_Z`), because each machine
+                // restarts that counter. Producing `path(a, _R1_Z)` on a machine that renames the
+                // recursive body call's Z to `_R1_Z` too would bind the goal's own variable.
+                List<Map<String, Term>> computed = produceTabled(norm.pattern);
+                boolean changed = false;
+                for (Map<String, Term> sol : computed) {
+                    if (seen.add(canonicalKey(sol))) { aggregated.add(sol); changed = true; }
+                }
+                synchronized (tableStore) {
+                    tableStore.setPartialCache(key, new ArrayList<>(aggregated));
+                }
+                if (!changed) break;
+            }
+            synchronized (tableStore) { tableStore.cacheSolutions(key, aggregated); }
+            return replayTabled(aggregated, norm);
+        } finally {
+            synchronized (tableStore) {
+                tableStore.clearPartialCache(key);
+                tableStore.unmarkInProgress(key);
+            }
+        }
+    }
+
+    /** Order-independent identity of one canonical answer (a HashMap's toString is not stable). */
+    private static String canonicalKey(Map<String, Term> sol) {
+        return new java.util.TreeMap<>(sol).toString();
+    }
+
+    /** One PRODUCE pass: the pattern's own clauses, with this variant's tabling interception off. */
+    private List<Map<String, Term>> produceTabled(Term pattern) {
+        MachineSolver m = new MachineSolver(liveKb, registry, contextSolver, modules, tableStore);
+        m.setResourceGuard(guard);
+        m.bypassTablingOnce = true;
+        final List<Map<String, Term>> out = new ArrayList<>();
+        m.solve(pattern, sol -> { out.add(sol); return true; });
+        return out;
+    }
+
+    /** Map canonically-named answers (_TV0, ...) onto the calling goal's variable names. */
+    private List<Map<String, Term>> replayTabled(
+            List<Map<String, Term>> canonical,
+            it.denzosoft.jprolog.core.engine.TableStore.NormalizedGoal norm) {
+        List<Map<String, Term>> out = new ArrayList<>(canonical.size());
+        for (Map<String, Term> sol : canonical) {
+            Map<String, Term> replayed = new HashMap<>();
+            for (Map.Entry<String, Term> e : sol.entrySet()) {
+                String orig = norm.canonicalToOrig.get(e.getKey());
+                if (orig != null) replayed.put(orig, e.getValue());
+            }
+            out.add(replayed);
+        }
+        return out;
+    }
+    // END_CHANGE: ISS-2025-0488
+    // END_CHANGE: ISS-2025-0484
+
     /** Try the next alternative of {@code cp}, undoing the trail first; sets {@link #goalStack}. */
     private boolean advance(CP cp) {
+        // START_CHANGE: ISS-2025-0423 - ENG-01/ENG-03: lazy generator choice points pull one
+        // alternative at a time and may never be exhausted (repeat/0, length/2 enumeration).
+        if (cp.gen != null) {
+            while (true) {
+                undo(cp.trailMark);
+                it.denzosoft.jprolog.core.engine.Trail.rollbackTo(cp.legacyMark);
+                Goal gs = cp.gen.next(cp);
+                if (gs == EXHAUSTED) return false;            // generator spent
+                if (gs != FAILED) {
+                    goalStack = gs;
+                    // ISS-2025-0433 - ENG-13: trust-me pop for lazy choice points too
+                    if (cp.genExhausted && cp.traceGoal == null
+                            && !cps.isEmpty() && cps.get(cps.size() - 1) == cp) {
+                        cps.remove(cps.size() - 1);
+                        reclaimTrailIfUnreachable();
+                    }
+                    return true;
+                }
+            }
+        }
+        // END_CHANGE: ISS-2025-0423
         while (cp.idx < cp.alts.size()) {
             undo(cp.trailMark);
             it.denzosoft.jprolog.core.engine.Trail.rollbackTo(cp.legacyMark);   // ISS-0316: undo b_setval etc.
             Goal gs = cp.alts.get(cp.idx++).apply();
-            if (gs != FAILED) { goalStack = gs; return true; }
+            if (gs != FAILED) {
+                goalStack = gs;
+                // START_CHANGE: ISS-2025-0429 - ENG-10: TRUST-ME POP. An exhausted choice point used
+                // to stay on `cps` forever (idx == alts.size()), keeping alive everything its Alt
+                // closures captured — the continuation, and for bridged built-ins a full copy of the
+                // binding map. A deterministic N-step recursion therefore left N dead frames behind
+                // and cut/backtrack had to walk through them. Once the LAST alternative has been
+                // taken the frame is dead: drop it when it is on top (the only position from which
+                // removal cannot shift another frame's absolute cut barrier). Cut barriers stay
+                // valid — they are captured BEFORE the push and cut() only removes frames ABOVE the
+                // barrier, so a barrier that now equals cps.size() is simply a no-op cut.
+                // Traced/debugged frames are kept: they still owe a Redo/Fail port.
+                if (cp.idx >= cp.alts.size() && cp.traceGoal == null
+                        && !cps.isEmpty() && cps.get(cps.size() - 1) == cp) {
+                    cps.remove(cps.size() - 1);
+                    reclaimTrailIfUnreachable();
+                }
+                // END_CHANGE: ISS-2025-0429
+                return true;
+            }
         }
         return false;
     }
@@ -1140,29 +1732,52 @@ public final class MachineSolver {
         return new Rule(head, body);
     }
 
+    // START_CHANGE: ISS-2025-0428 - ENG-09: iterative on the last argument. Renaming a clause whose
+    // head or body holds a long list used one Java frame per cell.
     private Term rename(Term t, int id, Map<String, Variable> map) {
         if (t instanceof Variable) {
             String name = ((Variable) t).getName();
             return map.computeIfAbsent(name, nm -> new Variable("_R" + id + "_" + nm));
         }
-        if (t instanceof CompoundTerm) {
-            CompoundTerm c = (CompoundTerm) t;
-            List<Term> args = new ArrayList<>(c.getArguments().size());
-            for (Term a : c.getArguments()) args.add(rename(a, id, map));
-            return new CompoundTerm(new Atom(c.getName()), args);
+        if (!(t instanceof CompoundTerm)) return t;
+        ArrayList<CompoundTerm> spine = new ArrayList<>();
+        CompoundTerm cur = (CompoundTerm) t;
+        while (true) {
+            spine.add(cur);
+            List<Term> as = cur.getArguments();
+            if (as.isEmpty()) break;
+            Term last = as.get(as.size() - 1);
+            if (!(last instanceof CompoundTerm)) break;
+            cur = (CompoundTerm) last;
         }
-        return t;
+        Term below = null;
+        for (int k = spine.size() - 1; k >= 0; k--) {
+            CompoundTerm node = spine.get(k);
+            List<Term> as = node.getArguments();
+            int n = as.size();
+            List<Term> args = new ArrayList<>(n);
+            for (int i = 0; i < n - 1; i++) args.add(rename(as.get(i), id, map));
+            if (n > 0) {
+                args.add(k < spine.size() - 1 ? below : rename(as.get(n - 1), id, map));
+            }
+            below = new CompoundTerm(node.getFunctor(), args);
+        }
+        return below;
     }
+    // END_CHANGE: ISS-2025-0428
 
     // ----------------------------------------------------------------- result extraction
     private void collectVars(Term root, List<String> out) {
+        // ISS-2025-0435 - ENG-15: a HashSet for the membership test; List.contains made this
+        // O(n^2) in the number of distinct query variables.
+        java.util.Set<String> seen = new java.util.HashSet<>();
         java.util.ArrayDeque<Term> stack = new java.util.ArrayDeque<>();
         stack.push(root);
         while (!stack.isEmpty()) {
             Term t = stack.pop();
             if (t instanceof Variable) {
                 String n = ((Variable) t).getName();
-                if (!out.contains(n)) out.add(n);
+                if (seen.add(n)) out.add(n);
             } else if (t instanceof CompoundTerm) {
                 for (Term a : ((CompoundTerm) t).getArguments()) stack.push(a);
             }
@@ -1194,10 +1809,86 @@ public final class MachineSolver {
             return r;
         }
         if (t instanceof CompoundTerm) {
-            CompoundTerm c = (CompoundTerm) t;
-            List<Term> args = new ArrayList<>(c.getArguments().size());
-            for (Term a : c.getArguments()) args.add(resolve(a, active));
-            return new CompoundTerm(new Atom(c.getName()), args);
+            // START_CHANGE: ISS-2025-0428 - ENG-09: iterative on the LAST argument. resolve() is the
+            // hottest walker in the engine (every builtin call, every trace line, every snapshot) and
+            // used one Java frame per list cell, capping terms at ~20-30k elements even with -Xss4m.
+            //
+            // Phase 1 walks the last-argument spine, dereferencing THROUGH bound variables (a list
+            // tail is normally a bound variable) and pushing every variable it passes into {@code
+            // active} — exactly what the recursive version did — so rational-tree detection is
+            // unchanged. Phase 2 rebuilds bottom-up, popping each link's variables again as it
+            // leaves that level, so a sibling subtree sees precisely the path above it in
+            // {@code active} (a cycle reached through a NON-last argument is still caught).
+            ArrayList<CompoundTerm> spine = new ArrayList<>();
+            ArrayList<List<String>> linkVars = new ArrayList<>();   // vars crossed below spine[k]
+            CompoundTerm cur = (CompoundTerm) t;
+            while (true) {
+                spine.add(cur);
+                List<Term> as = cur.getArguments();
+                if (as.isEmpty()) { linkVars.add(null); break; }
+                Term last = as.get(as.size() - 1);
+                List<String> crossed = null;
+                while (last instanceof Variable) {
+                    String vn = ((Variable) last).getName();
+                    Term b = binding.get(vn);
+                    if (b == null) break;                            // unbound: end of the chain
+                    if (!active.add(vn)) {                           // already on the path -> cycle
+                        throw new it.denzosoft.jprolog.core.exceptions.PrologException(
+                            it.denzosoft.jprolog.builtin.exception.ISOErrorTerms
+                                .representationError("cyclic_term", "resolve"));
+                    }
+                    if (crossed == null) crossed = new ArrayList<>(1);
+                    crossed.add(vn);
+                    last = b;
+                }
+                linkVars.add(crossed);
+                if (!(last instanceof CompoundTerm)) break;
+                cur = (CompoundTerm) last;
+            }
+            // The deepest node's last argument is resolved normally below, and resolve() re-enters
+            // the variables leading to it — release them first so that is not seen as a cycle.
+            List<String> tailCrossed = linkVars.get(spine.size() - 1);
+            if (tailCrossed != null) for (String v : tailCrossed) active.remove(v);
+
+            // START_CHANGE: ISS-2025-0430 - ENG-11: STRUCTURE SHARING. resolve() used to allocate a
+            // fresh CompoundTerm for every node, so dereferencing a goal that mentions a big ground
+            // term copied the whole term. Nodes whose arguments all resolve to themselves are now
+            // returned unchanged, which is what makes the resolved-goal handoff to built-ins cheap.
+            Term below = null;
+            boolean belowChanged = false;
+            for (int k = spine.size() - 1; k >= 0; k--) {
+                CompoundTerm node = spine.get(k);
+                List<Term> as = node.getArguments();
+                int n = as.size();
+                boolean hasSpineChild = (k < spine.size() - 1);
+                List<Term> args = null;                              // lazy: only when something changed
+                for (int i = 0; i < n; i++) {
+                    Term arg = as.get(i);
+                    Term res;
+                    if (hasSpineChild && i == n - 1) {
+                        // the link may have crossed bound variables, in which case the argument
+                        // itself changes (variable -> its value) even when the child node did not
+                        res = belowChanged ? below
+                            : (linkVars.get(k) != null ? spine.get(k + 1) : arg);
+                    } else {
+                        res = resolve(arg, active);
+                    }
+                    if (res != arg && args == null) {
+                        args = new ArrayList<>(n);
+                        for (int j = 0; j < i; j++) args.add(as.get(j));
+                    }
+                    if (args != null) args.add(res);
+                }
+                if (args == null) { below = node; belowChanged = false; }
+                else { below = new CompoundTerm(node.getFunctor(), args); belowChanged = true; }
+                if (k > 0) {
+                    List<String> vs = linkVars.get(k - 1);           // leaving this level
+                    if (vs != null) for (String v : vs) active.remove(v);
+                }
+            }
+            return below;
+            // END_CHANGE: ISS-2025-0430
+            // END_CHANGE: ISS-2025-0428
         }
         return t;
     }

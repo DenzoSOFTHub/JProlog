@@ -119,9 +119,9 @@ public class Leash implements BuiltIn {
 
         // Print feedback
         if (newPorts.isEmpty()) {
-            System.out.println("% Leashing set to none");
+            it.denzosoft.jprolog.builtin.io.StreamManager.out().println("% Leashing set to none");
         } else {
-            System.out.println("% Leashing set to " + newPorts);
+            it.denzosoft.jprolog.builtin.io.StreamManager.out().println("% Leashing set to " + newPorts);
         }
 
         solutions.add(bindings);

@@ -11,23 +11,60 @@ public class Number extends Term {
     private final BigInteger bigIntValue;  // null unless needed for values outside long range
     private final boolean isInteger;  // true for integer, false for float
 
+    // START_CHANGE: ISS-2025-0424 - ENG-02: a double NEVER auto-classifies as an ISO integer.
+    // Previously this constructor decided "integer if the value has no fractional part", so any
+    // built-in that computed a double and wrapped it here silently returned an ISO *integer*
+    // whenever the result happened to be integral (sum_list([1.5,1.5],S) gave S = 3, JSON/CSV 1.0
+    // parsed to 1). ISO 9.1.3 / 7.1.2: a float never becomes an integer implicitly.
     /**
-     * Create a Number from a double. If the value has no fractional part and fits
-     * in a long, it is treated as an integer.
+     * Create a floating-point Number. The value is ALWAYS a float, even when it is integral
+     * ({@code new Number(3.0).isInteger()} is {@code false}) — use {@link #Number(long)} /
+     * {@link #ofLong(long)} when an ISO integer is intended.
      */
     public Number(double value) {
         this.doubleValue = value;
-        // Determine if value is an integer: no fractional part and within long range
-        this.isInteger = (value == Math.floor(value)) && !Double.isInfinite(value)
-                         && Math.abs(value) <= Long.MAX_VALUE;
-        if (this.isInteger) {
-            this.longValue = (long) value;
-            this.bigIntValue = null;
-        } else {
-            this.longValue = 0;
-            this.bigIntValue = null;
-        }
+        this.isInteger = false;
+        this.longValue = 0;
+        this.bigIntValue = null;
     }
+
+    /** Explicit factory for an ISO integer (equivalent to {@code new Number(long)}). */
+    public static Number ofLong(long value) {
+        return valueOf(value);
+    }
+
+    // START_CHANGE: ISS-2025-0434 - ENG-14: small-integer cache. Arithmetic, list indices, character
+    // codes and counters allocate a fresh 48-byte Number for values that are overwhelmingly small;
+    // -128..1024 covers character codes, list lengths and loop counters in most programs.
+    private static final int CACHE_LOW = -128, CACHE_HIGH = 1024;
+    private static final Number[] SMALL = new Number[CACHE_HIGH - CACHE_LOW + 1];
+    static {
+        for (int v = CACHE_LOW; v <= CACHE_HIGH; v++) SMALL[v - CACHE_LOW] = new Number((long) v);
+    }
+
+    /** An ISO integer, reusing a cached instance for small values. Numbers are immutable, so
+     *  sharing is invisible to the engine (identity is never significant for a Number). */
+    public static Number valueOf(long value) {
+        if (value >= CACHE_LOW && value <= CACHE_HIGH) return SMALL[(int) (value - CACHE_LOW)];
+        return new Number(value);
+    }
+    // END_CHANGE: ISS-2025-0434
+
+    /** Explicit factory for an ISO float (equivalent to {@code new Number(double)}). */
+    public static Number ofDouble(double value) {
+        return new Number(value);
+    }
+
+    /**
+     * Legacy "classify a double" helper, kept ONLY for the few callers that must reproduce the
+     * pre-ISS-2025-0424 behaviour (notably {@link Rational}, whose whole-number values are exact
+     * integers). New code must pick {@link #ofLong} or {@link #ofDouble} deliberately.
+     */
+    public static boolean isIntegralDouble(double value) {
+        return (value == Math.floor(value)) && !Double.isInfinite(value)
+               && Math.abs(value) <= Long.MAX_VALUE;
+    }
+    // END_CHANGE: ISS-2025-0424
 
     /**
      * Create a Number explicitly marked as integer or float.

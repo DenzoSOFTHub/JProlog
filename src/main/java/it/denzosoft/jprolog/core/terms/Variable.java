@@ -1,16 +1,53 @@
 package it.denzosoft.jprolog.core.terms;
 
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 
 public class Variable extends Term {
 
+    // START_CHANGE: ISS-2025-0438 - engine v4 (design B.2): a Variable is a MUTABLE REFERENCE CELL.
+    //
+    // Until v3.8.0 a variable was a name and nothing else: every engine bound it through an external
+    // {@code Map<String,Term>} keyed by that name, which is what made bindings unreclaimable
+    // (LIM-033), variable identity string-typed and clause activation a string-allocating rename.
+    // The v4 engine (core.engine.v4) binds IN the object: {@link #ref} holds the value (null when
+    // unbound) and the machine's trail records the cells to reset on backtracking, so the JVM's own
+    // GC reclaims every binding of a finished deterministic call.
+    //
+    // Two consequences for everything outside core.engine.v4:
+    //   * equals/hashCode are IDENTITY. Two distinct cells are different variables even when they
+    //     print the same. {@link #getName()} is still unique per cell (lazily "_G<serial>"), so the
+    //     legacy name-keyed model keeps working: name equality still implies cell equality.
+    //   * {@link #unify(Term, java.util.Map)} — the legacy binding API used by the ~400 registry
+    //     built-ins and by the v2 engine — deliberately keeps comparing variables BY NAME,
+    //     because on that path two objects sharing a name ARE the same logical variable (JpcReader
+    //     and the legacy parser both build one object per occurrence).
+    private static final java.util.concurrent.atomic.AtomicLong SERIAL =
+        new java.util.concurrent.atomic.AtomicLong(0);
+
+    /** Creation order, unique for the JVM. Drives conditional trailing in the v4 machine and the
+     *  lazily generated {@code _G<serial>} print name. */
+    public final long serial = SERIAL.incrementAndGet();
+
+    /**
+     * v4 binding cell: {@code null} = unbound, otherwise the bound value (a chain is possible).
+     * Written ONLY by the v4 machine (through its trail); the legacy and v2 engines never look at
+     * it, they bind through their own substitution maps.
+     */
+    public Term ref;
+
+    /** The serial counter's current value: the watermark a v4 choice point records so
+     *  conditional trailing can tell "older than this choice point" from "created after it". */
+    public static long currentSerial() { return SERIAL.get(); }
+
+    /** @return the bound value, or null when this cell is unbound (v4 engine). */
+    public Term getRef() { return ref; }
+
+    /** Bind this cell (v4 engine only — the caller MUST trail it). */
+    public void setRef(Term value) { this.ref = value; }
+    // END_CHANGE: ISS-2025-0438
+
     private String name;
-    // START_CHANGE: ISS-2025-0164 - Thread-safe anonymous variable counter
-    private static final AtomicInteger anonymousCounter = new AtomicInteger(0);
-    // END_CHANGE: ISS-2025-0164
     private final boolean isAnonymous;
 
     // START_CHANGE: LIM-002 - Attributed variables support
@@ -28,7 +65,10 @@ public class Variable extends Term {
      */
     public void putAttribute(String module, Term value) {
         if (attributes == null) {
-            attributes = new java.util.HashMap<>();
+            // START_CHANGE: ISS-2025-0457 - insertion-ordered: the v4 wake queue runs one goal per
+            // attribute module, and the order in which they run must be reproducible.
+            attributes = new java.util.LinkedHashMap<>();
+            // END_CHANGE: ISS-2025-0457
         }
         attributes.put(module, value);
     }
@@ -88,7 +128,7 @@ public class Variable extends Term {
     }
 
     /**
-     * Thread-local hook set by QuerySolver to intercept attributed variable unifications.
+     * Hook installed by the engine context to intercept attributed variable unifications.
      * Null when no solver is active (zero overhead).
      */
     private static final ThreadLocal<AttributeUnifyHook> attributeUnifyHook = new ThreadLocal<>();
@@ -124,31 +164,40 @@ public class Variable extends Term {
      * occurs check is always performed. The unify_with_occurs_check/2 built-in
      * always performs the check regardless of this flag.
      */
-    private static final AtomicBoolean occursCheckEnabled = new AtomicBoolean(false);
-
+    // START_CHANGE: ISS-2025-0437 - ENG-06: occurs_check is PER ENGINE. It used to be a static
+    // AtomicBoolean here, so set_prolog_flag(occurs_check, true) in one Prolog instance changed
+    // unification for every instance in the JVM. It now lives in the engine's PrologFlags store;
+    // these two methods delegate to the store current on this thread, keeping every existing call
+    // site working. PrologFlags.isOccursCheckEnabled() short-circuits on a static volatile that is
+    // only ever set when SOME engine turns the check on, so the (universal) off case costs one
+    // volatile read and never touches the ThreadLocal — this is the unification hot path.
     /**
-     * Set the global occurs_check flag.
+     * Set the occurs_check flag of the engine current on this thread.
      *
      * @param enabled true to enable occurs check in standard unification
      */
     public static void setOccursCheckEnabled(boolean enabled) {
-        occursCheckEnabled.set(enabled);
+        it.denzosoft.jprolog.core.system.PrologFlags.setOccursCheckEnabled(enabled);
     }
 
     /**
-     * Get the current state of the global occurs_check flag.
+     * Get the occurs_check flag of the engine current on this thread.
      *
      * @return true if occurs check is enabled
      */
     public static boolean isOccursCheckEnabled() {
-        return occursCheckEnabled.get();
+        return it.denzosoft.jprolog.core.system.PrologFlags.isOccursCheckEnabled();
     }
+    // END_CHANGE: ISS-2025-0437
     // END_CHANGE: ISS-2025-0168
 
     public Variable(String name) {
         if ("_".equals(name)) {
             // Anonymous variable - each instance gets a unique name
-            this.name = "_G" + anonymousCounter.incrementAndGet();
+            // ISS-2025-0438: from the SAME counter as the lazily named v4 cells, so "_G<n>" names
+            // never collide between the two (a collision would alias two distinct variables on the
+            // legacy name-keyed path).
+            this.name = "_G" + serial;
             this.isAnonymous = true;
         } else {
             this.name = name;
@@ -156,7 +205,19 @@ public class Variable extends Term {
         }
     }
 
+    // START_CHANGE: ISS-2025-0438 - a FRESH v4 cell: no name until one is asked for. Clause
+    // activation allocates one of these per clause variable, which is why v4 no longer builds the
+    // "_R<id>_<name>" strings (and the HashMap that held them) on every call.
+    public Variable() {
+        this.name = null;
+        this.isAnonymous = false;
+    }
+    // END_CHANGE: ISS-2025-0438
+
     public String getName() {
+        // ISS-2025-0438: materialise the print/legacy-map name on first use, and keep it, so the
+        // name is stable and unique for the cell's whole life.
+        if (name == null) name = "_G" + serial;
         return name;
     }
 
@@ -167,7 +228,7 @@ public class Variable extends Term {
     }
     
     public String getDisplayName() {
-        return isAnonymous ? "_" : name;
+        return isAnonymous ? "_" : getName();
     }
 
    // START_CHANGE: ISS-2025-0012 - Complete redesign with iterative dereferencing
@@ -177,10 +238,22 @@ public class Variable extends Term {
         Term derefThis = dereferenceIterative(this, substitution);
         Term derefTerm = dereferenceIterative(term, substitution);
 
-        // If both sides are the same after dereferencing, they unify
-        if (derefThis.equals(derefTerm)) {
+        // If both sides are the same after dereferencing, they unify.
+        // START_CHANGE: ISS-2025-0438 - Variable.equals is IDENTITY now, but on this legacy
+        // name-keyed path two Variable objects sharing a name are the SAME logical variable
+        // (JpcReader and the legacy parser allocate one object per occurrence). Comparing them by
+        // name here preserves the pre-v4 behaviour exactly; without it the two objects would bind
+        // to each other and create a name self-loop in the substitution map.
+        if (derefThis == derefTerm) {
             return true;
         }
+        if (derefThis instanceof Variable && derefTerm instanceof Variable) {
+            if (((Variable) derefThis).getName().equals(((Variable) derefTerm).getName())) return true;
+        } else if (!(derefThis instanceof Variable) && !(derefTerm instanceof Variable)
+                   && derefThis.equals(derefTerm)) {
+            return true;
+        }
+        // END_CHANGE: ISS-2025-0438
 
         // If the dereferenced term is still a variable, handle variable-to-term binding
         if (derefThis instanceof Variable) {
@@ -188,19 +261,19 @@ public class Variable extends Term {
 
             // START_CHANGE: ISS-2025-0168 - Conditional occurs check based on global flag
             // Occurs check: prevent circular references (only when flag is enabled)
-            if (occursCheckEnabled.get() && occursCheckIterative(var, derefTerm, substitution)) {
+            if (isOccursCheckEnabled() && occursCheckIterative(var, derefTerm, substitution)) {
                 return false; // Unification fails if variable occurs in the term
             }
             // END_CHANGE: ISS-2025-0168
 
             // Bind the variable to the term
-            substitution.put(var.name, derefTerm);
+            substitution.put(var.getName(), derefTerm);
 
             if (var.hasAttributes() && !(derefTerm instanceof Variable)) {
                 AttributeUnifyHook hook = attributeUnifyHook.get();
                 if (hook != null) {
                     if (!hook.onAttributeUnify(var, derefTerm, substitution)) {
-                        substitution.remove(var.name);
+                        substitution.remove(var.getName());
                         return false;
                     }
                 }
@@ -214,20 +287,20 @@ public class Variable extends Term {
 
             // START_CHANGE: ISS-2025-0168 - Conditional occurs check based on global flag
             // Occurs check: prevent circular references (only when flag is enabled)
-            if (occursCheckEnabled.get() && occursCheckIterative(var, derefThis, substitution)) {
+            if (isOccursCheckEnabled() && occursCheckIterative(var, derefThis, substitution)) {
                 return false; // Unification fails if variable occurs in the term
             }
             // END_CHANGE: ISS-2025-0168
 
             // Bind the variable to the term
-            substitution.put(var.name, derefThis);
+            substitution.put(var.getName(), derefThis);
 
             // START_CHANGE: LIM-002 - Trigger attribute unification hooks
             if (var.hasAttributes() && !(derefThis instanceof Variable)) {
                 AttributeUnifyHook hook = attributeUnifyHook.get();
                 if (hook != null) {
                     if (!hook.onAttributeUnify(var, derefThis, substitution)) {
-                        substitution.remove(var.name);
+                        substitution.remove(var.getName());
                         return false;
                     }
                 }
@@ -253,7 +326,7 @@ public class Variable extends Term {
 
         // Fast path: no allocation for typical short variable chains
         while (current instanceof Variable) {
-            String varName = ((Variable) current).name;
+            String varName = ((Variable) current).getName();
             Term bound = substitution.get(varName);
             if (bound == null) {
                 break;
@@ -276,7 +349,7 @@ public class Variable extends Term {
         Term current = term;
 
         while (current instanceof Variable) {
-            String varName = ((Variable) current).name;
+            String varName = ((Variable) current).getName();
             if (!visited.add(varName)) {
                 break; // Cycle detected
             }
@@ -309,41 +382,31 @@ public class Variable extends Term {
      * Helper method to check if a variable occurs within a term structure.
      * Uses visited set to prevent infinite recursion on circular structures.
      */
+    // START_CHANGE: ISS-2025-0428 - ENG-09: iterative with an explicit work stack. The recursive
+    // version needed one Java frame per list cell, so the occurs check (occurs_check = true, and
+    // unify_with_occurs_check/2) overflowed on lists of a few tens of thousands of elements.
+    // {@code visited} is now a MARK-ON-VISIT set: a variable chain is expanded at most once, which
+    // both terminates on circular chains and keeps the walk linear on shared sub-terms.
     private boolean occursInTerm(Variable variable, Term term, Map<String, Term> substitution, java.util.Set<String> visited) {
-        if (term instanceof Variable) {
-            Variable termVar = (Variable) term;
-            
-            // Direct match
-            if (variable.getName().equals(termVar.getName())) {
-                return true;
+        String target = variable.getName();
+        java.util.ArrayDeque<Term> work = new java.util.ArrayDeque<>();
+        work.push(term);
+        while (!work.isEmpty()) {
+            Term t = work.pop();
+            if (t instanceof Variable) {
+                String n = ((Variable) t).getName();
+                if (target.equals(n)) return true;
+                if (!visited.add(n)) continue;                     // already expanded (or a cycle)
+                Term bound = substitution.get(n);
+                if (bound != null) work.push(bound);
+            } else if (t instanceof CompoundTerm) {
+                for (Term arg : ((CompoundTerm) t).getArguments()) work.push(arg);
             }
-            
-            // Avoid cycles in variable chains
-            if (visited.contains(termVar.getName())) {
-                return false;
-            }
-            
-            // Check if this variable has a substitution
-            if (substitution.containsKey(termVar.getName())) {
-                visited.add(termVar.getName());
-                boolean result = occursInTerm(variable, substitution.get(termVar.getName()), substitution, visited);
-                visited.remove(termVar.getName());
-                return result;
-            } else {
-                return false;
-            }
-        } else if (term instanceof CompoundTerm) {
-            CompoundTerm compoundTerm = (CompoundTerm) term;
-            for (Term arg : compoundTerm.getArguments()) {
-                if (occursInTerm(variable, arg, substitution, visited)) {
-                    return true;
-                }
-            }
-            return false;
-        } else {
-            return false; // Atoms, Numbers, and Lists cannot contain variables
+            // Atoms, Numbers and Strings cannot contain variables
         }
+        return false;
     }
+    // END_CHANGE: ISS-2025-0428
     
     // START_CHANGE: ISS-2025-0178 - Remove dead legacy occurs() stub
     // Removed unused backwards-compatibility occurs() method that just delegated to occursCheckIterative()
@@ -361,22 +424,30 @@ public class Variable extends Term {
         return getDisplayName();
     }
 
+    // START_CHANGE: ISS-2025-0438 - B.14 identity audit: a named variable copies to ITSELF.
+    //
+    // copy() used to return {@code new Variable(name)} — a different object with the same name.
+    // Under the name-keyed model those two objects WERE the same logical variable, which is why
+    // ~10 built-ins (arg/3, member/2, nth0/nth1, select/3, aggregate_all, CollectionUtils) call
+    // {@code x.copy()} and then unify with it, relying on the alias (CollectionUtils even documents
+    // it). With identity variables that alias silently disappeared: {@code arg(1, f(X), A), X = a}
+    // left A bound to a dead twin of X. Returning {@code this} restores the alias for BOTH models —
+    // it is a no-op change for the name-keyed engines and correct for the cell model. Callers that
+    // want genuinely fresh variables use copy_term/2 (TermCopier / Unify.copy), never copy().
+    //
+    // An ANONYMOUS variable still copies to a fresh one: that was already the behaviour (each
+    // {@code _} gets its own generated name) and several built-ins depend on it.
     @Override
     public Term copy() {
-        if (isAnonymous) {
-            // Create a fresh anonymous variable
-            return new Variable("_");
-        } else {
-            // Regular variable keeps the same name
-            return new Variable(this.name);
-        }
+        return isAnonymous ? new Variable("_") : this;
     }
+    // END_CHANGE: ISS-2025-0438
     
     // START_CHANGE: ISS-2025-0091 - Fully iterative resolveBindings without HashSet
     @Override
     public Term resolveBindings(Map<String, Term> bindings) {
         // Iterative variable chain resolution - no allocation for typical chains
-        Term current = bindings.get(this.name);
+        Term current = bindings.get(getName());
         if (current == null) {
             return this;
         }
@@ -403,11 +474,11 @@ public class Variable extends Term {
      * Resolve bindings with cycle detection to prevent infinite recursion.
      */
     private Term resolveBindingsWithCycleDetection(Map<String, Term> bindings, java.util.Set<String> visited) {
-        if (!visited.add(this.name)) {
+        if (!visited.add(getName())) {
             return this; // Circular reference
         }
 
-        Term bound = bindings.get(this.name);
+        Term bound = bindings.get(getName());
         if (bound == null) {
             return this;
         }
@@ -417,16 +488,17 @@ public class Variable extends Term {
         return bound.resolveBindings(bindings);
     }
     
+    // START_CHANGE: ISS-2025-0438 - IDENTITY equality (design B.2/B.14). A variable is a cell:
+    // two cells are the same variable only when they are the same object. Name equality is still
+    // sufficient for the legacy path because getName() is unique per cell.
     @Override
     public boolean equals(Object obj) {
-        if (this == obj) return true;
-        if (obj == null || getClass() != obj.getClass()) return false;
-        Variable variable = (Variable) obj;
-        return name != null ? name.equals(variable.name) : variable.name == null;
+        return this == obj;
     }
-    
+
     @Override
     public int hashCode() {
-        return name != null ? name.hashCode() : 0;
+        return System.identityHashCode(this);
     }
+    // END_CHANGE: ISS-2025-0438
 }

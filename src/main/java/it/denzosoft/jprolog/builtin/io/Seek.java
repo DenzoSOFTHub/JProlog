@@ -3,32 +3,25 @@ package it.denzosoft.jprolog.builtin.io;
 
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.engine.v4.PrologStream;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
 
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.channels.FileChannel;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * seek/4 - SWI-Prolog stream repositioning.
+ * seek/4 - seek(+Stream, +Offset, +Method, -NewLocation), Method = bof | current | eof.
  *
- * seek(+Stream, +Offset, +Method, -NewLocation)
- *
- * Method = bof | current | eof
- *   bof: position = Offset (from start)
- *   current: position = currentPos + Offset
- *   eof: position = streamSize + Offset (Offset typically 0 or negative)
- *
- * NewLocation is unified with the resulting absolute position.
+ * <p>START_CHANGE: ISS-2025-0472 - wave W7, limit L-07: the seek now goes through
+ * {@link PrologStream#reposition(long)}, which drops the stream's decode buffer and resets the
+ * decoder. Before this the channel moved but the {@code PushbackReader} that {@code get_char/2}
+ * read from kept its own 8 KB buffer, so {@code get_char(S,C1), seek(S,0,bof,_), get_char(S,C2)}
+ * answered {@code C2 = e} after {@code C1 = h}.
  */
 public class Seek implements BuiltIn {
 
@@ -42,9 +35,6 @@ public class Seek implements BuiltIn {
         Term methodTerm = query.getArguments().get(2).resolveBindings(bindings);
         Term newLocTerm = query.getArguments().get(3);
 
-        if (!(streamTerm instanceof Atom)) {
-            throw new PrologException(ISOErrorTerms.typeError("atom", streamTerm, "seek/4"));
-        }
         if (!(offsetTerm instanceof Number) || !((Number) offsetTerm).isInteger()) {
             throw new PrologException(ISOErrorTerms.typeError("integer", offsetTerm, "seek/4"));
         }
@@ -52,44 +42,32 @@ public class Seek implements BuiltIn {
             throw new PrologException(ISOErrorTerms.typeError("atom", methodTerm, "seek/4"));
         }
 
-        String alias = ((Atom) streamTerm).getName();
         long offset = ((Number) offsetTerm).longValue();
         String method = ((Atom) methodTerm).getName();
 
-        if (!StreamManager.hasStream(alias)) {
+        PrologStream s = StreamManager.stream(streamTerm);
+        if (s == null) {
             throw new PrologException(ISOErrorTerms.existenceError("stream", streamTerm, "seek/4"));
         }
-        if ("user_input".equals(alias) || "user_output".equals(alias) || "user_error".equals(alias)) {
+        if (!s.canReposition()) {
             throw new PrologException(ISOErrorTerms.permissionError("reposition", "stream", streamTerm, "seek/4"));
         }
 
         try {
-            FileChannel channel = null;
-            InputStream is = StreamManager.getInputStream(alias);
-            if (is instanceof FileInputStream) {
-                channel = ((FileInputStream) is).getChannel();
-            } else {
-                OutputStream os = StreamManager.getOutputStream(alias);
-                if (os instanceof FileOutputStream) {
-                    channel = ((FileOutputStream) os).getChannel();
-                }
-            }
-            if (channel == null) {
-                throw new PrologException(ISOErrorTerms.permissionError("reposition", "stream", streamTerm, "seek/4"));
-            }
-
             long newPos;
-            switch (method) {
-                case "bof": newPos = offset; break;
-                case "current": newPos = channel.position() + offset; break;
-                case "eof": newPos = channel.size() + offset; break;
-                default:
-                    throw new PrologException(ISOErrorTerms.domainError("seek_method", methodTerm, "seek/4"));
+            if ("bof".equals(method)) {
+                newPos = offset;
+            } else if ("current".equals(method)) {
+                newPos = s.bytePosition() + offset;
+            } else if ("eof".equals(method)) {
+                newPos = s.size() + offset;
+            } else {
+                throw new PrologException(ISOErrorTerms.domainError("seek_method", methodTerm, "seek/4"));
             }
             if (newPos < 0) {
                 throw new PrologException(ISOErrorTerms.domainError("position", new Number(newPos), "seek/4"));
             }
-            channel.position(newPos);
+            s.reposition(newPos);
 
             Map<String, Term> nb = new HashMap<>(bindings);
             if (newLocTerm.unify(new Number(newPos), nb)) {
@@ -100,6 +78,7 @@ public class Seek implements BuiltIn {
         } catch (PrologException pe) {
             throw pe;
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("seek/4: I/O error: " + e.getMessage());
         }
     }

@@ -2,7 +2,7 @@
 package it.denzosoft.jprolog.builtin.system;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -50,7 +50,7 @@ public class GlobalVariables implements BuiltInWithContext {
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, Map<String, Term> bindings,
+    public boolean executeWithContext(SolverContext solver, Term query, Map<String, Term> bindings,
                                      List<Map<String, Term>> solutions) {
         if (solver.getPrologContext() == null) {
             return false;
@@ -86,7 +86,7 @@ public class GlobalVariables implements BuiltInWithContext {
         }
     }
 
-    private boolean executeSetval(QuerySolver solver, List<Term> args, Map<String, Term> bindings) {
+    private boolean executeSetval(SolverContext solver, List<Term> args, Map<String, Term> bindings) {
         if (args == null || args.size() != 2) {
             throw new PrologException(ISOErrorTerms.typeError("callable",
                 new Atom("nb_setval"), "nb_setval/2 requires exactly 2 arguments"));
@@ -120,7 +120,7 @@ public class GlobalVariables implements BuiltInWithContext {
         // END_CHANGE: R1
     }
 
-    private boolean executeGetval(QuerySolver solver, List<Term> args, Map<String, Term> bindings,
+    private boolean executeGetval(SolverContext solver, List<Term> args, Map<String, Term> bindings,
                                   List<Map<String, Term>> solutions) {
         if (args == null || args.size() != 2) {
             throw new PrologException(ISOErrorTerms.typeError("callable",
@@ -158,7 +158,7 @@ public class GlobalVariables implements BuiltInWithContext {
         return false;
     }
 
-    private boolean executeCurrent(QuerySolver solver, List<Term> args, Map<String, Term> bindings,
+    private boolean executeCurrent(SolverContext solver, List<Term> args, Map<String, Term> bindings,
                                    List<Map<String, Term>> solutions) {
         if (args == null || args.size() != 2) {
             throw new PrologException(ISOErrorTerms.typeError("callable",
@@ -197,7 +197,7 @@ public class GlobalVariables implements BuiltInWithContext {
         return found;
     }
 
-    private boolean executeDelete(QuerySolver solver, List<Term> args, Map<String, Term> bindings) {
+    private boolean executeDelete(SolverContext solver, List<Term> args, Map<String, Term> bindings) {
         if (args == null || args.size() != 1) {
             throw new PrologException(ISOErrorTerms.typeError("callable",
                 new Atom("nb_delete"), "nb_delete/1 requires exactly 1 argument"));

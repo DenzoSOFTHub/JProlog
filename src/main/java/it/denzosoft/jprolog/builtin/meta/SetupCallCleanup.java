@@ -1,8 +1,7 @@
 package it.denzosoft.jprolog.builtin.meta;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.CutStatus;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
@@ -27,14 +26,14 @@ import java.util.Map;
  */
 public class SetupCallCleanup implements BuiltInWithContext {
 
-    private final QuerySolver querySolver;
+    private final SolverContext querySolver;
 
-    public SetupCallCleanup(QuerySolver querySolver) {
+    public SetupCallCleanup(SolverContext querySolver) {
         this.querySolver = querySolver;
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query,
+    public boolean executeWithContext(SolverContext solver, Term query,
                                       Map<String, Term> bindings,
                                       List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
@@ -60,7 +59,7 @@ public class SetupCallCleanup implements BuiltInWithContext {
 
         // Run Setup once. If it fails or raises, propagate without running Cleanup.
         List<Map<String, Term>> setupSols = new ArrayList<>();
-        boolean setupOk = solver.solve(setupResolved, new HashMap<>(bindings), setupSols, CutStatus.notOccurred());
+        boolean setupOk = solver.solveMeta(setupResolved, new HashMap<>(bindings), setupSols)   /* ISS-2025-0431 - ENG-04 */;
         if (!setupOk || setupSols.isEmpty()) {
             return false;
         }
@@ -70,8 +69,8 @@ public class SetupCallCleanup implements BuiltInWithContext {
         boolean cleaned = false;
         try {
             List<Map<String, Term>> goalSols = new ArrayList<>();
-            solver.solve(goal.resolveBindings(afterSetup), new HashMap<>(afterSetup),
-                    goalSols, CutStatus.notOccurred());
+            solver.solveMeta(goal.resolveBindings(afterSetup), new HashMap<>(afterSetup),
+                    goalSols)   /* ISS-2025-0431 - ENG-04 */;
             runCleanup(solver, cleanup.resolveBindings(afterSetup), afterSetup);
             cleaned = true;
             if (goalSols.isEmpty()) {
@@ -80,6 +79,7 @@ public class SetupCallCleanup implements BuiltInWithContext {
             solutions.addAll(goalSols);
             return true;
         } catch (RuntimeException e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             if (!cleaned) {
                 runCleanup(solver, cleanup.resolveBindings(afterSetup), afterSetup);
             }
@@ -87,11 +87,12 @@ public class SetupCallCleanup implements BuiltInWithContext {
         }
     }
 
-    private void runCleanup(QuerySolver solver, Term cleanup, Map<String, Term> b) {
+    private void runCleanup(SolverContext solver, Term cleanup, Map<String, Term> b) {
         try {
             List<Map<String, Term>> cs = new ArrayList<>();
-            solver.solve(cleanup, new HashMap<>(b), cs, CutStatus.notOccurred());
+            solver.solveMeta(cleanup, new HashMap<>(b), cs)   /* ISS-2025-0431 - ENG-04 */;
         } catch (RuntimeException ignore) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(ignore);   // ISS-2025-0431
             // Best-effort cleanup: suppress cleanup errors so they do not mask the goal result.
         }
     }

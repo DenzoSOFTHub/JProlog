@@ -37,6 +37,7 @@ public class Main {
             prolog.consult("parent(X, Y) :- mother(X, Y).");
             prolog.consult("grandparent(X, Z) :- parent(X, Y), parent(Y, Z).");
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             System.err.println("Error during loading: " + e.getMessage());
             e.printStackTrace();
             return;
@@ -139,6 +140,7 @@ public class Main {
                 }
             }
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             System.err.println("  Error: " + e.getMessage());
             e.printStackTrace(); // Stampa stack trace per debug
         }
@@ -250,6 +252,7 @@ public class Main {
                     failed++;
                 }
             } catch (Exception e) {
+                it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
                 System.out.println("ERROR : " + query + " (" + e.getMessage() + ")");
                 failed++;
             }

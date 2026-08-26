@@ -39,7 +39,7 @@ public class NoSpy implements BuiltIn {
         if (predicateIndicator instanceof Variable) {
             // Remove all spy points if argument is a variable
             Spy.clearAllSpyPoints();
-            System.out.println("% All spy points removed");
+            it.denzosoft.jprolog.builtin.io.StreamManager.out().println("% All spy points removed");
             solutions.add(bindings);
             return true;
         }
@@ -69,7 +69,7 @@ public class NoSpy implements BuiltIn {
         }
         
         Spy.removeSpyPoint(spyPoint);
-        System.out.println("% Spy point removed from " + spyPoint);
+        it.denzosoft.jprolog.builtin.io.StreamManager.out().println("% Spy point removed from " + spyPoint);
         
         solutions.add(bindings);
         return true;

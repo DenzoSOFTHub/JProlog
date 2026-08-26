@@ -67,6 +67,7 @@ public class CharType implements BuiltIn {
                 return false;
             }
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("char_type/2 error: " + e.getMessage());
         }
     }

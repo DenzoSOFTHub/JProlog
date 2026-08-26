@@ -8,32 +8,105 @@ Tabling, also known as memoization or tabulation, is a technique that caches the
 2. **Termination**: Prevents infinite loops in programs with cyclic dependencies, such as graph reachability over graphs with cycles.
 3. **Correctness**: Ensures that left-recursive grammars and transitive closure computations terminate and produce correct results.
 
-The implementation uses **variant tabling** with canonical variable normalization. Structurally identical queries (differing only in variable names) share the same cache entry. Loop detection prevents infinite recursion by returning failure for goals already being computed.
+JProlog has **two** tabling implementations, and which one you get depends on the selected engine.
+Since v4.0.0 the correct one is the default; the other is reachable only with
+`-Djprolog.engine=v2`, and is deleted in 4.1.
+
+| | `-Djprolog.engine=v2` and `=legacy` (the fallbacks) | **the default engine** (v4, since 3.12.0 as an option, the default since 4.0.0) |
+|---|---|---|
+| Algorithm | bounded re-evaluation: the goal is re-run at most **100** times over name-keyed answer maps, and a call that finds the variant in progress reads whatever partial answer list exists at that instant | **linear tabling with completion** (SLD + iterative completion, B-Prolog / DRA style) implemented in the machine's own choice points |
+| Correctness | **wrong answers** for a left-recursive predicate over a long chain — see below (LIM-038, design limit L-03) | correct and complete for definite programs, left recursion included |
+| Recursion depth | the pre-4.0.0 recursive solver's 2 000-deep Java cap | none — a tabled call is a choice point, not a Java frame |
+| Inference budget / Stop | not enforced inside the fixpoint | enforced |
+| Four-port trace / debugger | the whole tabled call is opaque | Call/Exit/Redo/Fail like any predicate |
+| `current_table/2` | not available | available |
+
+The difference is not academic. This program answers correctly on v4 and wrongly on the default
+engine:
+
+```prolog
+edge(I, J) :- between(1, 3000, I), J is I + 1.
+:- table path/2.
+path(X, Y) :- edge(X, Y).
+path(X, Y) :- path(X, Z), edge(Z, Y).
+
+?- path(1, 3001).                                  % default: true    -Djprolog.engine=v2: fails
+?- path(1, 51).                                    % default: true    -Djprolog.engine=v2: fails
+?- findall(Y, path(1, Y), L), length(L, 3000).     % default: true    -Djprolog.engine=v2: fails
+```
+
+Since v4.0.0 v4 IS the default, so tabled programs are correct out of the box; a program that
+selects `-Djprolog.engine=v2` or `=legacy` gets the old, wrong behaviour.
 
 ### Architecture
 
-The tabling system consists of two components:
+Shared by both engines:
 
-- **`TableStore`** (`it.denzosoft.jprolog.core.engine.TableStore`) -- The core data structure. Maintains:
-  - A set of tabled predicate indicators (e.g., `"fib/2"`).
-  - A cache mapping normalized goal strings to lists of solution bindings.
-  - An in-progress set for loop detection.
-  - A `normalize()` method that replaces unbound variables with positional canonical names (`_TV0`, `_TV1`, ...) to produce stable cache keys.
+- **`TableStore`** (`it.denzosoft.jprolog.core.engine.TableStore`) -- holds the set of tabled
+  predicate indicators (e.g. `"fib/2"`) declared by `:- table` / `table/1`, and, on the v2 and
+  v2 fallback engine, the answer cache itself.
 
-- **Built-in predicates**:
-  - `table/1` (`it.denzosoft.jprolog.builtin.meta.TableDirective`) -- Declares a predicate as tabled.
-  - `abolish_all_tables/0` (`it.denzosoft.jprolog.builtin.meta.AbolishAllTables`) -- Clears all cached results.
-  - `abolish_table/1` (`it.denzosoft.jprolog.builtin.meta.AbolishTable`) -- Clears cache for a specific predicate.
+- **Built-in predicates**: `table/1` (`builtin.meta.TableDirective`),
+  `abolish_all_tables/0` (`builtin.meta.AbolishAllTables`) and
+  `abolish_table/1` (`builtin.meta.AbolishTable`). All three are context-dependent
+  (`BuiltInWithContext`) because they need the `SolverContext` to reach the `Prolog` context.
 
-All three predicates are context-dependent (`BuiltInWithContext`) because they need access to the `QuerySolver` to reach the `Prolog` context and its `TableStore`.
+On the v4 engine:
 
-### How Tabling Works Internally
+- **`core.engine.v4.Tabling`** owns the answers: one *variant table* per tabled subgoal
+  (`{status, answers, dependencies}`) on the per-engine `Engine` object. The variant key is a
+  numbervars-style canonical encoding computed on the variable **cells**, not on variable names, so
+  `path(1, 51)` and `path(1, Y)` are two ordinary variants of the same machinery.
+- `abolish_all_tables/0`, `abolish_table/1` and the new `current_table/2` are v4 natives that
+  operate on that store (and keep the shared `TableStore` declarations in step).
 
-1. When a tabled predicate is called, `QuerySolver` checks `TableStore.isTabled(functor, arity)`.
-2. The goal is normalized via `TableStore.normalize()` to produce a cache key.
-3. If the cache key has stored solutions, those are returned immediately (cache hit).
-4. If the goal is already in-progress (loop detected), the call returns failure to break the cycle.
-5. Otherwise, the goal is marked as in-progress, solved normally, and the results are cached. The in-progress mark is then removed.
+### How tabling works internally
+
+**On the v4 engine (linear tabling with completion):**
+
+1. `Machine.callUser` sees that the predicate is tabled and computes the call's **variant key**.
+2. The first call to a variant becomes its **generator**: a choice point whose PRODUCE phase runs
+   the predicate's clauses against a private copy of the call, fail-driven, recording every answer
+   in the table (deduplicated by variant). Nothing is returned to the caller during this phase.
+3. A call to a variant that is *already being evaluated* becomes a **consumer**: a choice point
+   that iterates the answers recorded so far, lazily and by index, so answers appended later in the
+   same round are consumed too. This is what makes left recursion produce answers at all.
+4. When a generator exhausts its clauses, dependency information collected during the phase decides
+   whether it **leads** its strongly connected component. A leader re-runs its clauses (a new
+   round; deduplication makes the re-execution semi-naive) until a round adds no new answer
+   anywhere in the component, and then every table of the component is marked **complete**. There
+   is no iteration cap: termination follows from the finite, deduplicated answer set.
+5. A completed table is thereafter consumed directly, which is the memoization effect.
+
+**On the v2 fallback engine (bounded re-evaluation):**
+
+1. `MachineSolver` checks `TableStore.isTabled(functor, arity)`.
+2. The goal is normalized via `TableStore.normalize()` (unbound variables become `_TV0`, `_TV1`,
+   ...) to produce a `toString()` cache key.
+3. A cache hit replays the stored solution maps.
+4. Otherwise the goal is marked in-progress and re-solved up to **100** times until the answer set
+   stops growing; a recursive call meanwhile reads the partial list. If the fixpoint is not reached
+   within 100 iterations, whatever was collected is cached as if it were complete — which is where
+   the wrong answers come from.
+
+### Invalidation
+
+A table is a memo, so it survives across queries. On v4:
+
+- asserting to or retracting from a **tabled** predicate drops that predicate's tables;
+- a change to a **non-tabled** predicate that a tabled one depends on is **not** tracked. Call
+  `abolish_all_tables/0` after such a change (XSB requires the same);
+- an evaluation abandoned by an exception, a cut or the inference budget discards its half-built
+  tables, so the next call recomputes instead of reading a partial answer set;
+- two safety caps (100 000 tables, 4 000 000 answers) drop the oldest completed tables at a query
+  boundary, so a long-lived engine cannot grow the store without bound.
+
+`tnot/1` (tabled negation under the well-founded semantics) is **not implemented** on any engine:
+it raises `existence_error(procedure, tnot/1)`. Ordinary `\+/1` inside a tabled predicate is
+evaluated as negation-as-failure against the answers available at that moment, so a program whose
+meaning is *undefined* under the well-founded semantics gets an engine-dependent (but always
+terminating) answer -- for `:- table p/1.  p(X) :- \+ p(X).`, `p(a)` succeeds on v4 and fails on
+the default engine. Do not rely on either.
 
 ---
 
@@ -75,7 +148,9 @@ Clears all tabling caches and in-progress markers. The set of tabled predicate d
 
 | (no arguments) |
 
-**Behavior**: Calls `TableStore.abolishAllTables()` which clears both the `cache` map and the `inProgress` set. Always succeeds. Useful when the knowledge base has been modified (via `assert`/`retract`) and cached results may be stale.
+**Behavior**: clears the answer store (`Tabling.abolishAll()` on v4, `TableStore.abolishAllTables()` on the v2 fallback). Always succeeds. Useful when the knowledge base has been modified (via `assert`/`retract`) and cached results may be stale.
+
+**Errors** (v4 only): `permission_error(modify, table, ...)` when called from inside a running tabled evaluation -- abolishing then would pull the store out from under the live generator frames.
 
 **When to use**:
 - After `assert`/`retract` operations that modify facts used by tabled predicates.
@@ -96,13 +171,38 @@ Clears the tabling cache for a specific predicate and removes it from the set of
 |-------------------|-------------------|------|-------------|
 | `Functor/Arity`   | compound term     | `+`  | The predicate indicator to clear. |
 
-**Behavior**: Removes the predicate from `tabledPredicates`, removes all cache entries whose key starts with the predicate's functor pattern (e.g., all keys starting with `"fib("` for `fib/2`), and clears any in-progress markers for that predicate.
+**Behavior**: Removes the predicate from the tabled set and drops every table whose call belongs to that predicate.
 
 **Important**: Unlike `abolish_all_tables/0`, this predicate also **un-declares** the predicate as tabled. To re-enable tabling for it, you must call `table(Functor/Arity)` again.
+
+**Errors**: on v4, `instantiation_error` for an unbound argument, `type_error(predicate_indicator, T)` for anything that is not `Name/Arity`, and `permission_error(modify, table, ...)` from inside a running tabled evaluation. On the v2 fallback a malformed argument makes the call fail silently.
 
 **When to use**:
 - When you want to selectively invalidate cache for one predicate while keeping others cached.
 - When dynamically switching between tabled and non-tabled evaluation of a predicate.
+
+---
+
+### current_table/2
+
+```prolog
+current_table(?Variant, ?Status).
+```
+
+Enumerates the tables that currently exist. **`-Djprolog.engine=v4` only**; on the other engines it raises `existence_error(procedure, current_table/2)`.
+
+| Argument  | Type      | Mode | Description |
+|-----------|-----------|------|-------------|
+| `Variant` | callable  | `?`  | Unified with each table's call pattern (a partially instantiated `Variant` enumerates every table it matches, as `current_op/3` does). |
+| `Status`  | atom      | `?`  | `complete` for a finished table, `incomplete` for one still being evaluated. |
+
+**Behavior**: nondeterministic; one solution per live table, in creation order. Useful for checking that `abolish_all_tables/0` or the assert/retract invalidation really dropped a table.
+
+```prolog
+?- path(a, c), current_table(V, S).
+V = path(a, c), S = complete ;
+V = path(a, _),  S = complete.
+```
 
 ---
 

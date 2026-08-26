@@ -1,9 +1,8 @@
 package it.denzosoft.jprolog.builtin.meta;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.CutStatus;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -25,14 +24,14 @@ import java.util.Map;
  */
 public class ForAll implements BuiltInWithContext {
     
-    private final QuerySolver querySolver;
+    private final SolverContext querySolver;
     
-    public ForAll(QuerySolver querySolver) {
+    public ForAll(SolverContext querySolver) {
         this.querySolver = querySolver;
     }
     
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query, 
+    public boolean executeWithContext(SolverContext solver, Term query, 
                                     Map<String, Term> bindings, 
                                     List<Map<String, Term>> solutions) {
         
@@ -63,8 +62,8 @@ public class ForAll implements BuiltInWithContext {
 
         // Find all solutions to the condition
         List<Map<String, Term>> conditionSolutions = new ArrayList<>();
-        boolean conditionHasSolutions = solver.solve(condition, new HashMap<>(bindings), 
-                                                   conditionSolutions, CutStatus.notOccurred());
+        boolean conditionHasSolutions = solver.solveMeta(condition, new HashMap<>(bindings),
+                                                   conditionSolutions);   // ISS-2025-0485
         
         if (!conditionHasSolutions || conditionSolutions.isEmpty()) {
             // No solutions to condition - forall succeeds trivially
@@ -75,8 +74,8 @@ public class ForAll implements BuiltInWithContext {
         // Check that action succeeds for each condition solution
         for (Map<String, Term> conditionBinding : conditionSolutions) {
             List<Map<String, Term>> actionSolutions = new ArrayList<>();
-            boolean actionSucceeds = solver.solve(action, new HashMap<>(conditionBinding), 
-                                                actionSolutions, CutStatus.notOccurred());
+            boolean actionSucceeds = solver.solveMeta(action, new HashMap<>(conditionBinding),
+                                                actionSolutions);   // ISS-2025-0485
             
             // START_CHANGE: ISS-2025-0184 - Only check success, not solution count
             if (!actionSucceeds) {
@@ -106,6 +105,7 @@ public class ForAll implements BuiltInWithContext {
                 )
             );
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return new Atom("instantiation_error");
         }
     }
@@ -126,6 +126,7 @@ public class ForAll implements BuiltInWithContext {
                 )
             );
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             return new Atom("type_error");
         }
     }

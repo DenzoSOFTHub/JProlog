@@ -52,7 +52,7 @@ public class AtomLength implements BuiltIn {
         }
         // END_CHANGE: ISS-2025-0406
         // START_CHANGE: ISS-2025-0193 - Use codePointCount for correct Unicode character counting
-        double lengthValue = atomString.codePointCount(0, atomString.length());
+        long lengthValue = atomString.codePointCount(0, atomString.length());   // ISS-2025-0424: ISO integer
         // END_CHANGE: ISS-2025-0193
 
         Term computedLength = new Number(lengthValue);

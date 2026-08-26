@@ -44,6 +44,7 @@ public class PhraseWithOptions implements BuiltIn {
             return executeWithOptions(dcgBody, inputList, restList, dcgOptions, bindings, solutions);
             
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("phrase/4 error: " + e.getMessage());
         }
     }
@@ -202,6 +203,7 @@ public class PhraseWithOptions implements BuiltIn {
             return result;
             
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             // Handle syntax errors according to options
             switch (options.syntaxErrors) {
                 case "error":

@@ -1,8 +1,7 @@
 package it.denzosoft.jprolog.builtin.list;
 
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
-import it.denzosoft.jprolog.core.engine.CutStatus;
-import it.denzosoft.jprolog.core.engine.QuerySolver;
+import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -26,14 +25,14 @@ import java.util.Map;
  */
 public class Foldl implements BuiltInWithContext {
 
-    private final QuerySolver querySolver;
+    private final SolverContext querySolver;
 
-    public Foldl(QuerySolver querySolver) {
+    public Foldl(SolverContext querySolver) {
         this.querySolver = querySolver;
     }
 
     @Override
-    public boolean executeWithContext(QuerySolver solver, Term query,
+    public boolean executeWithContext(SolverContext solver, Term query,
                                      Map<String, Term> bindings,
                                      List<Map<String, Term>> solutions) {
         int arity = query.getArguments().size();
@@ -50,7 +49,7 @@ public class Foldl implements BuiltInWithContext {
         }
     }
 
-    private boolean foldl4(QuerySolver solver, Term goal, Term query,
+    private boolean foldl4(SolverContext solver, Term goal, Term query,
                            Map<String, Term> bindings,
                            List<Map<String, Term>> solutions) {
         Term list = query.getArguments().get(1).resolveBindings(bindings);
@@ -68,7 +67,7 @@ public class Foldl implements BuiltInWithContext {
                 Arrays.asList(goal, elements.get(i), accumulator, nextAcc));
 
             List<Map<String, Term>> temp = new ArrayList<>();
-            if (!solver.solve(callGoal, new HashMap<>(currentBindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
+            if (!solver.solveMeta(callGoal, new HashMap<>(currentBindings), temp)   /* ISS-2025-0431 - ENG-04 */ || temp.isEmpty()) {
                 return false;
             }
             currentBindings = new HashMap<>(temp.get(0));
@@ -84,7 +83,7 @@ public class Foldl implements BuiltInWithContext {
         return false;
     }
 
-    private boolean foldl5(QuerySolver solver, Term goal, Term query,
+    private boolean foldl5(SolverContext solver, Term goal, Term query,
                            Map<String, Term> bindings,
                            List<Map<String, Term>> solutions) {
         Term list1 = query.getArguments().get(1).resolveBindings(bindings);
@@ -104,7 +103,7 @@ public class Foldl implements BuiltInWithContext {
                 Arrays.asList(goal, elems1.get(i), elems2.get(i), accumulator, nextAcc));
 
             List<Map<String, Term>> temp = new ArrayList<>();
-            if (!solver.solve(callGoal, new HashMap<>(currentBindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
+            if (!solver.solveMeta(callGoal, new HashMap<>(currentBindings), temp)   /* ISS-2025-0431 - ENG-04 */ || temp.isEmpty()) {
                 return false;
             }
             currentBindings = new HashMap<>(temp.get(0));
@@ -119,7 +118,7 @@ public class Foldl implements BuiltInWithContext {
         return false;
     }
 
-    private boolean foldl6(QuerySolver solver, Term goal, Term query,
+    private boolean foldl6(SolverContext solver, Term goal, Term query,
                            Map<String, Term> bindings,
                            List<Map<String, Term>> solutions) {
         Term list1 = query.getArguments().get(1).resolveBindings(bindings);
@@ -141,7 +140,7 @@ public class Foldl implements BuiltInWithContext {
                 Arrays.asList(goal, elems1.get(i), elems2.get(i), elems3.get(i), accumulator, nextAcc));
 
             List<Map<String, Term>> temp = new ArrayList<>();
-            if (!solver.solve(callGoal, new HashMap<>(currentBindings), temp, CutStatus.notOccurred()) || temp.isEmpty()) {
+            if (!solver.solveMeta(callGoal, new HashMap<>(currentBindings), temp)   /* ISS-2025-0431 - ENG-04 */ || temp.isEmpty()) {
                 return false;
             }
             currentBindings = new HashMap<>(temp.get(0));

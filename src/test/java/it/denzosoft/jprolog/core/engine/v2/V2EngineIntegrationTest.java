@@ -21,9 +21,19 @@ public class V2EngineIntegrationTest {
 
     private Prolog p;
     private boolean prev;
+    // START_CHANGE: ISS-2025-0478 - wave W8 made v4 the default, and v4 wins over the v2 flag.
+    // This class exists to exercise the v2 MachineSolver, so it must turn v4 OFF as well.
+    private boolean prevV4;
 
-    @Before public void on() { prev = Prolog.isUsingV2Engine(); Prolog.setUseV2Engine(true); p = new Prolog(); }
-    @After public void off() { Prolog.setUseV2Engine(prev); }
+    @Before public void on() {
+        prev = Prolog.isUsingV2Engine();
+        prevV4 = Prolog.isUsingV4Engine();
+        Prolog.setUseV4Engine(false);
+        Prolog.setUseV2Engine(true);
+        p = new Prolog();
+    }
+    @After public void off() { Prolog.setUseV2Engine(prev); Prolog.setUseV4Engine(prevV4); }
+    // END_CHANGE: ISS-2025-0478
 
     private List<Map<String, Term>> q(String query) { return p.solve(query); }
 

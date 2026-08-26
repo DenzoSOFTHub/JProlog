@@ -317,6 +317,7 @@ public class ArithmeticEvaluator {
         } catch (ArithmeticException e) {
             throw new PrologEvaluationException("Arithmetic error evaluating expression: " + e.getMessage(), e);
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("Error evaluating arithmetic expression: " + e.getMessage(), e);
         }
     }
@@ -341,6 +342,7 @@ public class ArithmeticEvaluator {
         } catch (ArithmeticException e) {
             throw new PrologEvaluationException("Arithmetic error evaluating expression: " + e.getMessage(), e);
         } catch (Exception e) {
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologEvaluationException("Error evaluating arithmetic expression: " + e.getMessage(), e);
         }
     }

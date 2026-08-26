@@ -2,7 +2,7 @@ package it.denzosoft.jprolog.builtin.system;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
-import it.denzosoft.jprolog.core.operator.Operator;
+import it.denzosoft.jprolog.core.engine.v4.Ops;
 import it.denzosoft.jprolog.core.operator.OperatorTable;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
@@ -39,140 +39,33 @@ public class OperatorDefinition implements BuiltIn {
         }
     }
     
-    // START_CHANGE: ISS-2025-0177 - Fix dual-arity operator bug: use composite key (name:typeClass)
-    // Global operator registry - shared across all instances
-    // Key format: "name:typeClass" where typeClass is "prefix", "infix", or "postfix"
-    private static final Map<String, OperatorInfo> OPERATORS = new ConcurrentHashMap<>();
-    // START_CHANGE: R2 - track which module each operator was defined in
-    private static final Map<String, String> OP_MODULE = new ConcurrentHashMap<>();
-    private static volatile String currentModuleContext = "user";
-    public static void setCurrentModuleContext(String mod) {
-        currentModuleContext = (mod == null) ? "user" : mod;
-    }
-    public static String getCurrentModuleContext() { return currentModuleContext; }
-    // END_CHANGE: R2
-    // END_CHANGE: ISS-2025-0177
+    // START_CHANGE: ISS-2025-0474 - engine v4 wave W7 (design B.12, LIM-034): op/3 and
+    // current_op/3 no longer own any state. The three process-global stores that lived here — the
+    // OPERATORS map, the OP_MODULE map and the sharedOperatorTable the parser read — are replaced
+    // by ONE per-engine store, {@link Ops}, reached through the engine current on the calling
+    // thread (the same facade pattern PrologFlags has used since ISS-2025-0437). That is what makes
+    // current_op/3 see an operator declared by a consulted `:- op/3` directive, keeps two Prolog
+    // instances from sharing operators, and keeps a module's operators local to that module.
+    private static Ops ops() { return Ops.current(); }
 
-    // START_CHANGE: ISS-2025-0085 - Shared OperatorTable for parser integration
-    private static volatile OperatorTable sharedOperatorTable;
+    /** The module {@code op/3} attributes its definitions to. */
+    public static void setCurrentModuleContext(String mod) { ops().setModuleContext(mod); }
 
-    /**
-     * Set the shared OperatorTable that op/3 will update.
-     * This must be called during engine initialization to connect
-     * the op/3 predicate to the parser's operator table.
-     */
-    public static void setSharedOperatorTable(OperatorTable table) {
-        sharedOperatorTable = table;
-    }
+    /** The module {@code current_op/3} reports operators for. */
+    public static String getCurrentModuleContext() { return ops().moduleContext(); }
+
+    /** The operator table the parser of the current engine reads (module-aware). */
+    public static OperatorTable getSharedOperatorTable() { return ops().table(); }
 
     /**
-     * Get the shared OperatorTable.
+     * Historical hook: the parser table is owned by the engine now, so there is nothing to install.
+     * Kept so embedder code that called it still compiles.
+     *
+     * @deprecated the operator table belongs to the {@code Prolog} instance ({@code getOperatorTable()}).
      */
-    public static OperatorTable getSharedOperatorTable() {
-        return sharedOperatorTable;
-    }
-    // END_CHANGE: ISS-2025-0085
-
-    // Initialize with standard ISO Prolog operators
-    static {
-        initializeISOOperators();
-    }
-    
-    // START_CHANGE: ISS-2025-0177 - Fix dual-arity operator bug: use composite key
-    private static void initializeISOOperators() {
-        // Precedence 1200 (lowest binding)
-        putOperator(new OperatorInfo(1200, "xfx", ":-"));  // Rule definition (infix)
-        putOperator(new OperatorInfo(1200, "fx", ":-"));    // Directive (prefix)
-        putOperator(new OperatorInfo(1200, "xfx", "-->"));  // DCG rule
-        putOperator(new OperatorInfo(1200, "fx", "?-"));    // Query directive
-
-        // Precedence 1100
-        putOperator(new OperatorInfo(1100, "xfy", ";"));   // Disjunction/if-then-else
-
-        // Precedence 1050
-        putOperator(new OperatorInfo(1050, "xfy", "->"));  // If-then
-
-        // Precedence 1000
-        putOperator(new OperatorInfo(1000, "xfy", ","));   // Conjunction
-
-        // Precedence 900
-        putOperator(new OperatorInfo(900, "fy", "\\+"));  // Negation as failure
-
-        // Precedence 700 (comparison and unification)
-        putOperator(new OperatorInfo(700, "xfx", "="));
-        putOperator(new OperatorInfo(700, "xfx", "\\="));
-        putOperator(new OperatorInfo(700, "xfx", "=="));
-        putOperator(new OperatorInfo(700, "xfx", "\\=="));
-        putOperator(new OperatorInfo(700, "xfx", "@<"));
-        putOperator(new OperatorInfo(700, "xfx", "@=<"));
-        putOperator(new OperatorInfo(700, "xfx", "@>"));
-        putOperator(new OperatorInfo(700, "xfx", "@>="));
-        putOperator(new OperatorInfo(700, "xfx", "=.."));
-        putOperator(new OperatorInfo(700, "xfx", "is"));
-        putOperator(new OperatorInfo(700, "xfx", "=:="));
-        putOperator(new OperatorInfo(700, "xfx", "=\\="));
-        putOperator(new OperatorInfo(700, "xfx", "<"));
-        putOperator(new OperatorInfo(700, "xfx", "=<"));
-        putOperator(new OperatorInfo(700, "xfx", ">"));
-        putOperator(new OperatorInfo(700, "xfx", ">="));
-
-        // Precedence 600
-        putOperator(new OperatorInfo(600, "xfy", ":"));
-
-        // Precedence 500 (addition-like)
-        putOperator(new OperatorInfo(500, "yfx", "+"));
-        putOperator(new OperatorInfo(500, "yfx", "-"));
-        putOperator(new OperatorInfo(500, "yfx", "/\\"));  // Bitwise AND
-        putOperator(new OperatorInfo(500, "yfx", "\\/"));  // Bitwise OR
-        putOperator(new OperatorInfo(500, "yfx", "xor"));
-
-        // Precedence 400 (multiplication-like)
-        putOperator(new OperatorInfo(400, "yfx", "*"));
-        putOperator(new OperatorInfo(400, "yfx", "/"));
-        putOperator(new OperatorInfo(400, "yfx", "//"));
-        putOperator(new OperatorInfo(400, "yfx", "rem"));
-        putOperator(new OperatorInfo(400, "yfx", "mod"));
-        putOperator(new OperatorInfo(400, "yfx", "<<"));
-        putOperator(new OperatorInfo(400, "yfx", ">>"));
-
-        // Precedence 200 (highest binding)
-        putOperator(new OperatorInfo(200, "xfx", "**"));
-        putOperator(new OperatorInfo(200, "xfy", "^"));   // Power/existential quantification
-
-        // Unary operators (prefix - these no longer overwrite the infix versions)
-        putOperator(new OperatorInfo(200, "fy", "+"));   // Unary plus
-        putOperator(new OperatorInfo(200, "fy", "-"));   // Unary minus
-        putOperator(new OperatorInfo(200, "fy", "\\"));  // Bitwise NOT
-    }
-    // END_CHANGE: ISS-2025-0177
-    
-    // START_CHANGE: ISS-2025-0177 - Composite key helpers for dual-arity operator support
-    /**
-     * Get the type class (prefix, infix, or postfix) for an operator specifier.
-     */
-    private static String typeClass(String specifier) {
-        switch (specifier.toLowerCase()) {
-            case "fx": case "fy": return "prefix";
-            case "xf": case "yf": return "postfix";
-            case "xfx": case "xfy": case "yfx": return "infix";
-            default: return "infix";
-        }
-    }
-
-    /**
-     * Build the composite key for the OPERATORS map: "name:typeClass".
-     */
-    private static String compositeKey(String name, String specifier) {
-        return name + ":" + typeClass(specifier);
-    }
-
-    /**
-     * Store an operator using the composite key.
-     */
-    private static void putOperator(OperatorInfo info) {
-        OPERATORS.put(compositeKey(info.name, info.type), info);
-    }
-    // END_CHANGE: ISS-2025-0177
+    @Deprecated
+    public static void setSharedOperatorTable(OperatorTable table) { /* per-engine now */ }
+    // END_CHANGE: ISS-2025-0474
 
     private final OperatorType type;
 
@@ -248,55 +141,14 @@ public class OperatorDefinition implements BuiltIn {
             throw new PrologEvaluationException("op/3: Invalid operator type: " + operatorType);
         }
 
-        // START_CHANGE: ISS-2025-0283 - define/remove each name
+        // START_CHANGE: ISS-2025-0474 - one store, and op/3 under a choice point is undone on
+        // backtracking (R1) through the undo action the store hands back.
         for (String name : names) {
-        if (precedence == 0) {
-            // START_CHANGE: ISS-2025-0177 - Remove using composite key
-            // Remove operator by composite key (name:typeClass)
-            OPERATORS.remove(compositeKey(name, operatorType));
-            // START_CHANGE: R2 - drop module assoc
-            OP_MODULE.remove(compositeKey(name, operatorType));
-            // END_CHANGE: R2
-            // END_CHANGE: ISS-2025-0177
-            if (sharedOperatorTable != null) {
-                // Remove all operators with this name and compatible type
-                Operator.Type type = Operator.parseType(operatorType);
-                Set<Operator> ops = sharedOperatorTable.getOperators(name);
-                for (Operator op : ops) {
-                    if (isCompatibleType(op.getType(), type)) {
-                        sharedOperatorTable.removeOperator(op.getPrecedence(), op.getType(), name);
-                    }
-                }
-            }
-        } else {
-            // START_CHANGE: R1 - record trail entry to undo op definition on backtrack
-            final String ckey = compositeKey(name, operatorType);
-            final OperatorInfo previous = OPERATORS.get(ckey);
-            final String prevModule = OP_MODULE.get(ckey);
-            it.denzosoft.jprolog.core.engine.Trail.record(() -> {
-                if (previous == null) {
-                    OPERATORS.remove(ckey);
-                    OP_MODULE.remove(ckey);
-                } else {
-                    OPERATORS.put(ckey, previous);
-                    if (prevModule != null) OP_MODULE.put(ckey, prevModule);
-                    else OP_MODULE.remove(ckey);
-                }
-            });
-            // END_CHANGE: R1
-            // START_CHANGE: ISS-2025-0177 - Register using composite key
-            // Register or update the operator
-            putOperator(new OperatorInfo(precedence, operatorType, name));
-            // START_CHANGE: R2 - tag operator with defining module
-            OP_MODULE.put(compositeKey(name, operatorType), currentModuleContext);
-            // END_CHANGE: R2
-            // END_CHANGE: ISS-2025-0177
-            if (sharedOperatorTable != null) {
-                Operator.Type type = Operator.parseType(operatorType);
-                sharedOperatorTable.defineOperator(precedence, type, name);
-            }
+            final Runnable undo = ops().define(precedence, operatorType, name);
+            it.denzosoft.jprolog.core.engine.Trail.record(undo);
         }
-        } // END_CHANGE: ISS-2025-0283 - end for (String name : names)
+        // END_CHANGE: ISS-2025-0474
+
         // END_CHANGE: ISS-2025-0085
 
         // Success - operator defined/removed
@@ -320,23 +172,17 @@ public class OperatorDefinition implements BuiltIn {
         
         boolean foundSolution = false;
         
-        // START_CHANGE: R2 - filter operators by current module (or "user" for global)
-        String curMod = currentModuleContext;
-        for (Map.Entry<String, OperatorInfo> e : OPERATORS.entrySet()) {
-            OperatorInfo opInfo = e.getValue();
-            String defMod = OP_MODULE.get(e.getKey());
-            // Visibility rule: op is visible if defined in "user" (global) OR in current module
-            if (defMod != null && !defMod.equals("user") && !defMod.equals(curMod)) {
-                continue;
-            }
+        // START_CHANGE: ISS-2025-0474 - enumerate the engine's own store: the standard operators,
+        // everything op/3 defined, everything a consulted `:- op/3` directive declared, and the
+        // operators local to the module currently in context.
+        for (Ops.Def def : ops().visible()) {
             Map<String, Term> newBindings = new HashMap<>(bindings);
-            if (!unifyTerm(precedenceTerm, new Number((double) opInfo.precedence), newBindings)) continue;
-            if (!unifyTerm(typeTerm, new Atom(opInfo.type), newBindings)) continue;
-            if (!unifyTerm(nameTerm, new Atom(opInfo.name), newBindings)) continue;
+            if (!unifyTerm(precedenceTerm, new Number((long) def.precedence)   /* ISS-2025-0424 */, newBindings)) continue;
+            if (!unifyTerm(typeTerm, new Atom(def.type), newBindings)) continue;
+            if (!unifyTerm(nameTerm, new Atom(def.name), newBindings)) continue;
             solutions.add(newBindings);
             foundSolution = true;
         }
-        // END_CHANGE: R2
 
         return foundSolution;
     }
@@ -368,83 +214,34 @@ public class OperatorDefinition implements BuiltIn {
     }
     // END_CHANGE: ISS-2025-0283
 
-    // START_CHANGE: ISS-2025-0085 - Helper for operator removal
+    // START_CHANGE: ISS-2025-0474 - the lookup facade now reads the per-engine store.
     /**
-     * Check if two operator types are compatible (same position class).
-     * For removal: infix types match infix, prefix match prefix, postfix match postfix.
+     * Operator information for a name: infix first, then prefix, then postfix.
      */
-    private boolean isCompatibleType(Operator.Type existing, Operator.Type requested) {
-        if (existing == requested) return true;
-        // Infix types are interchangeable for removal
-        if (existing.name().contains("F") && existing.name().length() == 3 &&
-            requested.name().contains("F") && requested.name().length() == 3) {
-            return true; // both are XFX, XFY, or YFX
-        }
-        // Prefix types
-        if ((existing == Operator.Type.FX || existing == Operator.Type.FY) &&
-            (requested == Operator.Type.FX || requested == Operator.Type.FY)) {
-            return true;
-        }
-        // Postfix types
-        if ((existing == Operator.Type.XF || existing == Operator.Type.YF) &&
-            (requested == Operator.Type.XF || requested == Operator.Type.YF)) {
-            return true;
-        }
-        return false;
-    }
-    // END_CHANGE: ISS-2025-0085
-    
-    // START_CHANGE: ISS-2025-0177 - Dual-arity aware lookup methods
-    /**
-     * Get operator information for a given operator name.
-     * Returns the infix operator by default (most common usage).
-     * Falls back to prefix, then postfix if no infix definition exists.
-     */
-    public static OperatorInfo getOperator(String name) {
-        OperatorInfo info = OPERATORS.get(name + ":infix");
-        if (info != null) return info;
-        info = OPERATORS.get(name + ":prefix");
-        if (info != null) return info;
-        return OPERATORS.get(name + ":postfix");
-    }
+    public static OperatorInfo getOperator(String name) { return info(ops().any(name)); }
 
-    /**
-     * Get the prefix operator for a given name, or null if none.
-     */
-    public static OperatorInfo getPrefixOperator(String name) {
-        return OPERATORS.get(name + ":prefix");
-    }
+    /** The prefix operator for a name, or null. */
+    public static OperatorInfo getPrefixOperator(String name) { return info(ops().prefix(name)); }
 
-    /**
-     * Get the infix operator for a given name, or null if none.
-     */
-    public static OperatorInfo getInfixOperator(String name) {
-        return OPERATORS.get(name + ":infix");
-    }
+    /** The infix operator for a name, or null. */
+    public static OperatorInfo getInfixOperator(String name) { return info(ops().infix(name)); }
 
-    /**
-     * Get the postfix operator for a given name, or null if none.
-     */
-    public static OperatorInfo getPostfixOperator(String name) {
-        return OPERATORS.get(name + ":postfix");
-    }
+    /** The postfix operator for a name, or null. */
+    public static OperatorInfo getPostfixOperator(String name) { return info(ops().postfix(name)); }
 
-    /**
-     * Check if an operator is defined (any type class).
-     */
-    public static boolean isOperatorDefined(String name) {
-        return OPERATORS.containsKey(name + ":infix") ||
-               OPERATORS.containsKey(name + ":prefix") ||
-               OPERATORS.containsKey(name + ":postfix");
-    }
+    /** True when a name is an operator of any class in the current module. */
+    public static boolean isOperatorDefined(String name) { return ops().isDefined(name); }
 
-    /**
-     * Get all defined operators. Returns a map keyed by composite key (name:typeClass).
-     */
+    /** Every visible operator, keyed by the composite key {@code name:typeClass}. */
     public static Map<String, OperatorInfo> getAllOperators() {
-        return new HashMap<>(OPERATORS);
+        Map<String, OperatorInfo> out = new HashMap<>();
+        for (Map.Entry<String, Ops.Def> e : ops().all().entrySet()) out.put(e.getKey(), info(e.getValue()));
+        return out;
     }
-    // END_CHANGE: ISS-2025-0177
+
+    private static OperatorInfo info(Ops.Def d) {
+        return (d == null) ? null : new OperatorInfo(d.precedence, d.type, d.name);
+    }
     
     private Term resolveVariable(Term term, Map<String, Term> bindings) {
         if (term instanceof it.denzosoft.jprolog.core.terms.Variable) {

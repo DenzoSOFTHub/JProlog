@@ -27,7 +27,16 @@ public final class JpcFormat {
     // START_CHANGE: ISS-2025-0261 - bumped to 0x02: TERM_NUMBER now carries a subtype byte
     // (long / float / bigint) so int/float type and BigInteger precision round-trip. Older 0x01
     // .jpc files are rejected by the version check and transparently recompiled.
-    public static final byte VERSION = 0x02;
+    // START_CHANGE: ISS-2025-0447 - bumped to 0x03 (engine v4 wave W2, design B.7): variables are
+    // serialised BY INDEX within their clause (index + name), and each clause records its source
+    // line. Two things follow. (1) The reader now creates ONE Variable object per index per clause
+    // instead of one per occurrence: with identity variables (ISS-2025-0438) a clause read back
+    // from .jpc used to have as many distinct "X" cells as it had occurrences of X. (2)
+    // Rule.sourceLine survives compilation, so the IDE's line breakpoints
+    // (Prolog.getPredicateIndicatorAtLine) work on .jpc-loaded files too. Older 0x01/0x02 files
+    // fail the version check and are transparently recompiled.
+    public static final byte VERSION = 0x03;
+    // END_CHANGE: ISS-2025-0447
     // END_CHANGE: ISS-2025-0261
 
     /** File extension */

@@ -31,12 +31,18 @@ public final class IOStreamUtils {
         if (streamTerm instanceof Atom) {
             return ((Atom) streamTerm).getName();
         }
-        if (streamTerm instanceof CompoundTerm && "stream".equals(streamTerm.getName())
+        if (streamTerm instanceof CompoundTerm
                 && streamTerm.getArguments() != null && streamTerm.getArguments().size() == 1) {
             Term inner = streamTerm.getArguments().get(0);
-            if (inner instanceof Atom) {
+            if ("stream".equals(streamTerm.getName()) && inner instanceof Atom) {
                 return ((Atom) inner).getName();
             }
+            // START_CHANGE: ISS-2025-0472 - wave W7: '$stream'(N) is the canonical stream term
+            if ("$stream".equals(streamTerm.getName())) {
+                it.denzosoft.jprolog.core.engine.v4.PrologStream s = StreamManager.stream(streamTerm);
+                if (s != null) return it.denzosoft.jprolog.core.engine.v4.Streams.nameOf(s);
+            }
+            // END_CHANGE: ISS-2025-0472
         }
         return null;
     }
@@ -57,6 +63,16 @@ public final class IOStreamUtils {
         if (streamTerm instanceof Variable) {
             throw new PrologException(ISOErrorTerms.instantiationError(context));
         }
+        // START_CHANGE: ISS-2025-0472 - resolve through the engine's stream table, so the
+        // thread-local capture and the per-engine isolation both apply.
+        it.denzosoft.jprolog.core.engine.v4.Streams st = StreamManager.streams();
+        it.denzosoft.jprolog.core.engine.v4.PrologStream s = st.byTerm(streamTerm);
+        if (s != null) {
+            if (!s.isOutput()) {
+                throw new PrologException(ISOErrorTerms.permissionError("output", "stream", streamTerm, context));
+            }
+            return st.writerFor(s);
+        }
         String alias = streamAlias(streamTerm);
         if (alias == null) {
             throw new PrologException(ISOErrorTerms.domainError("stream_or_alias", streamTerm, context));
@@ -66,6 +82,99 @@ public final class IOStreamUtils {
             throw new PrologException(ISOErrorTerms.existenceError("stream", streamTerm, context));
         }
         return out;
+        // END_CHANGE: ISS-2025-0472
     }
+
+    // START_CHANGE: ISS-2025-0472 - engine v4 wave W7: resolve a stream argument to the engine's
+    // own PrologStream. The character/byte I/O built-ins read and write through the stream's own
+    // decoder, so peek, get, seek and the position properties all agree (limit L-07).
+    /**
+     * Resolve a stream argument to an <b>input</b> stream of the current engine, raising the ISO
+     * errors of 8.11.7: instantiation_error, domain_error(stream_or_alias, S),
+     * existence_error(stream, S), permission_error(input, stream, S).
+     *
+     * @param streamArg the raw stream argument (null selects the current input)
+     */
+    public static it.denzosoft.jprolog.core.engine.v4.PrologStream inputStream(
+            Term streamArg, Map<String, Term> bindings, String context) {
+        it.denzosoft.jprolog.core.engine.v4.Streams st = StreamManager.streams();
+        if (streamArg == null) return st.currentInput();
+        Term t = streamArg.resolveBindings(bindings);
+        if (t instanceof Variable) throw new PrologException(ISOErrorTerms.instantiationError(context));
+        it.denzosoft.jprolog.core.engine.v4.PrologStream s = st.byTerm(t);
+        if (s == null) {
+            if (streamAlias(t) == null) {
+                throw new PrologException(ISOErrorTerms.domainError("stream_or_alias", t, context));
+            }
+            throw new PrologException(ISOErrorTerms.existenceError("stream", t, context));
+        }
+        if (!s.isInput()) {
+            throw new PrologException(ISOErrorTerms.permissionError("input", "stream", t, context));
+        }
+        return s;
+    }
+
+    /**
+     * Resolve a stream argument to an <b>output</b> stream of the current engine, raising the ISO
+     * errors of 8.11.7 (see {@link #inputStream}).
+     *
+     * @param streamArg the raw stream argument (null selects the current output)
+     */
+    public static it.denzosoft.jprolog.core.engine.v4.PrologStream outputStream(
+            Term streamArg, Map<String, Term> bindings, String context) {
+        it.denzosoft.jprolog.core.engine.v4.Streams st = StreamManager.streams();
+        if (streamArg == null) return st.currentOutput();
+        Term t = streamArg.resolveBindings(bindings);
+        if (t instanceof Variable) throw new PrologException(ISOErrorTerms.instantiationError(context));
+        it.denzosoft.jprolog.core.engine.v4.PrologStream s = st.byTerm(t);
+        if (s == null) {
+            if (streamAlias(t) == null) {
+                throw new PrologException(ISOErrorTerms.domainError("stream_or_alias", t, context));
+            }
+            throw new PrologException(ISOErrorTerms.existenceError("stream", t, context));
+        }
+        if (!s.isOutput()) {
+            throw new PrologException(ISOErrorTerms.permissionError("output", "stream", t, context));
+        }
+        return s;
+    }
+
+    /**
+     * The ISO reaction to reading past the end of a stream: {@code eof_action(error)} raises
+     * permission_error(input, past_end_of_stream, S), the other actions return the eof value.
+     */
+    public static void checkPastEof(it.denzosoft.jprolog.core.engine.v4.PrologStream s, String context) {
+        if ("error".equals(s.eofAction())) {
+            throw new PrologException(ISOErrorTerms.permissionError(
+                "input", "past_end_of_stream", new Atom(
+                    it.denzosoft.jprolog.core.engine.v4.Streams.nameOf(s)), context));
+        }
+    }
+
+    /**
+     * True when {@code t} looks like a stream argument rather than a term to write / a variable to
+     * read into: the canonical {@code '$stream'(N)}, the legacy {@code stream(A)} wrapper, one of
+     * the reserved aliases, or an atom that names an open stream of this engine.
+     */
+    public static boolean isStreamTerm(Term t) {
+        if (t instanceof Atom) {
+            String n = ((Atom) t).getName();
+            if ("current_input".equals(n) || "current_output".equals(n)
+                    || "user_input".equals(n) || "user_output".equals(n) || "user_error".equals(n)) {
+                return true;
+            }
+            return StreamManager.hasStream(n);
+        }
+        if (t instanceof CompoundTerm && t.getArguments() != null && t.getArguments().size() == 1) {
+            return "$stream".equals(t.getName()) || "stream".equals(t.getName());
+        }
+        return false;
+    }
+
+    /** True when {@code s} is the engine's {@code user_input} (the interactive stdin path). */
+    public static boolean isStdin(it.denzosoft.jprolog.core.engine.v4.PrologStream s) {
+        return s == StreamManager.streams().userInput();
+    }
+    // END_CHANGE: ISS-2025-0472
 }
 // END_CHANGE: ISS-2025-0373

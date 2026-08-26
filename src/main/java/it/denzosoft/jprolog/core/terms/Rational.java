@@ -14,6 +14,13 @@ public class Rational extends Number {
     private final BigInteger numerator;
     private final BigInteger denominator;
 
+    // START_CHANGE: ISS-2025-0424 - ENG-02: shared by the constructor's two super() arguments
+    private static double ratioAsDouble(BigInteger numerator, BigInteger denominator) {
+        if (denominator.signum() == 0) return throwZeroDenominator();
+        return numerator.doubleValue() / denominator.doubleValue();
+    }
+    // END_CHANGE: ISS-2025-0424
+
     /**
      * Create a rational from numerator and denominator.
      * Automatically reduces to lowest terms.
@@ -27,7 +34,12 @@ public class Rational extends Number {
      */
     public Rational(BigInteger numerator, BigInteger denominator) {
         // START_CHANGE: ISS-2025-0185 - Check zero denominator before division
-        super(denominator.signum() == 0 ? throwZeroDenominator() : numerator.doubleValue() / denominator.doubleValue());
+        // START_CHANGE: ISS-2025-0424 - ENG-02: Number(double) no longer auto-classifies integral
+        // values as ISO integers, but a whole rational (6 rdiv 2 = 3) IS an exact integer, so keep
+        // the legacy classification explicitly here via the two-argument constructor.
+        super(ratioAsDouble(numerator, denominator),
+              isIntegralDouble(ratioAsDouble(numerator, denominator)));
+        // END_CHANGE: ISS-2025-0424
         // END_CHANGE: ISS-2025-0185
         // Normalize: GCD reduction and positive denominator
         BigInteger gcd = numerator.gcd(denominator);

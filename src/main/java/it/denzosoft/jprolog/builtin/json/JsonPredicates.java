@@ -265,7 +265,17 @@ public class JsonPredicates implements BuiltIn {
             if (pos[0] < json.length() && (json.charAt(pos[0]) == '+' || json.charAt(pos[0]) == '-')) pos[0]++;
             while (pos[0] < json.length() && Character.isDigit(json.charAt(pos[0]))) pos[0]++;
         }
-        return new Number(Double.parseDouble(json.substring(start, pos[0])));
+        // START_CHANGE: ISS-2025-0424 - ENG-02: JSON 1.0 is a FLOAT, JSON 1 an INTEGER. The
+        // isFloat flag was already computed by the scanner above but discarded, because
+        // Number(double) auto-classified integral doubles as integers.
+        String numText = json.substring(start, pos[0]);
+        if (isFloat) return new Number(Double.parseDouble(numText));
+        try {
+            return new Number(new java.math.BigInteger(numText));
+        } catch (NumberFormatException nfe) {
+            return new Number(Double.parseDouble(numText));
+        }
+        // END_CHANGE: ISS-2025-0424
     }
 
     private Term parseBool(String json, int[] pos) {

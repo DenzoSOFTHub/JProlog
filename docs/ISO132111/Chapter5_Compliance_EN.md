@@ -1,5 +1,13 @@
 # Chapter 5: Compliance - JProlog Implementation
 
+> **Implementation note (v4.0.0).** The Java code shown in this chapter describes the *recursive*
+> `QuerySolver` engine, which was **deleted in 4.0.0** (wave W9, ISS-2025-0484). The language
+> semantics described here are unchanged and still hold; the classes are not. The engine is now
+> `core.engine.v4` (`Machine`, `Unify`, `ClauseStore`, `Bindings`) and a context built-in
+> receives a `core.engine.SolverContext`, not a solver object. See `CLAUDE.md` and
+> `docs/reports/report-engine-v4-progress.md`.
+
+
 ## Overview
 
 This chapter provides a comprehensive analysis of JProlog's compliance with the ISO/IEC 13211-1:1995 Prolog standard. It examines how JProlog implements each aspect of the standard, documenting both conforming features and deviations, with detailed implementation examples and practical applications.

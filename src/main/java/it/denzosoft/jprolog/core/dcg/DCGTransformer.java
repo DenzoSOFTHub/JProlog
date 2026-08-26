@@ -99,7 +99,7 @@ public class DCGTransformer {
                 return TermUtils.createCompound("=", input, output);
             // START_CHANGE: ISS-2025-0254 - A bare cut in a DCG body parses as an Atom, so the
             // case "!" in the CompoundTerm switch below is dead code. Without handling it here,
-            // "!" was emitted as the non-terminal !(Input,Output): QuerySolver treats it as a
+            // "!" was emitted as the non-terminal !(Input,Output): the solver treats it as a
             // plain cut and ignores the two args, so the required Input=Output threading is lost.
             } else if ("!".equals(atomName)) {
                 // Cut: fire the cut AND thread the difference list (Input = Output).

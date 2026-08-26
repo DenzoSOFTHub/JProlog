@@ -82,11 +82,16 @@ public class JpcWriter {
         // Rules
         writeVarint(dos, rules.size());
         for (Rule rule : rules) {
+            // START_CHANGE: ISS-2025-0447 - one variable-index scope per CLAUSE (format 0x03)
+            clauseVars.clear();
+            // END_CHANGE: ISS-2025-0447
             writeTerm(dos, rule.getHead());
             writeVarint(dos, rule.getBody().size());
             for (Term t : rule.getBody()) {
                 writeTerm(dos, t);
             }
+            // ISS-2025-0447 - source line (+1 so the "unknown" -1 stays a non-negative varint)
+            writeVarint(dos, rule.getSourceLine() + 1);
         }
 
         dos.flush();
@@ -113,6 +118,18 @@ public class JpcWriter {
     }
 
     // ---------- internals ----------
+
+    // START_CHANGE: ISS-2025-0447 - per-clause variable numbering (format 0x03)
+    private final Map<String, Integer> clauseVars = new HashMap<>();
+
+    private int clauseVarIndex(String name) {
+        Integer k = clauseVars.get(name);
+        if (k != null) return k;
+        int i = clauseVars.size();
+        clauseVars.put(name, i);
+        return i;
+    }
+    // END_CHANGE: ISS-2025-0447
 
     private int intern(String s) {
         Integer idx = stringIndex.get(s);
@@ -211,9 +228,12 @@ public class JpcWriter {
             }
             // END_CHANGE: ISS-2025-0261
         } else if (term instanceof Variable) {
+            // START_CHANGE: ISS-2025-0447 - by INDEX within the clause, plus the name for display.
             Variable var = (Variable) term;
             dos.writeByte(JpcFormat.TERM_VARIABLE);
+            writeVarint(dos, clauseVarIndex(var.getName()));
             writeVarint(dos, indexOf(var.getName()));
+            // END_CHANGE: ISS-2025-0447
         } else if (term instanceof CompoundTerm) {
             CompoundTerm ct = (CompoundTerm) term;
             dos.writeByte(JpcFormat.TERM_COMPOUND);

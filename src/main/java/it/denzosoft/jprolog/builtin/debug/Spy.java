@@ -30,8 +30,15 @@ import java.util.Set;
  */
 public class Spy implements BuiltIn {
     
-    // Global set of spy points (simplified implementation)
-    private static Set<String> spyPoints = new HashSet<>();
+    // START_CHANGE: ISS-2025-0477 - engine v4 wave W7 (the tail of LIM-034): the spy points are
+    // PER ENGINE, not per JVM. `spy(foo/1).` in one Prolog used to set a spy point for every engine
+    // in the process. The set now lives on EngineState, reached through the engine current on the
+    // calling thread; the static API below is unchanged so nospy/1, spying/0 and debugging/0 keep
+    // compiling.
+    private static it.denzosoft.jprolog.core.engine.v4.EngineState.Spies spies() {
+        return it.denzosoft.jprolog.core.engine.v4.EngineState.current().spies();
+    }
+    // END_CHANGE: ISS-2025-0477
     
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
@@ -69,8 +76,8 @@ public class Spy implements BuiltIn {
             return false; // Fail silently for invalid predicate indicators
         }
         
-        spyPoints.add(spyPoint);
-        System.out.println("% Spy point set on " + spyPoint);
+        spies().add(spyPoint);
+        it.denzosoft.jprolog.builtin.io.StreamManager.out().println("% Spy point set on " + spyPoint);
         
         solutions.add(bindings);
         return true;
@@ -80,27 +87,27 @@ public class Spy implements BuiltIn {
      * Check if a spy point is set for the given predicate.
      */
     public static boolean hasSpyPoint(String name, int arity) {
-        return spyPoints.contains(name + "/" + arity);
+        return spies().has(name, arity);
     }
     
     /**
      * Get all spy points.
      */
     public static Set<String> getSpyPoints() {
-        return new HashSet<>(spyPoints);
+        return spies().snapshot();
     }
     
     /**
      * Clear a specific spy point (used by nospy/1).
      */
     public static void removeSpyPoint(String predicateIndicator) {
-        spyPoints.remove(predicateIndicator);
+        spies().remove(predicateIndicator);
     }
     
     /**
      * Clear all spy points.
      */
     public static void clearAllSpyPoints() {
-        spyPoints.clear();
+        spies().clear();
     }
 }

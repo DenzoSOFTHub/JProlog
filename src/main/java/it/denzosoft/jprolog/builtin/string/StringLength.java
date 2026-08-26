@@ -44,7 +44,7 @@ public class StringLength implements BuiltIn {
         // START_CHANGE: ISS-2025-0193 - Use codePointCount for correct Unicode character counting
         int length = strVal.codePointCount(0, strVal.length());
         // END_CHANGE: ISS-2025-0193
-        Number lengthNumber = new Number((double) length);
+        Number lengthNumber = new Number((long) length)   /* ISS-2025-0424 */;
         
         // Try to unify with the length
         Map<java.lang.String, Term> newBindings = new HashMap<>(bindings);

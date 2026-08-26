@@ -4,18 +4,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-JProlog is a Prolog interpreter written in Java (1.8). It includes a core engine, 200+ built-in predicates, a Swing-based IDE, and a CLI. No external dependencies beyond JUnit 4 for tests. The clean-room **v2** rewrites are the defaults for parser, CLP(FD), DCG, and (since v3.1.0) the resolution engine — see "v2 Subsystems" below. v3.4.0 added embedder-facing hardening: a sandbox (`enableSafeMode`) and an inference budget.
+JProlog is a Prolog interpreter written in Java (source/target 1.8; it builds and runs fine on a
+modern JDK — JDK 25 / Maven 3.9 in the dev environment). It has a clean-room resolution core, ~415
+built-in predicates, a Swing IDE and a CLI. No external dependencies beyond JUnit 4.
+
+**Since 4.0.0 the engine is `core.engine.v4`** — waves W1–W9 of
+`docs/reports/report-engine-v4-design-2026-08-25.md`, finished in this release. The recursive
+`QuerySolver` that JProlog ran on until 3.x is **deleted**. The v2 `MachineSolver` (the default from
+3.1.0 to 3.14.0) stays selectable for **one release** with `-Djprolog.engine=v2` and is deleted in
+4.1. The parser, DCG and CLP(FD) subsystems have their own clean-room v2 implementations, unrelated
+to the engine despite the shared name.
 
 **Repository**: https://github.com/DenzoSOFTHub/JProlog
-**Current version**: check `<version>` in pom.xml. README.md version/metrics lag behind — trust pom.xml and CHANGELOG.md.
+**Current version**: `<version>` in pom.xml (4.0.0). pom.xml and CHANGELOG.md are the source of
+truth; README.md is refreshed at release time and may lag between releases.
 
 ## Build & Run
 
 ```bash
 mvn compile                  # Build
-mvn test                     # JUnit tests (full suite; v3.6.0 baseline: 935/935)
-mvn test -Dtest=BugFixVerificationTest                  # Single test class
-mvn test -Dtest=BugFixVerificationTest#testISS0188_ModNegativeDivisor   # Single method
+mvn test                     # the suite on the DEFAULT engine, v4 (4.0.0 baseline: 1214/1214)
+mvn test -Pengine-v2         # the SAME suite on the v2 fallback (also 1214/1214) — the 2nd CI leg
+mvn test -Dtest=BugFixVerificationTest                                  # one test class
+mvn test -Dtest=BugFixVerificationTest#testISS0188_ModNegativeDivisor   # one method
 mvn clean compile            # Clean rebuild
 
 # Run CLI
@@ -26,7 +37,11 @@ java -cp target/classes it.denzosoft.jprolog.editor.PrologIDE
 
 # Test core example programs test_01..test_20 (REQUIRED after any code change)
 ./test_all_examples.sh
+JAVA_TOOL_OPTIONS=-Djprolog.engine=v2 ./test_all_examples.sh    # the same on the v2 fallback
 # Success rate >= 75% for maintenance, >= 85% for new features
+
+# Regenerate the user manual (pure Python 3, no external tools)
+tools/build-manual.sh
 
 # Other test scripts
 ./comprehensive_test.sh         # Built-in predicates
@@ -41,102 +56,341 @@ java -cp target/classes it.denzosoft.jprolog.editor.PrologIDE
 ```
 
 Build/test gotchas:
-- Bare `mvn exec:java` fails — the pom's default mainClass `it.denzosoft.jprolog.Main` does not exist. Use `mvn exec:java@run-ide` or the `java -cp` commands above. `run_ide.sh` is broken (points at a nonexistent `gui.PrologIDE`); `start-ide.sh` works but skips compilation.
-- `test_all_examples.sh` enforces nothing: "PASSED" only means the CLI exited 0 within a 30s timeout, and the script always exits 0. The 75%/85% thresholds are manual policy — eyeball the per-program output and "Successful queries" counts.
-- No surefire plugin is pinned in pom.xml, so the Maven-default surefire (2.12.4) runs the tests: new test classes must match `Test*` / `*Test` / `*TestCase` or they are silently skipped — note `*Tests` (plural) is NOT matched by this old surefire.
-- Every `new Prolog()` logs ~13 `WARNING: Overriding existing built-in predicate` lines (v2 CLP(FD) re-registering `#=`, `label`, …). Expected noise, not a bug.
+- **None of the root `*.sh` scripts are in git** — `.gitignore` has `/*.sh`, so `test_all_examples.sh`
+  and friends exist only in local working copies (the sole tracked script is
+  `examples/demo_semicolon.sh`; `tools/build-manual.sh` is tracked because it is not at the root).
+  A fresh clone has none of them; if a script is missing, drive `PrologCLI` directly with
+  `java -cp target/classes ...` and the `examples/test_XX_*.pl` files.
+- The checkout lives on a VirtualBox shared folder (`/media/sf_Cloud`): plain `git` reports
+  "dubious ownership" and `git status` lists ~585 files as modified purely because of mode changes
+  (644→755). Use `git -c safe.directory=$PWD -c core.fileMode=false ...` and never commit the mode
+  churn.
+- Bare `mvn exec:java` fails — the pom's default mainClass `it.denzosoft.jprolog.Main` does not
+  exist (the only `Main` is the demo `core.engine.Main`). Use `mvn exec:java@run-ide` or the
+  `java -cp` commands above. `run_ide.sh` is broken; `start-ide.sh` works but skips compilation.
+- `test_all_examples.sh` enforces nothing: "PASSED" only means the CLI exited 0 within a 30 s
+  timeout, and the script always exits 0. The 75%/85% thresholds are manual policy — eyeball the
+  per-program output and the "Successful queries" counts (the 4.0.0 baseline is
+  2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 0, 0 on both engines).
+- No surefire plugin is pinned in pom.xml, so the Maven-default surefire (2.12.4) runs the tests:
+  new test classes must match `Test*` / `*Test` / `*TestCase` or they are silently skipped — note
+  `*Tests` (plural) is NOT matched. That is why the tree holds 10 more `@Test` methods than the
+  baseline runs: the 10 in `BuiltInTests.java` never do. `-Dtest=Class#method` also does not work
+  with that surefire; run the whole class.
+- Every `new Prolog()` logs ~13 `WARNING: Overriding existing built-in predicate` lines (v2 CLP(FD)
+  re-registering `#=`, `label`, …). Expected noise, not a bug.
 
 ## Architecture
 
-### Query Execution Flow
+### Query Execution Flow (v4, the default)
 
-1. **Parser** — by default the clean-room single-pass v2 parser (`core.parser.v2.Lexer` + `core.parser.v2.TermReader`, operator-precedence/Pratt) converts Prolog text to `Term` objects. The legacy `core.parser.Parser` is the fallback (`-Djprolog.parser=legacy`).
-2. **KnowledgeBase** (`core.engine.KnowledgeBase`) stores facts/rules as `Rule` objects. Each `Rule` carries a `sourceLine` used for line-accurate breakpoints — but it is populated only by `consultWithDiagnostics` on the v2-parser path; plain `consult()` leaves it -1, so line breakpoints silently fail for code loaded that way.
-3. **Resolution** — the default engine is `core.engine.v2.MachineSolver` (iterative SLD with explicit goal stack/choice points). `Prolog` constructs a **fresh MachineSolver per query** over the live KnowledgeBase/BuiltInRegistry, so the solver instance holds no cross-query state; durable state (DebugController, flags) lives on the shared legacy `QuerySolver`, which MachineSolver receives as context. The legacy recursive `QuerySolver` remains as fallback (`-Djprolog.engine=legacy`, or per-call via `Prolog.solveLegacy(query)`).
-4. For each goal, the solver checks `BuiltInRegistry` first, then falls back to user-defined rules in the knowledge base.
-5. **Unification** happens via `Term.unify(Term, Map<String, Term> substitution)` — Robinson algorithm (the v2 machine uses its own binding/trail internally).
-6. **Cut** in the legacy engine is managed through `CutStatus`/`MutableCutStatus` flags passed through recursion; the v2 machine uses choice-point barriers.
+1. **Parser** — the clean-room single-pass v2 parser (`core.parser.v2.Lexer` +
+   `core.parser.v2.TermReader`, operator-precedence/Pratt) converts Prolog text to `Term` objects,
+   reading the engine's own operator table (`core.engine.v4.Ops`). The legacy
+   `core.parser.Parser` is the fallback (`-Djprolog.parser=legacy`).
+2. **KnowledgeBase** (`core.engine.KnowledgeBase`) is the database of record: facts and rules as
+   `Rule` objects, each carrying a `sourceLine` for line-accurate breakpoints — populated only by
+   `consultWithDiagnostics` on the v2-parser path, so plain `consult()` leaves it -1.
+3. **ClauseStore** (`core.engine.v4.ClauseStore`) mirrors it as compiled `Clause` skeletons with
+   birth/death generations and an incremental first-argument index, re-syncing a predicate when the
+   KB's version for it changes.
+4. **Machine** (`core.engine.v4.Machine`) resolves: an iterative SLD drive loop over a goal stack
+   and an explicit choice-point list, binding directly in mutable `Variable` cells with a
+   conditional trail (`core.engine.v4.Bindings`). One `core.engine.v4.Engine` per `Prolog`, one
+   `Machine` per query, one more per worker thread.
+5. For each goal the machine tries, in order: its **inline** table (`=/2`, `is/2`, the comparisons,
+   the type checks, `once/ignore/forall`, `between/3`), the **v4 native** table
+   (`core.engine.v4.BuiltinTable`), a **user or prelude clause**, then the legacy
+   `BuiltInRegistry` through `core.engine.v4.LegacyBuiltinAdapter`.
+6. **Unification** is `core.engine.v4.Unify` — iterative, cycle-safe, guard-polling. (The immutable
+   `Term.unify(Term, Map<String,Term>)` Robinson implementation still exists and is what the v2
+   fallback and the bridged built-ins use.)
+7. **Cut** is a choice-point barrier (`Machine.cut`), and `catch/3` a CATCH frame on the same stack.
 
-### v2 Subsystems
+Supporting services, all per `Prolog`: `Modules` (module resolution and the prelude library layer),
+`Streams`/`PrologStream` (the stream table), `Ops` (the one operator store), `Writer` (the ISO term
+writer behind the whole `write/1` family), `Answer` (console answer rendering), `Tabling` (linear
+tabling with completion), `Coroutining` (the wake queue and the attributed-variable protocol) and
+`Workers` (one machine per thread).
 
-Clean-room rewrites, selectable via system properties (and `Prolog.setUseV2*()` static toggles):
+### Subsystem toggles
 
-| Subsystem | v2 package | Default | Fallback |
-|---|---|---|---|
-| Parser | `core.parser.v2` (`Lexer` + `TermReader`) | **v2** | `-Djprolog.parser=legacy` |
-| CLP(FD) | `builtin.clpfd.v2` (`ClpStore`/`IntervalDomain`/`Constraint`/`Labeler`) | **v2** | `-Djprolog.clpfd=legacy` |
-| DCG | `core.dcg.v2.DCGTranslator` | **v2** | `-Djprolog.dcg=legacy` |
-| Resolution engine | `core.engine.v2.MachineSolver` | **v2** (since 3.1.0) | `-Djprolog.engine=legacy` |
-| Arithmetic | `core.arith.v2.ArithEvaluator` | used by the v2 engine | legacy engine uses `core.engine.ArithmeticEvaluator` |
-| Term writer | `core.write.v2.TermWriter` | IDE source formatter only | `write/1` family uses `core.util.TermFormatter` |
+| Subsystem | Default | Fallback |
+|---|---|---|
+| Resolution engine | **`core.engine.v4.Machine`** (since 4.0.0) | `-Djprolog.engine=v2` → `core.engine.v2.MachineSolver` (ONE release, deleted in 4.1) |
+| Parser | `core.parser.v2` (`Lexer` + `TermReader`) | `-Djprolog.parser=legacy` |
+| CLP(FD) | `builtin.clpfd.v2` (`ClpStore`/`IntervalDomain`/`Constraint`/`Labeler`) | `-Djprolog.clpfd=legacy` |
+| DCG | `core.dcg.v2.DCGTranslator` | `-Djprolog.dcg=legacy` |
+| Arithmetic | `core.arith.v2.ArithEvaluator` (both engines) | — (`core.engine.ArithmeticEvaluator` survives only as a helper) |
+| Term writer | `core.engine.v4.Writer` behind the whole `write/1` family (via the `core.util.TermFormatter` facade) | `core.write.v2.TermWriter` backs only the IDE source formatter |
 
 Toggle semantics (all four properties live in `Prolog.java`):
-- Only the literal value `legacy` (case-insensitive) selects the fallback — `-Djprolog.engine=v1` or `=off` still means v2.
-- Parser/DCG/engine flags are re-read on every call, so `Prolog.setUseV2Parser/Dcg/Engine()` work at runtime. The **CLP(FD) flag is read only in the `Prolog` constructor** — set it before constructing, or upgrade an existing instance with `prolog.enableV2Clpfd()`.
+- **Only literal values select a fallback**: `jprolog.engine` must be exactly `v2`; the other three
+  must be exactly `legacy`. Anything else (including `=legacy` for the engine, which no longer
+  means anything) is the default.
+- There is ONE engine flag: `Prolog.setUseV2Engine(b)` is the inverse of `setUseV4Engine(b)`, and
+  `isUsingV2Engine()` is "not v4". Parser/DCG/engine flags are re-read on every call, so the static
+  setters work at runtime. The **CLP(FD) flag is read only in the `Prolog` constructor** — set it
+  before constructing, or upgrade an instance with `prolog.enableV2Clpfd()`.
 - There is **no** `jprolog.sandbox`/`jprolog.budget` property — those are Java APIs (below).
 
-Pick the right file when fixing bugs: arithmetic on the default engine is `core.arith.v2.ArithEvaluator` (MachineSolver inlines `is/2` and the arithmetic comparisons through it); output of `write/1`/`writeln/1`/`writeq/1`/`format/2` is `core.util.TermFormatter` — **not** `core.write.v2`, which only backs the IDE's Ctrl+Alt+L formatter (`core.write.v2.PrologFormatter`).
+Pick the right file when fixing bugs: arithmetic is `core.arith.v2.ArithEvaluator` on both machines;
+output of `write/1`/`writeln/1`/`writeq/1`/`format/2` is **`core.engine.v4.Writer`**
+(`core.util.TermFormatter` is a facade over it, and `core.write.v2` only backs the IDE's Ctrl+Alt+L
+source formatter). Console answers are `core.engine.v4.Answer`.
 
 ### Embedding API (`core.engine.Prolog`)
 
-- `solve(String)` — default v2 engine. The `solve(Term)` overload always runs the legacy `QuerySolver` (no v2 engine, no inference budget). `solveLegacy(String)` forces the legacy solver explicitly regardless of `jprolog.engine`.
-- `solveStream(query, sink)` — lazy solution streaming; the sink (`Predicate<Map<String,Term>>`) returns `false` to stop. Truly lazy/cancellable only on the v2 engine; on legacy it eagerly materializes all solutions and replays them.
-- `consultWithDiagnostics(program, filename)` — per-clause compile collecting `CompilationError`s with line numbers (returns `CompilationResult`) instead of throwing on first error.
+- `solve(String)` / `solve(Term)` — the configured engine.
+- `solveStream(query, sink)` — lazy, cancellable solution streaming; the sink
+  (`Predicate<Map<String,Term>>`) returns `false` to stop.
+- `consultWithDiagnostics(program, filename)` — per-clause compile collecting `CompilationError`s
+  with line numbers (returns `CompilationResult`) instead of throwing on the first error.
 - `compileFile("x.pl")` / `consultSmart("x.pl")` — compile to `.jpc` / auto-cached consult.
-- `getPredicateIndicatorAtLine(line)` — maps a source line to the clause's predicate indicator (IDE gutter breakpoints).
+- `getPredicateIndicatorAtLine(line)` — maps a source line to the clause's predicate indicator
+  (IDE gutter breakpoints).
+- `getEngineContext()` — the durable `core.engine.EngineContext`: where the IDE installs its
+  `DebugController` and where the running machine publishes the query's `ResourceGuard`.
+  (It replaced `getQuerySolver()` in 4.0.0; `solveLegacy` is gone.)
+- `getEngineState()`, `getStreams()`, `getOps()`, `getFlags()`, `residualGoals(solution)`.
 - `enableSafeMode()` / `setInferenceBudget(steps)` — see hardening below.
 
-### Sandbox & Resource Limits (v3.4.0)
+### Sandbox & Resource Limits
 
-- **`Prolog.enableSafeMode()`** — per-instance, **irreversible**, deny-by-package sandbox: unregisters every built-in whose class lives in `builtin.{os,ffi,filesystem,network,http,jdbc,persistence}` (`UNSAFE_BUILTIN_PACKAGES` in `Prolog.java`; ~96 removed). Java API only — no system property or flag; use a fresh `Prolog` per security domain. **Gotcha**: `builtin.io` is *not* denied, so `open/3,4` can still read/write host files under safe mode — file isolation needs OS-level sandboxing (or extending the deny list). When adding a host-touching built-in, put it in one of the denied packages or safe mode won't strip it.
-- **`Prolog.setInferenceBudget(steps)`** (0 = unlimited) — aborts a runaway query with `InferenceLimitException`. Enforced by the **v2 engine only**; legacy paths ignore it. (The javadoc claims it raises `resource_error(inference_limit_exceeded)` — wrong; trust the implementation and `ProductionAuditTest`.)
-- **Error-trust model** — deliberate asymmetry: deep-term/deep-input `StackOverflowError`s are converted to a `PrologException` carrying ISO `resource_error('stack_overflow')` / `resource_error('parser_nesting')` so the Java embedder sees a controlled error instead of a raw `Error` (on the v2 engine the conversion happens after the query unwinds, so the running program's `catch/3` does not see it), while `InferenceLimitException` (budget), `QueryCancelledException` (IDE/embedder Stop, via thread interrupt polled by MachineSolver), and `DebugStopException` (debugger Stop) are plain `RuntimeException`s — **not** `PrologException` — so untrusted `catch/3` cannot swallow them; the Java embedder must catch them. Preserve this distinction when adding limits.
-- **First-argument indexing is deliberately absent** from the v2 engine: attempted and reverted (ISS-2025-0340) because `KnowledgeBase.getRulesWithFirstArgIndex` returned an empty list for predicates whose index was never populated, silently dropping clauses. ISS-2025-0344 (v3.5.0) has since fixed index maintenance and made index misses degrade to the full clause list — re-landing indexing is now feasible (perf opportunity, not done).
+- **`Prolog.enableSafeMode()`** — per-instance, **irreversible**, deny-by-package sandbox:
+  unregisters every built-in whose class lives in
+  `builtin.{os,ffi,filesystem,network,http,jdbc,persistence,threading}`
+  (`UNSAFE_BUILTIN_PACKAGES` in `Prolog.java`; ~110 removed). Java API only. **Gotcha**:
+  `builtin.io` is *not* denied, so `open/3,4` can still read/write host files — file isolation
+  needs OS-level sandboxing (or extending the deny list). When adding a host-touching built-in, put
+  it in one of the denied packages or safe mode will not strip it.
+- **`Prolog.setInferenceBudget(steps)`** (0 = unlimited) — aborts a runaway query with
+  `InferenceLimitException`, enforced through `core.engine.ResourceGuard` inside meta-call
+  sub-solves and worker threads too. (The javadoc claims it raises
+  `resource_error(inference_limit_exceeded)` — wrong; trust the implementation and
+  `ProductionAuditTest`.)
+- **Error-trust model** — deliberate asymmetry: deep-term/deep-input `StackOverflowError`s from a
+  bridged built-in are converted to a `PrologException` carrying ISO
+  `resource_error('stack_overflow')` / `resource_error('parser_nesting')` so the Java embedder sees
+  a controlled error, while `InferenceLimitException` (budget), `QueryCancelledException`
+  (IDE/embedder Stop, via thread interrupt) and `DebugStopException` (debugger Stop) are plain
+  `RuntimeException`s — **not** `PrologException` — so untrusted `catch/3` cannot swallow them.
+  `core.engine.ControlFlow.rethrowIfControl(t)` must be the first statement of any broad
+  `catch (Exception/RuntimeException)`. Preserve this distinction when adding limits.
+
+### Engine v4
+
+The clean-room core designed in `docs/reports/report-engine-v4-design-2026-08-25.md`. All nine
+waves are done (v3.9.0: ISS-2025-0438..0449; v3.10.0: 0450..0456; v3.11.0: 0457..0462;
+v3.12.0: 0463..0465; v3.13.0: 0466..0471; v3.14.0: 0472..0477; **v4.0.0: 0478..0488**).
+Progress, the 51 invariants, the benchmarks and the 4.1 outlook live in
+`docs/reports/report-engine-v4-progress.md` — **read it before touching `core.engine.v4`**;
+sections 9–15 are the wave records.
+
+**Package `core.engine.v4`** (some of it is shared with the v2 fallback, not v4-only):
+- `Machine` — the drive loop: goal stack, choice points, cut, catch/throw, findall, cleanup frames,
+  native control constructs, the four ports, the database operations, query normalisation, answers.
+- `Unify` — every term walker: `unify`, `==`, standard order, `resolve`, `copy_term`,
+  `term_variables`, `ground`, `numbervars`, `subsumes_term`, `cyclic_term`, `occurs`.
+- `Bindings` — the trail and conditional trailing (there is no binding store).
+- `ClauseStore` + `Clause` + `VarRef` — compiled skeletons, generations, first-arg index, the
+  prelude library layer.
+- `Builtin` / `Generator` / `BuiltinTable` / `NativeBuiltins` — the v4 built-in SPI.
+- `NativeControl` (phrase, bagof, setof, aggregate_all, with_output_to), `NativeLibrary` (the lazy
+  list/atom/database generators), `NativeMisc` (sort/4, predsort/3, max_list, min_list, current_op,
+  nb_getval, b_getval), `ClpfdNative` (the cell-based CLP(FD) posting and labeling),
+  `Lambdas` (yall), `ModuleBuiltins`, `Tabling`, `Coroutining`.
+- `Modules` — the module owner (system/user/library, resolution order, imports, meta_predicate);
+  `Prelude` — indexes and autoloads `prelude/*.pl`.
+- `Workers` — one `Machine` per thread over the same `Engine`.
+- `LegacyBuiltinAdapter` + `SolverFacade` — the ~310 remaining registry built-ins, unchanged.
+- `Engine` — the per-`Prolog` context; `Errors` — ISO error construction.
+- **Shared with the v2 fallback**: `EngineState` (the thread-current per-engine state),
+  `Streams` + `PrologStream`, `Ops`, `Writer`, `Answer`.
+
+**What the core does differently**: `Variable` is a mutable cell (`ref`, `serial`, identity
+`equals`/`hashCode`, lazy `_G<serial>` name), so bindings are reclaimed by the JVM and
+`loop(10000000)` runs in 64 MB; clauses are compiled once into numbered-variable skeletons and the
+head is unified directly against them (nrev ~2 MLIPS vs ~316 KLIPS on v2); every walker is
+iterative, cycle-safe (rational trees **succeed**) and polls the `ResourceGuard`; clauses carry
+birth/death generations so `assertz`/`retract` are O(1).
+
+**Deliberate behaviour differences** (design B.17, approved): rational trees are supported
+(`set_prolog_flag(occurs_check, error)` restores the ISO error); `setup_call_cleanup/3` and
+`call_cleanup/2` run `Cleanup` after the goal's LAST solution; `append(X,Y,Z)` fully open
+**enumerates** and `member(X, PartialList)` **extends** the open tail (a program that relied on the
+v2 termination loops). All three are pinned by engine-aware branches in `BugFixVerificationTest`.
+Compared with the v2 fallback, v4 is also ahead in a long list of visible ways — yall lambdas,
+`partition/4`, terminating `sub_atom(A,B,L,Af,'')`, `when/2` binding propagation, correct tabling,
+module-qualified built-in calls, `memberchk/2`, `frozen/2`, `unifiable/3`, `current_table/2`,
+`current_module/1` — recorded in LIM-037.
+
+**Unchanged on v4**: the embedding API and `Map<String,Term>` results, `enableSafeMode()`, the
+inference budget, the trust model, the IDE debugger contract, and the four-port trace.
+
+### Rules that bite in `core.engine.v4`
+
+- **The trail rule** (ISS-2025-0448, invariant 1): any construct that takes a `Bindings` mark and
+  undoes to it must keep `forceTrail` raised until *after* the undo — `cut()` and the trust-me pop
+  end in `clearIfUnreachable()`, which drops the whole trail as soon as `forceTrail` is 0 and no
+  choice point is left. Getting this backwards is what made `findall/3` non-opaque.
+- **`EXHAUSTED` is the "no more alternatives" sentinel, never `null`** — `null` is a perfectly good
+  goal stack (an empty continuation).
+- **A generator that tries several alternatives inside one `next()` must undo its own failed
+  unifications** (`Machine.unifyOrUndo`, or one explicit mark/undo extent around a whole group of
+  unifications — a partially-bound argument makes every later alternative fail; that is what broke
+  `current_op/3` in W9, invariant 49).
+- **A generator announces its last alternative with `Machine.lastSolution()`**, or the choice point
+  survives and defeats the trust-me pop.
+- **The prelude is the LAST resort, never the first**: `selectClauses` looks at
+  `ClauseStore.libraryClauses` only when the KB-backed `Predicate` is empty, and `stepN` routes a
+  library indicator to `callUser` *before* the legacy adapter. Both halves are needed.
+- **A term must be COPIED before it crosses a machine boundary** — bindings live in the cells.
+  `Workers` copies the goal in and every answer out; the message queues copy on send and receive.
+- **A worker gets its OWN `ResourceGuard`**, constructed with the parent's limit.
+- **A new port site takes its depth from `enterPort()` and returns it by ASSIGNING it** in
+  `portExit`/`portFail`; incrementing/decrementing drifts.
+- **Never re-introduce a "skip this when `debugController != null`" branch** (limit L-13). If a
+  fast path has no ports, give it ports.
+- **`Machine.Goal.module` is the context module** (`null` == `user`); every nested drive and the
+  `catch/3` recovery frame must save/restore it, and a new construct that pushes a goal must stamp
+  it (`Machine.mg`).
+- **Three tabling rules**: a `!` in a tabled clause body stays local (`bodyBarrier` is `cps.size()`
+  AFTER the generator CP is pushed); an evaluation abandoned by an exception, a cut or the guard
+  must **discard** its tables; the production template is created **before** `pushCP` and reused
+  across rounds. And since W9: **a tabled evaluation belongs to one thread** — claim it with
+  `Tabling.enterCall`, hold it until the SCC completes/aborts/the query ends, and hand it back from
+  a worker in `Machine.solve`'s finally (`Tabling.endWorker`).
+- **Two identity rules**: a named `Variable` `copy()`s to **itself** (ten built-ins rely on the
+  alias), and a clause skeleton numbers its variables **by name** (JpcReader and the legacy parser
+  allocate one object per occurrence). Query terms are normalised to one cell per name.
+- **The writer must stay iterative and cycle-safe** — it is what prints a rational tree.
+- **A stream argument is a term, not a string** — resolve it with `IOStreamUtils.inputStream` /
+  `outputStream` / `StreamManager.stream(Term)`.
+- **Anything a built-in prints goes through `StreamManager.out()`** — `with_output_to/2` captures
+  through the thread-local override alone, so a `System.out.print` escapes it.
 
 ### Term Hierarchy
 
-All terms are immutable. Base class: `core.terms.Term`
+All terms are immutable **except `Variable`**, which since v3.9.0 is a mutable reference cell.
+Base class: `core.terms.Term`
 - `Atom` — symbols like `hello`, `'John'`
-- `Number` — integers and floats
-- `Variable` — logic variables (`X`, `_`)
+- `Number` — integers and floats. `new Number(double)` is *always* a float; use
+  `new Number(long)` / `Number.valueOf(long)` for integers (ISS-2025-0424).
+- `Variable` — logic variables (`X`, `_`); carries `ref` (the binding, `null` when unbound) and a
+  JVM-unique `serial`. `equals`/`hashCode` are **identity**; `getName()` is unique per cell;
+  `copy()` of a named variable returns `this`.
 - `CompoundTerm` — compound terms like `f(a, b)`
 - `PrologString` — string literals
 
 ### Built-in Predicate System
 
-Two interfaces for built-ins:
-- `BuiltIn.execute(Term query, Map bindings, List solutions)` — standard predicates
-- `BuiltInWithContext.executeWithContext(QuerySolver, Term, Map, List)` — meta-predicates that need solver access (findall, bagof, setof, call, catch)
+There are **two** SPIs, and new work should use the first:
 
-Context-dependent built-ins are wrapped in `CollectionBuiltInAdapter` to bridge the two interfaces.
+**1. The v4 native SPI** (`core.engine.v4`): implement `Builtin` (deterministic — return
+`Outcome.SUCCESS` / `FAILURE`) or push a `Generator` (nondeterministic — return
+`Outcome.SUSPENDED`) and register it in `NativeBuiltins.register` / `NativeControl.register` /
+`NativeLibrary.register` / `NativeMisc.register`. A native sees dereferenced `Term[] args` and the
+`Machine`; it never builds a `Map<String,Term>`. 63 indicators are native, and ~40 more are handled inline by the machine.
 
-**Registration**: `BuiltInFactory` has a static `FACTORY_MAP` of predicate names to `Supplier<BuiltIn>`. The `Prolog` constructor iterates this map and registers each into `BuiltInRegistry`.
+**2. The legacy registry SPI** (`core.engine`), which the ~310 remaining built-ins use and which
+the v2 fallback uses for everything:
+- `BuiltIn.execute(Term query, Map bindings, List solutions)` — the eager contract: a *resolved*
+  goal, an empty bindings map, one solution map appended per answer.
+- `BuiltInWithContext.executeWithContext(SolverContext solver, Term query, Map bindings,
+  List solutions)` — for a built-in that runs a sub-goal. Since 4.0.0 the context is the
+  **`core.engine.SolverContext` interface**, not a solver class: `solveMeta(Goal, Bindings,
+  Solutions)` for a sub-goal, `solve(Term)` for its solution list, `solveInWorker(...)` for a goal
+  that must run on another thread, plus read-only `getPrologContext`/`getKnowledgeBase`/
+  `getBuiltInRegistry`/`getDebugController`/`getResourceGuard`. On v4 the object is the per-query
+  `core.engine.v4.SolverFacade` (running on `Machine.runSubQuery`); on v2 it is the engine's
+  `core.engine.EngineContext`. There is no `CutStatus` and no cut-propagating sub-solve: the
+  control constructs that propagated a cut outwards are native in both machines.
 
-**Adding a new built-in**:
-1. Create class in `it.denzosoft.jprolog.builtin.<category>/` implementing `BuiltIn` or `BuiltInWithContext`. If it touches the host (processes, files, network, JVM), it must live in one of the safe-mode denied packages.
-2. Register in `BuiltInFactory.FACTORY_MAP`
-3. Update `docs/references/BUILTIN_PREDICATES_REFERENCE.md`
-4. Run `./test_all_examples.sh` to verify no regressions
+**Registration**: `BuiltInFactory` has a static `FACTORY_MAP` of predicate names to
+`Supplier<BuiltIn>`; the `Prolog` constructor iterates it into `BuiltInRegistry`. A
+`BuiltInWithContext` is registered **unwrapped** — the wrapper that used to pin one solver at
+registration time is deleted.
 
-Output discipline: built-ins must write through the thread-local `StreamManager.out()` — never `System.out`/`System.setOut`. That is how the IDE captures per-thread output (`StreamManager.setThreadLocalOutput(ps)` around background solves, reset in `finally`).
+`BuiltInRegistry.isBuiltIn(name, arity)` needs BOTH a registration and an arity entry, and it is
+what makes `assertz`/`retract`/`clause/2` raise `permission_error` on a built-in. That is why the
+ISO control constructs (`;`, `->`, `\+`, `call`, `catch`, `^`) keep a registry entry — the 40-line
+`builtin.control.ControlConstruct` placeholder — even though both machines implement them natively
+and never dispatch them.
+
+**Adding a native built-in (preferred)**:
+1. Implement `Builtin`/`Generator` in the right `core.engine.v4.Native*` file and register it.
+2. Follow the three rules: `Machine.unifyOrUndo` (or one explicit extent) when you try several
+   alternatives inside one `next()`; `Machine.lastSolution()` on the last alternative; never take a
+   `Bindings` mark without the `forceTrail++` / undo / `forceTrail--` ordering of invariant 1.
+3. Update `docs/references/BUILTIN_PREDICATES_REFERENCE.md` and, if it has no entry there,
+   `tools/manual/supplement.md`; run `tools/build-manual.sh`.
+4. Run `mvn test`, `mvn test -Pengine-v2` and `./test_all_examples.sh`.
+
+**Adding a legacy built-in** (only when the v2 fallback must have it too):
+1. Create the class in `it.denzosoft.jprolog.builtin.<category>/` implementing `BuiltIn` or
+   `BuiltInWithContext`. If it touches the host (processes, files, network, JVM, threads) it must
+   live in one of the safe-mode denied packages.
+2. Register it in `BuiltInFactory.FACTORY_MAP` (and add an arity entry to `BuiltInRegistry` if the
+   name needs one).
+3. Same documentation and test steps as above.
+
+Output discipline: built-ins must write through `builtin.io.StreamManager.out()` — never
+`System.out`/`System.setOut`. `StreamManager` is a static facade over `core.engine.v4.Streams`, the
+stream table of the engine current on the calling thread; `StreamManager.setThreadLocalOutput(ps)`
+is a process-wide **per-thread** override that wins over every engine's `current_output` — that is
+how the IDE captures a background solve's output (reset in `finally`) and the only mechanism
+`with_output_to/2` and `format/3 atom(A)` use. Term output must go through `core.engine.v4.Writer`
+(via `core.util.TermFormatter`), never `Term.toString()`.
 
 ### Package Layout
 
-- `core.engine` — `Prolog`, `QuerySolver`, `KnowledgeBase`, `BuiltInRegistry`, `BuiltInFactory`, `ArithmeticEvaluator` (legacy arith), debug classes (`DebugController`, `DebugEvent`, `DebugStackEntry`), `InferenceLimitException`, `QueryCancelledException`; `core.engine.v2.MachineSolver` — the **default** iterative SLD engine (fallback `-Djprolog.engine=legacy`)
+- `core.engine` — `Prolog`, **`EngineContext`** (the durable per-engine context: debug controller,
+  query `ResourceGuard`, the legacy attribute hook), **`SolverContext`** (the interface a context
+  built-in receives), `KnowledgeBase`, `BuiltInRegistry`, `BuiltInFactory`, `TableStore` (the v2
+  fallback's tabling store and the `:- table` declarations), `Trail` (the process-per-thread undo
+  log for backtrackable state in bridged built-ins — used by BOTH engines), `ArithmeticEvaluator`,
+  the debug classes (`DebugController`, `DebugEvent`, `DebugStackEntry`), `ControlFlow`,
+  `ResourceGuard`, `InferenceLimitException`, `QueryCancelledException`,
+  `NeedsSolverContextException`
+- `core.engine.v4` — the engine (see above), plus the engine-neutral W7 services
+- `core.engine.v2.MachineSolver` — the one-release fallback (`-Djprolog.engine=v2`)
 - `core.terms` — `Term`, `Atom`, `Number`, `Variable`, `CompoundTerm`, `PrologString`
-- `core.parser` — legacy `Parser`, `PrologParser`, `TermParser` (recursive descent, fallback). `core.parser.v2` — `Lexer` + `TermReader` (single-pass, operator-precedence/Pratt), the **default** parser
-- `core.operator` — `Operator`, `OperatorTable` (precedence management)
-- `core.module` — `Module`, `ModuleManager`, `PredicateSignature`
-- `core.dcg` — `DCGTransformer` (legacy `-->` translator, fallback via `-Djprolog.dcg=legacy`); `core.dcg.v2.DCGTranslator` is the default single-pass ISO translator (head push-back, `|`, `\+`, `call//N`, `{}`, `!`, `->`)
-- `core.write.v2` — `TermWriter` + `PrologFormatter` (IDE source formatter); `core.arith.v2` — `ArithEvaluator` (default-engine arithmetic)
+- `core.parser` — legacy `Parser`, `PrologParser`, `TermParser` (fallback); `core.parser.v2` —
+  `Lexer` + `TermReader`, the default
+- `core.operator` — `Operator`, `OperatorTable` (the table `core.engine.v4.Ops` owns)
+- `core.module` — `Module`, `ModuleManager`, `PredicateSignature` (the consult-time recorder; on
+  v4 `core.engine.v4.Modules` is the resolver)
+- `core.dcg` — `DCGTransformer` (fallback); `core.dcg.v2.DCGTranslator` is the default
+- `core.write.v2` — `TermWriter` + `PrologFormatter` (IDE source formatter only);
+  `core.arith.v2.ArithEvaluator` — arithmetic for both engines
 - `core.compiled` — `JpcReader`, `JpcWriter`, `JpcFormat` (`.jpc` binary format)
 - `core.exceptions` — `PrologException` and ISO error-term helpers
-- `core.system` — `PrologFlags` (ISO flag store)
-- `core.util` — `TermFormatter` (output of the `write/1` family), `ListUtils`; distinct from `core.utils` (`ListTerm`, `Substitution`, `CollectionUtils`) and from top-level `util` (`TermCopier`, `TermUtils` — variable renaming on rule copy)
-- `builtin/` — organized by category. ISO-core: `arithmetic/`, `atom/`, `character/`, `control/`, `conversion/`, `database/`, `dcg/`, `debug/`, `exception/`, `io/`, `list/`, `meta/`, `string/`, `system/`, `term/`, `type/`, `unification/`. Extended library: `clpfd/` (with `clpfd/v2/` — the default CLP(FD) engine), `crypto/`, `csv/`, `datetime/`, `ffi/`, `filesystem/`, `graph/`, `http/`, `jdbc/`, `json/`, `logging/`, `network/`, `os/`, `persistence/`, `regex/`, `threading/`, `xml/`, `extension/`
+- `core.system` — `PrologFlags` (the per-engine ISO flag store)
+- `core.util` — `TermFormatter` (the entry point of the `write/1` family; a facade over
+  `core.engine.v4.Writer`), `ListUtils`; distinct from `core.utils` (`ListTerm`, `Substitution`,
+  `CollectionUtils`) and from top-level `util` (`TermCopier`, `TermUtils` — rule-copy renaming,
+  used by the KB and the bridged built-ins, not by the v4 machine)
+- `builtin/` — by category. ISO-core: `arithmetic/`, `atom/`, `character/`, `control/`,
+  `conversion/`, `database/`, `dcg/`, `debug/`, `exception/`, `io/`, `list/`, `meta/`, `string/`,
+  `system/`, `term/`, `type/`, `unification/`. Extended: `clpfd/` (with `clpfd/v2/`), `crypto/`,
+  `csv/`, `datetime/`, `ffi/`, `filesystem/`, `graph/`, `http/`, `jdbc/`, `json/`, `logging/`,
+  `network/`, `os/`, `persistence/`, `regex/`, `threading/`, `xml/`, `extension/`
 - `extension/` (top-level) — pluggable extension examples (`example/`, `math/`)
-- `editor/` — Swing IDE: `PrologIDE` (owns the single shared `Prolog` instance — panels fetch it via `ide.getPrologEngine()`, never construct their own), `FileEditor`, `EditorTabbedPane`, and the bottom tabs `OutputConsole`, `BuildPanel`, `RunPanel`, `SearchResultsPanel`, `DebugPanel` (hosted by `BottomTabbedPane`)
-- `PrologCLI` — CLI with `:consult`, `:trace [on|off]`, `:help`, `:quit` commands
+- `editor/` — Swing IDE: `PrologIDE` (owns the single shared `Prolog` — panels fetch it via
+  `ide.getPrologEngine()`, never construct their own), `FileEditor`, `EditorTabbedPane`, and the
+  bottom tabs `OutputConsole`, `BuildPanel`, `RunPanel`, `SearchResultsPanel`, `DebugPanel`
+- `src/main/resources/prelude/` — the engine's Prolog **library modules**, each headed by
+  `:- module(Name, [Exports])` and autoloaded by predicate indicator into `core.engine.v4.Modules`:
+  `lists.pl` (member/2, append/3), `apply.pl` (maplist/foldl/include/exclude/partition plus their
+  `meta_predicate` declarations), `pairs.pl`, `coroutining.pl` (freeze/frozen/when/dif/?= and the
+  `'$attr_hook'/4` dispatcher). The `KnowledgeBase` never sees them, so `listing/1`, the IDE and
+  the v2 fallback do not either. Maven picks the directory up by default.
+- `PrologCLI` — CLI with `:consult`/`:c`, `:compile`/`:cc` (to `.jpc`), `:listing`/`:l`, `:save`/`:s`,
+  `:clear`, `:trace [on|off]`, `:help`/`:h`, `:quit`/`:q`. It detects a **non-interactive** stdin
+  (`System.console() == null`, or `--batch` / `-q`) and prints every solution at once, separated by
+  ` ;` and terminated by `.`, instead of reading the next input line as the answer to the "more
+  solutions?" prompt.
 
 ### Debug & Tracing Architecture
 
@@ -144,31 +398,68 @@ The debugger uses a **two-thread model** with blocking synchronization:
 
 1. **Solver Thread**: runs the query in a background thread
 2. **Swing EDT**: handles UI updates and button clicks
-3. **Synchronization**: `DebugController` uses `wait()/notify()` on a `pauseLock` object; `DebugPanel` implements `DebugController.DebugListener` and marshals to the EDT via `SwingUtilities.invokeLater()`
+3. **Synchronization**: `DebugController` uses `wait()/notify()` on a `pauseLock` object;
+   `DebugPanel` implements `DebugController.DebugListener` and marshals to the EDT via
+   `SwingUtilities.invokeLater()`
 
-Wiring contract (works for **both** engines): install the controller with `querySolver.setDebugController(...)` — the shared `QuerySolver` is the durable home. Each per-query `MachineSolver` picks it up at solve start and fires the same four-port events (Call/Exit/Fail/Redo), so since v3.3.0 the IDE debugger runs on the default v2 engine via plain `engine.solve()`. All hooks are guarded by `debugController != null` — zero overhead when not debugging.
+**Wiring contract** (works on both engines): install the controller with
+`prolog.getEngineContext().setDebugController(...)` — the `EngineContext` is the durable home.
+Each per-query machine picks it up at solve start and fires the same four-port events
+(Call/Exit/Fail/Redo), so the IDE debugger runs on the default engine via plain `engine.solve()`.
+All hooks are guarded by `debugController != null` — zero overhead when not debugging.
 
 Engine specifics:
-- While debugging, MachineSolver **disables its fast paths** (inline `=/2`, native built-ins) so the 200+ registry built-ins fire ports through an instrumented bridge. Don't "optimize" those branches back without checking `debugController`. Same rule on legacy: the LCO trampoline bypassed ports and is disabled while debugging (ISS-2025-0330) — any new fast path needs the same treatment.
-- Redo/Fail ports are emitted by stashing `traceGoal`/`traceDepth` on choice points; a new choice-point kind representing a traced goal must carry these fields or Redo/Fail silently vanish from traces.
-- Breakpoints: line-accurate via `Rule.sourceLine` + `Prolog.getPredicateIndicatorAtLine()`; persist in hidden sidecar files `.<source>.bps` next to `.pl` files. Conditional/hit-count breakpoints evaluate their condition goal via a detached sub-solve (`engine.solveLegacy()` with the controller temporarily nulled); a throwing condition never pauses.
-- `trace/0`/`notrace/0` (and the CLI `:trace`, IDE Run-panel Trace toggle) use a process-global static flag in `builtin.debug.Trace`; only the **v2 engine** checks it, writing depth-indented four-port lines to `StreamManager.out()`. Under the legacy engine, `trace/0` sets the flag but no port lines are printed (the legacy `traceEnabled` field is an unrelated `LOGGER.info` mechanism).
+- **On v4 the fast paths are NOT disabled while debugging** (limit L-13). The machine keeps its
+  inline `=/2`, `is/2`, comparisons, type checks, `once/ignore/forall` and `between/3` and emits
+  their four ports itself, so a debugged run executes exactly the same code as an undebugged one.
+  Never re-introduce a "skip this when `debugController != null`" branch: add the ports instead
+  (`isInlineBuiltin` gates the deterministic ones, `Machine.iteTraced` owns the control constructs'
+  wrapper ports, a lazy generator carries `cp.traceGoal`). On the **v2 fallback** `MachineSolver`
+  still disables its fast paths.
+- **Depth is `Machine.portDepth`** on v4 — the call-nesting level, assigned by every port. It is
+  NOT `cps.size()`, because a deterministic frame is trust-me popped even while tracing.
+- **A deterministic frame emits no phantom `Fail` after its `Exit`** on v4, which is what keeps
+  trace memory linear in the number of OPEN calls.
+- Redo/Fail ports are emitted by stashing `traceGoal`/`traceDepth` on choice points; a new
+  choice-point kind representing a traced goal must carry these fields.
+- Breakpoints: line-accurate via `Rule.sourceLine` + `Prolog.getPredicateIndicatorAtLine()`;
+  persisted in hidden sidecar files `.<source>.bps` next to `.pl` files. Conditional/hit-count
+  breakpoints and the watch panel evaluate their goal via a **detached sub-solve**
+  (`engine.solve()` with the controller temporarily nulled on the `EngineContext`); a throwing
+  condition never pauses.
+- `trace/0`/`notrace/0` (and the CLI `:trace`, the IDE Run-panel Trace toggle) set the **per-engine**
+  trace flag (`Prolog.setTracing`, stored in the engine's `PrologFlags`); both machines check it and
+  write depth-indented four-port lines to `StreamManager.out()` (indentation capped at 40 levels,
+  the depth number itself exact). `EngineV4TraceTest` pins the v4 output line for line: change it
+  only deliberately. (`Prolog.setTraceEnabled/1` is a *different*, vestigial flag — it drove the
+  recursive solver's `LOGGER.info` tracing and now only records a boolean.)
 
 ### Compilation Diagnostics
 
-`Prolog.consultWithDiagnostics(program, filename)` compiles per-clause, collecting errors with line numbers instead of throwing on first error. Returns `CompilationResult` with `List<CompilationError>`. The IDE renders these in the Build tab plus in-editor squiggles/gutter markers.
+`Prolog.consultWithDiagnostics(program, filename)` compiles per-clause, collecting errors with line
+numbers instead of throwing on the first error. Returns `CompilationResult` with
+`List<CompilationError>`. The IDE renders these in the Build tab plus in-editor squiggles and gutter
+markers.
 
 ### Binary Compiled Format (.jpc)
 
-JProlog compiles `.pl` source to `.jpc` (JProlog Compiled) for fast loading. Implemented by `JpcWriter` / `JpcReader` in `core.compiled` — uses string interning, varint encoding, and source-hash validation to detect stale compilations. The unified `OperatorTable` is shared between parser, `op/3`, and query resolution so dynamic operators round-trip through `.jpc`.
+JProlog compiles `.pl` source to `.jpc` for fast loading (`JpcWriter` / `JpcReader` /`JpcFormat` in
+`core.compiled`): string interning, varint encoding, per-clause source lines, variables by clause
+index, and source-hash validation to detect stale compilations. The one `OperatorTable` is shared
+with the parser, `op/3` and the writer, so dynamic operators round-trip.
 
 ### Key Design Decisions
 
-- **Single-threaded** execution (Prolog semantics); IDE runs queries on background threads with thread-local output capture (`StreamManager`) and cancels via thread interrupt → `QueryCancelledException`
-- **Immutable terms** with external substitution maps for bindings
-- Variable scoping handled by `util.TermCopier` which renames variables when copying rules
-- ISO 13211-1 compliance where possible (exception handling, arithmetic functions, error terms)
-- `.gitignore` scratch patterns must stay **anchored to the root** (`/Debug*.java`, `/Test*.java`, `/*.sh`) — the unanchored forms once silently excluded core sources like `DebugController` from the repo (ISS-2025-0334)
+- **One `Machine` per thread** (a machine is single-threaded by construction). The IDE runs queries
+  on background threads with thread-local output capture and cancels via thread interrupt →
+  `QueryCancelledException`; `thread_create/2,3` and the `concurrent_*` family get a fresh machine
+  over the same `Engine` through `core.engine.v4.Workers`, with the goal copied in and every answer
+  copied out.
+- **Immutable terms**; the engine binds in the `Variable` cell with a trail. The v2 fallback uses
+  external substitution maps.
+- ISO 13211-1 compliance where possible (exception handling, arithmetic functions, error terms).
+- `.gitignore` scratch patterns must stay **anchored to the root** (`/Debug*.java`, `/Test*.java`,
+  `/*.sh`) — the unanchored forms once silently excluded core sources from the repo (ISS-2025-0334).
 
 ## Development Workflow
 
@@ -176,12 +467,16 @@ JProlog compiles `.pl` source to `.jpc` (JProlog Compiled) for fast loading. Imp
 
 Every bug or feature request must be documented before implementation:
 
-- **Issues**: `docs/tracking/track-issues.md` — format `ISS-YYYY-NNNN`; terminal status in practice is `RESOLVED`/`VERIFIED`
+- **Issues**: `docs/tracking/track-issues.md` — format `ISS-YYYY-NNNN`; terminal status in practice
+  is `RESOLVED`/`VERIFIED`
 - **Change Requests**: `docs/tracking/track-change-requests.md` — format `CR-YYYY-NNNN`
-- **Limitations**: `docs/tracking/track-limitations.md` — add when issue found, remove when resolved
+- **Limitations**: `docs/tracking/track-limitations.md` — add when found, remove when resolved
 - **Release Notes**: `docs/tracking/track-release-notes.md`
 
-Before allocating a new ISS number, grep **CHANGELOG.md** for the highest used one — track-issues.md lags behind recent releases (e.g. ISS-2025-0320..0341 exist only in CHANGELOG.md and source `START_CHANGE` tags). track-issues.md's internal ordering and header levels are inconsistent; grep for an ID rather than assuming position. Some tracking content is in Italian — match surrounding style rather than rewriting.
+Before allocating a new ISS number, grep **CHANGELOG.md** and `src/` (`START_CHANGE` tags) for the
+highest used one (**ISS-2025-0490** as of v4.0.0) — track-issues.md lags behind recent releases.
+Its internal ordering and header levels are inconsistent; grep for an ID rather than assuming
+position. Some tracking content is in Italian — match surrounding style rather than rewriting.
 
 ### Code Change Tagging
 
@@ -191,14 +486,27 @@ All code modifications must be tagged with the ID that drove the change (ISS, LI
 // ... modified code ...
 // END_CHANGE: ISS-2025-0001
 ```
+For a **deletion**, tag the surviving call site and record the deleted class in CHANGELOG.md.
 
 ### Test Verification (MANDATORY per bug/limitation fix)
 
-Every resolved bug or limitation must have a corresponding JUnit test that verifies the fix. Tests go in `src/test/java/it/denzosoft/jprolog/test/builtin/BugFixVerificationTest.java`, organized by ISS number (audit-driven findings live in `test/audit/` instead, e.g. `ProductionAuditTest.java` for the v3.4.0 sandbox/budget fixes):
-- Add a `@Test` method named after the issue and fix (e.g., `testISS0188_ModNegativeDivisor`)
-- The test must fail without the fix and pass with the fix
-- Use `prolog.solve()` for query-level assertions, direct Java assertions for internal class fixes
-- Run `mvn test` to confirm the new tests pass alongside all existing tests
+Every resolved bug or limitation must have a JUnit test that fails without the fix. Tests go in
+`src/test/java/it/denzosoft/jprolog/test/builtin/BugFixVerificationTest.java` (~420 tests, organized
+by ISS number); `test/audit/` holds the earlier audit suites (`ProductionAuditTest`,
+`AuditRound5Test`); the v2 subsystems each have their own `*Test` next to the package
+(`core/engine/v2/MachineSolverTest`, `core/parser/v2/NewParserTest`, `builtin/clpfd/v2/ClpfdV2Test`,
+…); and each v4 wave has its own `core/engine/v4/EngineV4*Test`:
+`EngineV4Test` (35, W1/W2), `EngineV4LibraryTest` (19, W3), `EngineV4CoroutiningTest` (22, W4),
+`EngineV4TablingTest` (18, W5), `EngineV4ModulesTest` (29, W6), `EngineV4StreamsTest` (25, W7),
+`EngineV4WriterTest` (21, W7), `EngineV4ThreadsTest` (15, W8), `EngineV4TraceTest` (25, W8 — 16
+line-for-line pinned trace oracles) and **`EngineV4RetirementTest` (18, W9)**, plus
+`test/cli/PrologCliBatchTest` (6).
+- Add a `@Test` method named after the issue and fix (e.g. `testISS0188_ModNegativeDivisor`)
+- The test must fail without the fix and pass with it
+- Use `prolog.solve()` for query-level assertions, direct Java assertions for internal fixes
+- Every wave must keep the full suite green on the **default** engine (v4) **and** under
+  `-Pengine-v2`. The v4 test classes select v4 in `setUp` and restore the previous selection in
+  `tearDown`, so they pass under either profile.
 
 ### Documentation Updates (MANDATORY per release)
 
@@ -208,20 +516,34 @@ When adding/modifying built-ins or operators, update:
 
 (These two uppercase filenames are deliberate exceptions — do not rename them.)
 
-All documentation must be in English. Naming convention: `[category-]descriptive-name.md` (lowercase, hyphens, no underscores).
+The user-facing **Reference Manual** (`docs/guides/guide-builtin-manual.md` + `.pdf`, every default
+operator and built-in with examples) is *generated*: edit `tools/manual/{front,supplement,appendix}.md`
+(the supplement holds the ~110 predicates that have no entry in
+`BUILTIN_PREDICATES_REFERENCE.md`) or the reference itself, then run `tools/build-manual.sh`
+(pure Python 3, no external tools; `tools/manual/md2pdf.py` is the renderer). Only reference
+sections 1–28, 29 (Java FFI) and 40 (concurrency) are included — the other sections describe
+libraries that are not registered by default.
 
-Doc directories: `docs/guides/guide-*.md`, `docs/references/ref-*.md`, `docs/reports/report-*.md`, `docs/tracking/track-*.md`
+All documentation must be in English. Naming convention: `[category-]descriptive-name.md`
+(lowercase, hyphens, no underscores).
+
+Doc directories: `docs/guides/guide-*.md`, `docs/references/ref-*.md`, `docs/reports/report-*.md`,
+`docs/tracking/track-*.md`. `docs/ISO132111/` holds bilingual ISO-chapter walkthroughs
+(`ChapterN_Topic_EN.md` / `_IT.md`) — CamelCase names and Italian content are a deliberate
+exception; keep the EN/IT pairs in sync.
 
 ### Release Process
 
 1. `mvn clean compile` (must succeed)
-2. `mvn test` (must pass)
-3. `./test_all_examples.sh` (must be >= 75% — checked manually, the script doesn't compute it)
-4. Increment patch version in `pom.xml`
-5. Update: `CHANGELOG.md`, `docs/tracking/track-issues.md`, `docs/tracking/track-limitations.md`, `docs/tracking/track-release-notes.md`
-6. Tag format: `v{major}.{minor}.{patch}`
+2. `mvn test` **and `mvn test -Pengine-v2`** (both must pass, while v2 is still selectable)
+3. `./test_all_examples.sh` on both engines (must be >= 75% — checked manually)
+4. `tools/build-manual.sh` if any predicate or operator changed
+5. Increment the version in `pom.xml`
+6. Update: `CHANGELOG.md`, `docs/tracking/track-issues.md`, `docs/tracking/track-limitations.md`,
+   `docs/tracking/track-release-notes.md`
+7. Tag format: `v{major}.{minor}.{patch}`
 
-Versioning: major = breaking changes, minor = new features, patch = bug fixes (auto-increment per session).
+Versioning: major = breaking changes, minor = new features, patch = bug fixes.
 
 ### Session Cleanup
 

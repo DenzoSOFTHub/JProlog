@@ -20,19 +20,47 @@ public class PrologCLI {
     private final Parser parser;
     private final BufferedReader reader;
     private boolean running = true;
-    
+
+    // START_CHANGE: ISS-2025-0483 - wave W8: a non-interactive console must never consume the next
+    // INPUT LINE as the answer to the "more solutions?" prompt. When stdin is not a terminal
+    // (`System.console() == null` — a pipe, a here-doc, a redirected file, surefire) or when
+    // `--batch` / `-q` is given, every solution is printed at once, separated by ` ;` and
+    // terminated by `.`; nothing is read back. The interactive behaviour is unchanged.
+    /** True when solutions are printed all at once instead of one per `;` keystroke. */
+    private final boolean batch;
+
+    /** Is this CLI printing solutions in batch (non-interactive) mode? */
+    public boolean isBatch() { return batch; }
+
     public PrologCLI() {
+        this(new String[0]);
+    }
+
+    public PrologCLI(String[] args) {
         this.prolog = new Prolog();
         this.parser = new Parser();
         this.reader = new BufferedReader(new InputStreamReader(System.in));
+        boolean forced = false;
+        if (args != null) {
+            for (String a : args) {
+                if ("--batch".equals(a) || "-q".equals(a) || "--quiet".equals(a)) forced = true;
+            }
+        }
+        this.batch = forced || (System.console() == null);
     }
+    // END_CHANGE: ISS-2025-0483
     
     public void start() {
         System.out.println("=== JProlog CLI ===");
         System.out.println("Interactive Prolog interpreter with ISO compliance");
         System.out.println();
         System.out.println("Enter Prolog queries followed by '.' and press Enter");
-        System.out.println("For multiple solutions: use ';' for next, Enter to stop");
+        // ISS-2025-0483: say which answer mode is in force, so a piped session is self-describing
+        if (batch) {
+            System.out.println("Non-interactive input: all solutions are printed, separated by ';'");
+        } else {
+            System.out.println("For multiple solutions: use ';' for next, Enter to stop");
+        }
         System.out.println();
         System.out.println("Special commands:");
         System.out.println("  :quit              - Exit the console");
@@ -91,16 +119,24 @@ public class PrologCLI {
             // IDE: query-variable-keyed solutions, and four-port output from trace/0 (ISS-2025-0329).
             List<Map<String, Term>> solutions = prolog.solve(queryString);
             
+            // START_CHANGE: ISS-2025-0476 - wave W7, design decision 5 (B.17, approved): answers
+            // print in quoted operator notation with _A-style variable names and the residual
+            // goals the answer still carries (limit L-11).
             if (solutions.isEmpty()) {
                 System.out.println("false.");
             } else {
-                if (solutions.size() == 1 && solutions.get(0).isEmpty()) {
+                List<List<String>> rendered = new java.util.ArrayList<>();
+                for (Map<String, Term> sol : solutions) {
+                    rendered.add(it.denzosoft.jprolog.core.engine.v4.Answer.lines(
+                        sol, prolog.residualGoals(sol), prolog.getOps().table()));   // ISS-2025-0490
+                }
+                if (rendered.size() == 1 && rendered.get(0).isEmpty()) {
                     System.out.println("true.");
                 } else {
-                    // Interactive handling of multiple solutions
-                    displaySolutionsInteractively(solutions);
+                    displaySolutionsInteractively(rendered);
                 }
             }
+            // END_CHANGE: ISS-2025-0476
 
         // START_CHANGE: ISS-2025-0346 - halt/0 and halt/1 exit the processor with the given status
         // (ISO 8.17.3/8.17.4); the CLI is the processor here, so terminate the JVM immediately.
@@ -149,11 +185,12 @@ public class PrologCLI {
 
             // ISS-2025-0329: toggle four-port call tracing (also available as the trace/0 .. notrace/0 goals)
             case ":trace":
+                // ISS-2025-0437 - ENG-06: tracing is per engine; set it on THIS CLI's engine.
                 if (parts.length > 1 && parts[1].trim().equalsIgnoreCase("off")) {
-                    it.denzosoft.jprolog.builtin.debug.Trace.setTracingEnabled(false);
+                    prolog.setTracing(false);
                     System.out.println("% Tracing disabled");
                 } else {
-                    it.denzosoft.jprolog.builtin.debug.Trace.setTracingEnabled(true);
+                    prolog.setTracing(true);
                     System.out.println("% Tracing enabled (use ':trace off' or notrace. to disable)");
                 }
                 break;
@@ -218,9 +255,18 @@ public class PrologCLI {
         System.out.println("  append([1,2],[3,4],L).      - List operations");
         System.out.println();
         System.out.println("Multiple solutions:");
-        System.out.println("  When there are multiple solutions, ' ;' will appear");
-        System.out.println("  Press ';' + Enter to see the next solution");
-        System.out.println("  Press Enter only to stop");
+        // START_CHANGE: ISS-2025-0483 - the help must describe the mode actually in force
+        if (batch) {
+            System.out.println("  Input is not a terminal (or --batch / -q was given):");
+            System.out.println("  every solution is printed at once, separated by ' ;'");
+            System.out.println("  and terminated by '.' — no answer is read back");
+        } else {
+            System.out.println("  When there are multiple solutions, ' ;' will appear");
+            System.out.println("  Press ';' + Enter to see the next solution");
+            System.out.println("  Press Enter only to stop");
+            System.out.println("  (--batch / -q prints them all at once instead)");
+        }
+        // END_CHANGE: ISS-2025-0483
         System.out.println();
         System.out.println("File loading:");
         System.out.println("  :consult my_facts.pl        - Load facts from file");
@@ -270,7 +316,7 @@ public class PrologCLI {
             prolog.asserta("mother(ann, bob).");
             prolog.asserta("father(bob, liz).");
             
-            // Rules (might have resolution problems in QuerySolver)
+            // Rules
             prolog.asserta("parent(X, Y) :- father(X, Y).");
             prolog.asserta("parent(X, Y) :- mother(X, Y).");
             
@@ -423,31 +469,36 @@ public class PrologCLI {
      * Display solutions interactively, allowing the user to 
      * use ";" to see the next solution or Enter to stop.
      */
-    private void displaySolutionsInteractively(List<Map<String, Term>> solutions) {
+    private void displaySolutionsInteractively(List<List<String>> solutions) {
         try {
             for (int i = 0; i < solutions.size(); i++) {
-                Map<String, Term> solution = solutions.get(i);
-                
+                List<String> lines = solutions.get(i);
+
                 // Display the current solution
-                if (solution.isEmpty()) {
+                if (lines.isEmpty()) {
                     System.out.print("true");
                 } else {
-                    boolean first = true;
-                    for (Map.Entry<String, Term> binding : solution.entrySet()) {
-                        if (!first) System.out.print(", ");
-                        System.out.print(binding.getKey() + " = " + binding.getValue());
-                        first = false;
+                    for (int k = 0; k < lines.size(); k++) {
+                        if (k > 0) System.out.print(",\n");
+                        System.out.print(lines.get(k));
                     }
                 }
-                
+
                 // If not the last solution, ask user what to do
                 if (i < solutions.size() - 1) {
+                    // START_CHANGE: ISS-2025-0483 - non-interactive: never read the next input
+                    // line (it is the next QUERY, not the user's answer). Print ` ;` and go on.
+                    if (batch) {
+                        System.out.println(" ;");
+                        continue;
+                    }
+                    // END_CHANGE: ISS-2025-0483
                     System.out.print(" ;");
                     System.out.flush();
-                    
+
                     // Read input from user
                     String input = reader.readLine();
-                    
+
                     if (input == null || input.trim().isEmpty()) {
                         // User pressed Enter - stop here
                         System.out.println(".");
@@ -472,6 +523,6 @@ public class PrologCLI {
     }
     
     public static void main(String[] args) {
-        new PrologCLI().start();
+        new PrologCLI(args).start();   // ISS-2025-0483: --batch / -q
     }
 }

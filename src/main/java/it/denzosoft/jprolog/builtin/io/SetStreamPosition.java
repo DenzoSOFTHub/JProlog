@@ -1,110 +1,79 @@
 // START_CHANGE: LIM-007 - Stream Repositioning
 package it.denzosoft.jprolog.builtin.io;
 
+import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.engine.v4.PrologStream;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
-import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
-import it.denzosoft.jprolog.core.terms.Atom;
+import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
-import it.denzosoft.jprolog.core.terms.Variable;
 
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.channels.FileChannel;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * set_stream_position/2 - ISO Prolog stream repositioning predicate.
- * set_stream_position(+Stream, +Position)
+ * set_stream_position/2 - set_stream_position(+Stream, +Position).
  *
- * Repositions a stream to the given byte position.
- * Only file-backed streams that support repositioning are allowed.
- * Standard streams (user_input, user_output, user_error) do not support repositioning.
- *
- * Throws permission_error(reposition, stream, Stream) if the stream does not support repositioning.
- * Throws existence_error(stream, Stream) if the stream does not exist.
+ * <p>{@code Position} is either a plain byte offset or the opaque term
+ * {@code '$stream_position'(CharCount, LineCount, LinePosition, ByteCount)} that
+ * {@code stream_property(S, position(P))} hands out (ISS-2025-0473).
  */
 public class SetStreamPosition implements BuiltIn {
 
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException(
-                "set_stream_position/2 requires exactly 2 arguments");
+            throw new PrologEvaluationException("set_stream_position/2 requires exactly 2 arguments");
         }
 
         Term streamTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term positionTerm = query.getArguments().get(1).resolveBindings(bindings);
 
-        // Validate stream argument
-        if (!(streamTerm instanceof Atom)) {
-            throw new PrologEvaluationException(
-                "set_stream_position/2: Stream must be an atom");
-        }
-
-        String streamAlias = ((Atom) streamTerm).getName();
-
-        // Check stream exists
-        if (!StreamManager.hasStream(streamAlias)) {
+        PrologStream s = StreamManager.stream(streamTerm);
+        if (s == null) {
             throw new PrologException(
                 ISOErrorTerms.existenceError("stream", streamTerm, "set_stream_position/2"));
         }
 
-        // Validate position argument
-        if (!(positionTerm instanceof Number)) {
-            throw new PrologEvaluationException(
-                "set_stream_position/2: Position must be an integer");
+        long position;
+        if (positionTerm instanceof Number) {
+            position = ((Number) positionTerm).longValue();
+        } else if (positionTerm instanceof CompoundTerm
+                && "$stream_position".equals(positionTerm.getName())
+                && positionTerm.getArguments() != null && positionTerm.getArguments().size() == 4) {
+            Term b = positionTerm.getArguments().get(3);
+            if (!(b instanceof Number)) {
+                throw new PrologException(
+                    ISOErrorTerms.domainError("stream_position", positionTerm, "set_stream_position/2"));
+            }
+            position = ((Number) b).longValue();
+        } else {
+            throw new PrologException(
+                ISOErrorTerms.domainError("stream_position", positionTerm, "set_stream_position/2"));
         }
-
-        long position = ((Number) positionTerm).getValue().longValue();
         if (position < 0) {
-            throw new PrologEvaluationException(
-                "set_stream_position/2: Position must be non-negative");
+            throw new PrologEvaluationException("set_stream_position/2: Position must be non-negative");
         }
-
-        // Standard streams do not support repositioning
-        if ("user_input".equals(streamAlias) || "user_output".equals(streamAlias)
-                || "user_error".equals(streamAlias)) {
+        if (!s.canReposition()) {
             throw new PrologException(
-                ISOErrorTerms.permissionError("reposition", "stream", streamTerm,
-                    "set_stream_position/2"));
+                ISOErrorTerms.permissionError("reposition", "stream", streamTerm, "set_stream_position/2"));
         }
 
-        // Try to reposition the stream
+        // START_CHANGE: ISS-2025-0472 - flush the decode buffer so the NEXT read really starts here
         try {
-            InputStream is = StreamManager.getInputStream(streamAlias);
-            if (is instanceof FileInputStream) {
-                FileChannel channel = ((FileInputStream) is).getChannel();
-                channel.position(position);
-                solutions.add(new HashMap<>(bindings));
-                return true;
-            }
-
-            OutputStream os = StreamManager.getOutputStream(streamAlias);
-            if (os instanceof FileOutputStream) {
-                FileChannel channel = ((FileOutputStream) os).getChannel();
-                channel.position(position);
-                solutions.add(new HashMap<>(bindings));
-                return true;
-            }
-
-            // Stream exists but doesn't support repositioning
-            throw new PrologException(
-                ISOErrorTerms.permissionError("reposition", "stream", streamTerm,
-                    "set_stream_position/2"));
-
+            s.reposition(position);
+            solutions.add(new HashMap<>(bindings));
+            return true;
         } catch (PrologException pe) {
             throw pe;
         } catch (Exception e) {
-            throw new PrologEvaluationException(
-                "set_stream_position/2: I/O error: " + e.getMessage());
+            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
+            throw new PrologEvaluationException("set_stream_position/2: I/O error: " + e.getMessage());
         }
+        // END_CHANGE: ISS-2025-0472
     }
 }
 // END_CHANGE: LIM-007
