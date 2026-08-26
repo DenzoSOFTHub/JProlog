@@ -1,30 +1,27 @@
 package it.denzosoft.jprolog.core.engine;
 
-import it.denzosoft.jprolog.core.terms.*;
-
-import java.util.*;
-import java.util.logging.Logger;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
 // START_CHANGE: ISS-2025-0092 - Tabling (memoization) support
+// START_CHANGE: ISS-2025-0491 - 4.1 wave A: the ANSWER tables, the in-progress set, the partial
+// cache, the goal normaliser and the one-thread evaluation claim all belonged to the v2 engine's
+// variant-tabling driver and are DELETED with it. What survives is
+// the one thing the v4 engine reads from here: the set of `:- table f/n` DECLARATIONS, written by
+// the consult-time directive (Prolog.processTableDirective) and by the table/1, abolish_table/1
+// and abolish_all_tables/0 built-ins. The answer tables of the live engine are
+// {@code core.engine.v4.Tabling} (linear tabling with completion, its own claim protocol).
 /**
- * Stores tabled predicate declarations and cached solutions.
- * Variant tabling with canonical variable normalization.
+ * The {@code :- table f/n} declarations of one {@code Prolog}.
+ *
+ * <p>Not a cache: {@code core.engine.v4.Tabling} owns the answer tries. This is the small,
+ * engine-neutral registry the consult directive writes and {@code Machine.isTabled} reads.
  */
 public class TableStore {
 
-    // START_CHANGE: ISS-2025-0173 - Add cache size limit and eviction to prevent unbounded growth
-    private static final Logger LOGGER = Logger.getLogger(TableStore.class.getName());
-    private static final int MAX_CACHE_SIZE = 10000;
-    // END_CHANGE: ISS-2025-0173
-
     /** Set of tabled predicate indicators: "fib/2", "path/2", etc. */
     private final Set<String> tabledPredicates = new HashSet<>();
-
-    /** Cache: normalized goal string -> list of canonical answer maps */
-    private final Map<String, List<Map<String, Term>>> cache = new LinkedHashMap<>(16, 0.75f, true);
-
-    /** Goals currently being computed (loop detection) */
-    private final Set<String> inProgress = new HashSet<>();
 
     public void declareTable(String functor, int arity) {
         tabledPredicates.add(functor + "/" + arity);
@@ -34,199 +31,24 @@ public class TableStore {
         return tabledPredicates.contains(functor + "/" + arity);
     }
 
-    public List<Map<String, Term>> getCachedSolutions(String cacheKey) {
-        return cache.get(cacheKey);
-    }
-
-    public void cacheSolutions(String cacheKey, List<Map<String, Term>> solutions) {
-        // START_CHANGE: ISS-2025-0173 - Evict oldest half of cache when size limit exceeded
-        if (cache.size() >= MAX_CACHE_SIZE) {
-            LOGGER.warning("TableStore cache exceeded " + MAX_CACHE_SIZE + " entries (" + cache.size()
-                + "). Evicting oldest half.");
-            int toRemove = cache.size() / 2;
-            Iterator<String> it = cache.keySet().iterator();
-            for (int i = 0; i < toRemove && it.hasNext(); i++) {
-                it.next();
-                it.remove();
-            }
-        }
-        // END_CHANGE: ISS-2025-0173
-        List<Map<String, Term>> copied = new ArrayList<>(solutions.size());
-        for (Map<String, Term> sol : solutions) {
-            copied.add(new HashMap<>(sol));
-        }
-        cache.put(cacheKey, copied);
-    }
-
-    // START_CHANGE: ISS-2025-0173 - Add getCacheSize() for monitoring
-    /**
-     * Returns the current number of entries in the solutions cache.
-     */
-    public int getCacheSize() {
-        return cache.size();
-    }
-    // END_CHANGE: ISS-2025-0173
-
-    // START_CHANGE: ISS-2025-0488 - LIM-039: a tabled evaluation is claimed by ONE thread.
-    // The v2 engine's variant-tabling driver (MachineSolver.tabledAnswers) keeps its state here —
-    // the in-progress set and the partial answer cache — and both describe ONE evaluation. Since
-    // v4.0.0 several worker threads can reach one engine, so an evaluation is claimed: a second
-    // thread waits for the first to finish and then finds the table CACHED, which is the
-    // answer-sharing behaviour a table exists for. Reading a cached table needs no claim beyond the
-    // call itself. The wait is bounded so a runaway producer surfaces as a resource_error rather
-    // than a hung thread, and a Stop interrupt is honoured while waiting.
-    private Thread evalOwner;
-    private int callDepth;
-    private static final long EVAL_WAIT_MS = 60_000L;
-
-    /** Enter a tabled call; no OTHER thread may be inside one on this store. */
-    public synchronized void enterCall() {
-        Thread me = Thread.currentThread();
-        long deadline = System.currentTimeMillis() + EVAL_WAIT_MS;
-        while (evalOwner != null && evalOwner != me) {
-            long left = deadline - System.currentTimeMillis();
-            if (left <= 0) {
-                throw new it.denzosoft.jprolog.core.exceptions.PrologException(
-                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError(
-                        "tabling_busy", "another thread is evaluating a table on this engine"));
-            }
-            try {
-                wait(left);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new QueryCancelledException();
-            }
-        }
-        evalOwner = me;
-        callDepth++;
-    }
-
-    /** Leave a tabled call; the claim is released when nothing is left in progress. */
-    public synchronized void exitCall() {
-        if (evalOwner != Thread.currentThread()) return;
-        if (--callDepth <= 0) {
-            callDepth = 0;
-            if (inProgress.isEmpty()) { evalOwner = null; notifyAll(); }
-        }
-    }
-    // END_CHANGE: ISS-2025-0488
-
-    public boolean isInProgress(String cacheKey) {
-        return inProgress.contains(cacheKey);
-    }
-
-    public void markInProgress(String cacheKey) {
-        inProgress.add(cacheKey);
-    }
-
-    public void unmarkInProgress(String cacheKey) {
-        inProgress.remove(cacheKey);
-    }
-
-    // START_CHANGE: R5 - partial cache for in-progress tabled goals (enables WFS-style iteration)
-    private final Map<String, List<Map<String, Term>>> partialCache = new HashMap<>();
-    public List<Map<String, Term>> getPartialCache(String cacheKey) {
-        return partialCache.get(cacheKey);
-    }
-    public void setPartialCache(String cacheKey, List<Map<String, Term>> sols) {
-        partialCache.put(cacheKey, sols);
-    }
-    public void clearPartialCache(String cacheKey) {
-        partialCache.remove(cacheKey);
-    }
-    // END_CHANGE: R5
-
+    /** Drop every answer table. Declarations survive (v4 semantics, and XSB's). */
     public void abolishAllTables() {
-        cache.clear();
-        inProgress.clear();
+        // no answer tables live here any more (ISS-2025-0491); v4's Tabling.abolishAll does the work
     }
 
     // START_CHANGE: ISS-2025-0124 - abolish_table/1 support
     /**
-     * Remove cached solutions for a specific tabled predicate.
-     * Also removes the predicate from the tabled set.
+     * Remove a predicate from the tabled set (its answer tables are dropped by
+     * {@code core.engine.v4.Tabling}).
      */
     public void abolishTable(String functor, int arity) {
-        String key = functor + "/" + arity;
-        tabledPredicates.remove(key);
-        // START_CHANGE: ISS-2025-0191 - Use exact functor/arity matching to prevent prefix collisions
-        // Match "functor(" for arity>0, or exact "functor" for arity==0
-        // Ensure no prefix collision: "path(" must NOT match "path_query("
-        cache.entrySet().removeIf(entry -> matchesPredicate(entry.getKey(), functor, arity));
-        inProgress.removeIf(k -> matchesPredicate(k, functor, arity));
-        // END_CHANGE: ISS-2025-0191
+        tabledPredicates.remove(functor + "/" + arity);
     }
     // END_CHANGE: ISS-2025-0124
-
-    // START_CHANGE: ISS-2025-0191 - Exact predicate matching helper
-    private static boolean matchesPredicate(String cacheKey, String functor, int arity) {
-        if (arity == 0) {
-            return cacheKey.equals(functor);
-        }
-        // For arity>0, must match "functor(" exactly (not "functor_ext(")
-        return cacheKey.startsWith(functor + "(");
-    }
-    // END_CHANGE: ISS-2025-0191
 
     public Set<String> getTabledPredicates() {
         return Collections.unmodifiableSet(tabledPredicates);
     }
-
-    /**
-     * Normalize a resolved goal for cache lookup.
-     * Replaces unbound variables with positional canonical variables (_TV0, _TV1, ...)
-     * so that structurally identical calls share the same cache key.
-     * Returns the normalized result containing cache key, normalized pattern,
-     * and the mapping from canonical variable names to original variable names.
-     */
-    public NormalizedGoal normalize(Term resolvedGoal) {
-        Map<String, String> origToCanonical = new HashMap<>();
-        Map<String, String> canonicalToOrig = new HashMap<>();
-        int[] counter = {0};
-        Term pattern = normalizeVars(resolvedGoal, origToCanonical, canonicalToOrig, counter);
-        return new NormalizedGoal(pattern, pattern.toString(), canonicalToOrig);
-    }
-
-    private Term normalizeVars(Term term, Map<String, String> origToCanonical,
-                               Map<String, String> canonicalToOrig, int[] counter) {
-        if (term instanceof Variable) {
-            String origName = ((Variable) term).getName();
-            String canonical = origToCanonical.get(origName);
-            if (canonical == null) {
-                canonical = "_TV" + (counter[0]++);
-                origToCanonical.put(origName, canonical);
-                canonicalToOrig.put(canonical, origName);
-            }
-            return new Variable(canonical);
-        } else if (term instanceof CompoundTerm) {
-            CompoundTerm compound = (CompoundTerm) term;
-            List<Term> newArgs = new ArrayList<>(compound.getArguments().size());
-            boolean changed = false;
-            for (Term arg : compound.getArguments()) {
-                Term newArg = normalizeVars(arg, origToCanonical, canonicalToOrig, counter);
-                newArgs.add(newArg);
-                if (newArg != arg) changed = true;
-            }
-            if (!changed) return term; // All ground — reuse
-            return new CompoundTerm(compound.getFunctor(), newArgs);
-        }
-        return term; // Atom, Number — already ground
-    }
-
-    /**
-     * Result of goal normalization for tabling.
-     */
-    public static class NormalizedGoal {
-        public final Term pattern;
-        public final String cacheKey;
-        /** Maps canonical variable name (_TV0) -> original variable name */
-        public final Map<String, String> canonicalToOrig;
-
-        public NormalizedGoal(Term pattern, String cacheKey, Map<String, String> canonicalToOrig) {
-            this.pattern = pattern;
-            this.cacheKey = cacheKey;
-            this.canonicalToOrig = canonicalToOrig;
-        }
-    }
 }
+// END_CHANGE: ISS-2025-0491
 // END_CHANGE: ISS-2025-0092

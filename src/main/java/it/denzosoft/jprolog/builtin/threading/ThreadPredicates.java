@@ -76,6 +76,9 @@ public class ThreadPredicates implements BuiltInWithContext {
     private static final ConcurrentHashMap<String, Integer> ALIASES = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Integer, Integer> THREAD_QUEUE = new ConcurrentHashMap<>();
     private static final ThreadLocal<Integer> SELF = new ThreadLocal<>();
+    // ISS-2025-0495: the ids of thread_create/2,3 WORKERS. A worker is never the `main` thread.
+    private static final java.util.Set<Integer> WORKER_IDS =
+        java.util.Collections.newSetFromMap(new ConcurrentHashMap<Integer, Boolean>());
 
     private static final long JOIN_TIMEOUT_MS = 60_000;
     private static final long MQ_GET_TIMEOUT_MS = 30_000;
@@ -156,6 +159,7 @@ public class ThreadPredicates implements BuiltInWithContext {
         int qid = QUEUE_COUNTER.incrementAndGet();
         MESSAGE_QUEUES.put(qid, new LinkedBlockingQueue<Term>());
         THREAD_QUEUE.put(id, qid);
+        WORKER_IDS.add(Integer.valueOf(id));                       // ISS-2025-0495
         if (alias != null) ALIASES.put(alias, id);
         if (detached) DETACHED.put(id, Boolean.TRUE);
 
@@ -205,6 +209,7 @@ public class ThreadPredicates implements BuiltInWithContext {
 
     private static void cleanup(int id) {
         THREADS.remove(id);
+        WORKER_IDS.remove(Integer.valueOf(id));                    // ISS-2025-0495
         THREAD_STATUS.remove(id);
         Integer q = THREAD_QUEUE.remove(id);
         if (q != null) MESSAGE_QUEUES.remove(q);
@@ -275,8 +280,18 @@ public class ThreadPredicates implements BuiltInWithContext {
         // thread (the main one, an IDE background solve) still reports the JVM thread id.
         // ISS-2025-0487: registering here too means the id thread_self/1 reports is always a
         // usable thread_send_message/2 target, on the main thread as well as in a worker.
-        long tid = selfId();
-        return unify(query.getArguments().get(0), new Number(tid), bindings, solutions);
+        // START_CHANGE: ISS-2025-0495 - 4.1 wave A: SWI-style identity. A thread that HAS an alias
+        // reports the alias, not the number: the top-level thread answers `main` (the alias
+        // selfId() claims for it), and a worker created with [alias(w1)] answers `w1`. A worker
+        // with no alias still answers its integer id. Every thread predicate accepts either form
+        // (threadId/2 resolves an alias, and so does the queue lookup), so the answer of
+        // thread_self/1 remains a usable argument to thread_join/2, thread_send_message/2 and the
+        // rest. W9 deviation 8 is closed.
+        int tid = selfId();
+        String alias = aliasOf(tid);
+        Term self = (alias != null) ? (Term) new Atom(alias) : (Term) new Number((long) tid);
+        return unify(query.getArguments().get(0), self, bindings, solutions);
+        // END_CHANGE: ISS-2025-0495
     }
 
     private boolean doThreadSleep(Term query, Map<String, Term> bindings,
@@ -368,7 +383,7 @@ public class ThreadPredicates implements BuiltInWithContext {
             // ISS-2025-0487: `main` names the queue of the thread that runs the top-level query.
             // Registering it on demand means a worker can post to it before the main thread has
             // ever called thread_get_message/1 itself.
-            if (MAIN_ALIAS.equals(alias) && !ALIASES.containsKey(MAIN_ALIAS)) selfId();
+            if (MAIN_ALIAS.equals(alias)) ensureLiveMainAlias();   // ISS-2025-0495
             Integer id = ALIASES.get(alias);                   // a thread alias
             if (id != null) {
                 Integer own = THREAD_QUEUE.get(id);
@@ -413,10 +428,38 @@ public class ThreadPredicates implements BuiltInWithContext {
         int qid = QUEUE_COUNTER.incrementAndGet();
         MESSAGE_QUEUES.put(Integer.valueOf(qid), new LinkedBlockingQueue<Term>());
         THREAD_QUEUE.put(Integer.valueOf(id), Integer.valueOf(qid));
-        ALIASES.putIfAbsent(MAIN_ALIAS, Integer.valueOf(id));
+        ensureLiveMainAlias();                                     // ISS-2025-0495
         return id;
     }
+
+    // START_CHANGE: ISS-2025-0495 - `main` must name a LIVE thread. It used to be claimed once, by
+    // whichever non-worker thread touched the queues first, and kept pointing at that thread for
+    // the life of the JVM — so once that thread died, `thread_send_message(main, T)` posted to a
+    // queue nobody would ever read, and the next non-worker thread silently got a queue of its own
+    // (a JUnit @Test(timeout=) body, an IDE background solve and a one-shot embedder thread all
+    // die like that). A non-worker thread now takes the alias over when the previous owner is gone.
+    /** Point {@code main} at this thread unless a LIVE thread already owns it (workers never do). */
+    private static void ensureLiveMainAlias() {
+        Integer owner = ALIASES.get(MAIN_ALIAS);
+        Thread ownerThread = (owner == null) ? null : THREADS.get(owner);
+        if (owner != null && ownerThread != null && ownerThread.isAlive()) return;
+        Integer self = SELF.get();
+        if (self == null) { selfId(); return; }                    // registers, and calls back here
+        if (WORKER_IDS.contains(self)) return;                     // a worker is never `main`
+        ALIASES.put(MAIN_ALIAS, self);
+    }
+    // END_CHANGE: ISS-2025-0495
     // END_CHANGE: ISS-2025-0487
+
+    // START_CHANGE: ISS-2025-0495 - the alias of a thread, for thread_self/1 (SWI reports it).
+    /** The alias registered for Prolog thread {@code id}, or null. */
+    private static String aliasOf(int id) {
+        for (Map.Entry<String, Integer> e : ALIASES.entrySet()) {
+            if (e.getValue() != null && e.getValue().intValue() == id) return e.getKey();
+        }
+        return null;
+    }
+    // END_CHANGE: ISS-2025-0495
 
     /**
      * A copy that shares no {@code Variable} cell with the sender (ISS-2025-0479). On the v4 engine

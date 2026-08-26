@@ -28,7 +28,7 @@ import java.util.Map;
  * The v4 resolution machine: an iterative SLD engine over <b>variable cells</b> and <b>compiled
  * clause skeletons</b>.
  *
- * <p>Its drive loop has the shape of the v2 {@code MachineSolver} — that part of the old engine was
+ * <p>Its drive loop has the shape of the v2 engine's — that part of the old engine was
  * right — with the four structural changes of the v4 design:
  * <ol>
  *   <li><b>No binding store.</b> Bindings live in {@link Variable#ref}; {@link Bindings} only holds
@@ -195,7 +195,6 @@ public final class Machine {
         final int kind;
         final int trailMark;
         final long serialMark;
-        final int legacyMark;
         Goal cont;
         int cutBarrier;
         // CLAUSES
@@ -227,7 +226,8 @@ public final class Machine {
             this.kind = kind;
             this.trailMark = trailMark;
             this.serialMark = Variable.currentSerial();
-            this.legacyMark = it.denzosoft.jprolog.core.engine.Trail.mark();
+            // ISS-2025-0492: no second mark. The bridged built-ins' undo actions live on the same
+            // Bindings trail as the cell resets, so `trailMark` covers both.
         }
     }
 
@@ -312,7 +312,7 @@ public final class Machine {
         }
         CP cp = new CP(CP.GEN, B.mark());
         cp.gen = new GeneratorGen(this, generator, after);
-        if (tg != null) { cp.traceGoal = tg; cp.traceDepth = td; cp.traceDebug = (debugController != null); }
+        if (tg != null) { cp.traceGoal = tg; cp.traceDepth = td; cp.traceDebug = debugPortsActive(); }
         pushCP(cp);
         if (advance(cp)) return true;
         popCP();
@@ -361,6 +361,10 @@ public final class Machine {
             (top && engine.context() != null) ? engine.context().getResourceGuard() : null;
         if (top && engine.context() != null) engine.context().setResourceGuard(guard);
         // END_CHANGE: ISS-2025-0479
+        // START_CHANGE: ISS-2025-0492 - this machine takes the bridged built-ins' undo actions
+        // while it runs (b_setval/2, op/3, setarg/3, the CLP(FD) store). Saved and restored, so a
+        // nested machine hands the role back.
+        Machine prevUndoTarget = Undo.enter(this);
         try {
             drive(new Driver() {
                 @Override public boolean onSolution() { return sink.onSolution(snapshot(names, cells)); }
@@ -379,8 +383,18 @@ public final class Machine {
                 // is abandoned and the store is handed back to the threads waiting for it.
                 engine.tabling().endWorker();
             }
+            Undo.exit(prevUndoTarget);                             // ISS-2025-0492
+            // END_CHANGE: ISS-2025-0492
         }
     }
+
+    /**
+     * Push a backtrackable undo action for a BRIDGED built-in ({@code b_setval/2}, {@code op/3},
+     * {@code setarg/3}, the CLP(FD) store). It lands on the same trail as the cell resets, so
+     * {@code B.undo(cp.trailMark)} runs it at exactly the point the bindings are undone.
+     * See {@link Undo}. (ISS-2025-0492)
+     */
+    void pushUndo(Runnable undo) { B.pushUndo(undo); }
 
     /** Rebuild {@code t} so that all occurrences of a variable NAME share one cell. */
     public static Term normalise(Term t, Map<String, Variable> vars) {
@@ -727,15 +741,24 @@ public final class Machine {
         // context-module-first override rule of selectClauses intact.
         // START_CHANGE: ISS-2025-0466 - and neither may a definition the CALLING MODULE can see:
         // a module that defines its own partition/4 must not get the registry's.
-        if (engine.modules4().overridesBuiltin(ctxModule, f, n)) {
-            if (!callUser(c, c)) return backtrack(floor);
-            return true;
+        // START_CHANGE: ISS-2025-0493 - 4.1 wave A: the module test is asked ONLY when there is a
+        // registry entry to override. A plain user predicate (app/3 in nrev, loop/1, a fact table)
+        // is not registered, so "does something override the built-in?" has no meaning for it and
+        // the goal goes straight to its clauses — one HashMap probe instead of the two string
+        // concatenations and up to four probes overridesBuiltin costs. The registry probe is the
+        // same one LegacyBuiltinAdapter.run would do as its first statement.
+        if (engine.registry() != null && engine.registry().isBuiltIn(f, n)) {
+            if (engine.modules4().overridesBuiltin(ctxModule, f, n)) {
+                if (!callUser(c, c)) return backtrack(floor);
+                return true;
+            }
+            int rb = LegacyBuiltinAdapter.run(this, c, f, n);
+            if (rb == 1) return true;
+            if (rb == 0) return backtrack(floor);
         }
+        // END_CHANGE: ISS-2025-0493
         // END_CHANGE: ISS-2025-0466
         // END_CHANGE: ISS-2025-0454
-        int rb = LegacyBuiltinAdapter.run(this, c, f, n);
-        if (rb == 1) return true;
-        if (rb == 0) return backtrack(floor);
         if (!callUser(c, c)) return backtrack(floor);
         return true;
     }
@@ -801,7 +824,7 @@ public final class Machine {
                 return EXHAUSTED;
             }
         };
-        if (traceGoal != null) { cp.traceGoal = traceGoal; cp.traceDepth = traceDepth; cp.traceDebug = (debugController != null); }
+        if (traceGoal != null) { cp.traceGoal = traceGoal; cp.traceDepth = traceDepth; cp.traceDebug = debugPortsActive(); }
         pushCP(cp);
         if (advance(cp)) return true;
         popCP();
@@ -883,7 +906,7 @@ public final class Machine {
         portFrame.gen = EXHAUSTED_GEN;
         portFrame.traceGoal = goal;
         portFrame.traceDepth = d;
-        portFrame.traceDebug = (debugController != null);
+        portFrame.traceDebug = debugPortsActive();
         pushCP(portFrame);
 
         final Goal cont = goalStack;
@@ -944,7 +967,7 @@ public final class Machine {
         }, cont) : cont;
         CP cp = new CP(CP.GEN, B.mark());
         cp.gen = new Gen() { @Override public Goal next(CP self) { return body; } };
-        if (traced) { cp.traceGoal = goal; cp.traceDepth = depth; cp.traceDebug = (debugController != null); }
+        if (traced) { cp.traceGoal = goal; cp.traceDepth = depth; cp.traceDebug = debugPortsActive(); }
         pushCP(cp);
         advance(cp);
     }
@@ -1109,7 +1132,7 @@ public final class Machine {
                 return Unify.unify(value, Number.valueOf(i), B) ? after : FAILED;
             }
         };
-        if (traced) { cp.traceGoal = goal; cp.traceDepth = depth; cp.traceDebug = (debugController != null); }
+        if (traced) { cp.traceGoal = goal; cp.traceDepth = depth; cp.traceDebug = debugPortsActive(); }
         pushCP(cp);
         if (advance(cp)) return 1;
         popCP();
@@ -1156,7 +1179,7 @@ public final class Machine {
                 return after;
             }
         };
-        if (traced) { cp.traceGoal = goal; cp.traceDepth = depth; cp.traceDebug = (debugController != null); }
+        if (traced) { cp.traceGoal = goal; cp.traceDepth = depth; cp.traceDebug = debugPortsActive(); }
         pushCP(cp);
         advance(cp);
         return true;
@@ -1306,8 +1329,7 @@ public final class Machine {
                 continue;
             }
             if (top.kind != CP.CATCH || !top.active) continue;
-            B.undo(top.trailMark);
-            it.denzosoft.jprolog.core.engine.Trail.rollbackTo(top.legacyMark);
+            B.undo(top.trailMark);                             // ISS-2025-0492: one trail
             int m = B.mark();
             B.forceTrail++;
             boolean matched;
@@ -1423,7 +1445,7 @@ public final class Machine {
                 ((CompoundTerm) g0).getName(), ((CompoundTerm) g0).getArguments().size());
         }
         final boolean tracing = it.denzosoft.jprolog.builtin.debug.Trace.isTracingEnabled();
-        final boolean debugging = debugController != null;
+        final boolean debugging = debugPortsActive();
         final int tdepth = (tracing || debugging) ? enterPort() : 0;   // ISS-2025-0482
         final Term g = traceGoal;
         if (tracing) tracePort("Call", g, tdepth);
@@ -1697,7 +1719,7 @@ public final class Machine {
     private boolean callTabledClaimed(Term unifyGoal, Term lookup, Term g0) {
         final Tabling tb = engine.tabling();
         final boolean tracing = it.denzosoft.jprolog.builtin.debug.Trace.isTracingEnabled();
-        final boolean debugging = debugController != null;
+        final boolean debugging = debugPortsActive();
         final int tdepth = (tracing || debugging) ? enterPort() : 0;   // ISS-2025-0482
         if (tracing) tracePort("Call", unifyGoal, tdepth);
         if (debugging) debugPort(DebugEvent.Port.CALL, unifyGoal, tdepth);
@@ -1926,8 +1948,7 @@ public final class Machine {
     /** Try the next alternative of {@code cp}, undoing the trail first. */
     private boolean advance(CP cp) {
         while (true) {
-            B.undo(cp.trailMark);
-            it.denzosoft.jprolog.core.engine.Trail.rollbackTo(cp.legacyMark);
+            B.undo(cp.trailMark);                              // ISS-2025-0492: one trail
             Goal gs = cp.gen.next(cp);
             if (gs == EXHAUSTED) return false;
             if (gs != FAILED) {
@@ -1982,8 +2003,21 @@ public final class Machine {
     // ------------------------------------------------------------------ ports
 
     boolean debugTraceActive() {
-        return debugController != null || it.denzosoft.jprolog.builtin.debug.Trace.isTracingEnabled();
+        return debugPortsActive() || it.denzosoft.jprolog.builtin.debug.Trace.isTracingEnabled();
     }
+
+    // START_CHANGE: ISS-2025-0494 - 4.1 wave A: an ATTACHED controller is not necessarily a
+    // LISTENING one. A controller with no listener, no breakpoint, in CONTINUE mode, with tracing
+    // off and no Stop pending can observe nothing, so the machine emits no ports for it — the
+    // port sites cost one field read and one method call instead of a resolve + a notify.
+    /** The controller to report ports to, or null when nothing would observe them. */
+    private DebugController debugPortsTarget() {
+        DebugController d = debugController;
+        return (d != null && d.needsPorts()) ? d : null;
+    }
+
+    private boolean debugPortsActive() { return debugPortsTarget() != null; }
+    // END_CHANGE: ISS-2025-0494
 
     // START_CHANGE: ISS-2025-0482 - wave W8: the four-port DEPTH is the machine's own call-nesting
     // level, not `cps.size()`.
@@ -2013,14 +2047,15 @@ public final class Machine {
     // END_CHANGE: ISS-2025-0482
 
     private void debugPort(DebugEvent.Port port, Term goal, int depth) {
-        if (debugController == null) return;
+        DebugController dc = debugPortsTarget();               // ISS-2025-0494
+        if (dc == null) return;
         Term g = goal;
         // ISS-2025-0481: only snapshot when somebody will read the term later (see needsGoalSnapshot)
-        if (debugController.needsGoalSnapshot()) {
+        if (dc.needsGoalSnapshot()) {
             try { g = Unify.resolve(goal, guard); }
             catch (RuntimeException e) { ControlFlow.rethrowIfControl(e); g = goal; }
         }
-        debugController.notifyPort(port, g, new HashMap<String, Term>(), depth);
+        dc.notifyPort(port, g, new HashMap<String, Term>(), depth);
     }
 
     // START_CHANGE: ISS-2025-0482 - the indentation is CAPPED. The depth is a real call depth now,

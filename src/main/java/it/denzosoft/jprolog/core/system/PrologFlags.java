@@ -73,7 +73,7 @@ public class PrologFlags {
     // START_CHANGE: ISS-2025-0437 - ENG-06: trace/0 state is per engine too. Trace.tracingEnabled
     // was a process-global static, so `trace.` in one engine turned four-port tracing on for every
     // engine in the JVM (and notrace/0 in one turned it off for all). Same volatile fast path as
-    // occurs_check: tracing is off in essentially every run, and MachineSolver consults it on the
+    // occurs_check: tracing is off in essentially every run, and the machine consults it on the
     // hot path (debugTraceActive()).
     private static volatile boolean anyTracing = false;
     private boolean tracing = false;

@@ -42,21 +42,14 @@ import static org.junit.Assert.fail;
 public class EngineV4TablingTest {
 
     private Prolog prolog;
-    private boolean prevV4;
-    private boolean prevV2;
 
     @Before
     public void setUp() {
-        prevV4 = Prolog.isUsingV4Engine();
-        prevV2 = Prolog.isUsingV2Engine();
-        Prolog.setUseV4Engine(true);
         prolog = new Prolog();
     }
 
     @After
     public void tearDown() {
-        Prolog.setUseV4Engine(prevV4);
-        Prolog.setUseV2Engine(prevV2);
     }
 
     /** {@code edge/2} as a generator plus one of the three recursion shapes of the acceptance set. */
@@ -402,19 +395,15 @@ public class EngineV4TablingTest {
      * (b) a findall-based, non-tabled transitive closure evaluated in Prolog. Both the open variant
      * {@code path(I, Y)} and every bound variant {@code path(I, K)} are checked.
      *
-     * <p>Deliberately engine-independent: it runs the whole comparison on the <b>v4</b> engine and
-     * again on the <b>default v2</b> engine, so it is a regression oracle for both and would catch
-     * a v4 tabling change that silently diverges from the rest of the system.
+     * <p>ISS-2025-0491 (4.1 wave A): it used to run the whole comparison twice, once per engine.
+     * There is one engine now, so it runs once — the oracle itself (findall-based transitive
+     * closure vs the tabled predicate) is what makes it valuable, not the engine loop.
      */
     @Test(timeout = 240000)
     public void testOracle_RandomGraphReachabilityMatchesTransitiveClosure() {
-        for (boolean v4 : new boolean[]{true, false}) {
-            Prolog.setUseV4Engine(v4);
-            String engine = v4 ? "v4" : "v2";
-            for (long seed : new long[]{1L, 7L, 99L}) {
-                for (boolean cyclic : new boolean[]{false, true}) {
-                    checkGraph(engine, seed, cyclic, 15);
-                }
+        for (long seed : new long[]{1L, 7L, 99L}) {
+            for (boolean cyclic : new boolean[]{false, true}) {
+                checkGraph("v4", seed, cyclic, 15);
             }
         }
     }

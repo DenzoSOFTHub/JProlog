@@ -145,7 +145,7 @@ public final class ClpStore {
      * Restore the store to a snapshot taken before a constraint post: undo all domain changes after
      * {@code domainMark} and remove every constraint added after {@code constraintMark}, including
      * its watcher registrations — so a constraint posted in a failed/abandoned branch can never
-     * re-propagate. Used by the engine's backtracking (via the legacy {@code Trail}).
+     * re-propagate. Used by the engine's backtracking (via {@code core.engine.v4.Undo}).
      */
     public void rollbackTo(int domainMark, int constraintMark) {
         undo(domainMark);

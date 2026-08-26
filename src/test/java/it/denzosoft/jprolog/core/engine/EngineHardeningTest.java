@@ -1,6 +1,5 @@
-package it.denzosoft.jprolog.core.engine.v2;
+package it.denzosoft.jprolog.core.engine;
 
-import it.denzosoft.jprolog.core.engine.Prolog;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -340,12 +339,12 @@ public class EngineHardeningTest {
      *  exhausted choice points — each retaining its Alt closures — and 40 000 trail entries. */
     @Test
     public void testISS0429_DeterministicRecursionLeavesNoChoicePointsOrTrail() {
-        java.util.List<it.denzosoft.jprolog.core.engine.Rule> rules = new java.util.ArrayList<>();
         it.denzosoft.jprolog.core.engine.Prolog helper = new Prolog();
         helper.consult("loop(0) :- !.\nloop(N) :- N1 is N-1, loop(N1).\n");
-        rules.addAll(helper.getRules());
 
-        MachineSolver m = new MachineSolver(rules, helper.getBuiltInRegistry());
+        // START_CHANGE: ISS-2025-0491 - 4.1 wave A: re-pointed at the v4 Machine, the only engine.
+        it.denzosoft.jprolog.core.engine.v4.Machine m = new it.denzosoft.jprolog.core.engine.v4.Machine(
+            helper.getV4Engine(), new it.denzosoft.jprolog.core.engine.ResourceGuard(0));
         final int[] cpsAtSolution = {-1};
         final int[] trailAtSolution = {-1};
         final int[] solutions = {0};
@@ -361,6 +360,7 @@ public class EngineHardeningTest {
         assertEquals("loop(20000) must succeed", 1, solutions[0]);
         assertEquals("trust-me pop: no exhausted choice point may survive", 0, cpsAtSolution[0]);
         assertEquals("conditional trailing: nothing to undo, nothing trailed", 0, trailAtSolution[0]);
+        // END_CHANGE: ISS-2025-0491
     }
 
     /** 3 000 000 deterministic inferences must complete (they used to OOM at 256 MB and be O(N)

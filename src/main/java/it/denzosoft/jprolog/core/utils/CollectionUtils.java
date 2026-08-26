@@ -206,7 +206,7 @@ public final class CollectionUtils {
     // must come out as fresh variables, never as aliases of the caller's template variables).
     // Variable.copy() preserves the name and binding maps are name-keyed, so a plain copy aliases
     // the caller's variables; rename them apart with a per-instance unique prefix (mirrors the v2
-    // engine's native findall renaming in MachineSolver).
+    // engine's own native findall renaming).
     private static final java.util.concurrent.atomic.AtomicInteger RENAME_COUNTER =
             new java.util.concurrent.atomic.AtomicInteger();
 
@@ -298,7 +298,7 @@ public final class CollectionUtils {
 
     // START_CHANGE: ISS-2025-0416 - ISO 8.10.1.3(c): findall/3's Instances argument must be a
     // list or a partial list; anything else raises type_error(list, Instances). Shared by the
-    // legacy collector above and the v2 engine's native findall (MachineSolver).
+    // legacy collector above and the engine's native findall.
     public static void checkInstancesArgument(Term instances, String context) {
         Term tail = instances;
         java.util.IdentityHashMap<Term, Boolean> seen = new java.util.IdentityHashMap<>();

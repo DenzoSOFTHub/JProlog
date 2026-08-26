@@ -37,30 +37,22 @@ false.
 
 # Appendix B — Engine configuration and embedding
 
-**Engine selection (system properties).** The clean-room implementations are the defaults — since
-version 4.0.0 that includes the **v4 resolution engine**. An older implementation of each subsystem
-can be selected with a property set before the engine starts:
+**Subsystem selection (system properties).** The clean-room implementations are the defaults.
+There is **one resolution engine** (`core.engine.v4`, since 4.0.0); the parser, the CLP(FD) solver
+and the DCG translator each keep an older implementation that a property set before the engine
+starts can select:
 
 | Property | Selects |
 |---|---|
-| `-Djprolog.engine=v2` | the 3.x iterative `MachineSolver` instead of the v4 core (kept for one release) |
 | `-Djprolog.parser=legacy` | the recursive-descent parser instead of the operator-precedence parser |
 | `-Djprolog.clpfd=legacy` | the first CLP(FD) implementation (read once, when the engine is created) |
 | `-Djprolog.dcg=legacy` | the first DCG translator |
 
-Only those literal values select a fallback — `-Djprolog.engine=anythingelse` is still v4. (The
-recursive engine that `-Djprolog.engine=legacy` used to select was **deleted in 4.0.0**; the
-property value no longer means anything.) The same switches are available at runtime as
-`Prolog.setUseV4Engine(boolean)` — `setUseV2Engine(boolean)` is its inverse — and
-`Prolog.setUseV2Parser/Dcg(boolean)`; the CLP(FD) choice must be made before constructing the engine
-(or upgraded with `prolog.enableV2Clpfd()`).
-
-Behaviour that differs on the v2 fallback engine: rational trees (`X = f(X)`) succeed on v4 and hang
-or raise `representation_error(cyclic_term)` on v2; `setup_call_cleanup/3` runs `Cleanup` after the
-last solution on v4 and after the first on v2; `append(X, Y, Z)` fully open enumerates on v4 and
-gives one answer on v2; tabling is correct only on v4; and `memberchk/2`, `partition/4`,
-`frozen/2`, `unifiable/3`, `current_table/2`, `current_module/1`, `library(yall)` lambdas and
-module-qualified built-in calls (`lists:append/3`) exist only on v4.
+Only the literal value `legacy` selects a fallback. `-Djprolog.engine` no longer selects anything:
+the recursive engine it could name as `legacy` was deleted in 4.0.0 and the iterative 3.x machine
+it could name as `v2` in **4.1.0**, so any value logs a warning and runs the v4 core. The parser and
+DCG switches are also available at runtime as `Prolog.setUseV2Parser/Dcg(boolean)`; the CLP(FD)
+choice must be made before constructing the engine (or upgraded with `prolog.enableV2Clpfd()`).
 
 **Java API summary** (`it.denzosoft.jprolog.core.engine.Prolog`):
 

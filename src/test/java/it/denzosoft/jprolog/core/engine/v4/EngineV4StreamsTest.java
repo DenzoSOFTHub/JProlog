@@ -33,11 +33,9 @@ public class EngineV4StreamsTest {
 
     private Prolog prolog;
     private File tmp;
-    private boolean prevV4;
 
     @Before
     public void setUp() throws Exception {
-        prevV4 = Prolog.isUsingV4Engine();
         prolog = new Prolog();
         tmp = File.createTempFile("v4streams", ".txt");
         tmp.deleteOnExit();
@@ -46,7 +44,6 @@ public class EngineV4StreamsTest {
 
     @After
     public void tearDown() {
-        Prolog.setUseV4Engine(prevV4);
         if (tmp != null) tmp.delete();
     }
 
@@ -361,13 +358,12 @@ public class EngineV4StreamsTest {
     }
 
     // ==================================================================
-    // the same stream layer under the v4 engine
+    // the same stream layer on a second engine instance
     // ==================================================================
 
     @Test
     public void testISS0472_TheStreamLayerBehavesIdenticallyOnV4() {
-        Prolog.setUseV4Engine(true);
-        Prolog v4 = new Prolog();
+        Prolog v4 = new Prolog();                        // ISS-2025-0491: one engine
         List<Map<String, Term>> r = v4.solve("open('" + path() + "', read, S), get_char(S, C1), "
             + "seek(S, 0, bof, _), get_char(S, C2), line_count(S, L), close(S)");
         assertFalse(r.isEmpty());

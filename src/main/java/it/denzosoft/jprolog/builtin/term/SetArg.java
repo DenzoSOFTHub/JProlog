@@ -2,7 +2,6 @@
 package it.denzosoft.jprolog.builtin.term;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.engine.Trail;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
@@ -16,7 +15,7 @@ import java.util.Map;
  * setarg(+Index, +Term, +NewArg)
  *
  * Destructively replaces the Index-th argument (1-based) of compound Term with NewArg.
- * Replacement is recorded on the Trail and undone on backtracking.
+ * Replacement is recorded on the machine's trail (ISS-2025-0492) and undone on backtracking.
  */
 public class SetArg implements BuiltIn {
 
@@ -40,7 +39,7 @@ public class SetArg implements BuiltIn {
         try {
             final Term old = c.setArgument(idx, newT);
             // Record undo: restore old arg on backtrack
-            Trail.record(() -> c.setArgument(idx, old));
+            it.denzosoft.jprolog.core.engine.v4.Undo.record(() -> c.setArgument(idx, old));
             solutions.add(new HashMap<>(bindings));
             return true;
         } catch (IndexOutOfBoundsException e) {

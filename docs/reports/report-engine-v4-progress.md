@@ -1,6 +1,6 @@
 # Engine v4 — implementation progress and handoff
 
-**Date**: 2026-08-26 · **Version**: 4.0.0 · **Design**:
+**Date**: 2026-08-26 · **Version**: 4.1.0 · **Design**:
 `docs/reports/report-engine-v4-design-2026-08-25.md` (part B) ·
 **Background**: `docs/reports/report-engine-deep-analysis-2026-08-24.md`
 
@@ -8,17 +8,17 @@
 meta-calls), W4 (coroutining), W5 (tabling), W6 (modules & prelude), W7 (engine state: streams,
 operators, writer), W8 (default switch, threads, debugger) and **W9 (retirement)** are implemented.
 **v4 is the DEFAULT engine since v4.0.0 and the recursive `QuerySolver` is deleted.**
-Section 15 is the W9 record and the 4.1 outlook; section 14 is W8; section 13 is W7; section 12
-is W6; section 11 is W5; section 10 is W4; section 9 is W3; sections 1–8 describe W1/W2 and are
-still accurate except where sections 9 to 15 say otherwise.
+**Section 16 is the 4.1 wave A record** (the v2 machine is deleted) and the starting point for
+wave B; section 15 is W9; section 14 is W8; section 13 is W7; section 12 is W6; section 11 is W5;
+section 10 is W4; section 9 is W3; sections 1–8 describe W1/W2 and are still accurate except where
+sections 9 to 16 say otherwise.
 
-The v2 `MachineSolver` stays selectable for **one release** (`-Djprolog.engine=v2`), as design
-decision 1 (B.17) requires; it is deleted in 4.1. That is why the per-engine state introduced in W7
-(streams, operators, spy points, profiler counters, the writer) is shared by both engines rather
-than being v4-only. `-Djprolog.engine=legacy` is **not a value any more**.
+**Since 4.1.0 there is ONE engine.** The v2 `MachineSolver` stayed selectable for one release
+(`-Djprolog.engine=v2`), as design decision 1 (B.17) required; wave A of 4.1 deletes it, with the
+`engine-v2` profile, the engine-selection API and `core.engine.Trail`. Anywhere below that says
+"on both engines" or "the v2 fallback", read it as history.
 
-**Suite**: 1212/1212 JUnit tests on the **default engine (v4)** and under `-Pengine-v2`;
-20/20 example programs on both engines.
+**Suite**: 1196/1196 JUnit tests, one engine, one leg; 20/20 example programs.
 
 **Post-review**: an independent verification of W1/W2 found two v4-only regressions, both fixed
 before W3 — `findall/3` was not opaque (**ISS-2025-0448**) and retract/assert loops were superlinear
@@ -1993,3 +1993,288 @@ Recommended 4.1 work, in order:
    the bucket cap against a realistic large program since W2.
 5. **A concurrent tabling store**, if anyone needs parallel production: the claim of ISS-2025-0488
    is correct but serial. The honest design is a per-variant lock plus a concurrent answer trie.
+
+---
+
+## 16. Release 4.1, wave A — one engine (v4.1.0, ISS-2025-0491..0495)
+
+**Status**: done. Suite **1196/1196** on the one engine; **20/20 example programs** with every
+per-program "Successful queries" count unchanged
+(2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 0, 0).
+`grep -rn "MachineSolver\|core.engine.v2\|Trail.record\|isUsingV2Engine\|setUseV4Engine" src/main`
+returns **nothing** (the only hits in the tree are in `EngineV41RetirementTest`, which asserts those
+names are gone, and one explanatory comment in `EngineV4Test`).
+`src/main`: **74 724 -> 71 899 lines** (-2 825), **352 -> 347 files** (6 deleted, 1 added).
+
+### 16.1 What changed
+
+| ISS | Change | Files |
+|---|---|---|
+| 0491 | the v2 `MachineSolver` is DELETED, with the `engine-v2` profile, the second CI leg, the four static engine flags, every engine-aware branch in `src/main` and `src/test`, the legacy attribute-unify hook, the cross-query attributed-variable session, the legacy `freeze`/`when`/`dif`/attributed-variable built-ins and the v2 half of `TableStore` | `core/engine/v2/MachineSolver.java` (deleted), `builtin/control/{Freeze,When,Dif}.java` (deleted), `builtin/term/AttributedVariables.java` (deleted), `core/engine/{Prolog,EngineContext,TableStore,BuiltInFactory,BuiltInRegistry,ResourceGuard,NeedsSolverContextException}.java`, `core/terms/{Variable,CompoundTerm}.java`, `core/engine/v4/{Engine,Machine,EngineState,Tabling,ClpfdNative}.java`, `core/system/PrologFlags.java`, `core/utils/CollectionUtils.java`, `builtin/{control/Repeat,control/ControlConstruct,database/Retract}.java`, `pom.xml`, 12 test files |
+| 0492 | `core.engine.Trail` (the second, process-wide undo stack) is replaced by `core.engine.v4.Undo` over the machine's own `Bindings` trail; `CP.legacyMark` is gone | `core/engine/v4/Undo.java` (new), `core/engine/v4/Machine.java`, `core/engine/Trail.java` (deleted), `builtin/system/{Op,OperatorDefinition,GlobalVariables}.java`, `builtin/term/SetArg.java`, `builtin/clpfd/v2/ClpfdV2Bridge.java` |
+| 0493 | the module override test leaves the hot goal path: asked only when a registry entry exists, and memoised behind the `ModuleManager` stamp | `core/engine/v4/{Machine,Modules}.java` |
+| 0494 | `DebugController.needsPorts()` — an attached controller that can observe nothing gets no ports | `core/engine/DebugController.java`, `core/engine/v4/Machine.java` |
+| 0495 | `thread_self/1` reports the thread's alias (`main`, `w1`, …); the `main` alias follows a live thread | `builtin/threading/ThreadPredicates.java`, `docs/references/BUILTIN_PREDICATES_REFERENCE.md` |
+
+**Deleted** (6 files, 2 616 lines):
+
+| File | Lines | What it was |
+|---|---:|---|
+| `core/engine/v2/MachineSolver.java` | 1895 | the iterative SLD engine of 3.1.0–4.0.0 |
+| `builtin/control/When.java` | 226 | `when/2` in Java |
+| `builtin/term/AttributedVariables.java` | 179 | `put_attr/3`, `get_attr/3`, `del_attr/2`, `attvar/1` in Java |
+| `builtin/control/Dif.java` | 156 | `dif/2` in Java |
+| `builtin/control/Freeze.java` | 106 | `freeze/2` in Java |
+| `core/engine/Trail.java` | 54 | the process-per-thread undo stack for bridged built-ins |
+
+**Added** (1 file): `core/engine/v4/Undo.java` (64).
+
+**Deleted tests** (39 methods). Every one either tested the deleted class directly or asserted the
+behaviour of the deleted selection API:
+
+| Test | Methods | Why it goes, and what covers the behaviour now |
+|---|---:|---|
+| `core/engine/v2/MachineSolverTest` | 30 | unit tests of `MachineSolver` itself (backtracking, cut, lazy enumeration, deep recursion), constructed directly. The same properties are pinned for the surviving engine by `EngineV4Test` (34) and `EngineHardeningTest` (54). |
+| `core/engine/v2/V2EngineIntegrationTest` | 7 | end-to-end programs driven through `MachineSolver` with the engine flag forced. The same programs run in `EngineV4Test` / `BugFixVerificationTest` on the one engine. |
+| `EngineV4Test.testISS0444_EngineSelectionFlag` | 1 | asserted `setUseV4Engine(false)` selects another engine. There is no other engine; `EngineV41RetirementTest.testISS0491_TheEngineSelectionApiIsGone` asserts the API is gone. |
+| `EngineV4RetirementTest.testISS0484_OnlyV2SelectsAFallbackEngine` | 1 | same, for the `v2` literal. Replaced by the same new test. |
+
+`core/engine/v2/EngineHardeningTest` (54 methods) was **moved** to `core/engine/EngineHardeningTest`
+— it is engine-neutral apart from one method that built a `MachineSolver` to read
+`choicePointCount()`/`trailSize()`, now built as a v4 `Machine`.
+
+**Added tests**: `core/engine/v4/EngineV41RetirementTest` (21).
+
+### 16.2 How it works, in one page
+
+1. **One undo trail.** `Bindings` always accepted undo actions next to its cell resets
+   (`pushUndo`). What was missing was a way for a *bridged* built-in — which sees a goal, a map and
+   a solution list, and no machine — to reach it. `core.engine.v4.Undo` is that doorway: the
+   machine installs itself as the thread's undo target for the duration of `solve` (saved and
+   restored, so a nested machine hands the role back), and `Undo.record(Runnable)` pushes onto its
+   trail. `B.undo(cp.trailMark)` then runs the action at exactly the point the cells are reset, and
+   the trail's own economy applies — an action nothing can backtrack over is dropped by
+   `clearIfUnreachable`, the same condition under which a binding is not trailed at all. An action
+   recorded with **no** machine on the thread (a `:- op(...)` directive at consult time, a
+   directly-instantiated built-in, a unit test) is a no-op: nothing can undo it, exactly as before.
+2. **The module test is a decision about built-ins, so it is asked only about built-ins.**
+   `stepN`'s tail used to be: `overridesBuiltin(ctx, f, n)` -> `LegacyBuiltinAdapter.run` ->
+   `callUser`. The first of those cost two string concatenations and up to four map probes for
+   *every* goal, including `app/3` in nrev, which has no registry entry to override. It is now
+   inside `if (registry.isBuiltIn(f, n))` — the probe the adapter does as its own first statement —
+   so a plain user predicate pays one `HashMap` miss and goes straight to its clauses. The answer
+   is also memoised: a 512-slot direct-mapped cache of **immutable** `Dispatch` entries carrying the
+   `ModuleManager` stamp. A stamp bump (a module defined, an import added, a clause consulted into
+   a module) makes every stale entry miss; no clearing, no lock, and a racing worker thread can at
+   worst recompute an entry. A library `load()` cannot flip an entry either — `autoload` loads the
+   module and only then reads its clauses.
+3. **An attached controller is not necessarily a listening one.** `DebugController.notifyPort`
+   maintains a call stack, decides whether to pause, and only then builds an event. With no
+   listener, no breakpoint, `CONTINUE` mode and no Stop pending, all three are no-ops, so
+   `needsPorts()` is false and the machine emits nothing — `debugPortsTarget()` replaces every
+   `debugController != null` port decision. `traceEnabled` deliberately does not count: every use
+   of it inside the controller is guarded by `listener != null`, and it defaults to `true`.
+4. **`thread_self/1` answers an identity, not an index.** A thread with an alias reports it; the
+   top-level thread's alias is `main`. The alias is now kept pointing at a **live** thread: it used
+   to be claimed once for the JVM's lifetime by the first non-worker thread to touch the queues, so
+   a JUnit `@Test(timeout=)` body, an IDE background solve or any one-shot embedder thread could
+   take it and then die, leaving `thread_send_message(main, T)` posting into a queue nobody could
+   read. `ensureLiveMainAlias()` hands the alias to the current thread when the owner is gone, and a
+   `WORKER_IDS` set makes sure a `thread_create/2,3` worker never becomes `main`.
+
+### 16.3 New invariants (add to section 3)
+
+52. **There is ONE trail.** A backtrackable side effect outside the binding cells is recorded with
+    `core.engine.v4.Undo.record`, never with a private stack and never with a second choice-point
+    mark. If a construct needs an undo that must survive `clearIfUnreachable`, it needs a choice
+    point or a `forceTrail` extent — the same rule as a binding (invariant 1).
+53. **A thread-current facade must be saved and restored, not set.** `Undo.enter/exit` mirrors
+    `EngineState.setCurrent` and `PrologFlags`: a nested machine (or an engine invoked from inside
+    another engine's built-in) hands the role back in a `finally`.
+54. **The module override test is a question about a registry entry.** Never ask
+    `Modules.overridesBuiltin` for a predicate that `BuiltInRegistry.isBuiltIn` does not claim —
+    the answer cannot change the dispatch, and it is pure cost on the hottest path in the engine.
+55. **The dispatch memo is stamped, never cleared.** Any new module-visibility state that could
+    change `overridesBuiltin`'s answer must bump `ModuleManager`'s stamp (`touch()`), or the memo
+    will keep answering the old question. Entries are immutable so the cache can race harmlessly;
+    do not make `Dispatch` mutable.
+56. **A port site asks `debugPortsActive()`, not `debugController != null`.** An attached
+    controller that can observe nothing must cost nothing — and, symmetrically, a controller that
+    can observe something must get every port, including the ones the inline fast paths emit
+    (limit L-13, invariant from W8: never skip the work, skip only the *reporting* when there is
+    provably no observer).
+
+### 16.4 Deviations from the 4.1-A brief, and why
+
+1. **`core.engine.TableStore` is not deleted, it is reduced.** The brief listed it as v2 tabling.
+   Its answer cache, in-progress set, partial cache, goal normaliser and one-thread claim were
+   indeed the v2 driver's and are gone (232 -> 54 lines), but the class also holds the `:- table`
+   **declarations**, which the v4 machine reads (`Machine.isTabled` via `Engine.tables()`) and
+   which three registered built-ins write (`table/1`, `abolish_table/1`, `abolish_all_tables/0`,
+   through `Prolog.getTableStore()`). Moving the declaration set into `core.engine.v4.Tabling`
+   would rename a public API for no behavioural gain and is not worth doing in a wave whose point
+   is deletion; it is a candidate for wave B, when the three built-ins migrate anyway.
+2. **`util.TermCopier` and `util.TermUtils` are not deleted** — re-verified, not assumed:
+   `TermCopier` has 11 call sites (`core.engine.Rule`, `Prolog.compile`, `builtin.database.Clause`,
+   `builtin.exception.Throw`, `builtin.term.TermConstruction`, …) and `TermUtils` is used in 12
+   files. Neither is reachable from the machine (it has `Clause.instantiate` and `Unify.copy`).
+   They go when the built-ins that use them migrate — wave B, as W9 deviation 3 already said.
+3. **`-Djprolog.engine` warns, it does not throw.** The brief allowed either. A build script that
+   still passes `-Djprolog.engine=v2` in CI should be told, loudly, that it is not getting what it
+   asked for — but failing every `new Prolog()` in a deployed embedder because of a stale JVM flag
+   is a worse trade. The warning is logged once, from a static initialiser.
+4. **Seven predicates lost their ISO `permission_error` on assert/retract.** Deleting the legacy
+   `Freeze`/`When`/`Dif`/`AttributedVariables` classes means deleting their `BuiltInFactory`
+   registrations, and `BuiltInRegistry.isBuiltIn` needs a registration *and* an arity entry — so
+   `assertz(freeze(X, Y))`, and the same for `when/2`, `dif/2`, `put_attr/3`, `get_attr/3`,
+   `del_attr/2` and `attvar/1`, is now allowed instead of raising
+   `permission_error(modify, static_procedure, …)`. Calling them still runs the native or the
+   prelude clause. This is consistent with the documented library rule (a user definition of a
+   library predicate overrides it — that is how `partition/4` works), and the alternative — teaching
+   `Machine.checkModifiable` about the native table — would newly protect ~63 indicators that were
+   never protected before, a larger behaviour change than the one it prevents. Recorded here rather
+   than done silently.
+5. **The measurement is a median of interleaved JVMs, not a single A/B pair.** The VM is a
+   VirtualBox guest on a shared folder and its noise floor is brutal: the *same* build measured
+   324 ms and 844 ms for `nrev30x2000` in two JVMs five seconds apart (2.6x). Cross-run comparison
+   of single numbers is meaningless here, so every figure in 16.5 is the median of alternating
+   A/B/A/B JVM runs in one shell session, each run reporting the best of 6 warm iterations.
+6. **`DebugController.needsPorts()` excludes `traceEnabled`**, although the brief's phrasing
+   ("no listener/breakpoints") could be read either way. The field defaults to `true` and every use
+   of it in the class is `traceEnabled && listener != null`, so including it would make
+   `needsPorts()` true for every controller ever constructed and the optimisation would be dead.
+7. **`thread_self/1` needed a second fix to be shippable.** Reporting the alias exposed a latent
+   bug in the alias itself (item 4 of 16.2): with `main` pinned to a dead thread, two test classes
+   that each ran on their own JUnit timeout thread could not exchange a message. The liveness
+   takeover is part of ISS-2025-0495 rather than a separate issue because the feature is not
+   correct without it.
+
+### 16.5 A/B evidence
+
+Same shell session, alternating JVMs, `java -Xss4m -Xmx2g`, harness
+`scratchpad/41a/probe/AB41.java` (best of 6 warm iterations per figure, after a warm-up round).
+**A** = the working tree after the deletions of ISS-2025-0491/0492, before the hot-path work;
+**B** = the same tree with ISS-2025-0493 and ISS-2025-0494.
+
+| benchmark | A (median / min) | B (median / min) | change (median) |
+|---|---|---|---|
+| `nrev30x2000` (496 LI per iteration) | 404 / 344 ms | 362 / 316 ms | **-10 %** |
+| `lk`: 200 000 x `f(19999,_)` (indexed, 20 000 facts) | 194 / 162 ms | 181 / 161 ms | **-7 %** |
+| `lk0`: 200 000 x `f(0,_)` (first clause) | 192 / 146 ms | 173 / 159 ms | -10 % |
+| `loop(1000000)` (deterministic recursion) | 543 / 456 ms | 496 / 451 ms | **-9 %** |
+
+13 A runs and 13 B runs; the medians are over runs, the minima over all iterations of all runs.
+
+**And against the release this wave started from** (same method, 8 interleaved pairs, run later in
+the session on a busier machine — hence the higher absolute numbers; what matters is that the wave
+costs nothing anywhere): **A** = the v4.0.0 build, **B** = the finished 4.1.0 tree.
+
+| benchmark | v4.0.0 (median / min) | 4.1.0 (median / min) | change (median) |
+|---|---|---|---|
+| `nrev30x2000` | 835 / 658 ms | 790 / 752 ms | -5.3 % |
+| `lk` 200 000 x `f(19999,_)` | 366 / 317 ms | 356 / 335 ms | -2.7 % |
+| `lk0` 200 000 x `f(0,_)` | 335 / 301 ms | 314 / 283 ms | -6.3 % |
+| `loop(1000000)` | 1054 / 834 ms | 927 / 862 ms | -12.1 % |
+
+**The probe that justified the work** (same method, a build with the `overridesBuiltin` call
+short-circuited to `false` — semantically wrong, but it isolates the cost): `nrev30x2000` 386 ms ->
+323 ms, i.e. the module test was **~16 %** of nrev and ~5 % of the fact-lookup loops. The reorder
+(ask it only for a registered name) removes it entirely for a plain user predicate; the memo
+removes most of what remains for the library predicates that DO have a registry entry
+(`member/2`, `append/3`, `maplist/N`, `include/3`, …).
+
+**`DebugController.needsPorts()`** needs its own harness (`scratchpad/41a/probe/Idle.java`),
+because none of the benchmarks above attaches a controller: it times the same goal with no
+controller, then with an **idle** one (no listener, no breakpoint, `CONTINUE`), then with none
+again, and reports the ratio.
+
+| goal | attached-idle cost, A | attached-idle cost, B |
+|---|---|---|
+| `loop(1000000)` (one port site per inference) | **2.27x / 1.77x / 2.08x** | **1.13x / 1.12x / 0.96x** |
+| `nrev30x1000` | 1.31x / 1.18x / 0.94x | 1.18x / 1.13x / 1.12x |
+
+The deterministic loop is the honest measurement — every inference hits a port site, so the
+overhead is not diluted by unification work: an attached-but-idle controller went from roughly
+**doubling** the run to costing nothing measurable. (On `nrev` the effect is inside the noise, which
+is why the loop is the one to quote.) `EngineV41RetirementTest.testISS0494_AnIdleControllerDoesNotSeeThePorts`
+pins the structural guarantee: the call stack of such a controller stays empty over a 200-step
+recursion, which is the observable form of "no port was emitted".
+
+**Suite and examples**: 1196/1196; 20/20 example programs, per-program counts unchanged.
+
+### 16.6 Where 4.1 wave B starts — the L-08 migration
+
+Wave B is item 2 of the 4.1 list in section 15.6: **move the eager registry built-ins to the v4
+native SPI, family by family, each with a benchmark**. Everything below is measured on the 4.1.0
+tree (`scratchpad/41a/probe/Fam.java` enumerates it from a live `Prolog`).
+
+**The shape of the problem.** 410 names are registered in `BuiltInRegistry`; 63 of them (66
+indicators) are shadowed by a v4 native and are never dispatched through the adapter. Of the
+remaining 361, about 44 are control constructs or inline built-ins the machine handles itself and
+never dispatches either (`!`, `,/2`, `;/2`, `->/2`, `\+/1`, `call/N`, `catch/3`, `throw/1`, `^/2`,
+`=/2`, `is/2`, the six arithmetic comparisons, the six term comparisons, `\=/2`, the nine type
+checks, `findall/3`, `assert*`/`retract/1`, `once/1`, `ignore/1`, `forall/2`, `between/3`,
+`repeat/0`). **~317 predicates really reach `LegacyBuiltinAdapter`.**
+
+**The families, by count** (bridged names only; the count is names, not indicators):
+
+| Family (`builtin.*`) | Bridged | Hot-path relevance | Notes for the migration |
+|---|---:|---|---|
+| `io` | 40 | **high** — `format/2,3`, `write/1,2`, `nl/0,1`, `read_term/2,3` are in every program's inner loop when it prints | the biggest single win; `format/2,3` alone is worth a wave step. Output must keep going through `StreamManager.out()` (invariant 11) and a stream argument is a term, not a string. |
+| `jdbc` | 28 | none | pure I/O against a database; migrate last, or never |
+| `type` | 16 | **low** — the nine hot type checks are already inline; what is left is `code_type/2`, `is_list/1`, `must_be/2`, `partial_list/1`, `proper_list/1`, `simple/1`, `ground/1` | cheap, deterministic, mechanical |
+| `filesystem` | 15 | none | host I/O |
+| `threading` | 15 | low | already runs goals on `Workers`; the adapter hop is not the cost |
+| `crypto` | 14 | none | |
+| `ffi` | 14 | none | |
+| `list` | 14 | **high** — `maplist/N`, `foldl/N`, `include/3`, `exclude/3` are prelude clauses already, but `keysort/2`, `permutation/2`, `flatten/2`, `subtract/3`, `intersection/3`, `union/3`, `delete/3`, `pairs_*` are bridged and eager | second-highest value; several are natural lazy generators |
+| `graph` | 13 | none | |
+| `network`, `persistence` | 13 + 13 | none | |
+| `os` | 12 | none | |
+| `term` | 12 | **medium** — `functor/3`, `arg/3`, `=../2`, `term_to_atom/2`, `atom_to_term/3`; `arg/3` in a loop is common | `arg/3` should be a generator (it is nondeterministic with an unbound N) |
+| `debug` | 11 | none | |
+| `http` | 11 | none | |
+| `conversion` | 10 | **medium** — `atom_codes/2`, `atom_chars/2`, `number_codes/2`, `atom_number/2` are hot in parsing-shaped programs | deterministic, easy |
+| `datetime` | 10 | none | |
+| `system` | 10 | low, but two are special: `op/3` and `b_setval/2` are the last `Undo.record` users outside CLP(FD) | migrating them lets `Undo` become an internal detail again |
+| `arithmetic` | 9 | low — the comparisons are inline; `succ/2`, `plus/3`, `between/3` (native) are what is left | |
+| `database` | 9 | **medium** — `listing/1`, `current_predicate/1`, `dynamic/1`, `abolish/1`, `retractall/1` (assert/retract are already machine-native) | `current_predicate/1` is a generator |
+| `string` | 8 | **high** on string-heavy programs — `split_string/4`, `atomic_list_concat/2,3`, `string_concat/3`, `string_chars/2` | `atomic_list_concat/3` in split mode is a generator |
+| `json`, `logging`, `regex`, `meta`, `dcg`, `character`, `csv`, `clpfd`, `xml`, `atom`, `exception` | 6,6,6,6,5,4,4,3,3,2,2 | mixed | `meta`'s five are machine-native already except `table/1`; `atom_concat/3` (in `atom`) is a **generator** in the split mode and is hot |
+
+**The order the evidence supports**: (1) `format/2,3` and the `io` write family; (2) the `string`
+and `conversion` families (they are what users hit on long inputs, and they are the ones LIM-037
+names); (3) `list` — the eager ones that should be lazy (`keysort`, `permutation`, `subtract`,
+`intersection`, `union`); (4) `term` (`arg/3`, `functor/3`, `=../2`); (5) `database`
+(`current_predicate/1`, `listing/1`); (6) `system` (`op/3`, `b_setval/2`, which retires the last
+external `Undo` users); the extended libraries (jdbc, http, network, crypto, graph, os, datetime,
+persistence, ffi, filesystem — 148 names between them) have no hot-path claim and can stay bridged
+indefinitely.
+
+**How to measure each step** (the method used in 16.5, which is the only one that survives this
+VM's noise):
+
+1. Write the microbenchmark FIRST, as a `Prolog` program driven from a Java `main` that runs the
+   target predicate in a tight recursive loop 100 000+ times, plus one realistic composite
+   (e.g. `format/3` into an atom inside a `numlist` fold). Add it to
+   `scratchpad/41a/probe/AB41.java` or a sibling.
+2. Snapshot `target/classes` to `scratchpad/<wave>/classes-A` **before** the change.
+3. After the change, run **alternating** JVMs `A, B, A, B, …` at least 5 pairs, in one shell
+   session, each JVM reporting the **best of 6** warm iterations (`java -Xss4m -Xmx2g -cp
+   <classes>:<probe> AB41 6`).
+4. Report the **median over runs** and the **min over all iterations**, both sides. A change under
+   ~5 % of the median is not distinguishable from the noise on this machine and should be reported
+   as "no measurable change", not as a win.
+5. Guard the behaviour with a test in `EngineV4*Test` **before** the migration, so the native and
+   the registry version are pinned to the same answers — including the error terms, which is where
+   an eager built-in and a native most often disagree.
+
+**The two structural rules a migrated built-in must follow** (invariants 3, 12, 49): a generator
+that tries several alternatives inside one `next()` needs ONE mark/undo extent around the whole
+group, and it must announce its last alternative with `Machine.lastSolution()` or the choice point
+survives the trust-me pop.
+
+**What wave B also unblocks**: every migration that removes a `Map<String,Term>` removes a
+potential `Undo.record` caller and a `TermCopier`/`TermUtils` user; when `op/3`, `b_setval/2` and
+`setarg/3` are native, `core.engine.v4.Undo` can lose its public `record` entry point and become
+`Machine`-internal, and `util.TermCopier` / `util.TermUtils` can be deleted (W9 deviation 3).

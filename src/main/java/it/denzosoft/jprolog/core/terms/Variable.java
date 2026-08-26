@@ -112,49 +112,13 @@ public class Variable extends Term {
         if (attributes == null) return java.util.Collections.emptyMap();
         return java.util.Collections.unmodifiableMap(attributes);
     }
-    /**
-     * Callback interface for attributed variable unification hooks.
-     * Called when an attributed variable is unified with a non-variable term.
-     */
-    public interface AttributeUnifyHook {
-        /**
-         * Called when an attributed variable is unified with a value.
-         * @param variable the attributed variable being bound
-         * @param value the term it is being unified with
-         * @param substitution the current substitution map
-         * @return true if the hook goals succeeded, false to fail unification
-         */
-        boolean onAttributeUnify(Variable variable, Term value, Map<String, Term> substitution);
-    }
-
-    /**
-     * Hook installed by the engine context to intercept attributed variable unifications.
-     * Null when no solver is active (zero overhead).
-     */
-    private static final ThreadLocal<AttributeUnifyHook> attributeUnifyHook = new ThreadLocal<>();
-
-    /**
-     * Set the attribute unification hook for the current thread.
-     * @param hook the hook, or null to clear
-     */
-    public static void setAttributeUnifyHook(AttributeUnifyHook hook) {
-        // START_CHANGE: Round5 minor - null clears the ThreadLocal entry for proper cleanup
-        if (hook == null) {
-            attributeUnifyHook.remove();
-        } else {
-            attributeUnifyHook.set(hook);
-        }
-        // END_CHANGE: Round5 minor
-    }
-
-    /**
-     * Get the current attribute unification hook.
-     * @return the hook, or null if not set
-     */
-    public static AttributeUnifyHook getAttributeUnifyHook() {
-        return attributeUnifyHook.get();
-    }
-    // END_CHANGE: LIM-002
+    // START_CHANGE: ISS-2025-0491 - 4.1 wave A: the static AttributeUnifyHook is DELETED with
+    // the v2 engine. It was a process-per-thread ThreadLocal that let `Term.unify(Term, Map)` fire
+    // freeze/when/dif and the CLP(FD) domain check from inside a legacy built-in's own
+    // unification; the v4 machine has a real wake queue (core.engine.v4.Coroutining) driven by
+    // `Unify.AttrHandler` on its Bindings, and uninstalled this hook for the whole query. The
+    // attribute MAP below stays — put_attr/3 and the coroutining natives store on it.
+    // END_CHANGE: ISS-2025-0491
 
     // START_CHANGE: ISS-2025-0168 - Occurs check flag (default: false for performance)
     /**
@@ -269,15 +233,7 @@ public class Variable extends Term {
             // Bind the variable to the term
             substitution.put(var.getName(), derefTerm);
 
-            if (var.hasAttributes() && !(derefTerm instanceof Variable)) {
-                AttributeUnifyHook hook = attributeUnifyHook.get();
-                if (hook != null) {
-                    if (!hook.onAttributeUnify(var, derefTerm, substitution)) {
-                        substitution.remove(var.getName());
-                        return false;
-                    }
-                }
-            }
+            // ISS-2025-0491: no legacy attribute hook any more (see above)
             return true;
         }
 
@@ -295,17 +251,7 @@ public class Variable extends Term {
             // Bind the variable to the term
             substitution.put(var.getName(), derefThis);
 
-            // START_CHANGE: LIM-002 - Trigger attribute unification hooks
-            if (var.hasAttributes() && !(derefThis instanceof Variable)) {
-                AttributeUnifyHook hook = attributeUnifyHook.get();
-                if (hook != null) {
-                    if (!hook.onAttributeUnify(var, derefThis, substitution)) {
-                        substitution.remove(var.getName());
-                        return false;
-                    }
-                }
-            }
-            // END_CHANGE: LIM-002
+            // ISS-2025-0491: no legacy attribute hook any more (see above)
             return true;
         }
 

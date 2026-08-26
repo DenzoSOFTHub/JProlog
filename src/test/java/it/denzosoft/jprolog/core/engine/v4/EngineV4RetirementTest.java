@@ -28,9 +28,9 @@ import static org.junit.Assert.fail;
  * interface, the last name-keyed hop in the v4 engine is gone, and the built-ins wave W9 migrated
  * behave exactly as their registry versions did.
  *
- * <p>Deliberately <b>engine-neutral</b> except where a test names an engine: every assertion below
- * must hold on the default v4 engine AND under {@code -Pengine-v2}, which is the point — the v2
- * MachineSolver survives this wave and now runs over the same {@link EngineContext}.
+ * <p>(ISS-2025-0491, 4.1 wave A: these assertions were written to hold on the v4 engine AND on
+ * the v2 fallback, which was still selectable in 4.0.0. The fallback is deleted; every test here
+ * now runs on the one engine.)
  *
  * <p>Covers ISS-2025-0484 (delete the recursive engine), ISS-2025-0485 (reduce
  * {@code BuiltInWithContext} to the adapter), ISS-2025-0486 (the migrated built-ins and the
@@ -108,23 +108,10 @@ public class EngineV4RetirementTest {
         }
     }
 
-    /** {@code -Djprolog.engine=legacy} is not a value any more: it cannot turn v4 off. */
-    @Test
-    public void testISS0484_OnlyV2SelectsAFallbackEngine() {
-        boolean prevV4 = Prolog.isUsingV4Engine();
-        try {
-            Prolog.setUseV4Engine(true);
-            assertTrue(Prolog.isUsingV4Engine());
-            assertFalse("isUsingV2Engine is simply 'not v4' now", Prolog.isUsingV2Engine());
-            Prolog.setUseV2Engine(true);
-            assertFalse(Prolog.isUsingV4Engine());
-            assertTrue(Prolog.isUsingV2Engine());
-        } finally {
-            Prolog.setUseV4Engine(prevV4);
-        }
-    }
+    // ISS-2025-0491 (4.1 wave A): `testISS0484_OnlyV2SelectsAFallbackEngine` is DELETED with the
+    // fallback it described. See EngineV41RetirementTest for the one-engine assertions.
 
-    /** The durable context is where the IDE installs its debug controller, on either engine. */
+    /** The durable context is where the IDE installs its debug controller. */
     @Test
     public void testISS0484_EngineContextIsTheDebugControllerHome() {
         EngineContext ctx = prolog.getEngineContext();
@@ -163,11 +150,11 @@ public class EngineV4RetirementTest {
     // ================================================================ ISS-2025-0486
 
     /**
-     * The tabling regression the port to the v2 engine exposed: with the driver running the
-     * production on a nested {@code MachineSolver}, a GROUND tabled variant whose body recurses
-     * through an OPEN one used to bind the goal's own variable, because a fresh machine restarts
-     * its clause-renaming counter at {@code _R1_}. Producing against the normalised pattern fixes
-     * it. Engine-neutral: v4 has its own linear tabling and must agree.
+     * The tabling regression the 4.0.0 port of the v2 driver exposed: with the production running
+     * on a nested machine, a GROUND tabled variant whose body recurses through an OPEN one used to
+     * bind the goal's own variable, because a fresh machine restarts its clause-renaming counter
+     * at {@code _R1_}. Producing against the normalised pattern fixes it (invariant 51). Kept as a
+     * regression test of v4's own linear tabling.
      */
     @Test(timeout = 30000)
     public void testISS0484_GroundTabledVariantThroughAnOpenOne() {
@@ -275,8 +262,11 @@ public class EngineV4RetirementTest {
         assertFalse("a worker can post to the main thread's queue",
             prolog.solve("thread_create(thread_send_message(main, w9from(worker)), T), "
                        + "thread_join(T, true), thread_get_message(M), M == w9from(worker).").isEmpty());
+        // ISS-2025-0495 (4.1 wave A): thread_self/1 now reports the ALIAS of an aliased thread,
+        // so the top-level thread answers `main` instead of its integer id. It is still a usable
+        // thread_send_message/2 target, which is what this assertion is really about.
         assertFalse("thread_self/1 reports a usable id",
-            prolog.solve("thread_self(S), integer(S), thread_send_message(S, w9self), "
+            prolog.solve("thread_self(S), S == main, thread_send_message(S, w9self), "
                        + "thread_get_message(M), M == w9self.").isEmpty());
     }
 

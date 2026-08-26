@@ -30,8 +30,8 @@ import java.util.Map;
  * succeeds, findall drains the predicate), but the side effect is not one-clause-per-redo: a
  * query that commits early (e.g. {@code retract(p(X)), !}) has still removed ALL matching
  * clauses. Making this lazy would require redesigning the legacy BuiltIn protocol, so the gap
- * is accepted here; the default v2 engine (MachineSolver.retractClause) implements the full
- * re-executable ISO 8.9.3 semantics with a real choice point.
+ * is accepted here; the engine implements retract/1 itself (Machine.retractClause) with the full
+ * re-executable ISO 8.9.3 semantics and a real choice point, and never dispatches this class.
  * END_CHANGE: ISS-2025-0396
  */
 public class Retract implements BuiltInWithContext {

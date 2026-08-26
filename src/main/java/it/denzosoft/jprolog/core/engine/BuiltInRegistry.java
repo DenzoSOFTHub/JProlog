@@ -125,16 +125,12 @@ public class BuiltInRegistry {
         // END_CHANGE: LIM-006
 
         // START_CHANGE: LIM-002 - Attributed variable predicates
-        putArity("put_attr", 3);
-        putArity("get_attr", 3);
-        putArity("del_attr", 2);
-        putArity("attvar", 1);
-        // END_CHANGE: LIM-002
-
-        // START_CHANGE: LIM-001 - Coroutining predicates
-        putArity("freeze", 2);
-        putArity("when", 2);
-        putArity("dif", 2);
+        // START_CHANGE: ISS-2025-0491 - 4.1 wave A: put_attr/3, get_attr/3, del_attr/2, attvar/1,
+        // freeze/2, when/2 and dif/2 have no arity entry any more. isBuiltIn() needs BOTH a
+        // registration and an arity entry, and their legacy registrations went with the v2-era
+        // classes: put_attr & co. are v4 natives, freeze/when/dif are prelude clauses (which a
+        // user module is allowed to override — that is the documented library rule).
+        // END_CHANGE: ISS-2025-0491
         // END_CHANGE: LIM-001
 
         // START_CHANGE: ISS-2025-0369 - dynamic/1 is a goal-callable built-in at arity 1 ONLY

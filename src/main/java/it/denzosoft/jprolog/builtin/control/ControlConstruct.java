@@ -8,9 +8,9 @@ import java.util.Map;
 
 // START_CHANGE: ISS-2025-0485 - wave W9: the ISO control constructs (;/2, ->/2, \+/1, call/N,
 // catch/3, ^/2) used to have Java implementations that only the recursive SolverContext ever
-// dispatched — it was the one engine that looked them up in the registry. Both surviving machines
-// (v4 Machine.stepN, v2 MachineSolver.stepN) implement them natively, with real choice points and
-// real cut barriers, and never consult the registry for them. The implementations
+// dispatched — it was the one engine that looked them up in the registry. The machine
+// (Machine.stepN) implements them natively, with real choice points and real cut barriers, and
+// never consults the registry for them. The implementations
 // (Conjunction, IfThen, IfThenElse, NegationAsFailure, Catch, Call, Caret) are therefore deleted.
 //
 // What the REGISTRATION still buys us is ISO protection: BuiltInRegistry.isBuiltIn(f, a) answers

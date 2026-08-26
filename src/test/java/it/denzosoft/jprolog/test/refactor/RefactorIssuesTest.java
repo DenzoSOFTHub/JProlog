@@ -245,29 +245,20 @@ public class RefactorIssuesTest {
         prolog.consult(":- dynamic(probe/1).");
         // END_CHANGE: ISS-2025-0347
         // START_CHANGE: ISS-2025-0461 - engine v4 wave W4, design decision 3 (B.17, approved):
-        // cross-query coroutining is DROPPED on v4. A query's variables die with the query, so the
-        // `Y` of the second query is a NEW variable and the suspension of the first query can never
-        // fire in it. The v2/legacy behaviour below (v2.9.4 session-scoped attributed variables) is
-        // unchanged and still asserted on those engines.
-        if (it.denzosoft.jprolog.core.engine.Prolog.isUsingV4Engine()) {
-            prolog.solve("when(ground(f(X, Y)), assertz(probe(fired))), X = 1.");
-            assertEquals("when must not fire while Y unbound", 0, prolog.solve("probe(fired).").size());
-            prolog.solve("Y = 2.");
-            assertEquals("v4: a finished query's suspension never fires in a later one",
-                0, prolog.solve("probe(fired).").size());
-            // ... and within ONE query it fires, with the woken goal's bindings propagating
-            // (ISS-2025-0336, which is what the v4 wake queue fixes).
-            assertEquals("when fires inside one query on v4", 1,
-                prolog.solve("when(ground(f(A, B)), C = fired), A = 1, B = 2, C == fired.").size());
-            return;
-        }
-        // END_CHANGE: ISS-2025-0461
+        // cross-query coroutining is DROPPED. A query's variables die with the query, so the `Y`
+        // of the second query is a NEW variable and the suspension of the first can never fire in
+        // it. ISS-2025-0491 (4.1 wave A): the v2 branch that asserted the old session-scoped
+        // behaviour is gone with the v2 engine.
         prolog.solve("when(ground(f(X, Y)), assertz(probe(fired))), X = 1.");
-        List<Map<String, Term>> r1 = prolog.solve("probe(fired).");
-        assertEquals("when must not fire while Y unbound", 0, r1.size());
+        assertEquals("when must not fire while Y unbound", 0, prolog.solve("probe(fired).").size());
         prolog.solve("Y = 2.");
-        List<Map<String, Term>> r2 = prolog.solve("probe(fired).");
-        assertEquals("when must fire after Y bound", 1, r2.size());
+        assertEquals("a finished query's suspension never fires in a later one",
+            0, prolog.solve("probe(fired).").size());
+        // ... and within ONE query it fires, with the woken goal's bindings propagating
+        // (ISS-2025-0336, which is what the wake queue fixes).
+        assertEquals("when fires inside one query", 1,
+            prolog.solve("when(ground(f(A, B)), C = fired), A = 1, B = 2, C == fired.").size());
+        // END_CHANGE: ISS-2025-0461
     }
 
     // ===================================================================

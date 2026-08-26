@@ -2,6 +2,96 @@
 
 ## Active and Resolved Issues
 
+## 4.1 wave A 2026-08-26 (v4.1.0) — ONE ENGINE
+
+The one-release promise of decision 1 of B.17 expires: **the v2 `MachineSolver` is deleted**, with
+the `engine-v2` profile, the second CI leg, the engine-selection API and everything that existed
+only for it. Wave record and the starting point for wave B (the L-08 migration):
+`docs/reports/report-engine-v4-progress.md` section 16.
+Suite: **1196/1196** (1175 after the deleted engine's tests go + 21 new); 20/20 example programs
+with every per-program "Successful queries" count unchanged. New test:
+`src/test/java/it/denzosoft/jprolog/core/engine/v4/EngineV41RetirementTest.java` (21).
+Acceptance:
+`grep -rn "MachineSolver\|core.engine.v2\|Trail.record\|isUsingV2Engine\|setUseV4Engine" src/main`
+returns **nothing**.
+
+### ISS-2025-0491
+**Status**: RESOLVED (v4.1.0) — 4.1 wave A item 1, delete the v2 engine
+**Problem**: two resolution engines, two CI legs and an engine-selection flag threaded through
+`src/main` and `src/test`, for a machine nothing had used by default since 4.0.0. Everything the
+fallback kept alive was dead weight on the v4 path: the legacy `Variable.AttributeUnifyHook` (a
+process-per-thread hook that fired `freeze/when/dif` from inside `Term.unify(Term, Map)`), the
+cross-query attributed-variable session in `Prolog`, the Java `Freeze`/`When`/`Dif` and
+`AttributedVariables` built-ins (natives and prelude clauses on v4), the v2 variant-tabling driver's
+half of `TableStore`, and an `isUsingV4Engine()` branch in five test methods.
+**Fix**: deleted `core/engine/v2/MachineSolver.java` (1895), `builtin/control/{Freeze,When,Dif}.java`,
+`builtin/term/AttributedVariables.java` and their registrations; deleted the four static
+engine-selection accessors, `EngineContext.runSub`'s branch and `handleAttributeUnification`,
+`Prolog.solveWithV2Engine` and the session splicing, the `engine-v2` Maven profile, and the v2
+tests (`MachineSolverTest`, `V2EngineIntegrationTest`); moved `EngineHardeningTest` to
+`core.engine` and re-pointed its one direct machine use at v4; reduced `TableStore` to the
+`:- table` declaration registry; collapsed every engine-aware test branch to the v4 behaviour.
+`-Djprolog.engine=<anything>` logs a warning and runs v4.
+**Behaviour note**: `put_attr/3`, `get_attr/3`, `del_attr/2`, `attvar/1`, `freeze/2`, `when/2` and
+`dif/2` are no longer `BuiltInRegistry.isBuiltIn`, so asserting a clause for them is allowed rather
+than a `permission_error` — consistent with "a user definition overrides a library one".
+**Test**: `EngineV41RetirementTest.testISS0491_*` (4).
+
+### ISS-2025-0492
+**Status**: RESOLVED (v4.1.0) — 4.1 wave A item 2, one trail
+**Problem**: `core.engine.Trail` was a second, process-per-thread undo stack that every choice
+point had to mark (`CP.legacyMark`) and roll back in parallel with the real `Bindings` trail. Two
+trails, two marks, one ordering rule to get wrong — and the v4 machine still depended on it for the
+backtrackable state of bridged built-ins.
+**Fix**: `core.engine.v4.Undo` — the machine installs itself as the thread's undo target for the
+duration of `solve`, and `Undo.record(Runnable)` pushes onto its `Bindings` trail. `b_setval/2`,
+`op/3` (both implementations), `setarg/3` and the CLP(FD) store now record there;
+`CP.legacyMark` and the two `Trail.rollbackTo` calls are gone; `Trail` is deleted.
+**Test**: `EngineV41RetirementTest.testISS0492_*` (6) — b_setval, op/3, setarg/3, put_attr/3 and a
+CLP(FD) narrowing each undone by backtracking, plus the no-machine no-op and a reflective check
+that `CP` carries one mark. Three of them fail if the machine does not install itself.
+
+### ISS-2025-0493
+**Status**: RESOLVED (v4.1.0) — 4.1 wave A item 3, the hot goal path
+**Problem**: `Modules.overridesBuiltin` (two string concatenations plus up to four map probes,
+through `Prelude.owner` and `autoload`) ran for every goal that is not inline, not a v4 native and
+not a control construct — including plain user predicates, which have no built-in to override.
+Measured at ~13-16 % of `nrev` (a build with the call short-circuited ran nrev in 323 ms against
+386 ms, best-of-6 in interleaved same-session JVMs).
+**Fix**: ask it only when `BuiltInRegistry.isBuiltIn(f, n)` says there is an entry to override (the
+probe `LegacyBuiltinAdapter.run` does anyway), and memoise the answer in a 512-slot direct-mapped
+cache of immutable entries stamped with the `ModuleManager` modification stamp.
+**Measured** (medians of 13 interleaved same-session runs, best-of-6 each): `nrev30x2000`
+404 -> 362 ms, 200 000 indexed fact lookups 194 -> 181 ms, `loop(1000000)` 543 -> 496 ms.
+**Test**: `EngineV41RetirementTest.testISS0493_*` (3) — the memo must follow the module stamp, the
+prelude must still win over the registry, a plain user predicate must still reach its clauses.
+
+### ISS-2025-0494
+**Status**: RESOLVED (v4.1.0) — 4.1 wave A item 3, `DebugController.needsPorts()`
+**Problem**: the machine emitted the four ports whenever a controller was attached, even one that
+could not observe them (no listener, no breakpoint, CONTINUE mode, no Stop pending).
+**Fix**: `DebugController.needsPorts()`, and `Machine.debugPortsTarget()` in place of every
+`debugController != null` port decision. `traceEnabled` deliberately does not count towards it:
+every use of that field inside `DebugController` is already guarded by `listener != null`.
+**Measured** (`scratchpad/41a/probe/Idle.java`, the same goal with no controller / with an idle one
+/ with none again): on `loop(1000000)` an attached-but-idle controller cost **2.27x / 1.77x / 2.08x**
+before and **1.13x / 1.12x / 0.96x** after.
+**Test**: `EngineV41RetirementTest.testISS0494_*` (4), including "a listening controller still gets
+every port".
+
+### ISS-2025-0495
+**Status**: RESOLVED (v4.1.0) — 4.1 wave A item 4, `thread_self/1`
+**Problem**: `thread_self/1` always answered an integer; SWI answers the thread's alias, and the
+top-level thread's alias is `main` (W9 deviation 8). Worse, the `main` alias was claimed once for
+the life of the JVM by whichever non-worker thread touched the message queues first, so after that
+thread died `thread_send_message(main, T)` posted to a queue nobody could read.
+**Fix**: `thread_self/1` reports the alias when the thread has one (`main` for the top-level
+thread, `w1` for `thread_create(G, Id, [alias(w1)])`) and its integer id otherwise; a non-worker
+thread takes the `main` alias over when the previous owner is dead (`ensureLiveMainAlias`, with a
+`WORKER_IDS` set so a worker never becomes `main`). Every thread predicate already resolved an
+alias, so the answer stays usable; `thread_join/2` statuses are unchanged.
+**Test**: `EngineV41RetirementTest.testISS0495_*` (3).
+
 ## Engine v4 wave W9 2026-08-26 (v4.0.0) — RETIREMENT
 
 Implements `docs/reports/report-engine-v4-design-2026-08-25.md` part B, section B.16 wave W9, and

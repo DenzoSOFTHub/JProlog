@@ -42,7 +42,8 @@ public class CompoundTerm extends Term {
     }
 
     // START_CHANGE: R1 - setarg/3 support: destructive arg replacement
-    /** Replace argument at 1-based index. Used by setarg/3; caller must record undo via Trail. */
+    /** Replace argument at 1-based index. Used by setarg/3; the caller records the undo action
+     *  with {@code core.engine.v4.Undo.record} (ISS-2025-0492). */
     public Term setArgument(int index1based, Term newArg) {
         if (index1based < 1 || index1based > arguments.size()) {
             throw new IndexOutOfBoundsException("setarg: index " + index1based + " out of range 1.." + arguments.size());

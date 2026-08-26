@@ -15,7 +15,7 @@ import it.denzosoft.jprolog.core.module.ModuleManager;
  * controller and the query ResourceGuard.
  *
  * <p>One {@code Engine} per {@link Prolog}; one {@link Machine} per query over it. The machine
- * therefore holds no cross-query state, exactly as the v2 {@code MachineSolver} did.
+ * therefore holds no cross-query state, exactly as the v2 engine did before it.
  *
  * <p>Design B.13 also gives the Engine the stream table, the operator store and the flags; those
  * arrive in wave W7 — until then v4 uses the same per-engine {@code PrologFlags} and the same
@@ -31,10 +31,10 @@ public final class Engine {
     private final TableStore tables;
     private final ClauseStore store;
     private final BuiltinTable natives = new BuiltinTable();
-    // START_CHANGE: ISS-2025-0463 - wave W5: the v4 tabling store (design B.8). The legacy
-    // TableStore stays the home of the `:- table p/n` DECLARATIONS (it is shared with the v2 and
-    // legacy engines and with the consult-time directive); the ANSWERS live here, as
-    // variant-normalised terms on the cell model rather than name-keyed solution maps.
+    // START_CHANGE: ISS-2025-0463 - wave W5: the v4 tabling store (design B.8). TableStore stays
+    // the home of the `:- table p/n` DECLARATIONS (written by the consult-time directive and by
+    // table/1); the ANSWERS live here, as variant-normalised terms on the cell model rather than
+    // name-keyed solution maps (ISS-2025-0491: and now they live ONLY here).
     private final Tabling tabling = new Tabling();
     // END_CHANGE: ISS-2025-0463
     // START_CHANGE: ISS-2025-0466 - wave W6: the v4 module owner (design B.10). It REPLACES

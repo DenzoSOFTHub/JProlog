@@ -70,7 +70,7 @@ public final class ClpfdV2Bridge {
             // created the FdVar restores plain-variable semantics.
             v.putAttribute(CLPFD_ATTR, FD_MARKER);
             final Ctx fc = c; final String name = v.getName(); final Variable fvv = v;
-            it.denzosoft.jprolog.core.engine.Trail.record(() -> {
+            it.denzosoft.jprolog.core.engine.v4.Undo.record(() -> {
                 fc.vars.remove(name);
                 fc.cells.remove(name);                   // ISS-2025-0460
                 fvv.removeAttribute(CLPFD_ATTR);
@@ -83,8 +83,9 @@ public final class ClpfdV2Bridge {
     // START_CHANGE: ISS-2025-0356 - posted constraints must be undone when the engine backtracks past
     // the posting goal. Every store mutation is bracketed: snapshot (domain mark + constraint count)
     // before, self-undo immediately on failure (a failed post leaves no narrowing behind), and on
-    // success register a rollback on the legacy Trail — the v2 engine already rolls that Trail back
-    // at every choice point (MachineSolver CP.legacyMark), so abandoning a branch retracts its posts.
+    // success register a rollback with core.engine.v4.Undo — the machine runs it from its own
+    // trail when it backtracks past the posting goal, so abandoning a branch retracts its posts
+    // (ISS-2025-0492; it used to be a second, parallel trail marked by CP.legacyMark).
     private static boolean guardedPost(java.util.function.BooleanSupplier post) {
         final ClpStore store = ctx().store;
         final int dm = store.mark();
@@ -96,7 +97,7 @@ public final class ClpfdV2Bridge {
             if (!ok) store.rollbackTo(dm, cm);            // failed (or threw): leave no trace
         }
         if (!ok) return false;
-        it.denzosoft.jprolog.core.engine.Trail.record(() -> store.rollbackTo(dm, cm));
+        it.denzosoft.jprolog.core.engine.v4.Undo.record(() -> store.rollbackTo(dm, cm));
         return true;
     }
     // END_CHANGE: ISS-2025-0356
@@ -130,7 +131,7 @@ public final class ClpfdV2Bridge {
             c.cells.put(to.getName(), to);               // ISS-2025-0460
             to.putAttribute(CLPFD_ATTR, FD_MARKER);
             final String name = to.getName(); final Variable tv = to;
-            it.denzosoft.jprolog.core.engine.Trail.record(() -> {
+            it.denzosoft.jprolog.core.engine.v4.Undo.record(() -> {
                 c.vars.remove(name);
                 c.cells.remove(name);                    // ISS-2025-0460
                 tv.removeAttribute(CLPFD_ATTR);

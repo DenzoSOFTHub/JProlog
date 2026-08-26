@@ -1,5 +1,70 @@
 # JProlog - Release Notes
 
+## Release 4.1.0 - 2026-08-26
+
+### Wave A of 4.1: one engine
+
+The v2 `MachineSolver` — the default from 3.1.0 to 3.14.0, the selectable fallback of 4.0.0 — is
+**deleted**, together with everything that existed only for it. ISS-2025-0491..0495. Wave record
+and the starting point for wave B: `docs/reports/report-engine-v4-progress.md` section 16.
+
+**1196/1196 JUnit tests** (one engine, one CI leg), **20/20 example programs** with unchanged
+per-program counts. `src/main` is 2 825 lines and 5 files smaller.
+
+#### Upgrading
+
+Nothing to do unless you selected the old engine or called the selection API.
+
+```
+-Djprolog.engine=v2        GONE. Any value of the property now logs a warning and runs v4.
+-Pengine-v2                GONE (the Maven profile). `mvn test` is the whole suite.
+Prolog.setUseV4Engine(b)   GONE, with isUsingV4Engine(), setUseV2Engine(b), isUsingV2Engine().
+                           There is one engine; nothing to select.
+Variable.AttributeUnifyHook   GONE, with setAttributeUnifyHook/getAttributeUnifyHook. It was the
+                           v2 engine's coroutining entry point inside Term.unify(Term, Map); v4
+                           has its own wake queue (core.engine.v4.Coroutining).
+core.engine.Trail          GONE. A built-in that records a backtrackable side effect calls
+                           core.engine.v4.Undo.record(Runnable) instead — same contract, but the
+                           action lands on the running machine's own trail.
+EngineContext.handleAttributeUnification   GONE (it dispatched the hook above).
+Prolog.clearSession()      kept as a no-op: there is no cross-query attributed-variable state.
+TableStore                 keeps declareTable/isTabled/abolishTable/abolishAllTables/
+                           getTabledPredicates; the answer cache, the in-progress set, the partial
+                           cache, normalize() and enterCall/exitCall are gone (they were the v2
+                           tabling driver's). The answer tables are core.engine.v4.Tabling.
+thread_self(S)             now S == main on the top-level thread and S == w1 inside
+                           thread_create(G, Id, [alias(w1)]); an anonymous worker still answers an
+                           integer. A program that did arithmetic on the answer must stop.
+```
+
+Everything else is unchanged: `solve/1`, `solveStream/2`, `consult`, `consultWithDiagnostics`,
+`compileFile`, `enableSafeMode`, `setInferenceBudget`, the `Map<String,Term>` result shape, the
+trust model and the IDE debugger contract.
+
+#### What is new in this release
+
+- **One engine, one CI leg.** 6 classes and 2 616 lines of engine deleted, plus the second Maven
+  profile and every engine-aware branch in the sources and the tests.
+- **One trail.** The bridged built-ins' undo actions (`b_setval/2`, `op/3`, `setarg/3`, the CLP(FD)
+  store) go on the machine's own `Bindings` trail through `core.engine.v4.Undo`; the parallel
+  process-wide `Trail` and the second choice-point mark are gone.
+- **A faster goal path.** The module override test is asked only when there is a registry entry to
+  override, and memoised behind the module stamp: `nrev` -10 %, an indexed fact-lookup loop -7 %,
+  `loop(1000000)` -9 % (medians, interleaved same-session runs).
+- **An idle debugger is free.** `DebugController.needsPorts()`: a controller with no listener, no
+  breakpoint, in CONTINUE mode and with no Stop pending gets no ports at all — on `loop(1000000)`
+  an attached-but-idle controller cost 1.8-2.3x before and 0.96-1.13x now.
+- **`thread_self/1` is SWI-shaped**, and the `main` alias follows a live thread instead of pointing
+  at a dead one for the rest of the JVM's life.
+
+#### Known limitations after this release
+
+**LIM-037** (~310 of 416 registered predicates still run on the eager built-in bridge — none on a
+measured hot path; the migration is 4.1 wave B) and **LIM-036** (`.jpc` source lines come from the
+legacy parser's clause splitter). **LIM-027** closed with the engine that carried it.
+
+---
+
 ## Release 4.0.0 - 2026-08-26
 
 ### Wave W9: retirement — the recursive engine is deleted

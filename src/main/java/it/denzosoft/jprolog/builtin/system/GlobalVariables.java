@@ -26,9 +26,9 @@ import java.util.Map;
  *
  * Backtrackability:
  * - nb_setval/nb_getval: non-backtrackable (value persists across backtracks).
- * - b_setval/b_getval: backtrackable via Trail engine (R1, v2.9.0+). On failure of
+ * - b_setval/b_getval: backtrackable via the machine's trail (R1, v2.9.0+; ISS-2025-0492). On failure of
  *   the choice point containing the b_setval, the previous value (or absence) is
- *   restored via {@link it.denzosoft.jprolog.core.engine.Trail#record}.
+ *   restored via {@link it.denzosoft.jprolog.core.engine.v4.Undo#record}.
  */
 public class GlobalVariables implements BuiltInWithContext {
 
@@ -106,11 +106,11 @@ public class GlobalVariables implements BuiltInWithContext {
         }
 
         String name = ((Atom) nameTerm).getName();
-        // START_CHANGE: R1 - b_setval records undo on Trail; nb_setval does not
+        // START_CHANGE: R1 - b_setval records an undo action; nb_setval does not (ISS-2025-0492)
         if (mode == Mode.B_SETVAL) {
             final Term oldValue = solver.getPrologContext().nbGetval(name);
             final it.denzosoft.jprolog.core.engine.Prolog ctx = solver.getPrologContext();
-            it.denzosoft.jprolog.core.engine.Trail.record(() -> {
+            it.denzosoft.jprolog.core.engine.v4.Undo.record(() -> {
                 if (oldValue == null) ctx.nbDelete(name);
                 else ctx.nbSetval(name, oldValue);
             });

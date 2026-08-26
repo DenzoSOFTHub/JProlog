@@ -65,37 +65,21 @@ public class Prolog {
     public static boolean isUsingV2Dcg() { return USE_V2_DCG; }
     // END_CHANGE: ISS-2025-0304
 
-    // START_CHANGE: ISS-2025-0311 - route queries through the clean-room v2 resolution engine
-    // (MachineSolver: iterative SLD, mutable bindings + trail, lazy enumeration).
-    // START_CHANGE: ISS-2025-0478 - wave W8: v4 is the DEFAULT engine; v2 is the one-release
-    // fallback selected by -Djprolog.engine=v2 (design decision 1, B.17).
-    // START_CHANGE: ISS-2025-0484 - wave W9: the recursive solver is DELETED, so there is no
-    // `legacy` value any more and there is only ONE flag. `isUsingV2Engine()` is simply
-    // "not v4", and `setUseV2Engine(b)` is the inverse of `setUseV4Engine(b)`; both are kept
-    // because tests and embedders written for 3.x call them.
-    /** The literal value of {@code -Djprolog.engine}, read once ({@code v4} when unset). */
-    private static final String ENGINE_PROPERTY = System.getProperty("jprolog.engine", "v4");
-    public static void setUseV2Engine(boolean v2) { USE_V4_ENGINE = !v2; }
-    public static boolean isUsingV2Engine() { return !USE_V4_ENGINE; }
-    // END_CHANGE: ISS-2025-0484
-    // END_CHANGE: ISS-2025-0478
-    // END_CHANGE: ISS-2025-0311
-
-    // START_CHANGE: ISS-2025-0444 - engine v4 (design B.16 wave W1).
-    // The clean-room v4 core (core.engine.v4): variables are mutable cells, clauses are compiled
-    // skeletons, unification is cycle-safe and cancellable, the clause store keeps birth/death
-    // generations.
-    // START_CHANGE: ISS-2025-0478 - wave W8: this is now the DEFAULT engine. Only the literal
-    // property value `v2` turns it off (`-Djprolog.engine=anythingelse` is still v4), and
-    // `Prolog.setUseV4Engine(false)` drops to the v2 MachineSolver. The flag is re-read on every
-    // call, so the static setter works at runtime.
-    // ISS-2025-0484 - wave W9: `legacy` is gone with the recursive solver; this is the ONE engine
-    // flag now.
-    private static volatile boolean USE_V4_ENGINE =
-        !"v2".equalsIgnoreCase(ENGINE_PROPERTY);
-    public static void setUseV4Engine(boolean v4) { USE_V4_ENGINE = v4; }
-    public static boolean isUsingV4Engine() { return USE_V4_ENGINE; }
-    // END_CHANGE: ISS-2025-0478
+    // START_CHANGE: ISS-2025-0491 - 4.1 wave A: there is ONE resolution engine. The v2 machine
+    // (default 3.1.0..3.14.0, one-release fallback in 4.0.0) is DELETED, and with it
+    // `jprolog.engine=v2`, the four static engine-selection accessors and the `engine-v2` Maven
+    // profile. The property is still READ so that a build script that
+    // still passes `-Djprolog.engine=v2` gets a loud warning instead of silently running a
+    // different engine than it asked for; any value other than `v4` warns once and runs v4.
+    static {
+        String engineProperty = System.getProperty("jprolog.engine");
+        if (engineProperty != null && !"v4".equalsIgnoreCase(engineProperty)) {
+            Logger.getLogger(Prolog.class.getName()).warning(
+                "-Djprolog.engine=" + engineProperty + " is obsolete: the v2 engine was removed in "
+                + "4.1.0 and core.engine.v4 is the only engine. Running v4.");
+        }
+    }
+    // END_CHANGE: ISS-2025-0491
 
     /** This engine's v4 context (clause store, built-in tables); created on first v4 query. */
     private volatile it.denzosoft.jprolog.core.engine.v4.Engine v4Engine;
@@ -116,7 +100,7 @@ public class Prolog {
         return e;
     }
 
-    /** Run one query on the v4 machine (fresh machine per query, like the v2 engine). */
+    /** Run one query on the v4 machine (a fresh machine per query). */
     private List<Map<String, Term>> solveWithV4Engine(Term query) {
         final List<Map<String, Term>> out = new ArrayList<>();
         solveStreamWithV4Engine(query, sol -> { out.add(sol); return true; });
@@ -124,13 +108,9 @@ public class Prolog {
     }
 
     private void solveStreamWithV4Engine(Term query, java.util.function.Predicate<Map<String, Term>> sink) {
-        // START_CHANGE: ISS-2025-0461 - wave W4: v4 has its own wake queue (core.engine.v4.Coroutining),
-        // so the process-wide LEGACY attribute hook is explicitly UNINSTALLED for the duration of a v4
-        // query. Leaving it installed would let a legacy built-in's internal Term.unify(Term, Map) fire
-        // freeze/when/dif against a throw-away binding map behind the machine's back.
-        Variable.AttributeUnifyHook prevHook = Variable.getAttributeUnifyHook();
-        Variable.setAttributeUnifyHook(null);
-        // END_CHANGE: ISS-2025-0461
+        // START_CHANGE: ISS-2025-0491 - 4.1 wave A: the legacy Variable.AttributeUnifyHook was the
+        // v2 engine's coroutining entry point and is deleted with it; v4 has its own wake queue
+        // (core.engine.v4.Coroutining), so there is nothing to uninstall around a query any more.
         try {
             it.denzosoft.jprolog.core.engine.v4.Machine m =
                 new it.denzosoft.jprolog.core.engine.v4.Machine(getV4Engine(), new ResourceGuard(inferenceBudget));
@@ -139,9 +119,8 @@ public class Prolog {
             // The v4 core is iterative; this can only come from a legacy built-in deep in a term.
             throw new PrologException(
                 it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("stack_overflow", "solve"));
-        } finally {
-            Variable.setAttributeUnifyHook(prevHook);
         }
+        // END_CHANGE: ISS-2025-0491
     }
     // END_CHANGE: ISS-2025-0444
     private boolean traceEnabled = false;
@@ -210,37 +189,30 @@ public class Prolog {
                          // END_CHANGE: ISS-2025-0126
                          // START_CHANGE: ISS-2025-0139 - Concurrent execution predicates
                          // START_CHANGE: ISS-2025-0480 - wave W8: the concurrency predicates are
-                         // NO LONGER wrapped in a CollectionBuiltInAdapter. The adapter pins the
-                         // solver at registration time (this engine's shared, recursive
-                         // recursive solver), which is exactly the object a worker must not use: on v4
-                         // the built-in has to receive the per-query SolverFacade so its
+                         // NO LONGER wrapped in a CollectionBuiltInAdapter. The adapter pinned one
+                         // solver at registration time, which is exactly the object a worker must
+                         // not use: the built-in has to receive the per-query SolverFacade so its
                          // solveInWorker runs the goal on a fresh Machine over the same Engine
-                         // (LIM-024). Every dispatcher — LegacyBuiltinAdapter (v4),
-                         // MachineSolver.bridgeBuiltin (v2) and the recursive solver (legacy)
-                         // — already handles a BuiltInWithContext directly and passes the right
-                         // solver, so dropping the wrapper changes nothing on v2/legacy.
+                         // (LIM-024). The dispatcher (LegacyBuiltinAdapter) already handles a
+                         // BuiltInWithContext directly and passes the right context.
                          // END_CHANGE: ISS-2025-0480
                          // START_CHANGE: LIM-003 - Global variable predicates (context-dependent)
                          name.equals("nb_setval") || name.equals("nb_getval") ||
                          name.equals("nb_current") || name.equals("nb_delete") ||
-                         name.equals("b_setval") || name.equals("b_getval") ||
+                         name.equals("b_setval") || name.equals("b_getval")
                          // END_CHANGE: LIM-003
-                         // START_CHANGE: LIM-002 - Attributed variable predicates (context-dependent)
-                         name.equals("put_attr") || name.equals("get_attr") ||
-                         name.equals("del_attr") || name.equals("attvar") ||
-                         // END_CHANGE: LIM-002
-                         // START_CHANGE: LIM-001 - Coroutining predicates (context-dependent)
-                         name.equals("freeze") || name.equals("when") || name.equals("dif")
-                         // END_CHANGE: LIM-001
+                         // ISS-2025-0491 (4.1 wave A): the attributed-variable (LIM-002) and
+                         // coroutining (LIM-001) names left this list with the legacy classes that
+                         // implemented them — put_attr/get_attr/del_attr/attvar are v4 natives and
+                         // freeze/when/dif are prelude clauses.
                          )) {
                         // START_CHANGE: ISS-2025-0485 - wave W9: CollectionBuiltInAdapter is
                         // DELETED. It wrapped a BuiltInWithContext so it could be called through
-                        // the plain BuiltIn interface, pinning ONE solver (the engine's shared
-                        // recursive solver) at registration time — which is exactly the
-                        // object a per-query context must not be. Every dispatcher that survives
-                        // (v4 LegacyBuiltinAdapter, v2 MachineSolver.bridgeBuiltin) handles a
-                        // BuiltInWithContext directly and passes the RIGHT context, so the
-                        // built-in is now registered unwrapped. Invariant 43 becomes structural.
+                        // the plain BuiltIn interface, pinning ONE solver at registration time —
+                        // which is exactly the object a per-query context must not be. The
+                        // dispatcher (LegacyBuiltinAdapter) handles a BuiltInWithContext directly
+                        // and passes the RIGHT context, so the built-in is registered unwrapped.
+                        // Invariant 43 becomes structural.
                         builtInRegistry.registerBuiltIn(name, builtIn);
                         // END_CHANGE: ISS-2025-0485
                     } else if (name.equals("listing")) {
@@ -983,10 +955,6 @@ public class Prolog {
      * @param queryString The query as a string
      * @return List of all solutions
      */
-    // START_CHANGE: v2.9.4 - session-scoped attributed variables (cross-solve identity)
-    /** Per-Prolog map of variable name → Variable instance, ONLY for vars with pending attribute goals. */
-    private final Map<String, Variable> attributedSessionVars = new HashMap<>();
-
     // START_CHANGE: ISS-2025-0437 - ENG-06: this engine's OWN ISO flag store (unknown,
     // double_quotes, occurs_check, trace, ...). It is installed as the thread-current store around
     // every solve/consult entry point, so the static PrologFlags API used by the built-ins and the
@@ -1073,18 +1041,12 @@ public class Prolog {
                 query = parser.parseTerm(queryString);
             }
             // END_CHANGE: ISS-2025-0293
-            // START_CHANGE: ISS-2025-0461 - wave W4, design decision 3 (B.17, approved): on v4 a
-            // query's variables die with the query. No session-scoped attributed-variable splicing,
-            // so a suspended goal of a FINISHED query can never fire in a later one. The v2/legacy
-            // behaviour (v2.9.4 cross-solve identity) is unchanged.
-            if (USE_V4_ENGINE) {
-                return solveWithV4Engine(query);
-            }
+            // START_CHANGE: ISS-2025-0461 - wave W4, design decision 3 (B.17, approved): a query's
+            // variables die with the query. No session-scoped attributed-variable splicing, so a
+            // suspended goal of a FINISHED query can never fire in a later one.
+            // ISS-2025-0491 - 4.1 wave A: and there is no other engine to route to.
+            return solveWithV4Engine(query);
             // END_CHANGE: ISS-2025-0461
-            // Splice any previously-suspended attributed variables (by name)
-            query = spliceAttributedSessionVars(query);
-            // ISS-2025-0311 / ISS-2025-0484: the v2 fallback is the only other engine there is.
-            return solveWithV2Engine(query);
         } catch (DebugController.DebugStopException e) {
             throw e;
         } catch (PrologParserException e) {
@@ -1092,30 +1054,10 @@ public class Prolog {
         }
     }
 
-    // START_CHANGE: ISS-2025-0311 - run a query through the v2 MachineSolver over the live KB + registry
-    private List<Map<String, Term>> solveWithV2Engine(Term query) {
-        // ISS-2025-0318: install the attribute-unify hook so the v2 engine fires freeze/when/dif
-        // goals when an attributed variable is bound; refresh the attributed-session vars afterwards
-        // so coroutines suspended in one query survive into the next.
-        Variable.AttributeUnifyHook prevHook = Variable.getAttributeUnifyHook();
-        Variable.setAttributeUnifyHook(engineContext::handleAttributeUnification);
-        try {
-            it.denzosoft.jprolog.core.engine.v2.MachineSolver m =
-                new it.denzosoft.jprolog.core.engine.v2.MachineSolver(knowledgeBase, builtInRegistry, engineContext, moduleManager, tableStore);
-            m.setInferenceBudget(inferenceBudget);   // ISS-2025-0339
-            List<Map<String, Term>> out = new ArrayList<>();
-            m.solve(query, sol -> { out.add(sol); return true; });
-            refreshAttributedSessionVars(query, out);
-            return out;
-        } catch (StackOverflowError e) {
-            // ISS-2025-0341: deep TERM structures still recurse in resolve/unify; convert the raw error
-            // into a catchable ISO resource_error instead of crashing the embedder.
-            throw new PrologException(
-                it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("stack_overflow", "solve"));
-        } finally {
-            Variable.setAttributeUnifyHook(prevHook);
-        }
-    }
+    // START_CHANGE: ISS-2025-0491 - 4.1 wave A: `solveWithV2Engine` is DELETED with the v2
+    // machine, together with the attribute-unify hook install it needed and the cross-query
+    // attributed-variable session (design decision 3 dropped it on v4).
+    // END_CHANGE: ISS-2025-0491
 
     // START_CHANGE: ISS-2025-0321 - streaming solve: deliver solutions one at a time to a sink that
     // returns false to stop (lazy + bounded + cancellable). Lets the IDE cap result counts and avoid
@@ -1146,78 +1088,22 @@ public class Prolog {
             it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
             throw new PrologException("Error parsing query: " + e.getMessage(), e);
         }
-        // ISS-2025-0444 - opt-in v4 engine: the native streaming path (lazy + cancellable)
-        // ISS-2025-0461 - no cross-query coroutining on v4 (design decision 3)
-        if (USE_V4_ENGINE) {
-            solveStreamWithV4Engine(query, sink);
-            return;
-        }
-        query = spliceAttributedSessionVars(query);
-        // ISS-2025-0484: the v2 fallback is the only other engine; it streams natively.
-        Variable.AttributeUnifyHook prevHook = Variable.getAttributeUnifyHook();
-        Variable.setAttributeUnifyHook(engineContext::handleAttributeUnification);
-        try {
-            it.denzosoft.jprolog.core.engine.v2.MachineSolver m =
-                new it.denzosoft.jprolog.core.engine.v2.MachineSolver(
-                    knowledgeBase, builtInRegistry, engineContext, moduleManager, tableStore);
-            m.setInferenceBudget(inferenceBudget);   // ISS-2025-0339
-            m.solve(query, sink::test);              // sink returns false to stop the search
-        } finally {
-            Variable.setAttributeUnifyHook(prevHook);
-        }
+        // ISS-2025-0444 - the v4 streaming path (lazy + cancellable)
+        // ISS-2025-0461 - no cross-query coroutining (design decision 3)
+        solveStreamWithV4Engine(query, sink);
     }
     // END_CHANGE: ISS-2025-0311
 
-    private Term spliceAttributedSessionVars(Term term) {
-        if (attributedSessionVars.isEmpty()) return term;
-        if (term instanceof Variable) {
-            Variable v = (Variable) term;
-            String n = v.getName();
-            if (n != null && !n.startsWith("_") && attributedSessionVars.containsKey(n)) {
-                return attributedSessionVars.get(n);
-            }
-            return term;
-        }
-        if (term instanceof CompoundTerm) {
-            CompoundTerm c = (CompoundTerm) term;
-            List<Term> args = c.getArguments();
-            if (args == null || args.isEmpty()) return term;
-            List<Term> newArgs = new ArrayList<>(args.size());
-            boolean changed = false;
-            for (Term a : args) {
-                Term na = spliceAttributedSessionVars(a);
-                if (na != a) changed = true;
-                newArgs.add(na);
-            }
-            return changed ? new CompoundTerm(c.getFunctor(), newArgs) : term;
-        }
-        return term;
-    }
-
-    private void refreshAttributedSessionVars(Term query, List<Map<String, Term>> solutions) {
-        // Walk query for named vars
-        Map<String, Variable> qVars = new HashMap<>();
-        extractVariablesRecursive(query, qVars);
-        Map<String, Term> sol = solutions.isEmpty() ? new HashMap<>() : solutions.get(0);
-        for (Map.Entry<String, Variable> e : qVars.entrySet()) {
-            String name = e.getKey();
-            Variable v = e.getValue();
-            if (name == null || name.startsWith("_")) continue;
-            Term bound = sol.get(name);
-            boolean stillUnbound = (bound == null) || (bound instanceof Variable);
-            if (stillUnbound && v.hasAttributes()) {
-                attributedSessionVars.put(name, v);
-            } else {
-                attributedSessionVars.remove(name);
-            }
-        }
-    }
-
-    /** Clear cross-solve attributed-var state (used by tests / REPL restart). On the v4 engine
-     *  there is no such state to clear — see {@link #residualGoals(Map)} and ISS-2025-0461. */
+    // START_CHANGE: ISS-2025-0491 - 4.1 wave A: `spliceAttributedSessionVars` /
+    // `refreshAttributedSessionVars` and the `attributedSessionVars` map are DELETED with the v2
+    // engine that used them. Cross-query coroutining was dropped on v4 by design decision 3
+    // (B.17): a query's variables — and the goals frozen on them — die with the query.
+    /** Kept as a no-op for embedders written against 3.x: there is no cross-solve state to clear.
+     *  Residual constraints of one answer are read with {@link #residualGoals(Map)}. */
     public void clearSession() {
-        attributedSessionVars.clear();
+        // nothing to clear on v4 (ISS-2025-0461)
     }
+    // END_CHANGE: ISS-2025-0491
     // END_CHANGE: v2.9.4
 
     // START_CHANGE: ISS-2025-0462 - engine v4 wave W4 (design B.9 / B.12, limit L-11): the residual
@@ -1323,19 +1209,11 @@ public class Prolog {
         // START_CHANGE: ISS-2025-0252 - reset transient per-query state (CLP(FD) store)
         resetTransientQueryState();
         // END_CHANGE: ISS-2025-0252
-        // START_CHANGE: ISS-2025-0345 - route the Term overload through the same engine as
-        // solve(String): the default v2 MachineSolver with the inference budget applied and
-        // StackOverflowError converted to resource_error. Previously this overload silently ran
-        // the legacy engine with no budget, bypassing the v3.4.0 DoS protection (ISS-2025-0339).
-        // ISS-2025-0444 - the Term overload routes to v4 as well, budget included
-        // ISS-2025-0461 - ... and, like solve(String), with no cross-query coroutining on v4
-        if (USE_V4_ENGINE) {
-            return solveWithV4Engine(query);
-        }
-        query = spliceAttributedSessionVars(query);
+        // START_CHANGE: ISS-2025-0345 - the Term overload runs the same engine as solve(String),
+        // with the inference budget applied and StackOverflowError converted to resource_error.
+        // ISS-2025-0491 - 4.1 wave A: that engine is v4, and it is the only one.
+        return solveWithV4Engine(query);
         // END_CHANGE: ISS-2025-0345
-        // ISS-2025-0484: solve(Term) runs the SELECTED engine; there is no legacy path left.
-        return solveWithV2Engine(query);
     }
 
     // START_CHANGE: ISS-2025-0252 - Reset process-wide transient state at the start of each

@@ -694,22 +694,14 @@ public class BuiltInFactory {
             it.denzosoft.jprolog.builtin.system.GlobalVariables.Mode.B_GETVAL));
         // END_CHANGE: LIM-003
 
-        // START_CHANGE: LIM-002 - Attributed variable predicates
-        registerFactory("put_attr", () -> new it.denzosoft.jprolog.builtin.term.AttributedVariables(
-            it.denzosoft.jprolog.builtin.term.AttributedVariables.Mode.PUT_ATTR));
-        registerFactory("get_attr", () -> new it.denzosoft.jprolog.builtin.term.AttributedVariables(
-            it.denzosoft.jprolog.builtin.term.AttributedVariables.Mode.GET_ATTR));
-        registerFactory("del_attr", () -> new it.denzosoft.jprolog.builtin.term.AttributedVariables(
-            it.denzosoft.jprolog.builtin.term.AttributedVariables.Mode.DEL_ATTR));
-        registerFactory("attvar", () -> new it.denzosoft.jprolog.builtin.term.AttributedVariables(
-            it.denzosoft.jprolog.builtin.term.AttributedVariables.Mode.ATTVAR));
-        // END_CHANGE: LIM-002
-
-        // START_CHANGE: LIM-001 - Coroutining predicates
-        registerFactory("freeze", () -> new it.denzosoft.jprolog.builtin.control.Freeze(null));
-        registerFactory("when", () -> new it.denzosoft.jprolog.builtin.control.When(null));
-        registerFactory("dif", () -> new it.denzosoft.jprolog.builtin.control.Dif(null));
-        // END_CHANGE: LIM-001
+        // START_CHANGE: ISS-2025-0491 - 4.1 wave A: the LEGACY coroutining and attributed-variable
+        // built-ins are DELETED (builtin.control.Freeze/When/Dif, builtin.term.AttributedVariables).
+        // They existed for the v2 engine, which fired them from Variable.AttributeUnifyHook inside
+        // Term.unify(Term, Map). On v4 `put_attr/3`, `get_attr/3`, `del_attr/2`, `attvar/1` and
+        // `term_attvars/2` are natives (core.engine.v4.Coroutining) and `freeze/2`, `frozen/2`,
+        // `when/2`, `dif/2` and `?=/2` are prelude clauses (prelude/coroutining.pl) over the
+        // attr_unify_hook protocol — neither the registry entry nor the Java class was reachable.
+        // END_CHANGE: ISS-2025-0491
 
         // START_CHANGE: LIM-012 - Rational number predicate
         registerFactory("rational", () -> (it.denzosoft.jprolog.core.engine.BuiltIn) (query, bindings, solutions) -> {

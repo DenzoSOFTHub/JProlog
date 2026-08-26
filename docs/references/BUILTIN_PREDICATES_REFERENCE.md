@@ -381,9 +381,8 @@ true.
 **When to use**: Guard code that walks a term structurally before handing it to something that
 cannot represent cycles (a writer, a serialiser, an external API).
 
-**Availability**: the **v4 engine only** (`-Djprolog.engine=v4` / `Prolog.setUseV4Engine(true)`).
-The default v2 engine cannot construct cyclic terms and does not register this predicate, so a call
-there raises `existence_error(procedure, cyclic_term/1)`.
+**Availability**: added with engine v4 (v3.9.0). The engines deleted in 4.0.0/4.1.0 could not
+construct cyclic terms and did not register this predicate.
 
 ```prolog
 % Syntax: cyclic_term(+Term)
@@ -554,17 +553,17 @@ apply_template(Template, Values, Result) :-
 
 ### Attributed variables and coroutining
 
-*v3.11.0, engine v4* (ISS-2025-0457..0462): on `-Djprolog.engine=v4` these predicates are native or
-prelude Prolog over a real wake queue — binding an attributed variable runs its suspended goals on
-the machine's goal stack, so **the bindings a woken goal makes propagate**, it is traced through the
-four ports, the inference budget and Stop can abort it, and an exception it throws reaches the
-enclosing `catch/3`. On the `-Djprolog.engine=v2` fallback `freeze/2`, `when/2`, `dif/2`,
-`put_attr/3`, `get_attr/3`, `del_attr/2` and `attvar/1` are the older Java built-ins (a
-`when/2`-woken goal's bindings are lost there — ISS-2025-0336), and `term_attvars/2`,
-`copy_term/3`, `frozen/2`, `unifiable/3` and `?=/2` do **not** exist (`existence_error`).
+*v3.11.0, engine v4* (ISS-2025-0457..0462): these predicates are native (`put_attr/3`,
+`get_attr/3`, `del_attr/2`, `attvar/1`, `term_attvars/2`) or prelude Prolog (`freeze/2`,
+`frozen/2`, `when/2`, `dif/2`, `?=/2`) over a real wake queue — binding an attributed variable runs
+its suspended goals on the machine's goal stack, so **the bindings a woken goal makes propagate**,
+it is traced through the four ports, the inference budget and Stop can abort it, and an exception
+it throws reaches the enclosing `catch/3`. (The older Java implementations, which lost a
+`when/2`-woken goal's bindings — ISS-2025-0336 — belonged to the engine deleted in 4.1.0 and are
+gone with it.)
 
-One more deliberate difference on v4: **a query's variables die with the query**. A goal still
-suspended when a query ends never fires in a later one; on v2 it does (session-scoped attributed
+One more deliberate behaviour: **a query's variables die with the query**. A goal still suspended
+when a query ends never fires in a later one (before 4.0.0 it did — session-scoped attributed
 variables, v2.9.4).
 
 | Predicate | Purpose |
@@ -1256,12 +1255,11 @@ element where `call(Pred, X)` succeeds into `Included` and the rest into `Exclud
 `partition(:Pred, +List, ?Less, ?Equal, ?Greater)` uses `call(Pred, X, Order)` with `Order` one of
 `<`, `=`, `>`.
 
-**Availability**: **the default (v4) engine only** (v3.10.0, ISS-2025-0454), as prelude
-Prolog clauses. Under `-Djprolog.engine=v2` and `=legacy` `partition/4` is deliberately *not*
-registered, so a call raises `existence_error(procedure, partition/4)` and programs are expected to
-define their own. That remains true on v4 as well: **a user definition of `partition/4` overrides
-the library one** (the quicksort in `examples/test_16_sorting.pl` relies on this, and its
-`partition/4` takes a pivot rather than a goal).
+**Availability**: since v3.10.0 (ISS-2025-0454), as prelude Prolog clauses; before that a call
+raised `existence_error(procedure, partition/4)` and programs defined their own. That still works:
+**a user definition of `partition/4` overrides the library one** (the quicksort in
+`examples/test_16_sorting.pl` relies on this, and its `partition/4` takes a pivot rather than a
+goal).
 ```prolog
 ?- partition([X]>>(X > 2), [1,2,3,4], Big, Small).
 Big = [3, 4], Small = [1, 2].
@@ -1280,8 +1278,8 @@ over four parallel lists and are linear and interruptible.
 ### Lambda expressions — `library(yall)`
 **Purpose**: Write an anonymous predicate inline instead of naming a helper.
 
-**Availability**: **the default (v4) engine only** (v3.10.0, ISS-2025-0455). Under
-`-Djprolog.engine=v2` and `=legacy` a lambda raises `existence_error(procedure, >>/4)`.
+**Availability**: since v3.10.0 (ISS-2025-0455); before that a lambda raised
+`existence_error(procedure, >>/4)`.
 
 | Form | Meaning |
 |---|---|
@@ -4055,10 +4053,9 @@ debug_print(Message) :-
 *v3.5.0*: the `unknown` flag is enforced — calling an undefined procedure raises `existence_error(procedure, Name/Arity)` when the flag is `error` (the default), prints a warning and fails when `warning`, and fails silently when `fail`. Procedures declared dynamic (via the `:- dynamic` directive, the `dynamic/1` goal, or implied by `assert`/`retractall`) fail silently instead of raising the error.
 
 *v3.9.0* (ISS-2025-0441): `occurs_check` accepts a **third** value, `error`, as ISO 7.11.2.4
-requires (`true`, `false`, `error`) — it was rejected before. On the v4 engine `error` makes a
-unification that would build a cyclic term raise `representation_error(cyclic_term)` instead of
-succeeding with a rational tree; on the `-Djprolog.engine=v2` fallback it behaves like `true` (the
-unification fails).
+requires (`true`, `false`, `error`) — it was rejected before. `error` makes a unification that
+would build a cyclic term raise `representation_error(cyclic_term)` instead of succeeding with a
+rational tree.
 
 *v3.8.0* (ISS-2025-0437): flags are **per engine**. `set_prolog_flag/2` now changes only the `Prolog` instance that runs the goal — previously the flag store was a process-wide static, so `set_prolog_flag(unknown, fail)` (or `double_quotes`, or `occurs_check`) in one engine silently reconfigured every other engine in the JVM. The same applies to `trace/0` / `notrace/0`. Embedders can reach a specific engine's store with `Prolog.getFlags()` and toggle tracing from another thread with `Prolog.setTracing(boolean)`.
 
@@ -5252,11 +5249,13 @@ true.
 ```prolog
 % Syntax: thread_self(-ThreadId)
 ?- thread_self(Id).
-Id = 1.
+Id = main.
 ```
 
-Inside a thread created by `thread_create/2,3` this is that thread's own Prolog id; on any other
-thread it is the JVM thread id.
+A thread that has an **alias** reports the alias, as in SWI-Prolog: the top-level thread is `main`,
+and a worker started with `thread_create(Goal, Id, [alias(w1)])` reports `w1`. A worker with no
+alias reports its integer Prolog id. Either form is accepted wherever a thread is named
+(`thread_join/2`, `thread_send_message/2`, `thread_is_alive/1`, ...).
 
 ### thread_sleep/1
 **Purpose**: Suspends the current thread for the specified number of seconds.
@@ -5754,18 +5753,21 @@ Tabling (memoization, tabled resolution) caches the answers of a tabled predicat
 variant**, so a repeated call with the same argument pattern is answered from the table and a
 left-recursive or cyclic definition terminates instead of looping.
 
-### Two implementations — read this first
+### One implementation since 4.1.0
 
-| | `-Djprolog.engine=v2` and `=legacy` (the fallbacks) | **the default engine** (v4, since 3.12.0 as an option, the default since 4.0.0) |
+Tabling used to differ per engine. The engine that carried the bounded, sometimes-wrong
+implementation was deleted in 4.1.0, so what follows is simply how tabling works.
+
+| | the pre-4.1.0 fallback engines (deleted) | **the engine** (v4, an option since 3.12.0, the default since 4.0.0) |
 |---|---|---|
-| Algorithm | bounded re-evaluation: the goal is re-run at most **100** times over name-keyed answer maps | **linear tabling with completion** (SLD + iterative completion, B-Prolog/DRA style) in the machine's own choice points |
+| Algorithm | bounded re-evaluation: the goal was re-run at most **100** times over name-keyed answer maps | **linear tabling with completion** (SLD + iterative completion, B-Prolog/DRA style) in the machine's own choice points |
 | Correctness | **wrong answers** for a left-recursive predicate over a long chain (LIM-038 / design limit L-03) | correct and complete for definite programs, left recursion included |
 | Recursion depth | the pre-4.0.0 recursive solver's 2 000-deep Java cap | none (a tabled call is a choice point) |
 | Inference budget / Stop | not enforced inside the fixpoint | enforced |
-| Four-port trace / debugger | the whole tabled call is opaque | Call/Exit/Redo/Fail like any predicate |
+| Four-port trace / debugger | the whole tabled call was opaque | Call/Exit/Redo/Fail like any predicate |
 | `current_table/2` | not available | available |
 
-The classic repro, which **fails on the default engine and succeeds on v4**:
+The classic repro, which **succeeds today and failed on the deleted fallback**:
 
 ```prolog
 edge(I, J) :- between(1, 3000, I), J is I + 1.
@@ -5773,12 +5775,12 @@ edge(I, J) :- between(1, 3000, I), J is I + 1.
 path(X, Y) :- edge(X, Y).
 path(X, Y) :- path(X, Z), edge(Z, Y).
 
-?- path(1, 3001).                                  % v4: true    v2: fails
-?- path(1, 51).                                    % v4: true    v2: fails
-?- findall(Y, path(1, Y), L), length(L, N).        % v4: N = 3000
+?- path(1, 3001).                                  % true   (old fallback: fails)
+?- path(1, 51).                                    % true   (old fallback: fails)
+?- findall(Y, path(1, Y), L), length(L, N).        % N = 3000
 ```
 
-### Semantics on v4
+### Semantics
 
 - A **variant table** is created per tabled subgoal. `path(1, Y)` and `path(1, 51)` are different
   variants and each gets its own table; both are answered correctly.
@@ -5863,14 +5865,13 @@ true.
 % Only fib/2 is affected; other tabled predicates keep their tables and their declarations
 ```
 
-**Errors** (v4): `instantiation_error` for an unbound argument,
+**Errors**: `instantiation_error` for an unbound argument,
 `type_error(predicate_indicator, T)` for anything that is not `Name/Arity`,
-`permission_error(modify, table, ...)` from inside a running tabled evaluation. On the v2 and
-v2 fallback engine a malformed argument makes the call fail silently.
+`permission_error(modify, table, ...)` from inside a running tabled evaluation. (On the engines
+deleted in 4.0.0/4.1.0 a malformed argument made the call fail silently.)
 
 ### current_table/2
-**Purpose**: Enumerates the tables that currently exist. **`-Djprolog.engine=v4` only** — on the
-other engines it raises `existence_error(procedure, current_table/2)`.
+**Purpose**: Enumerates the tables that currently exist. Added with engine v4 (v3.12.0).
 
 **When to use**: debugging a tabled program, or checking that a table was really discarded.
 
@@ -7799,14 +7800,12 @@ true.
 
 <!-- START_CHANGE: ISS-2025-0466..0471 - engine v4 wave W6: the module system -->
 
-## 61. Module System (engine v4)
+## 61. Module System
 
-**Engine note.** Everything in this section describes the **default (v4) engine**. Under
-`-Djprolog.engine=v2` the module system is the older `ModuleManager` one: `Module:Goal` reaches
-only user-defined clauses (`lists:append([1],[2],L)` is **false**), declaring a second module
-switches the whole knowledge base into module-manager resolution, there are no library modules and
-no autoload, `meta_predicate/1` is recorded but never consulted, and `current_module/1` does not
-exist. That fallback engine is deleted in 4.1.
+**Version note.** Everything in this section arrived with engine v4 (v3.13.0, the default since
+4.0.0). The older `ModuleManager` behaviour — `Module:Goal` reaching only user-defined clauses, no
+library modules, no autoload, `meta_predicate/1` recorded but never consulted, no
+`current_module/1` — belonged to the engine deleted in 4.1.0.
 
 ### The three kinds of module
 

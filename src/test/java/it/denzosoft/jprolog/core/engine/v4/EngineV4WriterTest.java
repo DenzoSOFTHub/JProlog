@@ -30,17 +30,14 @@ import static org.junit.Assert.assertTrue;
 public class EngineV4WriterTest {
 
     private Prolog prolog;
-    private boolean prevV4;
 
     @Before
     public void setUp() {
-        prevV4 = Prolog.isUsingV4Engine();
         prolog = new Prolog();
     }
 
     @After
     public void tearDown() {
-        Prolog.setUseV4Engine(prevV4);
     }
 
     /** Render {@code goal}'s output by capturing it into an atom. */
@@ -146,8 +143,7 @@ public class EngineV4WriterTest {
 
     @Test
     public void testISS0475_CyclicTermPrintingTerminates() {
-        Prolog.setUseV4Engine(true);
-        Prolog v4 = new Prolog();
+        Prolog v4 = new Prolog();                        // ISS-2025-0491: one engine
         List<Map<String, Term>> r = v4.solve("X = f(X), with_output_to(atom(A), write(X))");
         assertFalse(r.isEmpty());
         assertEquals("f(...)", r.get(0).get("A").toString());
@@ -281,8 +277,7 @@ public class EngineV4WriterTest {
 
     @Test
     public void testISS0476_ResidualGoalsArePrintedAfterTheBindings() {
-        Prolog.setUseV4Engine(true);
-        Prolog v4 = new Prolog();
+        Prolog v4 = new Prolog();                        // ISS-2025-0491: one engine
         List<Map<String, Term>> r = v4.solve("freeze(X, writeln(hi))");
         assertFalse(r.isEmpty());
         List<String> lines = Answer.lines(r.get(0), v4.residualGoals(r.get(0)));

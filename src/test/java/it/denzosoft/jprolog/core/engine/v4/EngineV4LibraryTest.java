@@ -31,21 +31,14 @@ import static org.junit.Assert.fail;
 public class EngineV4LibraryTest {
 
     private Prolog prolog;
-    private boolean prevV4;
-    private boolean prevV2;
 
     @Before
     public void setUp() {
-        prevV4 = Prolog.isUsingV4Engine();
-        prevV2 = Prolog.isUsingV2Engine();
-        Prolog.setUseV4Engine(true);
         prolog = new Prolog();
     }
 
     @After
     public void tearDown() {
-        Prolog.setUseV4Engine(prevV4);
-        Prolog.setUseV2Engine(prevV2);
     }
 
     private static String value(List<Map<String, Term>> sols, int i, String var) {

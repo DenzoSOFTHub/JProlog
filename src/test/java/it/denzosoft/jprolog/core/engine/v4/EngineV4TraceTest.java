@@ -52,20 +52,13 @@ import static org.junit.Assert.assertTrue;
  */
 public class EngineV4TraceTest {
 
-    private boolean prevV4;
-    private boolean prevV2;
 
     @Before
     public void setUp() {
-        prevV4 = Prolog.isUsingV4Engine();
-        prevV2 = Prolog.isUsingV2Engine();
-        Prolog.setUseV4Engine(true);
     }
 
     @After
     public void tearDown() {
-        Prolog.setUseV4Engine(prevV4);
-        Prolog.setUseV2Engine(prevV2);
     }
 
     // ------------------------------------------------------------------ harness

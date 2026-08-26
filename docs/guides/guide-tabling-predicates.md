@@ -8,21 +8,20 @@ Tabling, also known as memoization or tabulation, is a technique that caches the
 2. **Termination**: Prevents infinite loops in programs with cyclic dependencies, such as graph reachability over graphs with cycles.
 3. **Correctness**: Ensures that left-recursive grammars and transitive closure computations terminate and produce correct results.
 
-JProlog has **two** tabling implementations, and which one you get depends on the selected engine.
-Since v4.0.0 the correct one is the default; the other is reachable only with
-`-Djprolog.engine=v2`, and is deleted in 4.1.
+JProlog had **two** tabling implementations until 4.1.0, one per engine. The engine that carried
+the bounded, sometimes-wrong one (`-Djprolog.engine=v2`) is deleted, so there is now exactly one:
 
-| | `-Djprolog.engine=v2` and `=legacy` (the fallbacks) | **the default engine** (v4, since 3.12.0 as an option, the default since 4.0.0) |
+| | the pre-4.1.0 fallback engines (deleted) | **the engine** (v4, an option since 3.12.0, the default since 4.0.0, the only one since 4.1.0) |
 |---|---|---|
-| Algorithm | bounded re-evaluation: the goal is re-run at most **100** times over name-keyed answer maps, and a call that finds the variant in progress reads whatever partial answer list exists at that instant | **linear tabling with completion** (SLD + iterative completion, B-Prolog / DRA style) implemented in the machine's own choice points |
-| Correctness | **wrong answers** for a left-recursive predicate over a long chain — see below (LIM-038, design limit L-03) | correct and complete for definite programs, left recursion included |
+| Algorithm | bounded re-evaluation: the goal was re-run at most **100** times over name-keyed answer maps, and a call that found the variant in progress read whatever partial answer list existed at that instant | **linear tabling with completion** (SLD + iterative completion, B-Prolog / DRA style) implemented in the machine's own choice points |
+| Correctness | **wrong answers** for a left-recursive predicate over a long chain (LIM-038, design limit L-03) | correct and complete for definite programs, left recursion included |
 | Recursion depth | the pre-4.0.0 recursive solver's 2 000-deep Java cap | none — a tabled call is a choice point, not a Java frame |
 | Inference budget / Stop | not enforced inside the fixpoint | enforced |
-| Four-port trace / debugger | the whole tabled call is opaque | Call/Exit/Redo/Fail like any predicate |
+| Four-port trace / debugger | the whole tabled call was opaque | Call/Exit/Redo/Fail like any predicate |
 | `current_table/2` | not available | available |
 
-The difference is not academic. This program answers correctly on v4 and wrongly on the default
-engine:
+The difference was not academic. This program answers correctly today and answered wrongly on the
+old fallback:
 
 ```prolog
 edge(I, J) :- between(1, 3000, I), J is I + 1.
@@ -30,28 +29,21 @@ edge(I, J) :- between(1, 3000, I), J is I + 1.
 path(X, Y) :- edge(X, Y).
 path(X, Y) :- path(X, Z), edge(Z, Y).
 
-?- path(1, 3001).                                  % default: true    -Djprolog.engine=v2: fails
-?- path(1, 51).                                    % default: true    -Djprolog.engine=v2: fails
-?- findall(Y, path(1, Y), L), length(L, 3000).     % default: true    -Djprolog.engine=v2: fails
+?- path(1, 3001).                                  % true   (the old fallback engine: fails)
+?- path(1, 51).                                    % true   (the old fallback engine: fails)
+?- findall(Y, path(1, Y), L), length(L, 3000).     % true   (the old fallback engine: fails)
 ```
-
-Since v4.0.0 v4 IS the default, so tabled programs are correct out of the box; a program that
-selects `-Djprolog.engine=v2` or `=legacy` gets the old, wrong behaviour.
 
 ### Architecture
 
-Shared by both engines:
-
 - **`TableStore`** (`it.denzosoft.jprolog.core.engine.TableStore`) -- holds the set of tabled
-  predicate indicators (e.g. `"fib/2"`) declared by `:- table` / `table/1`, and, on the v2 and
-  v2 fallback engine, the answer cache itself.
+  predicate indicators (e.g. `"fib/2"`) declared by `:- table` / `table/1`. Since 4.1.0 that is
+  *all* it holds: the answer cache it also carried belonged to the deleted engine.
 
 - **Built-in predicates**: `table/1` (`builtin.meta.TableDirective`),
   `abolish_all_tables/0` (`builtin.meta.AbolishAllTables`) and
   `abolish_table/1` (`builtin.meta.AbolishTable`). All three are context-dependent
   (`BuiltInWithContext`) because they need the `SolverContext` to reach the `Prolog` context.
-
-On the v4 engine:
 
 - **`core.engine.v4.Tabling`** owns the answers: one *variant table* per tabled subgoal
   (`{status, answers, dependencies}`) on the per-engine `Engine` object. The variant key is a
@@ -62,7 +54,7 @@ On the v4 engine:
 
 ### How tabling works internally
 
-**On the v4 engine (linear tabling with completion):**
+**Linear tabling with completion:**
 
 1. `Machine.callUser` sees that the predicate is tabled and computes the call's **variant key**.
 2. The first call to a variant becomes its **generator**: a choice point whose PRODUCE phase runs
@@ -78,20 +70,14 @@ On the v4 engine:
    is no iteration cap: termination follows from the finite, deduplicated answer set.
 5. A completed table is thereafter consumed directly, which is the memoization effect.
 
-**On the v2 fallback engine (bounded re-evaluation):**
-
-1. `MachineSolver` checks `TableStore.isTabled(functor, arity)`.
-2. The goal is normalized via `TableStore.normalize()` (unbound variables become `_TV0`, `_TV1`,
-   ...) to produce a `toString()` cache key.
-3. A cache hit replays the stored solution maps.
-4. Otherwise the goal is marked in-progress and re-solved up to **100** times until the answer set
-   stops growing; a recursive call meanwhile reads the partial list. If the fixpoint is not reached
-   within 100 iterations, whatever was collected is cached as if it were complete — which is where
-   the wrong answers come from.
+*(For the record, the deleted engine's algorithm was: normalise the goal to a `toString()` cache
+key, replay a cache hit, otherwise mark the variant in progress and re-solve it up to **100** times
+until the answer set stopped growing — caching whatever had been collected if the fixpoint was not
+reached, which is where the wrong answers came from.)*
 
 ### Invalidation
 
-A table is a memo, so it survives across queries. On v4:
+A table is a memo, so it survives across queries:
 
 - asserting to or retracting from a **tabled** predicate drops that predicate's tables;
 - a change to a **non-tabled** predicate that a tabled one depends on is **not** tracked. Call
@@ -101,12 +87,11 @@ A table is a memo, so it survives across queries. On v4:
 - two safety caps (100 000 tables, 4 000 000 answers) drop the oldest completed tables at a query
   boundary, so a long-lived engine cannot grow the store without bound.
 
-`tnot/1` (tabled negation under the well-founded semantics) is **not implemented** on any engine:
+`tnot/1` (tabled negation under the well-founded semantics) is **not implemented**:
 it raises `existence_error(procedure, tnot/1)`. Ordinary `\+/1` inside a tabled predicate is
 evaluated as negation-as-failure against the answers available at that moment, so a program whose
 meaning is *undefined* under the well-founded semantics gets an engine-dependent (but always
-terminating) answer -- for `:- table p/1.  p(X) :- \+ p(X).`, `p(a)` succeeds on v4 and fails on
-the default engine. Do not rely on either.
+terminating) answer -- for `:- table p/1.  p(X) :- \+ p(X).`, `p(a)` succeeds. Do not rely on it.
 
 ---
 

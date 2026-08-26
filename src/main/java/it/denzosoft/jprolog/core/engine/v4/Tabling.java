@@ -419,10 +419,9 @@ final class Tabling {
 
     // ------------------------------------------------------------------ built-ins
 
-    // START_CHANGE: ISS-2025-0464 - the tabling built-ins must observe the v4 store. The legacy
-    // TableStore keeps the DECLARATIONS (they are shared with the v2/legacy engines and with the
-    // consult-time `:- table` directive), so abolish_table/1 clears both; the legacy Java built-ins
-    // stay registered and stay the implementation on v2/legacy.
+    // START_CHANGE: ISS-2025-0464 - the tabling built-ins must observe the v4 store. TableStore
+    // keeps the DECLARATIONS (the consult-time `:- table` directive and table/1 write them), so
+    // abolish_table/1 clears both.
     static void register(BuiltinTable t) {
         t.register("abolish_all_tables", 0, new AbolishAllB());
         t.register("abolish_table", 1, new AbolishOneB());

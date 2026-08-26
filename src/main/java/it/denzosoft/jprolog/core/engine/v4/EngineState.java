@@ -14,9 +14,9 @@ package it.denzosoft.jprolog.core.engine.v4;
  * engine's built-in cannot leave its state behind). Code with no engine in scope — a
  * directly-instantiated built-in, a unit test — sees a process-wide default, exactly as before.
  *
- * <p>This is deliberately reachable from both engines: design decision 1 (B.17) keeps the v2
- * {@code MachineSolver} selectable for one release after v4 becomes the default, so the per-engine
- * state has to work for the legacy engines too.
+ * <p>It lives outside the machine on purpose: the ~310 bridged built-ins reach it through their
+ * static facades, with no engine object in hand. (Until 4.1 it was also shared with the v2 engine,
+ * which design decision 1 of B.17 kept selectable for one release.)
  */
 public final class EngineState {
 

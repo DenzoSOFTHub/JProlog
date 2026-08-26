@@ -101,7 +101,7 @@ public class Op extends AbstractBuiltInWithContext {
             final OperatorTable t = operatorTable;
             if (precedence == 0) {
                 if (existing != null) {
-                    it.denzosoft.jprolog.core.engine.Trail.record(() -> {
+                    it.denzosoft.jprolog.core.engine.v4.Undo.record(() -> {
                         t.defineOperator(existing.getPrecedence(), existing.getType(), existing.getName());
                     });
                 }
@@ -111,13 +111,13 @@ public class Op extends AbstractBuiltInWithContext {
                 if (precedence < 1 || precedence > 1200) return false;
                 if (!isValidOperatorDefinition(precedence, type, name)) return false;
                 if (existing != null) {
-                    it.denzosoft.jprolog.core.engine.Trail.record(() -> {
+                    it.denzosoft.jprolog.core.engine.v4.Undo.record(() -> {
                         t.defineOperator(existing.getPrecedence(), existing.getType(), existing.getName());
                     });
                 } else {
                     final Operator.Type capturedType = type;
                     final String capturedName = name;
-                    it.denzosoft.jprolog.core.engine.Trail.record(() -> {
+                    it.denzosoft.jprolog.core.engine.v4.Undo.record(() -> {
                         t.removeOperator(0, capturedType, capturedName);
                     });
                 }

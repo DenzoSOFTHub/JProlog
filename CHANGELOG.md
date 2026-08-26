@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.1.0] - 2026-08-26
+
+### Wave A of 4.1: one engine
+
+The one-release promise of design decision 1 (B.17) expires: the v2 `MachineSolver` — JProlog's
+default from 3.1.0 to 3.14.0 and the selectable fallback of 4.0.0 — is **deleted**, together with
+everything that existed only to keep it alive. Wave record, invariants and the exact starting point
+for wave B are in `docs/reports/report-engine-v4-progress.md` (new section 16).
+ISS-2025-0491..0495.
+
+Baseline: **1196/1196 JUnit tests** (4.0.0 ran 1214 across two CI legs; 39 of those tests exercised
+the deleted machine, 21 new ones cover the retirement), **20/20 example programs** with every
+per-program "Successful queries" count unchanged
+(2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 0, 0). `src/main` shrank from **74 724 to
+71 899 lines** (-2 825) across **347 files** (was 352: 6 deleted, 1 added).
+`grep -rn "MachineSolver\|core.engine.v2\|Trail.record\|isUsingV2Engine\|setUseV4Engine" src/main`
+returns nothing.
+
+**Deleted classes** (6 files, 2 616 lines):
+
+| File | Lines | What it was |
+|---|---:|---|
+| `core/engine/v2/MachineSolver.java` | 1895 | the iterative SLD engine of 3.1.0–4.0.0 |
+| `builtin/control/When.java` | 226 | `when/2`, the Java version (v4 has a prelude clause) |
+| `builtin/term/AttributedVariables.java` | 179 | `put_attr/3`, `get_attr/3`, `del_attr/2`, `attvar/1`, the Java versions (v4 has natives) |
+| `builtin/control/Dif.java` | 156 | `dif/2`, the Java version (v4 has a prelude clause) |
+| `builtin/control/Freeze.java` | 106 | `freeze/2`, the Java version (v4 has a prelude clause) |
+| `core/engine/Trail.java` | 54 | the process-wide `ThreadLocal` undo stack for bridged built-ins |
+
+**Added** (1 file): `core/engine/v4/Undo.java` (64) — the doorway a bridged built-in uses to push
+an undo action onto the running machine's own trail.
+
+**Deleted tests** (2 files, 37 methods): `core/engine/v2/MachineSolverTest` (30 — unit tests of the
+deleted class), `core/engine/v2/V2EngineIntegrationTest` (7 — the same programs the v4 suite runs,
+driven through the deleted engine), plus `EngineV4Test.testISS0444_EngineSelectionFlag` and
+`EngineV4RetirementTest.testISS0484_OnlyV2SelectsAFallbackEngine`, which asserted the behaviour of
+the deleted selection API. `core/engine/v2/EngineHardeningTest` (54 ENG-01..ENG-17 regressions)
+**moved** to `core/engine/EngineHardeningTest`, with its one direct `MachineSolver` use re-pointed
+at the v4 `Machine`.
+
+**Removed API**: `Prolog.setUseV2Engine`, `isUsingV2Engine`, `setUseV4Engine`, `isUsingV4Engine`;
+`Variable.AttributeUnifyHook` with `Variable.setAttributeUnifyHook`/`getAttributeUnifyHook`;
+`EngineContext.handleAttributeUnification`; the `engine-v2` Maven profile.
+`-Djprolog.engine=<anything>` now logs a warning at class-init and runs v4. `Prolog.clearSession()`
+survives as a no-op (there is no cross-query attributed-variable state on v4).
+`core.engine.TableStore` keeps its name and its `:- table` declaration registry but loses the
+answer cache, the in-progress set, the partial cache, the goal normaliser and the evaluation claim
+(232 -> 54 lines) — all of that was the deleted driver's.
+
+- **ISS-2025-0491** — **the v2 engine is deleted.** With `MachineSolver` go: the `engine-v2`
+  profile and the second CI leg; the four static engine flags and every engine-aware branch in
+  `src/main` and `src/test` (the v4 test classes no longer select an engine in `setUp`; the
+  `isUsingV4Engine()` branches in `BugFixVerificationTest` and `RefactorIssuesTest` collapse to the
+  v4 behaviour they always asserted); `EngineContext.runSub`'s engine branch and its legacy
+  attribute-hook dispatcher; `Prolog.solveWithV2Engine`, the cross-query attributed-variable
+  session (`spliceAttributedSessionVars` / `refreshAttributedSessionVars`) and the hook
+  install/uninstall around every query; the legacy `freeze/when/dif` and attributed-variable
+  built-ins and their `BuiltInFactory` registrations and `BuiltInRegistry` arity entries — on v4
+  `put_attr/3`, `get_attr/3`, `del_attr/2`, `attvar/1` and `term_attvars/2` are natives and
+  `freeze/2`, `frozen/2`, `when/2`, `dif/2` and `?=/2` are prelude clauses, so neither the classes
+  nor their registry entries were reachable. **Behaviour note**: those seven names are no longer
+  `BuiltInRegistry.isBuiltIn`, so `assertz(freeze(X, Y))` is allowed instead of raising
+  `permission_error` — consistent with the documented rule that a user definition overrides a
+  library one. `util.TermCopier` and `util.TermUtils` are **kept**: the knowledge base, `Prolog.compile`,
+  `builtin.database.Clause`, `builtin.exception.Throw` and `builtin.term.TermConstruction` still
+  use them (11 call sites, 12 files), and the machine uses neither.
+- **ISS-2025-0492** — **one trail.** `core.engine.Trail`, a process-per-thread `ThreadLocal` stack
+  of undo `Runnable`s that every choice point had to mark (`CP.legacyMark`) and roll back in
+  parallel with the real trail, is replaced by `core.engine.v4.Undo`. A bridged built-in that
+  mutates engine state outside the binding cells — `b_setval/2`, `op/3` (both implementations),
+  `setarg/3`, the CLP(FD) store's domain narrowings and attribute registrations — records its undo
+  action on the **thread-current machine's `Bindings` trail**, where `B.undo(cp.trailMark)` runs it
+  at exactly the point the cells are reset. `CP` carries one mark again. An action recorded with no
+  machine running on the thread (a `:- op(...)` directive at consult time, a directly instantiated
+  built-in, a unit test) is a no-op, exactly as the old trail was with no choice point.
+- **ISS-2025-0493** — **the module test leaves the hot path.** `Modules.overridesBuiltin`
+  (two string concatenations and up to four map probes, through `Prelude.owner` and `autoload`) ran
+  for **every** goal that is not inline, not a v4 native and not a control construct — including
+  plain user predicates, which have no built-in to override. Measured at ~13–16 % of `nrev`. It is
+  now asked only when `BuiltInRegistry.isBuiltIn(f, n)` says there IS an entry to override (the
+  same probe `LegacyBuiltinAdapter.run` does as its first statement), and memoised in a 512-slot
+  direct-mapped cache of immutable entries stamped with the `ModuleManager` modification stamp, so
+  a module definition, an import or a consult into a module invalidates it without a lock or a
+  sweep. Medians over 13 interleaved same-session JVM runs: `nrev30x2000` 404 -> 362 ms (-10 %),
+  200 000 first-arg-indexed fact lookups 194 -> 181 ms (-7 %), `loop(1000000)` 543 -> 496 ms (-9 %).
+- **ISS-2025-0494** — **an idle debug controller is free.** `DebugController.needsPorts()` is false
+  for a controller with no listener, no breakpoint, in `CONTINUE` mode and with no Stop pending —
+  such a controller can observe nothing, so the machine emits no ports for it at all. Measured on
+  `loop(1000000)`, one port site per inference: an attached-but-idle controller cost **1.8–2.3x**
+  before and **0.96–1.13x** after. `traceEnabled` deliberately does not count towards
+  `needsPorts()`: every use of it inside `DebugController` is guarded by `listener != null`.
+- **ISS-2025-0495** — **`thread_self/1` answers SWI-style.** A thread that has an alias reports the
+  **alias**: the top-level thread answers `main`, a worker created with `[alias(w1)]` answers `w1`,
+  and an anonymous worker still answers its integer id. Every thread predicate already accepted
+  either form, so the answer stays a usable argument to `thread_join/2`,
+  `thread_send_message/2` and the rest; `thread_join/2` statuses are unchanged. The `main` alias
+  also **follows a live thread** now: it used to be claimed once, for the JVM's lifetime, by
+  whichever non-worker thread touched the queues first, so once that thread died
+  `thread_send_message(main, T)` posted to a queue nobody could read. W9 deviation 8 is closed.
+
+---
+
 ## [4.0.0] - 2026-08-26
 
 ### Wave W9: retirement — the recursive engine is gone

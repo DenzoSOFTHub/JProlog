@@ -1938,21 +1938,15 @@ public class BugFixVerificationTest {
     // START_CHANGE: ISS-2025-0273 - setup_call_cleanup/3 and call_cleanup/2
     @Test
     public void testISS0273_setupCallCleanup() {
-        // START_CHANGE: ISS-2025-0442 - engine v4 implements setup_call_cleanup/3 with a real
+        // START_CHANGE: ISS-2025-0442 - the engine implements setup_call_cleanup/3 with a real
         // CLEANUP FRAME (design B.6): Cleanup runs when Goal has no alternatives left, i.e. after
-        // its LAST solution, not eagerly after the first. The legacy built-in the v2 engine bridges
-        // to is eager (it materialises every solution, then runs Cleanup), so `..., scc_ok` sees
-        // the assert on the first solution there and only on the second one here. The ISO/SWI
-        // behaviour is v4's; the assertion is therefore engine-dependent.
+        // its LAST solution, not eagerly after the first. That is the ISO/SWI behaviour.
+        // ISS-2025-0491 - 4.1 wave A: the v2 branch (an eager bridged built-in that ran Cleanup
+        // after the FIRST solution) is gone with the v2 engine.
         List<Map<String, Term>> s;
-        if (it.denzosoft.jprolog.core.engine.Prolog.isUsingV4Engine()) {
-            assertEquals("both solutions are produced, and Cleanup ran by the end", 1, prolog.solve(
-                "findall(X, setup_call_cleanup(true, member(X,[1,2]), assertz(scc_ok)), L), "
-                + "L == [1,2], scc_ok.").size());
-        } else {
-            s = prolog.solve("setup_call_cleanup(true, member(X,[1,2]), assertz(scc_ok)), scc_ok.");
-            assertEquals(2, s.size());
-        }
+        assertEquals("both solutions are produced, and Cleanup ran by the end", 1, prolog.solve(
+            "findall(X, setup_call_cleanup(true, member(X,[1,2]), assertz(scc_ok)), L), "
+            + "L == [1,2], scc_ok.").size());
         // END_CHANGE: ISS-2025-0442
 
         // Cleanup runs even when the goal fails.
@@ -1964,14 +1958,9 @@ public class BugFixVerificationTest {
             "catch(setup_call_cleanup(true, throw(boom), assertz(scc_e)), boom, true), scc_e.");
         assertEquals(1, s.size());
 
-        // call_cleanup/2.
-        if (it.denzosoft.jprolog.core.engine.Prolog.isUsingV4Engine()) {
-            assertEquals("call_cleanup runs Cleanup once, after the last solution", 1, prolog.solve(
-                "findall(X, call_cleanup(member(X,[a,b]), assertz(scc_cc)), L), L == [a,b], scc_cc.").size());
-        } else {
-            s = prolog.solve("call_cleanup(member(X,[a,b]), assertz(scc_cc)), scc_cc.");
-            assertEquals(2, s.size());
-        }
+        // call_cleanup/2 (ISS-2025-0491: v4 only, like the setup_call_cleanup/3 case above).
+        assertEquals("call_cleanup runs Cleanup once, after the last solution", 1, prolog.solve(
+            "findall(X, call_cleanup(member(X,[a,b]), assertz(scc_cc)), L), L == [a,b], scc_cc.").size());
     }
     // END_CHANGE: ISS-2025-0273
 
@@ -2620,32 +2609,22 @@ public class BugFixVerificationTest {
     }
 
     @Test
-    public void testISS0348_StringIdentityAndAtomicOnLegacyEngine() {
-        // ==/\==/atomic for strings on the legacy engine (the v2 engine inlines its own
-        // structural equality in core.engine.v2.MachineSolver — tracked separately).
-        boolean wasV2 = Prolog.isUsingV2Engine();
-        // START_CHANGE: ISS-2025-0478 - v4 is the default since wave W8 and wins over the v2 flag;
-        // reaching the LEGACY recursive solver means turning both off.
-        boolean wasV4 = Prolog.isUsingV4Engine();
-        Prolog.setUseV4Engine(false);
-        // END_CHANGE: ISS-2025-0478
-        Prolog.setUseV2Engine(false);
-        try {
-            Prolog legacy = new Prolog();
-            assertEquals("\"abc\" == \"abc\" must succeed", 1, legacy.solve("\"abc\" == \"abc\".").size());
-            assertEquals("\"abc\" == \"abd\" must fail", 0, legacy.solve("\"abc\" == \"abd\".").size());
-            assertEquals("\"abc\" \\== \"abc\" must fail", 0, legacy.solve("\"abc\" \\== \"abc\".").size());
-            assertEquals("\"abc\" \\== \"abd\" must succeed", 1, legacy.solve("\"abc\" \\== \"abd\".").size());
-            assertEquals("strings are atomic", 1, legacy.solve("atomic(\"abc\").").size());
-        } finally {
-            Prolog.setUseV2Engine(wasV2);
-            Prolog.setUseV4Engine(wasV4);   // ISS-2025-0478
-        }
+    public void testISS0348_StringIdentityAndAtomicOnAFreshEngine() {
+        // START_CHANGE: ISS-2025-0491 - 4.1 wave A: this used to select the legacy (and later the
+        // v2) engine to prove that string identity held there too. There is ONE engine now, so the
+        // test keeps its assertions and drops the selection: a fresh Prolog, same guarantees.
+        Prolog fresh = new Prolog();
+        assertEquals("\"abc\" == \"abc\" must succeed", 1, fresh.solve("\"abc\" == \"abc\".").size());
+        assertEquals("\"abc\" == \"abd\" must fail", 0, fresh.solve("\"abc\" == \"abd\".").size());
+        assertEquals("\"abc\" \\== \"abc\" must fail", 0, fresh.solve("\"abc\" \\== \"abc\".").size());
+        assertEquals("\"abc\" \\== \"abd\" must succeed", 1, fresh.solve("\"abc\" \\== \"abd\".").size());
+        assertEquals("strings are atomic", 1, fresh.solve("atomic(\"abc\").").size());
+        // END_CHANGE: ISS-2025-0491
     }
 
     @Test
     public void testISS0348_StringIdentityAndAtomicOnDefaultEngine() {
-        // ==/\==/atomic for strings on the default v2 engine (inlined in MachineSolver)
+        // ==/\==/atomic for strings on the default engine (ISS-2025-0491: v4 inlines them)
         assertEquals("\"abc\" == \"abc\" must succeed", 1, prolog.solve("\"abc\" == \"abc\".").size());
         assertEquals("\"abc\" == \"abd\" must fail", 0, prolog.solve("\"abc\" == \"abd\".").size());
         assertEquals("\"abc\" \\== \"abc\" must fail", 0, prolog.solve("\"abc\" \\== \"abc\".").size());
@@ -3575,20 +3554,14 @@ public class BugFixVerificationTest {
         // the real two-clause Prolog definition of prelude/lists.pl, so the fully-open mode
         // ENUMERATES (X = [], X = [_], X = [_,_], ...) instead of stopping at the one standard
         // solution the eager Java built-in could produce. Collecting every solution of an infinite
-        // relation is therefore no longer a meaningful assertion on v4 — the guarantee becomes
-        // "the first solution is X = [], and it arrives without throwing".
-        if (it.denzosoft.jprolog.core.engine.Prolog.isUsingV4Engine()) {
-            List<Map<String, Term>> v4 = prolog.solve("append(X,Y,Z), X == [], !.");
-            assertFalse("append(X,Y,Z) must produce the X=[] solution, not throw", v4.isEmpty());
-            assertEquals("fully open append/3 must enumerate lazily on v4",
-                1, prolog.solve("append(X, _, _), length(X, 2), !.").size());
-            return;
-        }
+        // relation is therefore not a meaningful assertion — the guarantee is "the first solution
+        // is X = [], and it arrives without throwing".
+        // ISS-2025-0491 - 4.1 wave A: the bounded v2 branch is gone with the v2 engine (LIM-027).
+        List<Map<String, Term>> v4 = prolog.solve("append(X,Y,Z), X == [], !.");
+        assertFalse("append(X,Y,Z) must produce the X=[] solution, not throw", v4.isEmpty());
+        assertEquals("fully open append/3 must enumerate lazily",
+            1, prolog.solve("append(X, _, _), length(X, 2), !.").size());
         // END_CHANGE: ISS-2025-0468
-        // Fully-open append(X,Y,Z): the eager builtin protocol cannot enumerate the infinite
-        // relation; it must at least produce the first standard solution X=[], Z=Y without throwing.
-        List<Map<String, Term>> solutions = prolog.solve("append(X,Y,Z), X == [].");
-        assertFalse("append(X,Y,Z) must produce the X=[] solution, not throw", solutions.isEmpty());
     }
 
     // ======================== ISS-2025-0380: no unsound success on partial lists ========================
@@ -4015,23 +3988,15 @@ public class BugFixVerificationTest {
     public void testISS0397_RealCyclicTermProtectionUntouched() {
         // ISS-2025-0313: a rational tree (X = f(X) with occurs_check off) must STILL raise the
         // controlled representation_error, not be weakened by the var-var skip.
-        // START_CHANGE: ISS-2025-0441 - engine v4 SUPPORTS rational trees (design decision 2,
-        // approved): the same query succeeds there and cyclic_term/1 is a real test. The ISO
-        // "error" policy remains available on v4 through set_prolog_flag(occurs_check, error).
-        if (it.denzosoft.jprolog.core.engine.Prolog.isUsingV4Engine()) {
-            assertEquals("v4 supports rational trees: X = f(X), Y = X succeeds", 1,
-                prolog.solve("X = f(X), Y = X.").size());
-            assertEquals("and the term is genuinely cyclic", 1,
-                prolog.solve("X = f(X), cyclic_term(X).").size());
-            return;
-        }
+        // START_CHANGE: ISS-2025-0441 - the engine SUPPORTS rational trees (design decision 2,
+        // approved): the query succeeds and cyclic_term/1 is a real test. The ISO "error" policy
+        // remains available through set_prolog_flag(occurs_check, error).
+        // ISS-2025-0491 - 4.1 wave A: the v2 branch that expected representation_error is gone.
+        assertEquals("rational trees are supported: X = f(X), Y = X succeeds", 1,
+            prolog.solve("X = f(X), Y = X.").size());
+        assertEquals("and the term is genuinely cyclic", 1,
+            prolog.solve("X = f(X), cyclic_term(X).").size());
         // END_CHANGE: ISS-2025-0441
-        try {
-            prolog.solve("X = f(X), Y = X.");
-            fail("X = f(X) must still raise representation_error(cyclic_term)");
-        } catch (Exception e) {
-            assertTrue(e.getMessage(), e.getMessage().contains("cyclic_term"));
-        }
     }
     // END_CHANGE: ISS-2025-0397
 

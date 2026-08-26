@@ -103,6 +103,26 @@ public class DebugController {
     // make the engine snapshot every goal. The snapshot is a full term copy; it is needed only when
     // somebody will look at the term later — a trace listener (the IDE renders it on the EDT, after
     // the bindings have moved on) or a breakpoint/step decision.
+    // START_CHANGE: ISS-2025-0494 - 4.1 wave A: and a controller that can OBSERVE nothing must not
+    // make the engine emit ports at all. `notifyPort` maintains the call stack, decides whether to
+    // pause and — only then — builds an event; with no listener, no breakpoint, CONTINUE mode, no
+    // trace and no pending Stop, every one of those is a no-op, so the machine skips the port
+    // entirely (and with it the depth bookkeeping and the choice-point trace fields).
+    // NOTE: the DEFAULT mode of a fresh controller is STEP_INTO, which pauses — an idle controller
+    // is one the embedder put in CONTINUE. `stopped` must keep ports alive: it is what turns the
+    // next port into a DebugStopException.
+    /** True when a port reported to this controller can have any effect. */
+    public boolean needsPorts() {
+        return stopped                                   // the next port must raise DebugStopException
+            || listener != null                          // somebody renders the trace / the pause
+            || !breakpoints.isEmpty()                    // a port may hit a breakpoint
+            || currentMode != DebugEvent.Action.CONTINUE;  // stepping pauses on the next port
+        // `traceEnabled` alone is NOT an observer: every use of it in this class is guarded by
+        // `listener != null` (it is the IDE's per-session trace toggle, not an output switch), and
+        // it defaults to true, so including it here would make every controller need ports.
+    }
+    // END_CHANGE: ISS-2025-0494
+
     /** True when the port's goal has to be resolved into a stable snapshot before being reported. */
     public boolean needsGoalSnapshot() {
         return (traceEnabled && listener != null)

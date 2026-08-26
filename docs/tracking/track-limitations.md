@@ -3,7 +3,7 @@
 This document describes current limitations in JProlog implementation.
 When an issue is resolved, the corresponding limitation should be removed from this file.
 
-**Last updated**: 2026-08-26 (v4.0.0, wave W9)
+**Last updated**: 2026-08-26 (v4.1.0, wave A)
 
 ---
 
@@ -12,9 +12,8 @@ When an issue is resolved, the corresponding limitation should be removed from t
 **Wave W9 is done** (v4.0.0, ISS-2025-0484..0488): the recursive `QuerySolver` engine is deleted,
 `BuiltInWithContext` is typed against the `SolverContext` interface, `CollectionBuiltInAdapter`,
 `CutStatus`, `MutableCutStatus`, `LayeredMap` and the seven control-construct built-ins are gone,
-and the v4 engine has no name-keyed hop left. The v2 `MachineSolver` stays selectable for this
-release with `-Djprolog.engine=v2` (design decision 1, B.17) and is deleted in 4.1; there is no
-`legacy` value any more.
+and the engine has no name-keyed hop left. **4.1.0 wave A** (ISS-2025-0491) deleted the v2
+`MachineSolver` too, so there is exactly one engine and `-Djprolog.engine` selects nothing.
 
 What is left of this limitation is limit **L-08** of the design. Of the 416 registered predicate
 names, 63 are v4 natives and about 40 more are control constructs or inline built-ins the machine
@@ -49,8 +48,9 @@ are inlined by the machine anyway, the type checks (likewise inlined), `keysort/
 with the `KnowledgeBase`, the IDE and the v2 engine), `op/3`, `statistics/2`, the debug and
 profiler predicates, and the whole extended library (CSV, JSON, XML, HTTP, JDBC, crypto, datetime,
 filesystem, graph, logging, network, os, persistence, regex, threading, FFI). None of them is on a
-measured hot path and each would be a separate benchmark-backed change; migrating them is an
-open-ended 4.1 item, not a correctness gap.
+measured hot path and each would be a separate benchmark-backed change; migrating them is **4.1
+wave B** (families, order and measurement method: section 16.6 of
+`docs/reports/report-engine-v4-progress.md`), not a correctness gap.
 
 Two behaviour differences on v4 are deliberate and approved (design B.17): rational trees are
 supported (queries that raised `representation_error(cyclic_term)` now succeed;
@@ -58,16 +58,16 @@ supported (queries that raised `representation_error(cyclic_term)` now succeed;
 `setup_call_cleanup/3`/`call_cleanup/2` run `Cleanup` after the goal's LAST solution rather than
 eagerly after the first.
 
-Since v4.0.0 these are simply how JProlog behaves; they are listed because `-Djprolog.engine=v2`
-still gets the old behaviour: `library(yall)` lambdas work (`existence_error(>>/4)` on v2),
-`partition/4` exists (unregistered on v2), `sub_atom(A, B, L, Af, '')` terminates (it spins forever
-on v2), the bindings of a `when/2`-woken goal propagate (ISS-2025-0336), `frozen/2`,
-`term_attvars/2`, `copy_term/3`, `unifiable/3`, `?=/2`, `current_table/2`, `current_module/1` and
-`memberchk/2` exist only on v4, **tabling is complete** rather than a bounded 100-round
-re-evaluation, `append(X, Y, Z)` fully open enumerates and `member(X, PartialList)` extends the
-open tail, cyclic terms are supported, query memory is O(live data) rather than O(bindings), the
-fast paths are not disabled while debugging, and **module-qualified built-in calls, autoloaded
-library modules and `meta_predicate/1` work**.
+Since v4.0.0 these are simply how JProlog behaves, and since **4.1.0** there is no other engine to
+compare them against (ISS-2025-0491). For the record, everything the v4 engine brought over the
+deleted one: `library(yall)` lambdas (`existence_error(>>/4)` before), `partition/4`,
+a terminating `sub_atom(A, B, L, Af, '')`, propagating bindings from a `when/2`-woken goal
+(ISS-2025-0336), `frozen/2`, `term_attvars/2`, `copy_term/3`, `unifiable/3`, `?=/2`,
+`current_table/2`, `current_module/1`, `memberchk/2`, **complete tabling** rather than a bounded
+100-round re-evaluation, a fully open `append(X, Y, Z)` that enumerates and a
+`member(X, PartialList)` that extends the open tail, cyclic terms, query memory that is O(live
+data) rather than O(bindings), fast paths that are not disabled while debugging, and
+**module-qualified built-in calls, autoloaded library modules and `meta_predicate/1`**.
 
 ## LIM-039: RESOLVED in 4.0.0 (wave W9) — a tabled evaluation is claimed by one thread
 
@@ -77,11 +77,11 @@ one variant table, one producing stack and one answer list, all plain `HashMap`/
 threads *producing* interleaved their bookkeeping and a consumer could read a half-produced answer
 set as if it were complete.
 
-**ISS-2025-0488** claims an evaluation for one thread, on **both** engines:
+**ISS-2025-0488** claims an evaluation for one thread:
 
-- a tabled CALL runs inside `Tabling.enterCall`/`exitCall` (v4) or `TableStore.enterCall`/`exitCall`
-  (v2), so "does this variant exist, is it complete, do I produce it" and the frame it installs are
-  atomic;
+- a tabled CALL runs inside `Tabling.enterCall`/`exitCall`, so "does this variant exist, is it
+  complete, do I produce it" and the frame it installs are atomic (in 4.0.0 the deleted v2 engine
+  had the same protocol on `TableStore`; 4.1.0 removed that half with the engine);
 - the claim is **held for the whole evaluation** — until the SCC completes, is abandoned, or the
   query ends — so a second thread never sees an EVALUATING table that is not its own;
 - a worker machine hands the claim back when it finishes (`Tabling.endWorker`), abandoning whatever
@@ -93,7 +93,7 @@ Residual, deliberate: the wait is bounded at 60 s and then raises
 `resource_error(tabling_busy)` rather than hanging, and a tabled goal that fans out into workers
 which are *themselves* tabled serialises them (and, if the parent's evaluation cannot finish
 without them, hits that timeout). Running several top-level `Prolog.solve` calls concurrently on
-ONE `Prolog` instance is still outside the contract on both engines — a top-level query owns the
+ONE `Prolog` instance is still outside the contract — a top-level query owns the
 engine-wide query boundary and abandons every EVALUATING table when it ends; use
 `concurrent_maplist/2,3,4`, `concurrent/3` or `thread_create/2,3` from one query instead.
 
@@ -130,18 +130,18 @@ for streams, operators, spy points and the profiler as well as the flags. A sepa
 the answer for a hard security boundary (`builtin.io` is deliberately not in the safe-mode deny
 list, so `open/3,4` can still reach the host filesystem).
 
-## LIM-027: open-tail generative list modes are bounded on the v2 FALLBACK engine
+## LIM-027: CLOSED in 4.1.0 — open-tail generative list modes
 
-Under `-Djprolog.engine=v2`, fully-open `append(X, Y, Z)` and open-tail `last([a|T], X)` /
-`maplist(G, [a|T])` produce only the FIRST standard solution (open tails are closed with `[]`)
-instead of enumerating infinitely. Sound but incomplete; a consequence of the eager built-in
-protocol (ISS-2025-0379/0380).
+Fully-open `append(X, Y, Z)` and open-tail `last([a|T], X)` / `maplist(G, [a|T])` used to produce
+only the FIRST standard solution (open tails closed with `[]`) instead of enumerating: sound but
+incomplete, a consequence of the eager built-in protocol (ISS-2025-0379/0380).
 
-**RESOLVED on the default v4 engine** in v3.13.0 (wave W6, ISS-2025-0468): `member/2` and
-`append/3` are the two-clause definitions of `src/main/resources/prelude/lists.pl`, so
-`append(X, Y, Z)` enumerates and `member(X, PartialList)` extends the open tail. That is a
-deliberate divergence from v2 — a program that relied on the bounded behaviour to terminate now
-loops (`testISS0379_AppendFullyOpenDoesNotThrow` has an engine-aware branch).
+Resolved on the v4 engine in v3.13.0 (wave W6, ISS-2025-0468): `member/2` and `append/3` are the
+two-clause definitions of `src/main/resources/prelude/lists.pl`, so `append(X, Y, Z)` enumerates
+and `member(X, PartialList)` extends the open tail. It stayed on this list only because the v2
+fallback still carried the bounded behaviour; **that engine is deleted in 4.1.0**
+(ISS-2025-0491), so the limitation is closed. The deliberate consequence remains: a program that
+relied on the bounded behaviour to terminate now loops.
 
 ---
 
@@ -157,8 +157,8 @@ findings. The eight highest-confidence, low-risk items were fixed in v3.0.0
 | ~~LIM-019~~ | Parser | **RESOLVED v3.0.0** — v2 parser (default): canonical functor `-(1,2)` and operator-as-atom (`X = -`, `foo(-,+)`) handled. `-Djprolog.parser=legacy` to fall back. |
 | ~~LIM-021~~ | DCG | **RESOLVED v3.0.0** — clean-room v2 DCG translator (`core.dcg.v2.DCGTranslator`, now default): single recursive pass handling ISO head push-back, `[]`/terminal lists, strings, `{}`, `!`, `\+`, `(A,B)`/`(A;B)`/`(A\|B)`/`(A->B)`, `call//N`, and variable bodies. `-Djprolog.dcg=legacy` to fall back. |
 | ~~LIM-022~~ | CLP(FD) | **RESOLVED v3.0.0** — clean-room v2 CLP(FD) (now default): interval domains (no OOM, no `TreeSet`), per-query identity store (no singleton leak), trail-backtracked **sound** labeling, real `#\=` propagation, `all_different` pigeonhole. Remaining = future *features* (`global_cardinality`, Hall-interval pruning, lazy labeling), not correctness gaps. `-Djprolog.clpfd=legacy` to fall back. |
-| ~~LIM-023~~ | Engine | **RESOLVED in 4.0.0** (waves W1-W9). The recursive engine that recursed in Java is deleted (ISS-2025-0484); the default `core.engine.v4.Machine` is iterative over mutable cells with compiled clause skeletons and first-argument indexing, every term walker is iterative and cycle-safe, and residual deep-structure `StackOverflowError`s in bridged built-ins still convert to `resource_error` terms (ISS-2025-0341). The v2 `MachineSolver` fallback (`-Djprolog.engine=v2`) keeps its own first-argument index (ISS-2025-0433). |
-| ~~LIM-024~~ | Concurrency | **RESOLVED in v4.0.0** (wave W8, ISS-2025-0479/0480). `thread_create/2,3` and the `concurrent_*` family run every goal on a **fresh `core.engine.v4.Machine` over the same `Engine`** (`core.engine.v4.Workers`): shared clause store (thread-safe by birth/death generations), shared flags/operators/modules, per-thread current streams, one `ResourceGuard` per worker carrying the parent's budget, and a `copy_term`'d goal so no `Variable` cell is shared between machines. Interrupting the parent cancels the workers. On `-Djprolog.engine=v2`/`legacy` the old shared-solver behaviour remains (the recursive engine is deleted in 4.0.0; the v2 fallback keeps the shared-context behaviour until it is deleted in 4.1). |
+| ~~LIM-023~~ | Engine | **RESOLVED in 4.0.0** (waves W1-W9). The recursive engine that recursed in Java is deleted (ISS-2025-0484); the default `core.engine.v4.Machine` is iterative over mutable cells with compiled clause skeletons and first-argument indexing, every term walker is iterative and cycle-safe, and residual deep-structure `StackOverflowError`s in bridged built-ins still convert to `resource_error` terms (ISS-2025-0341). (The v2 `MachineSolver` fallback, which kept its own first-argument index — ISS-2025-0433 — is deleted in 4.1.0.) |
+| ~~LIM-024~~ | Concurrency | **RESOLVED in v4.0.0** (wave W8, ISS-2025-0479/0480). `thread_create/2,3` and the `concurrent_*` family run every goal on a **fresh `core.engine.v4.Machine` over the same `Engine`** (`core.engine.v4.Workers`): shared clause store (thread-safe by birth/death generations), shared flags/operators/modules, per-thread current streams, one `ResourceGuard` per worker carrying the parent's budget, and a `copy_term`'d goal so no `Variable` cell is shared between machines. Interrupting the parent cancels the workers. (The old shared-solver behaviour survived on the fallback engines; both are deleted — the recursive one in 4.0.0, the v2 machine in 4.1.0.) |
 | LIM-025 | Resource | **RESOLVED in v3.14.0** (wave W7, ISS-2025-0472): `with_output_to/2` on **both** engines, `format/3` with `atom/string/codes/chars`, `format ~@` and the `~p` portray path capture through the per-thread `StreamManager` output override alone — no `System.setOut`, no `user_output` stream swap — so two threads can capture concurrently and a capture never garbles unrelated output. The last built-ins that printed to `System.out` directly (`spy/1`, `nospy/1`, `leash/1`, `debugging/0`) were routed through `StreamManager.out()`. (Earlier: RESOLVED in v3.0.0 the `open/4` dangling-alias handle — ISS-0305; `StreamManager` map thread-safety, HTTP disconnect, JDBC statement leaks — ISS-0257..0260, 0265.) |
 
 > Resolved in v3.0.0: LIM-018 (negative radix/char-code literals — ISS-2025-0256);

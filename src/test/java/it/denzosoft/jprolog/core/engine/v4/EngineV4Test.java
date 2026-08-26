@@ -41,21 +41,14 @@ import static org.junit.Assert.fail;
 public class EngineV4Test {
 
     private Prolog prolog;
-    private boolean prevV4;
-    private boolean prevV2;
 
     @Before
     public void setUp() {
-        prevV4 = Prolog.isUsingV4Engine();
-        prevV2 = Prolog.isUsingV2Engine();
-        Prolog.setUseV4Engine(true);
         prolog = new Prolog();
     }
 
     @After
     public void tearDown() {
-        Prolog.setUseV4Engine(prevV4);
-        Prolog.setUseV2Engine(prevV2);
     }
 
     private List<Map<String, Term>> solve(String q) { return prolog.solve(q); }
@@ -311,13 +304,10 @@ public class EngineV4Test {
         }
     }
 
-    @Test
-    public void testISS0444_EngineSelectionFlag() {
-        assertTrue(Prolog.isUsingV4Engine());
-        Prolog.setUseV4Engine(false);
-        assertFalse(Prolog.isUsingV4Engine());
-        Prolog.setUseV4Engine(true);
-    }
+    // ISS-2025-0491 (4.1 wave A): `testISS0444_EngineSelectionFlag` is DELETED — it asserted
+    // that Prolog.setUseV4Engine(false) selects another engine, and there is no other engine and
+    // no flag any more. EngineV41RetirementTest pins what replaced it (the property warns, the
+    // API is gone).
 
     // ================================================================ W2: clause store (B.7)
 

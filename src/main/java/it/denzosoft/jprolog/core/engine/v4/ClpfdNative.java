@@ -29,13 +29,12 @@ import java.util.Map;
  *
  * <p>The generator is lazy in DELIVERY (one assignment per redo, trust-me popped on the last one)
  * but the search itself is eager, exactly as the registry version is. Making the DFS resumable
- * across redos is not possible while the CLP(FD) store rolls back through the process-global
- * legacy {@code Trail}: the machine calls {@code Trail.rollbackTo(cp.legacyMark)} before every
+ * across redos is not possible while the CLP(FD) store rolls back with the machine's trail: the
+ * machine runs the store's undo action ({@code core.engine.v4.Undo}, ISS-2025-0492) before every
  * redo, which would undo the half-finished search's own narrowing. A per-engine constraint store
- * is W7 (design B.12/L-06).
+ * is a later item (design B.12/L-06).
  *
- * <p>The legacy built-in stays registered and is what the v2 and legacy engines run — as with
- * {@code freeze/2} (W4), the two implementations are not unified.
+ * <p>The legacy built-in stays registered; it is what a direct registry call would run.
  */
 final class ClpfdNative {
 

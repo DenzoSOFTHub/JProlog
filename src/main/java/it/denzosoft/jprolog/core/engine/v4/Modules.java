@@ -347,19 +347,70 @@ public final class Modules {
     /**
      * Must a call to {@code f/n} from context {@code ctx} go to CLAUSES rather than to the legacy
      * built-in registry? True when the context module (or a module it imports) defines it, and
-     * when an autoloadable library does. This is the one module test on the hot goal path, and for
-     * the {@code user} context it degenerates to a single {@code HashMap} probe of the prelude
-     * index — no load, no allocation.
+     * when an autoloadable library does.
+     *
+     * <p>This is the one module test on the hot goal path: EVERY goal that is not inline, not a
+     * v4 native and not a control construct pays it, {@code app/3} in nrev included. The answer
+     * itself is two string concatenations and up to four map probes ({@code Prelude.owner}, then
+     * {@code autoload}'s {@code mod}/{@code load}/{@code clauses.get}), which measured at ~13-16 %
+     * of nrev and ~5 % of a fact-table lookup loop — so it is MEMOISED here (ISS-2025-0493).
+     *
+     * <p>The memo is a small direct-mapped cache of immutable entries stamped with the
+     * {@link ModuleManager} modification stamp — the same stamp {@link #sync()} mirrors on. A
+     * stamp bump (a module defined, an import added, a clause consulted into a module) makes every
+     * stale entry miss; nothing is cleared and nothing is locked, so a worker thread racing on the
+     * same {@code Modules} can at worst recompute an entry. A library {@code load()} cannot flip
+     * an entry either: {@code autoload} loads the module and only then reads its clauses.
      *
      * @param ctx the context module, {@code null} for {@code user}
      */
     public boolean overridesBuiltin(String ctx, String f, int n) {
+        // START_CHANGE: ISS-2025-0493 - memoise the hot-path module test
+        long stamp = (legacy == null) ? 0L : legacy.getStamp();
+        int i = slot(ctx, f, n);
+        Dispatch d = dispatch[i];
+        if (d != null && d.stamp == stamp && d.arity == n && d.functor.equals(f) && sameCtx(d.ctx, ctx)) {
+            return d.overrides;
+        }
+        boolean v = computeOverridesBuiltin(ctx, f, n);
+        dispatch[i] = new Dispatch(ctx, f, n, v, stamp);
+        return v;
+        // END_CHANGE: ISS-2025-0493
+    }
+
+    private boolean computeOverridesBuiltin(String ctx, String f, int n) {
         if (ctx != null && !USER.equals(ctx)) {
             if (localClauses(ctx, f, n) != null) return true;
             if (fromImports(ctx, f, n) != null) return true;
         }
         return hasLibraryClauses(f, n);
     }
+
+    // START_CHANGE: ISS-2025-0493 - the dispatch memo (see overridesBuiltin)
+    /** One memoised decision. Immutable, so publishing the reference publishes the fields. */
+    private static final class Dispatch {
+        final String ctx;                 // null == user
+        final String functor;
+        final int arity;
+        final boolean overrides;
+        final long stamp;
+        Dispatch(String ctx, String functor, int arity, boolean overrides, long stamp) {
+            this.ctx = ctx; this.functor = functor; this.arity = arity;
+            this.overrides = overrides; this.stamp = stamp;
+        }
+    }
+
+    private static final int DISPATCH_SLOTS = 512;            // power of two
+    private final Dispatch[] dispatch = new Dispatch[DISPATCH_SLOTS];
+
+    private static int slot(String ctx, String f, int n) {
+        int h = f.hashCode() * 31 + n;                        // String caches its hash
+        if (ctx != null) h = h * 31 + ctx.hashCode();
+        return h & (DISPATCH_SLOTS - 1);
+    }
+
+    private static boolean sameCtx(String a, String b) { return (a == null) ? b == null : a.equals(b); }
+    // END_CHANGE: ISS-2025-0493
 
     /** The {@code meta_predicate} specification of {@code f/n} as declared in module {@code m},
      *  or null. */

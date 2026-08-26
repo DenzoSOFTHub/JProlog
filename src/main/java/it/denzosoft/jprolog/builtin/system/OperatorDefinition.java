@@ -145,7 +145,7 @@ public class OperatorDefinition implements BuiltIn {
         // backtracking (R1) through the undo action the store hands back.
         for (String name : names) {
             final Runnable undo = ops().define(precedence, operatorType, name);
-            it.denzosoft.jprolog.core.engine.Trail.record(undo);
+            it.denzosoft.jprolog.core.engine.v4.Undo.record(undo);
         }
         // END_CHANGE: ISS-2025-0474
 
