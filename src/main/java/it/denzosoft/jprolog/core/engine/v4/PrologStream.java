@@ -165,8 +165,21 @@ public final class PrologStream {
         return s;
     }
 
+    // START_CHANGE: ISS-2025-0552 - wave P2.13: in UTF-8 and US-ASCII a byte below 0x80 IS its
+    // code point, and in ISO-8859-1 every byte is; decodeOne() answers those without a
+    // CharsetDecoder call (which cost a decode round-trip through a one-char buffer per character:
+    // get_char/2 over 1.6 MB took 3 s). Both decoders are stateless between whole characters, and
+    // decodeOne() only ever stops between whole characters, so skipping the decoder is exact.
+    /** 0: always decode; 1: bytes < 0x80 are code points; 2: every byte is its code point. */
+    private int byteFast;
+    /** Test hook: characters that went through the CharsetDecoder (all streams, racy). */
+    static long decoderCalls;
+    // END_CHANGE: ISS-2025-0552
+
     void setCharset(Charset cs) {
         this.charset = (cs == null) ? StandardCharsets.UTF_8 : cs;
+        this.byteFast = (StandardCharsets.UTF_8.equals(this.charset) || StandardCharsets.US_ASCII.equals(this.charset)) ? 1
+            : StandardCharsets.ISO_8859_1.equals(this.charset) ? 2 : 0;                 // ISS-2025-0552
         this.decoder = this.charset.newDecoder()
             .onMalformedInput(CodingErrorAction.REPLACE)
             .onUnmappableCharacter(CodingErrorAction.REPLACE);
@@ -309,6 +322,13 @@ public final class PrologStream {
      */
     private int decodeOne() throws IOException {
         if (bytes == null || flushed) return -1;
+        // START_CHANGE: ISS-2025-0552 - the byte fast path (see byteFast)
+        if (byteFast != 0 && bytes.hasRemaining()) {
+            int b = bytes.get(bytes.position());
+            if (b >= 0 || byteFast == 2) { bytes.position(bytes.position() + 1); return b & 0xFF; }
+        }
+        decoderCalls++;                                                   // test hook
+        // END_CHANGE: ISS-2025-0552
         int spins = 0;
         while (true) {
             cb1.clear();

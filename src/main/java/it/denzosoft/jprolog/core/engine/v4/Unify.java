@@ -48,7 +48,7 @@ public final class Unify {
     private static final int GUARD_MASK = 0xFFF;      // 4096
 
     private static void poll(ResourceGuard g, int n) {
-        if (g != null && (n & GUARD_MASK) == 0) g.step();
+        if (g != null && (n & GUARD_MASK) == 0) { g.step(); g.charge(GUARD_MASK); }   // ISS-2025-0624
     }
 
     // ------------------------------------------------------------------ dereference
@@ -144,9 +144,9 @@ public final class Unify {
                     if (!bindVar((Variable) c, a, b)) return false;
                 } else if (a instanceof CompoundTerm && c instanceof CompoundTerm) {
                     CompoundTerm ca = (CompoundTerm) a, cc = (CompoundTerm) c;
-                    List<Term> aa = ca.getArguments(), ba = cc.getArguments();
-                    int ar = aa.size();
-                    if (ar != ba.size() || !ca.getName().equals(cc.getName())) return false;
+                    // ISS-2025-0543: arity()/arg(i), no list views
+                    int ar = ca.arity();
+                    if (ar != cc.arity() || !ca.getName().equals(cc.getName())) return false;
                     poll(b.guard, ++n);
                     boolean skip = false;
                     if (n > CYCLE_THRESHOLD) {
@@ -163,11 +163,11 @@ public final class Unify {
                                 System.arraycopy(stack, 0, bigger, 0, sp);
                                 stack = bigger;
                             }
-                            stack[sp++] = aa.get(i);
-                            stack[sp++] = ba.get(i);
+                            stack[sp++] = ca.arg(i);
+                            stack[sp++] = cc.arg(i);
                         }
-                        a = aa.get(ar - 1);
-                        c = ba.get(ar - 1);
+                        a = ca.arg(ar - 1);
+                        c = cc.arg(ar - 1);
                         continue;                                          // iterate down the spine
                     }
                 } else if (!leafEqual(a, c)) {
@@ -205,9 +205,9 @@ public final class Unify {
             if (a != c) {
                 if (a instanceof CompoundTerm && c instanceof CompoundTerm) {
                     CompoundTerm ca = (CompoundTerm) a, cc = (CompoundTerm) c;
-                    List<Term> aa = ca.getArguments(), ba = cc.getArguments();
-                    int ar = aa.size();
-                    if (ar != ba.size() || !ca.getName().equals(cc.getName())) return false;
+                    // ISS-2025-0543: arity()/arg(i), no list views
+                    int ar = ca.arity();
+                    if (ar != cc.arity() || !ca.getName().equals(cc.getName())) return false;
                     poll(g, ++n);
                     boolean skip = false;
                     if (n > CYCLE_THRESHOLD) {
@@ -224,11 +224,11 @@ public final class Unify {
                                 System.arraycopy(stack, 0, bigger, 0, sp);
                                 stack = bigger;
                             }
-                            stack[sp++] = aa.get(i);
-                            stack[sp++] = ba.get(i);
+                            stack[sp++] = ca.arg(i);
+                            stack[sp++] = cc.arg(i);
                         }
-                        a = aa.get(ar - 1);
-                        c = ba.get(ar - 1);
+                        a = ca.arg(ar - 1);
+                        c = cc.arg(ar - 1);
                         continue;
                     }
                 } else if (a instanceof Variable || c instanceof Variable) {
@@ -262,8 +262,8 @@ public final class Unify {
                 poll(g, ++n);
                 if (r1 == 4) {
                     CompoundTerm ca = (CompoundTerm) a, cc = (CompoundTerm) c;
-                    List<Term> aa = ca.getArguments(), ba = cc.getArguments();
-                    int a1 = aa.size(), a2 = ba.size();
+                    // ISS-2025-0543: arity()/arg(i), no list views
+                    int a1 = ca.arity(), a2 = cc.arity();
                     if (a1 != a2) return (a1 < a2) ? -1 : 1;
                     int fc = ca.getName().compareTo(cc.getName());
                     if (fc != 0) return fc < 0 ? -1 : 1;
@@ -275,11 +275,11 @@ public final class Unify {
                                 System.arraycopy(stack, 0, bigger, 0, sp);
                                 stack = bigger;
                             }
-                            stack[sp++] = ba.get(i);
-                            stack[sp++] = aa.get(i);
+                            stack[sp++] = cc.arg(i);
+                            stack[sp++] = ca.arg(i);
                         }
-                        a = aa.get(0);
-                        c = ba.get(0);
+                        a = ca.arg(0);
+                        c = cc.arg(0);
                         continue;
                     }
                 } else {
@@ -339,9 +339,9 @@ public final class Unify {
      * right-nested structures grow, and the only one that can be long) is walked iteratively with a
      * Brent tortoise/hare test and cut at the repeat, so {@code X = f(X)} and {@code X = [1|X]}
      * resolve to the finite shared graph instead of expanding forever. The other arguments recurse,
-     * bounded by {@link #MAX_ARG_DEPTH}: past that the sub-term is returned as it stands (still a
-     * valid term — every v4 walker dereferences — just not flattened), which also removes any risk
-     * of a StackOverflowError inside the resolver.
+     * bounded by {@link #MAX_ARG_DEPTH}: past that the walk continues ITERATIVELY in
+     * {@link #deepWalk} (ISS-2025-0524 — it used to return the sub-term as it stood), so there is
+     * no depth cut-off and no risk of a StackOverflowError inside the resolver.
      */
     public static Term resolve(Term t, ResourceGuard g) {
         return resolve(t, g, 0);
@@ -353,7 +353,10 @@ public final class Unify {
     private static Term resolve(Term t, ResourceGuard g, int depth) {
         t = deref(t);
         if (!(t instanceof CompoundTerm)) return t;
-        if (depth > MAX_ARG_DEPTH) return t;
+        // START_CHANGE: ISS-2025-0524 - past the recursion cap the walk CONTINUES iteratively; it
+        // used to stop and return the sub-term unresolved (see deepWalk).
+        if (depth > MAX_ARG_DEPTH) return deepWalk(t, null, g);
+        // END_CHANGE: ISS-2025-0524
 
         // phase 1: collect the last-argument spine, with Brent cycle detection
         ArrayList<CompoundTerm> spine = new ArrayList<CompoundTerm>();
@@ -410,19 +413,81 @@ public final class Unify {
     /** {@code copy_term/2}: fresh cells for the unbound variables, shared ground sub-terms; the
      *  same spine/depth discipline as {@link #resolve}. */
     public static Term copy(Term t, IdentityHashMap<Variable, Variable> map, ResourceGuard g) {
-        return copy(t, map, g, 0);
+        CopyCtx c = new CopyCtx(map, g, false);
+        Term r = copy(t, c, 0);
+        if (g != null) g.charge(c.nodes);          // ISS-2025-0624: a copy is O(size) work
+        return r;
     }
 
-    private static Term copy(Term t, IdentityHashMap<Variable, Variable> map, ResourceGuard g, int depth) {
-        t = deref(t);
-        if (t instanceof Variable) {
-            Variable v = (Variable) t;
+    // START_CHANGE: ISS-2025-0514, ISS-2025-0524, ISS-2025-0527 - the copy walker carries a small
+    // context: the variable map, the guard, the ANSWER mode of P1.1 and a flag that records whether
+    // a cycle had to be cut (P1.14). One allocation per copy, not per node.
+    /** Per-copy state. */
+    static final class CopyCtx {
+        final IdentityHashMap<Variable, Variable> map;
+        final ResourceGuard g;
+        /** P1.1: fresh cells keep the original's NAME; an attributed cell is kept as itself. */
+        final boolean answer;
+        /** Set when a cyclic sub-term was met (and left as it stands). */
+        boolean cyclic;
+        /** ISS-2025-0624: compound nodes copied, charged to the guard when the copy ends. */
+        long nodes;
+
+        CopyCtx(IdentityHashMap<Variable, Variable> map, ResourceGuard g, boolean answer) {
+            this.map = map;
+            this.g = g;
+            this.answer = answer;
+        }
+
+        Term var(Variable v) {
             Variable c = map.get(v);
-            if (c == null) { c = new Variable(); map.put(v, c); }
+            if (c == null) {
+                if (answer) {
+                    // An attributed cell carries residual constraints (freeze/dif/when/CLP(FD))
+                    // that Prolog.residualGoals reads from the cell itself (the CLP(FD) store even
+                    // keys it by name), so it stays live; every plain cell becomes a fresh one that
+                    // PRINTS like the original.
+                    if (v.hasAttributes()) return v;
+                    c = new Variable(v.getName());
+                } else {
+                    c = new Variable();
+                }
+                map.put(v, c);
+            }
             return c;
         }
+    }
+
+    /**
+     * ISS-2025-0514 (P1.1): the copy of one top-level ANSWER. Every unbound, unattributed cell is
+     * replaced by a fresh one with the same print name, so a binding the machine makes after the
+     * answer was delivered (the next disjunct, a later solution) cannot show through it; sharing
+     * inside the answer is kept by passing ONE map for all of its variables.
+     */
+    public static Term copyAnswer(Term t, IdentityHashMap<Variable, Variable> map, ResourceGuard g) {
+        return copy(t, new CopyCtx(map, g, true), 0);
+    }
+
+    /**
+     * ISS-2025-0527 (P1.14): {@code copy_term} semantics, or null when {@code t} is cyclic. A copy
+     * cuts a cycle by leaving that sub-term as it stands, i.e. sharing the ORIGINAL cells — fine
+     * for a transient copy, wrong for anything that is stored (a clause, a global variable),
+     * because the binding that closes the cycle is undone on backtracking.
+     */
+    public static Term copyAcyclic(Term t, IdentityHashMap<Variable, Variable> map, ResourceGuard g) {
+        CopyCtx c = new CopyCtx(map, g, false);
+        Term r = copy(t, c, 0);
+        if (g != null) g.charge(c.nodes);          // ISS-2025-0624
+        return c.cyclic ? null : r;
+    }
+    // END_CHANGE: ISS-2025-0514, ISS-2025-0524, ISS-2025-0527
+
+    private static Term copy(Term t, CopyCtx cx, int depth) {
+        t = deref(t);
+        if (t instanceof Variable) return cx.var((Variable) t);
         if (!(t instanceof CompoundTerm)) return t;
-        if (depth > MAX_ARG_DEPTH) return t;
+        if (depth > MAX_ARG_DEPTH) return deepWalk(t, cx, cx.g);    // ISS-2025-0524
+        ResourceGuard g = cx.g;
 
         ArrayList<CompoundTerm> spine = new ArrayList<CompoundTerm>();
         CompoundTerm cur = (CompoundTerm) t;
@@ -431,6 +496,7 @@ public final class Unify {
         int steps = 0, power = 1, n = 0;
         while (true) {
             spine.add(cur);
+            cx.nodes++;                                              // ISS-2025-0624
             List<Term> as = cur.getArguments();
             if (as.isEmpty()) break;
             Term last = deref(as.get(as.size() - 1));
@@ -456,8 +522,9 @@ public final class Unify {
                     res = belowChanged ? below : deref(arg);
                 } else if (i == ar - 1 && truncated && k == spine.size() - 1) {
                     res = arg;
+                    cx.cyclic = true;                                      // ISS-2025-0527
                 } else {
-                    res = copy(arg, map, g, depth + 1);
+                    res = copy(arg, cx, depth + 1);
                 }
                 if (res != arg && out == null) {
                     out = new ArrayList<Term>(ar);
@@ -470,6 +537,166 @@ public final class Unify {
         }
         return below;
     }
+
+    // START_CHANGE: ISS-2025-0524 - wave P1.11: resolve/copy past the recursion cap.
+    /**
+     * Nesting depth (in NON-last arguments) past which {@link #deepWalk} starts tracking the nodes
+     * on the current path, so that a cycle running through a non-last argument is recognised.
+     * Below it no identity map is built: an acyclic term never pays for one unless it is deep.
+     */
+    private static final int NEST_TRACK = 256;
+
+    /** One last-argument spine being rebuilt bottom-up by {@link #deepWalk}. */
+    private static final class Seg {
+        final ArrayList<CompoundTerm> spine;
+        final boolean truncated;
+        int k;                 // spine node being rebuilt (from the bottom up)
+        int i;                 // next argument of spine[k]
+        List<Term> out;        // spine[k]'s new arguments, or null while none changed
+        Term below;            // rebuilt spine[k+1]
+        boolean belowChanged;
+
+        Seg(ArrayList<CompoundTerm> spine, boolean truncated) {
+            this.spine = spine;
+            this.truncated = truncated;
+            this.k = spine.size() - 1;
+        }
+    }
+
+    /** Collect {@code t}'s last-argument spine, cut at a cycle (Brent), exactly as the recursive
+     *  walkers do. */
+    private static Seg spineOf(CompoundTerm t, ResourceGuard g) {
+        ArrayList<CompoundTerm> spine = new ArrayList<CompoundTerm>();
+        CompoundTerm cur = t;
+        CompoundTerm slow = cur;
+        boolean truncated = false;
+        int steps = 0, power = 1, n = 0;
+        while (true) {
+            spine.add(cur);
+            List<Term> as = cur.getArguments();
+            if (as.isEmpty()) break;
+            Term last = deref(as.get(as.size() - 1));
+            if (!(last instanceof CompoundTerm)) break;
+            CompoundTerm next = (CompoundTerm) last;
+            poll(g, ++n);
+            if (next == slow) { truncated = true; break; }
+            if (++steps == power) { power <<= 1; steps = 0; slow = next; }
+            cur = next;
+        }
+        return new Seg(spine, truncated);
+    }
+
+    private static void pathAdd(IdentityHashMap<CompoundTerm, int[]> path, CompoundTerm c) {
+        int[] n = path.get(c);
+        if (n == null) path.put(c, new int[] {1}); else n[0]++;
+    }
+
+    private static void pathRemove(IdentityHashMap<CompoundTerm, int[]> path, CompoundTerm c) {
+        int[] n = path.get(c);
+        if (n != null && --n[0] <= 0) path.remove(c);
+    }
+
+    /**
+     * The fully ITERATIVE form of {@link #resolve} ({@code cx == null}) and {@link #copy}: an
+     * explicit stack of spine segments instead of Java recursion, and NO depth cut-off.
+     *
+     * <p>The recursive walkers above handle the common case (fast, no allocation per level) and
+     * hand the sub-term over to this one once their non-last-argument recursion passes
+     * {@link #MAX_ARG_DEPTH}. They used to stop there and return the sub-term <b>as it stood</b>:
+     * for {@code resolve} that was merely unflattened, but for {@code copy} it meant the "copy"
+     * still contained the ORIGINAL cells below depth 2000 — {@code copy_term/2} and
+     * {@code findall/3} answers shared variables with the source, and {@code assertz/1} stored a
+     * cell whose binding was later undone (P1.11). A term nested a million levels deep in its first
+     * argument is now copied completely.
+     *
+     * <p>Cycle safety: a cycle along the last-argument spine is cut by the Brent test of
+     * {@link #spineOf}; a cycle through a non-last argument makes the nesting grow without bound,
+     * so once it passes {@link #NEST_TRACK} every compound on the current path is kept in an
+     * identity multiset and re-entering one of them leaves that sub-term as it stands (the same
+     * "leave the cycle alone" answer the spine test gives), and {@code cx.cyclic} records it.
+     */
+    private static Term deepWalk(Term root, CopyCtx cx, ResourceGuard g) {
+        root = deref(root);
+        if (!(root instanceof CompoundTerm)) {
+            return (cx != null && root instanceof Variable) ? cx.var((Variable) root) : root;
+        }
+        ArrayList<Seg> stack = new ArrayList<Seg>();
+        IdentityHashMap<CompoundTerm, int[]> path = null;
+        stack.add(spineOf((CompoundTerm) root, g));
+        Term delivered = null;
+        boolean hasDelivery = false;
+        int n = 0;
+        while (true) {
+            Seg s = stack.get(stack.size() - 1);
+            CompoundTerm node = s.spine.get(s.k);
+            List<Term> as = node.getArguments();
+            int ar = as.size();
+            boolean hasSpineChild = s.k < s.spine.size() - 1;
+            boolean descended = false;
+            while (s.i < ar) {
+                int i = s.i;
+                Term arg = as.get(i);
+                Term res;
+                if (hasDelivery) {                              // a child segment just finished
+                    res = delivered;
+                    delivered = null;
+                    hasDelivery = false;
+                } else if (i == ar - 1 && hasSpineChild) {
+                    res = s.belowChanged ? s.below : deref(arg);
+                } else if (i == ar - 1 && s.truncated && s.k == s.spine.size() - 1) {
+                    res = arg;                                   // spine cycle: leave it alone
+                    if (cx != null) cx.cyclic = true;
+                } else {
+                    Term d = deref(arg);
+                    if (d instanceof CompoundTerm) {
+                        if (path != null && path.containsKey(d)) {
+                            res = arg;                           // nested cycle: leave it alone
+                            if (cx != null) cx.cyclic = true;
+                        } else {
+                            Seg child = spineOf((CompoundTerm) d, g);
+                            stack.add(child);
+                            if (path != null) {
+                                for (int j = 0; j < child.spine.size(); j++) pathAdd(path, child.spine.get(j));
+                            } else if (stack.size() > NEST_TRACK) {
+                                // start tracking: every node still on the path is an ancestor
+                                path = new IdentityHashMap<CompoundTerm, int[]>();
+                                for (int x = 0; x < stack.size(); x++) {
+                                    Seg sx = stack.get(x);
+                                    for (int j = 0; j <= sx.k; j++) pathAdd(path, sx.spine.get(j));
+                                }
+                            }
+                            descended = true;
+                            break;
+                        }
+                    } else {
+                        res = (cx != null && d instanceof Variable) ? cx.var((Variable) d) : d;
+                    }
+                }
+                if (res != arg && s.out == null) {
+                    s.out = new ArrayList<Term>(ar);
+                    for (int j = 0; j < i; j++) s.out.add(as.get(j));
+                }
+                if (s.out != null) s.out.add(res);
+                s.i++;
+            }
+            if (descended) continue;
+            // spine[k] is complete
+            poll(g, ++n);
+            if (s.out == null) { s.below = node; s.belowChanged = false; }
+            else { s.below = new CompoundTerm(node.getFunctor(), s.out); s.belowChanged = true; }
+            if (path != null) pathRemove(path, node);
+            s.out = null;
+            s.i = 0;
+            s.k--;
+            if (s.k >= 0) continue;
+            // the whole segment is complete: hand it to the parent
+            stack.remove(stack.size() - 1);
+            if (stack.isEmpty()) return s.below;
+            delivered = s.below;
+            hasDelivery = true;
+        }
+    }
+    // END_CHANGE: ISS-2025-0524
 
     // ------------------------------------------------------------------ variables / ground / cyclic
 

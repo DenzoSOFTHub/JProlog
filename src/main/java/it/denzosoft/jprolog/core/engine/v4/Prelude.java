@@ -57,7 +57,8 @@ final class Prelude {
         "/prelude/lists.pl",
         "/prelude/apply.pl",
         "/prelude/pairs.pl",
-        "/prelude/coroutining.pl"
+        "/prelude/coroutining.pl",
+        "/prelude/clpfd.pl"            // ISS-2025-0646/0650: the library(clpfd) global predicates
     };
 
     /** One library module as the index knows it: no clauses, just the header. */

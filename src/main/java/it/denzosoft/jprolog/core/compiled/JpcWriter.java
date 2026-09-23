@@ -155,28 +155,28 @@ public class JpcWriter {
         collectStrings(term, new java.util.IdentityHashMap<>());
     }
     private void collectStrings(Term term, java.util.IdentityHashMap<Term, Boolean> visited) {
-        if (term == null) return;
-        if (term instanceof CompoundTerm) {
-            if (visited.put(term, Boolean.TRUE) != null) {
-                // cycle: skip
-                return;
+        // START_CHANGE: ISS-2025-0561 - P3.12: iterative (a deep clause overflowed the recursion);
+        // the Round5 rule is kept: a compound met twice is skipped
+        java.util.ArrayDeque<Term> work = new java.util.ArrayDeque<>();
+        if (term != null) work.push(term);
+        while (!work.isEmpty()) {
+            Term t = work.pop();
+            if (t instanceof CompoundTerm) {
+                if (visited.put(t, Boolean.TRUE) != null) continue;
+                CompoundTerm ct = (CompoundTerm) t;
+                intern(ct.getFunctor().getName());
+                List<Term> as = ct.getArguments();
+                for (int i = as.size() - 1; i >= 0; i--) if (as.get(i) != null) work.push(as.get(i));
+            } else if (t instanceof Atom) {
+                intern(((Atom) t).getName());
+            } else if (t instanceof Variable) {
+                intern(((Variable) t).getName());
+            } else if (t instanceof PrologString) {
+                intern(((PrologString) t).getStringValue());
             }
+            // Number and Rational have no strings
         }
-        if (term instanceof Atom) {
-            intern(((Atom) term).getName());
-        } else if (term instanceof Variable) {
-            intern(((Variable) term).getName());
-        } else if (term instanceof PrologString) {
-            intern(((PrologString) term).getStringValue());
-        } else if (term instanceof CompoundTerm) {
-            CompoundTerm ct = (CompoundTerm) term;
-            intern(ct.getFunctor().getName());
-            for (Term arg : ct.getArguments()) {
-                collectStrings(arg, visited);
-            }
-        }
-        // Number and Rational have no strings
-        // END_CHANGE: Round5
+        // END_CHANGE: ISS-2025-0561
     }
 
     private void writeTerm(DataOutputStream dos, Term term) throws IOException {
@@ -184,12 +184,27 @@ public class JpcWriter {
         writeTerm(dos, term, new java.util.IdentityHashMap<>());
     }
     private void writeTerm(DataOutputStream dos, Term term, java.util.IdentityHashMap<Term, Boolean> visited) throws IOException {
-        if (term instanceof CompoundTerm) {
-            if (visited.put(term, Boolean.TRUE) != null) {
-                throw new IOException("Cannot serialize cyclic term: " + term);
+        // START_CHANGE: ISS-2025-0561 - P3.12: pre-order with an explicit stack (a compound's
+        // header, then its arguments left to right — the same bytes the recursion wrote)
+        java.util.ArrayDeque<Term> work = new java.util.ArrayDeque<>();
+        work.push(term);
+        while (!work.isEmpty()) {
+            Term t = work.pop();
+            if (t instanceof CompoundTerm) {
+                if (visited.put(t, Boolean.TRUE) != null) {
+                    throw new IOException("Cannot serialize cyclic term");
+                }
+                CompoundTerm ct = (CompoundTerm) t;
+                dos.writeByte(JpcFormat.TERM_COMPOUND);
+                writeVarint(dos, indexOf(ct.getFunctor().getName()));
+                List<Term> as = ct.getArguments();
+                writeVarint(dos, as.size());
+                for (int i = as.size() - 1; i >= 0; i--) work.push(as.get(i));
+            } else {
+                writeTermInner(dos, t, visited);
             }
         }
-        writeTermInner(dos, term, visited);
+        // END_CHANGE: ISS-2025-0561
         // END_CHANGE: Round5
     }
     private void writeTermInner(DataOutputStream dos, Term term, java.util.IdentityHashMap<Term, Boolean> visited) throws IOException {
@@ -219,8 +234,9 @@ public class JpcWriter {
                     writeVarint(dos, b.length);
                     dos.write(b);
                 } else {
-                    dos.writeByte(JpcFormat.NUM_LONG);
-                    dos.writeLong(num.longValue());
+                    dos.writeByte(JpcFormat.NUM_VARLONG);                     // ISS-2025-0553
+                    long v = num.longValue();
+                    writeVarlong(dos, (v << 1) ^ (v >> 63));
                 }
             } else {
                 dos.writeByte(JpcFormat.NUM_FLOAT);
@@ -230,9 +246,17 @@ public class JpcWriter {
         } else if (term instanceof Variable) {
             // START_CHANGE: ISS-2025-0447 - by INDEX within the clause, plus the name for display.
             Variable var = (Variable) term;
-            dos.writeByte(JpcFormat.TERM_VARIABLE);
-            writeVarint(dos, clauseVarIndex(var.getName()));
-            writeVarint(dos, indexOf(var.getName()));
+            // ISS-2025-0553: the name only at the first occurrence in the clause
+            boolean first = !clauseVars.containsKey(var.getName());
+            int slot = clauseVarIndex(var.getName());
+            if (first) {
+                dos.writeByte(JpcFormat.TERM_VARIABLE);
+                writeVarint(dos, slot);
+                writeVarint(dos, indexOf(var.getName()));
+            } else {
+                dos.writeByte(JpcFormat.TERM_VAR_AGAIN);
+                writeVarint(dos, slot);
+            }
             // END_CHANGE: ISS-2025-0447
         } else if (term instanceof CompoundTerm) {
             CompoundTerm ct = (CompoundTerm) term;
@@ -253,6 +277,16 @@ public class JpcWriter {
     }
 
     /** Write an unsigned variable-length integer (1-5 bytes). */
+    // START_CHANGE: ISS-2025-0553
+    static void writeVarlong(DataOutputStream dos, long value) throws IOException {
+        while ((value & ~0x7FL) != 0) {
+            dos.writeByte((int) ((value & 0x7F) | 0x80));
+            value >>>= 7;
+        }
+        dos.writeByte((int) value);
+    }
+    // END_CHANGE: ISS-2025-0553
+
     static void writeVarint(DataOutputStream dos, int value) throws IOException {
         while ((value & ~0x7F) != 0) {
             dos.writeByte((value & 0x7F) | 0x80);

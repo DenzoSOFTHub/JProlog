@@ -57,6 +57,18 @@ public final class Errors {
         return new PrologException(ISOErrorTerms.evaluationError(what, context));
     }
 
+    // START_CHANGE: ISS-2025-0569
+    /** {@code error(uninstantiation_error(Culprit), Context)} — ISO Cor.2 7.12.2 k. */
+    public static PrologException uninstantiation(Term culprit, String context) {
+        return new PrologException(new it.denzosoft.jprolog.core.terms.CompoundTerm(
+            new it.denzosoft.jprolog.core.terms.Atom("error"), java.util.Arrays.<Term>asList(
+                new it.denzosoft.jprolog.core.terms.CompoundTerm(
+                    new it.denzosoft.jprolog.core.terms.Atom("uninstantiation_error"),
+                    java.util.Arrays.<Term>asList(culprit)),
+                new it.denzosoft.jprolog.core.terms.Atom(context))));
+    }
+    // END_CHANGE: ISS-2025-0569
+
     /** {@code error(syntax_error(What), Context)} — ISO 7.12.2 j. */
     public static PrologException syntax(String what, String context) {
         return new PrologException(ISOErrorTerms.syntaxError(what, context));

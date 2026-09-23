@@ -77,13 +77,13 @@ public class ExceptionHandlingTest {
         String program = "test_mismatch :- catch(throw(error_a), error_b, true).";
         prolog.consult(program);
         
+        // ISS-2025-0662: the unmatched ball propagates to Java unchanged (it used to accept an
+        // empty answer list too, which a swallowed exception would also produce)
         try {
-            List<Map<String, Term>> solutions = prolog.solve("test_mismatch");
-            // The exception should propagate if not caught
-            assertTrue("Should propagate uncaught exception", solutions.isEmpty());
+            prolog.solve("test_mismatch");
+            fail("the uncaught ball must propagate");
         } catch (PrologException e) {
-            // This is expected behavior - exception propagates
-            assertTrue(true);
+            assertEquals("error_a", e.getErrorTerm().toString());
         }
     }
     

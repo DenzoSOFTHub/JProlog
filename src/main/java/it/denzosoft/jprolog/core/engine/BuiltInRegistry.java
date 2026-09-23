@@ -68,7 +68,50 @@ public class BuiltInRegistry {
         // END_CHANGE: ISS-2025-0253
         // START_CHANGE: ISS-2025-0203 - read/1 and read/2
         putArity("read", 1, 2);
+        // ISS-2025-0670: the placeholders registered for these names must not accept arities the
+        // natives do not implement (a placeholder is never meant to execute)
+        putArity("read_term", 2, 3);
+        putArity("term_to_atom", 2);
+        putArity("dcg_translate_rule", 2);
         // END_CHANGE: ISS-2025-0203
+        // START_CHANGE: ISS-2025-0574/0576 - the loader built-ins
+        putArity("consult", 1);
+        putArity("ensure_loaded", 1);
+        putArity("load_files", 1, 2);
+        putArity(".", 2);
+        putArity("make", 0);
+        putArity("source_file", 1, 2);
+        putArity("prolog_load_context", 2);
+        // END_CHANGE: ISS-2025-0574/0576
+        // START_CHANGE: ISS-2025-0630 - wave P6.5: the thread / queue / mutex family at its real
+        // arities, so thread_join/5 is an unknown procedure instead of reaching the built-in.
+        putArity("thread_create", 2, 3);
+        putArity("thread_join", 1, 2);
+        putArity("thread_detach", 1);
+        putArity("thread_self", 1);
+        putArity("thread_sleep", 1);
+        putArity("thread_is_alive", 1);
+        putArity("thread_property", 2);
+        putArity("thread_exit", 1);
+        putArity("message_queue_create", 1, 2);
+        putArity("message_queue_destroy", 1);
+        putArity("thread_send_message", 2);
+        putArity("thread_get_message", 1, 2, 3);
+        putArity("thread_peek_message", 1, 2);
+        putArity("mutex_create", 1, 2);
+        putArity("mutex_destroy", 1);
+        putArity("mutex_lock", 1);
+        putArity("mutex_trylock", 1);
+        putArity("mutex_unlock", 1);
+        putArity("mutex_unlock_all", 0);
+        putArity("with_mutex", 2);
+        putArity("concurrent", 3);
+        putArity("concurrent_maplist", 2, 3, 4);
+        putArity("concurrent_forall", 2, 3);
+        putArity("first_solution", 3);
+        putArity("concurrent_and", 2);
+        putArity("concurrent_or", 2);
+        // END_CHANGE: ISS-2025-0630
         // Zero-arity predicates
         putArity("!", 0);
         putArity("repeat", 0);
@@ -155,11 +198,24 @@ public class BuiltInRegistry {
      * Register a built-in predicate.
      */
     public void registerBuiltIn(String name, BuiltIn builtIn) {
-        if (builtIns.containsKey(name)) {
-            LOGGER.warning("Overriding existing built-in predicate: " + name);
+        // START_CHANGE: ISS-2025-0674 - FINE, not WARNING: every `new Prolog()` re-registers the 13
+        // CLP(FD) names deliberately (the v2 solver replaces the legacy entries), so the warning
+        // was 26 lines of stderr noise on every CLI start (`java -jar jprolog.jar`) and in every
+        // embedder's log, and said nothing actionable.
+        if (builtIns.containsKey(name) && LOGGER.isLoggable(java.util.logging.Level.FINE)) {
+            LOGGER.fine("Overriding existing built-in predicate: " + name);
         }
+        // END_CHANGE: ISS-2025-0674
         builtIns.put(name, builtIn);
+        modCount++;                                                    // ISS-2025-0542
     }
+
+    // START_CHANGE: ISS-2025-0542 - wave P2.3: lets the v4 call-site cache notice a (re)registration.
+    private volatile int modCount;
+
+    /** Bumped by every register/unregister. */
+    public int modCount() { return modCount; }
+    // END_CHANGE: ISS-2025-0542
 
     // START_CHANGE: ISS-2025-0338 - support a sandbox/safe-mode that removes unsafe built-ins
     /** Snapshot of the registered predicate names (this instance only). */
@@ -171,6 +227,7 @@ public class BuiltInRegistry {
      *  unregistered predicate becomes unavailable (it falls through to user clauses / existence_error). */
     public void unregisterBuiltIn(String name) {
         builtIns.remove(name);
+        modCount++;                                                    // ISS-2025-0542
     }
     // END_CHANGE: ISS-2025-0338
 

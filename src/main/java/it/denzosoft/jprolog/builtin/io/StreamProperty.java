@@ -38,6 +38,13 @@ public class StreamProperty implements BuiltIn {
         Term streamTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term propertyTerm = query.getArguments().get(1).resolveBindings(bindings);
 
+        // START_CHANGE: ISS-2025-0605 - P4.12: ISO 8.11.8.3 (c): a bound Property that is not a
+        // stream property is domain_error(stream_property, P), not a silent failure.
+        if (!(propertyTerm instanceof Variable) && !isStreamProperty(propertyTerm)) {
+            throw new PrologException(
+                ISOErrorTerms.domainError("stream_property", propertyTerm, "stream_property/2"));
+        }
+        // END_CHANGE: ISS-2025-0605
         List<PrologStream> candidates = new ArrayList<>();
         boolean bindStream = streamTerm instanceof Variable;
         if (bindStream) {
@@ -68,6 +75,20 @@ public class StreamProperty implements BuiltIn {
         }
         return found;
     }
+
+    // START_CHANGE: ISS-2025-0605 - the ISO properties plus the SWI ones a program may ask about
+    private static final java.util.Set<String> UNARY_PROPERTIES = new java.util.HashSet<>(java.util.Arrays.asList(
+        "file_name", "mode", "alias", "position", "end_of_stream", "eof_action", "reposition",
+        "type", "encoding", "line_count", "buffer", "buffer_size", "bom", "close_on_abort",
+        "newline", "representation_errors", "timeout", "tty", "file_no", "locale", "nlink",
+        "write_errors", "close_on_exec"));
+
+    private static boolean isStreamProperty(Term p) {
+        if (p instanceof Atom) return "input".equals(((Atom) p).getName()) || "output".equals(((Atom) p).getName());
+        return p instanceof it.denzosoft.jprolog.core.terms.CompoundTerm
+            && p.getArguments().size() == 1 && UNARY_PROPERTIES.contains(p.getName());
+    }
+    // END_CHANGE: ISS-2025-0605
 
     /** Every property of {@code s}, in ISO order. */
     public static List<Term> propertiesOf(PrologStream s) {

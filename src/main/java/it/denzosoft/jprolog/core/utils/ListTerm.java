@@ -41,7 +41,7 @@ public class ListTerm extends Term {
         if (term instanceof ListTerm) {
             ListTerm otherList = (ListTerm) term;
             if (this.elements.size() != otherList.elements.size()) {
-            	LOGGER.fine("List sizes differ, unification failed: " + this.elements.size() + " != " + otherList.elements.size());
+            	if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine("List sizes differ, unification failed: " + this.elements.size() + " != " + otherList.elements.size());   // ISS-2025-0550: lazy
                 return false;
             }
             // START_CHANGE: ISS-2025-0192 - Save substitution state for rollback on partial failure
@@ -49,7 +49,7 @@ public class ListTerm extends Term {
             // END_CHANGE: ISS-2025-0192
             for (int i = 0; i < this.elements.size(); i++) {
                 if (!this.elements.get(i).unify(otherList.elements.get(i), substitution)) {
-                	LOGGER.fine("Element " + i + " failed to unify: " + this.elements.get(i) + " with " + otherList.elements.get(i));
+                	if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine("Element " + i + " failed to unify: " + this.elements.get(i) + " with " + otherList.elements.get(i));   // ISS-2025-0550: lazy
                     // START_CHANGE: ISS-2025-0192 - Rollback substitution on partial unification failure
                     substitution.clear();
                     substitution.putAll(saved);

@@ -25,15 +25,18 @@ public class ProductionAuditTest {
     // ---- ISS-2025-0335: sort/msort/sort-4 must not fail on lists containing unbound variables ----
     @Test public void testISS0335_msortWithVariableSucceeds() {
         // standard order: a variable is below all other terms, so the sort must succeed
-        assertFalse("msort([1, X], L) must not fail", solve(p(), "msort([1, X], L).").isEmpty());
+        // ISS-2025-0663: the sorted VALUE, not merely success (a variable sorts first)
+        assertEquals("msort([1, X], L)", 1, solve(p(), "msort([1, X], L), L = [A, B], A == X, B == 1.").size());
     }
 
     @Test public void testISS0335_sortWithVariablesSucceeds() {
-        assertFalse("sort([X, Y], L) must not fail", solve(p(), "sort([X, Y], L).").isEmpty());
+        assertEquals("sort([X, Y], L)", 1, solve(p(), "sort([X, Y], L), length(L, 2), L = [A, B], A \\== B, "
+            + "(A == X, B == Y ; A == Y, B == X).").size());
+        assertEquals("sort dedups identical variables", 1, solve(p(), "sort([X, X], L), L = [A], A == X.").size());
     }
 
     @Test public void testISS0335_msortMixedVarAndGroundSucceeds() {
-        assertFalse("msort([X, 1, a], L) must not fail", solve(p(), "msort([X, 1, a], L).").isEmpty());
+        assertEquals("msort([X, 1, a], L)", 1, solve(p(), "msort([X, 1, a], L), L = [V, N, A], V == X, N == 1, A == a.").size());
     }
 
     // ---- ISS-2025-0336: freeze/2 must propagate the bindings the woken goal makes ----
@@ -127,29 +130,25 @@ public class ProductionAuditTest {
     @Test(timeout = 20000) public void testISS0341_deepTermDoesNotCrash() {
         Prolog pl = p();
         pl.consult("wrap(0, X, X).\nwrap(N, X, W) :- N > 0, N1 is N - 1, wrap(N1, f(X), W).");
-        try {
-            pl.solve("wrap(200000, a, T).");   // builds a 200k-deep term -> SO while resolving it
-            // succeeding (no SO at this depth/JVM) is also acceptable
-        } catch (it.denzosoft.jprolog.core.exceptions.PrologException converted) {
-            // converted to a catchable ISO error -> good
-        } catch (StackOverflowError raw) {
-            fail("a deep term must not escape as a raw StackOverflowError");
-        }
+        // START_CHANGE: ISS-2025-0662 - every walker is iterative since 4.5 (ISS-2025-0524), so
+        // the 200k-deep answer is built, copied out and measured exactly; no error is acceptable
+        pl.consult("depth(a, 0).\ndepth(f(X), N) :- depth(X, M), N is M + 1.");
+        List<Map<String, Term>> r = solve(pl, "wrap(200000, a, T), depth(T, D), D == 200000.");
+        assertEquals(1, r.size());
+        // END_CHANGE: ISS-2025-0662
     }
 
     @Test(timeout = 15000) public void testISS0341_deeplyNestedInputDoesNotCrashParser() {
         Prolog pl = p();
         int depth = 100000;
-        StringBuilder sb = new StringBuilder();
+        // START_CHANGE: ISS-2025-0662 - the reader handles 200 000 levels since 4.5 (ISS-2025-0561):
+        // the 100k-deep input is READ, not merely "not crashing" (it used to accept any error)
+        StringBuilder sb = new StringBuilder("X = ");
         for (int i = 0; i < depth; i++) sb.append("f(");
         sb.append("a");
         for (int i = 0; i < depth; i++) sb.append(")");
-        try {
-            pl.solve(sb.append(".").toString());
-        } catch (it.denzosoft.jprolog.core.exceptions.PrologException ok) {
-            // controlled ISO error -> good
-        } catch (StackOverflowError raw) {
-            fail("deeply nested untrusted input must not crash the parser with a raw StackOverflowError");
-        }
+        sb.append(", X = f(Y), Y = f(_).");
+        assertEquals(1, pl.solve(sb.toString()).size());
+        // END_CHANGE: ISS-2025-0662
     }
 }

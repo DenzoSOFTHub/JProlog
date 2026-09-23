@@ -143,16 +143,23 @@ public class PrologFlags {
         // END_CHANGE: ISS-2025-0200
         
         // prolog_version/1 - Version information
-        FLAGS.put("prolog_version", new Atom("jprolog-2.0.15"));
+        // START_CHANGE: ISS-2025-0675 - the version flags said 2.0.15 since 2.x. They now follow
+        // the release, in SWI's shapes: version = Major*10000 + Minor*100 + Patch (an integer),
+        // version_data = jprolog(Major, Minor, Patch, []).
+        FLAGS.put("prolog_version", new Atom("jprolog-4.5.0"));
+        // END_CHANGE: ISS-2025-0675
         
         // dialect/1 - Prolog dialect
         FLAGS.put("dialect", new Atom("iso"));
         
         // version/1 - Implementation version
-        FLAGS.put("version", new Atom("2.0.15"));
+        FLAGS.put("version", it.denzosoft.jprolog.core.terms.Number.valueOf(40500L));   // ISS-2025-0675
         
         // version_data/1 - Structured version data
-        FLAGS.put("version_data", new Atom("jprolog(2,0,15)"));
+        FLAGS.put("version_data", new it.denzosoft.jprolog.core.terms.CompoundTerm(new Atom("jprolog"),   // ISS-2025-0675
+            new it.denzosoft.jprolog.core.terms.Term[] {
+                it.denzosoft.jprolog.core.terms.Number.valueOf(4L), it.denzosoft.jprolog.core.terms.Number.valueOf(5L),
+                it.denzosoft.jprolog.core.terms.Number.valueOf(0L), new Atom("[]")}));
         
         // occurs_check/1 - Whether unification performs occurs check
         FLAGS.put("occurs_check", new Atom("false"));

@@ -152,6 +152,15 @@ public class OperatorTable {
         defineOperator(700, Operator.Type.XFX, "#>=");
         defineOperator(450, Operator.Type.XFX, "..");
         // END_CHANGE: Round5 minor
+        // START_CHANGE: ISS-2025-0652 - the CLP(FD) reification connectives, SWI priorities
+        defineOperator(760, Operator.Type.YFX, "#<==>");
+        defineOperator(750, Operator.Type.XFY, "#==>");
+        defineOperator(750, Operator.Type.YFX, "#<==");
+        defineOperator(740, Operator.Type.YFX, "#\\/");
+        defineOperator(730, Operator.Type.YFX, "#\\");
+        defineOperator(720, Operator.Type.YFX, "#/\\");
+        defineOperator(710, Operator.Type.FY, "#\\");
+        // END_CHANGE: ISS-2025-0652
         
         defineOperator(500, Operator.Type.YFX, "+");
         defineOperator(500, Operator.Type.YFX, "-");

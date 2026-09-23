@@ -5,8 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 JProlog is a Prolog interpreter written in Java (source/target 1.8; it builds and runs fine on a
-modern JDK — JDK 25 / Maven 3.9 in the dev environment). It has a clean-room resolution core, ~415
-built-in predicates, a Swing IDE and a CLI. No external dependencies beyond JUnit 4.
+modern JDK — JDK 25 / Maven 3.9 in the dev environment). It has a clean-room resolution core, 430
+registered built-in names, a Swing IDE and a CLI (also a runnable jar). No external dependencies
+beyond JUnit 4.
 
 **The engine is `core.engine.v4`, and it is the only one** — waves W1–W9 of
 `docs/reports/report-engine-v4-design-2026-08-25.md`, finished in 4.0.0. The recursive
@@ -19,20 +20,25 @@ clean-room rewrites of the parser, the DCG translator, the CLP(FD) solver, the a
 and the IDE source formatter, and they are all current.
 
 **Repository**: https://github.com/DenzoSOFTHub/JProlog
-**Current version**: `<version>` in pom.xml (4.4.0). pom.xml and CHANGELOG.md are the source of
-truth; README.md is refreshed at release time and may lag between releases.
+**Current version**: `<version>` in pom.xml (4.5.0 — the production-readiness release, waves
+P1..P7 of `docs/reports/report-production-readiness-2026-09-23.md`). pom.xml and CHANGELOG.md are
+the source of truth; README.md is refreshed at release time and may lag between releases.
+**Deliberate deviations** from ISO/SWI live in ONE place: `docs/references/ref-deviations.md`
+(reference semantics: ISO 13211-1 first, SWI-Prolog 9 where ISO is silent).
 
 ## Build & Run
 
 ```bash
 mvn compile                  # Build
-mvn test                     # the whole suite — ONE engine, one leg (4.4.0 baseline: 1313/1313)
+mvn test                     # the whole suite — ONE engine, one leg (4.5.0 baseline: 1452/1452)
+mvn package -DskipTests      # + target/jprolog.jar (runnable, Main-Class PrologCLI)
 mvn test -Dtest=BugFixVerificationTest                                  # one test class
 mvn test -Dtest=BugFixVerificationTest#testISS0188_ModNegativeDivisor   # one method
 mvn clean compile            # Clean rebuild
 
-# Run CLI
+# Run CLI (or: java -jar target/jprolog.jar [options] [file.pl ...]; or: mvn exec:java)
 java -cp target/classes it.denzosoft.jprolog.PrologCLI
+java -jar target/jprolog.jar prog.pl -g main -t halt      # -g/-t/--safe/--budget/--demo/-q ...
 
 # Run IDE (or: mvn exec:java@run-ide)
 java -cp target/classes it.denzosoft.jprolog.editor.PrologIDE
@@ -66,20 +72,24 @@ Build/test gotchas:
   "dubious ownership" and `git status` lists ~585 files as modified purely because of mode changes
   (644→755). Use `git -c safe.directory=$PWD -c core.fileMode=false ...` and never commit the mode
   churn.
-- Bare `mvn exec:java` fails — the pom's default mainClass `it.denzosoft.jprolog.Main` does not
-  exist (the only `Main` is the demo `core.engine.Main`). Use `mvn exec:java@run-ide` or the
-  `java -cp` commands above. `run_ide.sh` is broken; `start-ide.sh` works but skips compilation.
+- `mvn exec:java` runs the CLI (4.5.0 fixed the pom's default mainClass, which named a class that
+  did not exist); `mvn exec:java@run-ide` runs the IDE. `run_ide.sh` is broken; `start-ide.sh`
+  works but skips compilation.
 - `test_all_examples.sh` enforces nothing: "PASSED" only means the CLI exited 0 within a 30 s
   timeout, and the script always exits 0. The 75%/85% thresholds are manual policy — eyeball the
   per-program output and the "Successful queries" counts (the baseline, unchanged since 4.0.0, is
-  2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 0, 0).
-- No surefire plugin is pinned in pom.xml, so the Maven-default surefire (2.12.4) runs the tests:
-  new test classes must match `Test*` / `*Test` / `*TestCase` or they are silently skipped — note
-  `*Tests` (plural) is NOT matched. That is why the tree holds 10 more `@Test` methods than the
-  baseline runs: the 10 in `BuiltInTests.java` never do. `-Dtest=Class#method` also does not work
-  with that surefire; run the whole class.
-- Every `new Prolog()` logs ~13 `WARNING: Overriding existing built-in predicate` lines (the v2
-  CLP(FD) *solver* re-registering `#=`, `label`, …). Expected noise, not a bug.
+  2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 0, 0). Since 4.5.0 the CLI loads its demo
+  facts (`father/2`, `likes/2`, …) only with `--demo`, and test_01's two successes depend on them:
+  the (untracked) script must run `PrologCLI --demo` — a copy that does not gets 0 for test_01.
+- No surefire plugin is pinned in pom.xml, so the Maven-default surefire runs the tests (2.17 with
+  this Maven, per the build log): new test classes must match `Test*` / `*Test` / `*TestCase` or
+  they are silently skipped — note `*Tests` (plural) is NOT matched (the one such class,
+  `BuiltInTests.java`, was deleted in 4.5.0). `-Dtest=Class#method` does not work here; run the
+  whole class (`-Dtest=A,B` works).
+- The dev machine is shared and memory-tight: `export MAVEN_OPTS="-Xmx512m"`, tests with
+  `-DargLine="-Xmx1g"`, `mvn -o`, one JVM at a time. The full suite takes 5–7 min.
+- The CLP(FD) *solver* re-registers `#=`, `label`, … on every `new Prolog()`; since 4.5.0 that is
+  logged at FINE (it printed 13 WARNING lines per engine, ISS-2025-0674).
 
 ## Architecture
 
@@ -91,16 +101,27 @@ Build/test gotchas:
    `core.parser.Parser` is the fallback (`-Djprolog.parser=legacy`).
 2. **KnowledgeBase** (`core.engine.KnowledgeBase`) is the database of record: facts and rules as
    `Rule` objects, each carrying a `sourceLine` for line-accurate breakpoints — populated only by
-   `consultWithDiagnostics` on the v2-parser path, so plain `consult()` leaves it -1.
+   `consultWithDiagnostics` on the v2-parser path, so plain `consult()` leaves it -1. Since 4.5.0
+   (P2) each predicate is ONE `PredEntry` (created once, never replaced) holding a gap-buffer
+   `RuleSeq`: O(1) `asserta`/`assertz`, O(1) retract of a stored `Rule` (slot hint), one-pass
+   `retractAllClauses`; there is no global rule list (`getRules()` rebuilds the order from
+   per-rule sequence numbers) and no KB-side first-argument index any more.
 3. **ClauseStore** (`core.engine.v4.ClauseStore`) mirrors it as compiled `Clause` skeletons with
-   birth/death generations and an incremental first-argument index, re-syncing a predicate when the
-   KB's version for it changes. **Every** clause-selection path goes through that index since
-   4.3.0 — calls (`Machine.selectClauses`), `retract/1` and `clause/2`; see "First-argument
-   indexing" below.
+   birth/death generations and an incremental first-argument index, syncing a predicate through
+   its `PredEntry` handle (a volatile version read, no map lookup). Clause sequences are gap
+   buffers handed out as `ClauseStore.View` windows (no copies); a bucket and the variable-headed
+   clauses are merged by clause ordinal, cached per bucket. **Every** clause-selection path goes
+   through that index — calls, `retract/1`, `retractall/1` (4.5.0) and `clause/2`; see
+   "First-argument indexing" below.
 4. **Machine** (`core.engine.v4.Machine`) resolves: an iterative SLD drive loop over a goal stack
    and an explicit choice-point list, binding directly in mutable `Variable` cells with a
    conditional trail (`core.engine.v4.Bindings`). One `core.engine.v4.Engine` per `Prolog`, one
-   `Machine` per query, one more per worker thread.
+   `Machine` per query, one more per worker thread. Since 4.5.0 (P2) a compound body goal of a
+   compiled clause is a `Clause.Skel` carrying a `Machine.CallSite` (the resolved
+   `ClauseStore.Predicate` or module predicate), valid while `Engine.dispatchStamp()` is unchanged;
+   `,`/`;`/`->`/`*->` in clause bodies are expanded lazily over the frame (`stepControlSkel`), and
+   body-only variables get their cells at clause activation (ISS-2025-0551). Answers handed to
+   Java are COPIES (`Unify.copyAnswer`, ISS-2025-0514) and omit `_`-variables.
 5. For each goal the machine tries, in order: its **inline** table (`=/2`, `is/2`, the comparisons,
    the type checks, `once/ignore/forall`, `between/3`), the **v4 native** table
    (`core.engine.v4.BuiltinTable`), a **user or prelude clause**, then the legacy
@@ -150,7 +171,9 @@ source formatter). Console answers are `core.engine.v4.Answer`.
 
 - `solve(String)` / `solve(Term)` — the configured engine.
 - `solveStream(query, sink)` — lazy, cancellable solution streaming; the sink
-  (`Predicate<Map<String,Term>>`) returns `false` to stop.
+  (`Predicate<Map<String,Term>>`) returns `false` to stop. `solveStream(String, AnswerSink)` (4.5.0)
+  also tells the sink whether alternatives remain (`Machine.hasAlternatives()`) — the CLI uses it.
+- A query that does not parse raises `error(syntax_error(Msg), query)` (4.5.0, ISS-2025-0671).
 - `consultWithDiagnostics(program, filename)` — per-clause compile collecting `CompilationError`s
   with line numbers (returns `CompilationResult`) instead of throwing on the first error.
 - `compileFile("x.pl")` / `consultSmart("x.pl")` — compile to `.jpc` / auto-cached consult.
@@ -160,35 +183,49 @@ source formatter). Console answers are `core.engine.v4.Answer`.
   `DebugController` and where the running machine publishes the query's `ResourceGuard`.
   (It replaced `getQuerySolver()` in 4.0.0; `solveLegacy` is gone.)
 - `getEngineState()`, `getStreams()`, `getOps()`, `getFlags()`, `residualGoals(solution)`.
-- `enableSafeMode()` / `setInferenceBudget(steps)` — see hardening below.
+- `enableSafeMode()` / `enableSafeMode(SafeModeOptions)` / `setInferenceBudget(steps)` — see
+  hardening below.
 
 ### Sandbox & Resource Limits
 
-- **`Prolog.enableSafeMode()`** — per-instance, **irreversible**, deny-by-package sandbox:
-  unregisters every built-in whose class lives in
-  `builtin.{os,ffi,filesystem,network,http,jdbc,persistence,threading}`
-  (`UNSAFE_BUILTIN_PACKAGES` in `Prolog.java`; ~110 removed). Java API only. **Gotcha**:
-  `builtin.io` is *not* denied, so `open/3,4` can still read/write host files — file isolation
-  needs OS-level sandboxing (or extending the deny list). When adding a host-touching built-in, put
-  it in one of the denied packages or safe mode will not strip it.
+- **`Prolog.enableSafeMode()`** / **`enableSafeMode(SafeModeOptions)`** — per-instance,
+  **irreversible** deny-list sandbox over BOTH the registry and the native `BuiltinTable`: every
+  registry built-in whose class lives in
+  `builtin.{os,ffi,filesystem,network,http,jdbc,persistence,threading}` (`UNSAFE_BUILTIN_PACKAGES`)
+  plus every name in `UNSAFE_PREDICATE_NAMES` (`open`, `see`/`tell`, `csv_*_file`, `log_to_file`,
+  the loaders `consult`/`ensure_loaded`/`load_files`/`make`, `absolute_file_name`, `exists_file`,
+  `shell`, `getenv`, …), and `halt/0,1` become `permission_error(call, sandboxed, halt)`
+  (ISS-2025-0672). `SafeModeOptions.allowFileRead(dir)` keeps `open/3,4` (read mode) and the
+  loaders for whitelisted directories; `allowHalt()` keeps `halt` (the CLI's `--safe` uses it).
+  Logging is per engine. `src/test/resources/safe-mode-allowlist.txt` is a snapshot of what
+  survives: **a new built-in fails `EngineV45HardeningTest` until it is classified** — put a
+  host-touching one in a denied package or the name list.
 - **`Prolog.setInferenceBudget(steps)`** (0 = unlimited) — aborts a runaway query with
   `InferenceLimitException`, enforced through `core.engine.ResourceGuard` inside meta-call
-  sub-solves and worker threads too. (The javadoc claims it raises
+  sub-solves and worker threads too. Since 4.5.0 (ISS-2025-0624) it is ONE shared pool per query
+  (an `AtomicLong`; each guard draws credit in chunks of 1 024), a worker runs on
+  `parentGuard.child()`, and natives that do O(N) work charge the guard per element
+  (`ResourceGuard.charge(n)`: `length`, `append`, `member`, `nth`, `msort`, `copy_term`, `findall`
+  copying, `atom_codes`, …). (The javadoc claims it raises
   `resource_error(inference_limit_exceeded)` — wrong; trust the implementation and
   `ProductionAuditTest`.)
 - **Error-trust model** — deliberate asymmetry: deep-term/deep-input `StackOverflowError`s from a
   bridged built-in are converted to a `PrologException` carrying ISO
   `resource_error('stack_overflow')` / `resource_error('parser_nesting')` so the Java embedder sees
   a controlled error, while `InferenceLimitException` (budget), `QueryCancelledException`
-  (IDE/embedder Stop, via thread interrupt) and `DebugStopException` (debugger Stop) are plain
-  `RuntimeException`s — **not** `PrologException` — so untrusted `catch/3` cannot swallow them.
+  (IDE/embedder Stop, via thread interrupt), `DebugStopException` (debugger Stop) and
+  `core.engine.ThreadExitException` (`thread_exit/1`, 4.5.0) are plain `RuntimeException`s —
+  **not** `PrologException` — so untrusted `catch/3` cannot swallow them. `halt/0,1` reach the
+  embedder as a `PrologException` with `isHalt()`; the engine never calls `System.exit`.
   `core.engine.ControlFlow.rethrowIfControl(t)` must be the first statement of any broad
   `catch (Exception/RuntimeException)`. Preserve this distinction when adding limits.
 
 ### Engine v4
 
-The clean-room core designed in `docs/reports/report-engine-v4-design-2026-08-25.md`. All nine
-waves are done (v3.9.0: ISS-2025-0438..0449; v3.10.0: 0450..0456; v3.11.0: 0457..0462;
+The clean-room core designed in `docs/reports/report-engine-v4-design-2026-08-25.md`. (4.5.0 —
+the production-readiness waves P1..P7, ISS-2025-0514..0675 — is recorded in
+`docs/reports/report-production-readiness-2026-09-23.md` §10–§16, not in the progress report.)
+All nine waves are done (v3.9.0: ISS-2025-0438..0449; v3.10.0: 0450..0456; v3.11.0: 0457..0462;
 v3.12.0: 0463..0465; v3.13.0: 0466..0471; v3.14.0: 0472..0477; **v4.0.0: 0478..0488**), and so are
 the two 4.1 waves (**v4.1.0**, one engine: 0491..0495; **v4.2.0**, the L-08 built-in migration:
 0496..0501), **v4.3.0** (4.2 wave C — indexing on every selection path, `op/3` and
@@ -196,7 +233,8 @@ the two 4.1 waves (**v4.1.0**, one engine: 0491..0495; **v4.2.0**, the L-08 buil
 **v4.4.0** (4.3 wave D — ISO error conformance across the natives, `retractall/1` through the
 index, `bounded = false`, the cleanup catch escape: 0504..0513). Progress, the 68 invariants, the benchmarks and what remains
 live in `docs/reports/report-engine-v4-progress.md` — **read it before touching `core.engine.v4`**;
-sections 9–19 are the wave records.
+sections 9–19 are the wave records; §3 invariants 12–15 were added by 4.5.0 (activation-time body
+cells, call sites and the dispatch stamp, the loader/reader).
 
 **Package `core.engine.v4`**:
 - `Machine` — the drive loop: goal stack, choice points, cut, catch/throw, findall, cleanup frames,
@@ -218,13 +256,23 @@ sections 9–19 are the wave records.
   unify_with_occurs_check) and **`NativeDb`** (current_predicate/retractall/abolish/dynamic/
   listing, the global variables, the ISO flags, halt, findall/4); and, since 4.3.0,
   **`NativeChars`** (`char_type/2` and `code_type/2` as generators, with the SWI parametric forms)
-  plus `op/3`, `char_conversion/2` and `current_char_conversion/2` in `NativeMisc`.
+  plus `op/3`, `char_conversion/2` and `current_char_conversion/2` in `NativeMisc`; and, since
+  4.5.0, **`NativeRead`** (`read/1,2`, `read_term/2,3`, `read_term_from_atom/3`, `open_string/2`,
+  `with_input_from/2`, `read_line_to_string/2`, `read_line_to_codes/2,3`, `read_string/3,5` — the
+  clause collector + v2 reader with fresh variable cells) and **`NativeExpand`**
+  (`dcg_translate_rule/2`, `expand_term/2`, the consult-time `term_expansion/2`), plus
+  `print_message/2`, `statistics/0,2`, `predicate_property/2`, `string_upper/lower`, the SWI
+  `aggregate_all/3` forms and every CLP(FD) predicate (`ClpfdNative`, lazy labeling generators).
+  The loaders (`consult/1`, `[F]`, `ensure_loaded/1`, `load_files/1,2`, `make/0`) are the registry
+  built-in `builtin.filesystem.LoadFiles` (safe-mode denied); a load runs under the per-engine
+  `core.engine.LoadLock` (a `thread_join` on a thread that loads is recognised, LIM-045).
 - `Modules` — the module owner (system/user/library, resolution order, imports, meta_predicate);
   `Prelude` — indexes and autoloads `prelude/*.pl`.
 - `Workers` — one `Machine` per thread over the same `Engine`.
-- `LegacyBuiltinAdapter` + `SolverFacade` — the **229** remaining registry built-ins, unchanged
-  (4.1 wave B took 94 indicators off it, 4.2 wave C another 5). What is left is essentially the extended libraries plus
-  the stream/parser half of `io`; see LIM-037 and the residual list below.
+- `LegacyBuiltinAdapter` + `SolverFacade` — the remaining registry built-ins: about **240** names
+  (of the registry's 430: 12 are `ControlConstruct` placeholders, ~45 are handled inline by the
+  machine or by prelude clauses, the rest have a native entry). What is left is essentially the
+  extended libraries plus the stream half of `io`; see LIM-037 and the residual list below.
 - `Engine` — the per-`Prolog` context; `Errors` — ISO error construction.
 - `EngineState` (the thread-current per-engine state), `Streams` + `PrologStream`, `Ops`, `Writer`,
   `Answer` — the W7 services the bridged built-ins reach through their static facades.
@@ -249,6 +297,13 @@ birth/death generations so `assertz`/`retract` are O(1).
 `call_cleanup/2` run `Cleanup` after the goal's LAST solution; `append(X,Y,Z)` fully open
 **enumerates** and `member(X, PartialList)` **extends** the open tail (a program that relied on the
 old termination loops must be rewritten). All three are pinned in `BugFixVerificationTest`.
+The 4.5.0 program added its own decisions (SWI as the reference): `op/3` is permanent on
+backtracking, `integer/1` rounds, negative shifts shift the other way, `intersection/union` keep
+duplicates, `call((fail,1))` and `string_concat(-,-,-)` raise, `M:G` runs non-exported `G`,
+`print/1` quotes, globals are per thread, directives run once, tabled non-stratified negation
+raises (LIM-046), consulted predicates stay modifiable. **All of them — and every other deliberate
+deviation — are listed in `docs/references/ref-deviations.md`; a change of pinned behaviour
+updates that file and the pinning test, it never adds a second test.**
 
 **Unchanged on v4**: the embedding API and `Map<String,Term>` results, `enableSafeMode()`, the
 inference budget, the trust model, the IDE debugger contract, and the four-port trace.
@@ -272,7 +327,9 @@ inference budget, the trust model, the IDE debugger contract, and the four-port 
   library indicator to `callUser` *before* the legacy adapter. Both halves are needed.
 - **A term must be COPIED before it crosses a machine boundary** — bindings live in the cells.
   `Workers` copies the goal in and every answer out; the message queues copy on send and receive.
-- **A worker gets its OWN `ResourceGuard`**, constructed with the parent's limit.
+- **A worker gets its OWN `ResourceGuard`, a `child()` of the parent's** — it draws from the
+  query's ONE budget pool (ISS-2025-0624); never construct a worker guard with the parent's limit
+  (that multiplied the budget per thread).
 - **A new port site takes its depth from `enterPort()` and returns it by ASSIGNING it** in
   `portExit`/`portFail`; incrementing/decrementing drifts.
 - **Never re-introduce a "skip this when `debugController != null`" branch** (limit L-13). If a
@@ -312,13 +369,15 @@ inference budget, the trust model, the IDE debugger contract, and the four-port 
     `1`, `1.0`, `'1'` and `"1"` are four buckets. Never go back to building a `String` per call
     (`"i" + n.bigIntegerValue()` cost `loop(1000000)` about 16%, ISS-2025-0502), and never let two
     kinds of key compare equal unless you mean the over-approximation.
-  - A **new selection site** must call `p.select(Clause.argKey1(goal))`, not `p.all()`. The three
-    that exist are `Machine.selectClauses` (calls), `Machine.retractClause` and
-    `NativeLibrary.ClauseB` (`clause/2`); `p.all()` survives only where the whole predicate really
-    is wanted (`Machine.hasQualifiedHook`). A fourth lives on the KB side:
-    `KnowledgeBase.retractAllClauses` selects through `getRulesWithFirstArgIndex` when the head's
-    first argument is bound (ISS-2025-0511), and deliberately keeps the historical full scan when
-    it is not — every clause matches there, so the candidate list is pure overhead.
+  - A **new selection site** must call `p.view(Clause.argKey1(goal), view)` (4.5.0: a
+    `ClauseStore.View` window over the gap buffer — `a`, `from`, `to` — instead of the copied array
+    `p.select(...)` returned; a module predicate still uses `select`), not `p.all()`. The sites are
+    `Machine.callSite`/`selectClauses` (calls), `Machine.retractClause`, the store-side
+    `retractall/1` (ISS-2025-0545) and `NativeLibrary.ClauseB` (`clause/2`); `p.all()` survives
+    only where the whole predicate really is wanted (`Machine.hasQualifiedHook`). On the KB side
+    `KnowledgeBase.retractAllClauses` (the Java-API path) is one pass over the predicate's own
+    `RuleSeq` plus one compaction (ISS-2025-0544); `getRulesWithFirstArgIndex` is an O(n) filter
+    with the same over-approximating key rule (no v4 path uses it).
     `EngineV4IndexingTest` pins the property with a randomised equivalence against an independent
     "could the first arguments unify?" oracle, plus the partial-structure key (`f(g(X), _)` keys on
     `g/1`) on all four paths.
@@ -374,7 +433,7 @@ There are **two** SPIs, and new work should use the first:
 `Outcome.SUSPENDED`) and register it in `NativeBuiltins.register` / `NativeControl.register` /
 `NativeLibrary.register` / `NativeMisc.register` / `NativeIo.register` / `NativeText.register` /
 `NativeTerm.register` / `NativeDb.register`. A native sees dereferenced `Term[] args` and the
-`Machine`; it never builds a `Map<String,Term>`. **165 indicators (141 names) are native**, and
+`Machine`; it never builds a `Map<String,Term>`. **204 indicators (174 names) are native** (4.5.0), and
 ~44 more are handled inline by the machine.
 
 **How the io natives are laid out** (`NativeIo`, 4.1 wave B): one `Builtin` class per *shape*, not
@@ -389,11 +448,11 @@ cells instead of a `Map<String,Term>` and calls back into the running machine
 the term to print is handed to `core.engine.v4.Writer` **unresolved**, because the writer derefs as
 it walks. That last point is the whole performance story: the bridge had to copy the term first.
 
-**2. The legacy registry SPI** (`core.engine`), which the **229** remaining built-ins use — the
-extended libraries (jdbc, filesystem, threading, crypto, ffi, graph, network, persistence, os,
-http, datetime, json, logging, regex, dcg, csv, xml, clpfd), the stream/parser half of `io`
-(`open`, `close`, `read`, `read_term`, `stream_property`, `seek`, the byte I/O, `print_message`,
-`portray_clause`), `statistics/2`, `table/1` and the debug and profiler predicates (LIM-037):
+**2. The legacy registry SPI** (`core.engine`), which the ~240 remaining built-ins use — the
+extended libraries (jdbc, filesystem incl. the loaders, threading, crypto, ffi, graph, network,
+persistence, os, http, datetime, json, logging, regex, dcg, csv, xml), the stream half of `io`
+(`open`, `close`, `stream_property`, `seek`, the byte I/O, `portray_clause`), `table/1` and the
+debug and profiler predicates (LIM-037):
 - `BuiltIn.execute(Term query, Map bindings, List solutions)` — the eager contract: a *resolved*
   goal, an empty bindings map, one solution map appended per answer.
 - `BuiltInWithContext.executeWithContext(SolverContext solver, Term query, Map bindings,
@@ -486,11 +545,18 @@ how the IDE captures a background solve's output (reset in `finally`) and the on
   `meta_predicate` declarations), `pairs.pl`, `coroutining.pl` (freeze/frozen/when/dif/?= and the
   `'$attr_hook'/4` dispatcher). The `KnowledgeBase` never sees them, so neither `listing/1` nor
   the IDE does. Maven picks the directory up by default.
-- `PrologCLI` — CLI with `:consult`/`:c`, `:compile`/`:cc` (to `.jpc`), `:listing`/`:l`, `:save`/`:s`,
-  `:clear`, `:trace [on|off]`, `:help`/`:h`, `:quit`/`:q`. It detects a **non-interactive** stdin
-  (`System.console() == null`, or `--batch` / `-q`) and prints every solution at once, separated by
-  ` ;` and terminated by `.`, instead of reading the next input line as the answer to the "more
-  solutions?" prompt.
+- `PrologCLI` — `jprolog [options] [file.pl ...]` (also `java -jar target/jprolog.jar`): consults
+  the files, `-g Goal` runs a goal once, `-t Goal` replaces the toplevel, `--safe`
+  (`enableSafeMode(allowHalt)`), `--budget N`, `--max-solutions N`, `--demo` (the demo facts are
+  NOT loaded otherwise), `--batch`, `--interactive`, `-q`, `-h`. Exit status: `halt(N)` → N, a
+  failing/raising `-g` → 1, a bad option → 2; `initialization(G, main)` halts after `G`.
+  `PrologCLI(args, in, out, err).run()` never calls `System.exit` (tests use it; only `main`
+  exits). Answers are **streamed** through `solveStream(String, AnswerSink)`: interactively one
+  answer is computed per `;`, and with a non-interactive stdin (`System.console() == null`, or
+  `--batch` / `-q`) each answer is printed as it is found, separated by ` ;` and ended by `.` (or
+  `;` + `false.` when a choice point was left). Commands: `:consult`/`:c`, `:compile`/`:cc` (to
+  `.jpc`), `:listing`/`:l`, `:save`/`:s` (writes the SWI-layout listing), `:clear`,
+  `:trace [on|off]`, `:help`/`:h`, `:quit`/`:q`. Uncaught errors print through the ISO writer.
 
 ### Debug & Tracing Architecture
 
@@ -519,8 +585,14 @@ Engine specifics:
   wrapper ports, a lazy generator carries `cp.traceGoal`).
 - **Depth is `Machine.portDepth`** — the call-nesting level, assigned by every port. It is
   NOT `cps.size()`, because a deterministic frame is trust-me popped even while tracing.
-- **A deterministic frame emits no phantom `Fail` after its `Exit`**, which is what keeps
-  trace memory linear in the number of OPEN calls.
+- **A deterministic frame emits no phantom `Fail` after its `Exit`**, and a failure inside a
+  predicate's body prints that predicate's `Fail` (4.5.0, ISS-2025-0668): a traced CLAUSES frame
+  (and the `iteTraced` port frame) is NOT trust-me popped when its last alternative is handed out
+  — it stays until its Exit port, where `popIfDeterministicTop` drops it if nothing is above it;
+  a traced frame also looks ahead (`anyMayMatch`, a per-argument key clash checked before the head
+  binds) so its last matching clause makes it deterministic. The frames kept are exactly the OPEN
+  calls, so trace memory stays linear. Untraced execution is untouched (all of it is behind
+  `traceGoal != null`). Ports print `'$mctx'(user, G)` as `G` (`portView`).
 - Redo/Fail ports are emitted by stashing `traceGoal`/`traceDepth` on choice points; a new
   choice-point kind representing a traced goal must carry these fields.
 - Breakpoints: line-accurate via `Rule.sourceLine` + `Prolog.getPredicateIndicatorAtLine()`;
@@ -577,7 +649,9 @@ Every bug or feature request must be documented before implementation:
 - **Release Notes**: `docs/tracking/track-release-notes.md`
 
 Before allocating a new ISS number, grep **CHANGELOG.md** and `src/` (`START_CHANGE` tags) for the
-highest used one (**ISS-2025-0512** as of 4.4.0) — track-issues.md lags behind recent releases.
+highest used one (**ISS-2025-0675** as of 4.5.0; the 4.5.0 program allocated ranges per wave, so
+0530–0539, 0554–0559, 0580–0589, 0614–0619, 0653–0659 and 0676–0679 are unused) — track-issues.md
+lags behind recent releases.
 Its internal ordering and header levels are inconsistent; grep for an ID rather than assuming
 position. Some tracking content is in Italian — match surrounding style rather than rewriting.
 
@@ -607,15 +681,27 @@ line-for-line pinned trace oracles), `EngineV4RetirementTest` (17, W9),
 `EngineV41RetirementTest` (21, 4.1 wave A), `EngineV4IoTest` (19), `EngineV4TextTest` (16),
 `EngineV4TermTest` (13), `EngineV4DatabaseTest` (17) — 4.1 wave B — `EngineV4IndexingTest`
 (14), `EngineV4OpsTest` (16), `EngineV4CharTypeTest` (14) — 4.2 wave C — and
-**`EngineV4IsoErrorsTest` (1 method, 249 table rows) and `EngineV4CleanupTest` (7) — 4.3 wave
-D**, plus
-`test/cli/PrologCliBatchTest` (6). A wave-B class opens with a `test*IsNative` method that fails
+**`EngineV4IsoErrorsTest` (1 method, now 261 table rows) and `EngineV4CleanupTest` (7) — 4.3 wave
+D**, plus `test/cli/PrologCliBatchTest` (6). The 4.5.0 program added one class per wave:
+`EngineV45SemanticsTest` (16, P1), `EngineV45PerformanceTest` (17, P2 — counters: call-site hits,
+views, merged slots, allocation bounds), `EngineV45LoadReadWriteTest` (21, P3),
+`EngineV45ConformanceTest` (23) + `EngineV4FormatTest` (85-row directive table) (P4),
+`builtin/clpfd/v2/ClpfdV45Test` (19, P5), `EngineV45HardeningTest` (17, P6 — incl. the safe-mode
+allowlist snapshot `src/test/resources/safe-mode-allowlist.txt`), `test/cli/PrologCliToplevelTest`
+(9, P6/P7), `EngineV45ReleaseTest` (6, P7), `test/performance/PerformanceRegressionTest` (10, P7 —
+N-vs-4N growth tests with warm-up and a 10x bound, never an absolute time) and the real programs
+of `test/integration/FamousPrologProgramsTest` (9). Interrupt/Stop tests synchronise on
+`test/support/QueryStartLatch` (the query writes `go` into a thread-local stream), never on a
+`sleep`. A wave-B class opens with a `test*IsNative` method that fails
 the moment one of the migrated indicators is not in the `BuiltinTable`; the rest pin the modes and
 the ISO error terms so a migration cannot quietly change one.
 - Add a `@Test` method named after the issue and fix (e.g. `testISS0188_ModNegativeDivisor`)
 - The test must fail without the fix and pass with it
 - Use `prolog.solve()` for query-level assertions, direct Java assertions for internal fixes
-- Every wave must keep the full suite green (4.4.0 baseline: **1313/1313**). There is one engine
+- Assert VALUES, not existence: `==` inside the query (`X == [a,b]`), exact answer counts, and the
+  whole `error(Formal, _)` term — never `!isEmpty()`, `>= N`, `toString().contains(...)` or a
+  `catch (RuntimeException e) { /* acceptable */ }` (4.5.0 P7 removed ~80 such assertions).
+- Every wave must keep the full suite green (4.5.0 baseline: **1452/1452**). There is one engine
   and one leg, so a test never selects an engine (ISS-2025-0491 removed the `setUp`/`tearDown`
   toggles the v4 classes used to carry).
 

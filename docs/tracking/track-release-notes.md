@@ -1,5 +1,68 @@
 # JProlog - Release Notes
 
+## Release 4.5.0 - 2026-09-23
+
+### The production-readiness release (waves P1..P7)
+
+Seven waves turned a five-way audit of 4.4.0 into fixes: engine semantics (P1), performance (P2),
+loading/reading/writing (P3), built-in conformance (P4), CLP(FD) (P5), production hardening (P6)
+and the test suite plus this release (P7). ISS-2025-0514 .. ISS-2025-0675 (ranges per wave in
+CHANGELOG.md). Spec and wave records: `docs/reports/report-production-readiness-2026-09-23.md`.
+
+**1452/1452 JUnit tests** (4.4.0: 1313), **20/20 example programs** with unchanged per-program
+counts. Every deliberate difference from ISO/SWI is now listed in one place:
+`docs/references/ref-deviations.md`.
+
+#### Upgrading — READ THIS
+
+Behaviour a program can notice (details and the full list in CHANGELOG.md and
+`ref-deviations.md` §3):
+- `op/3` is permanent on backtracking; `integer/1` rounds; a negative shift shifts the other way;
+  `intersection/union/subtract` keep duplicates; `M:G` runs `G` in `M` even if not exported;
+  `print/1` quotes; `tab/1` evaluates; global variables are per thread.
+- More argument faults raise instead of failing: `string_concat(-,-,-)`, `call((fail, 1))`
+  (checked before running), `plus/3` with floats, `atomic_list_concat(L, '', A)` split,
+  `format ~r` without a radix, a query that does not parse (`error(syntax_error(M), query)`).
+- Directives run once; consult errors are warnings and the load continues; `listing/1` has SWI's
+  layout; floats print in SWI's layout (`10000000.0`, `1.0Inf`).
+- `last/2`, `nth0/3`, `nth1/3` enumerate on a partial list; CLP(FD) labeling is lazy.
+- The CLI loads no demo facts (use `--demo`); answers are streamed; exit codes follow `halt/1`.
+- Safe mode also sandboxes `halt/0,1` (`SafeModeOptions.allowHalt()` restores it) and the native
+  table; `SafeModeOptions.allowFileRead(dir)` whitelists read access.
+- Tabled non-stratified negation raises `permission_error(negate, incomplete_table, G)`.
+- The inference budget is one pool per query, shared with its worker threads.
+- Map answers are copies (they no longer change when the next answer is computed) and omit `_X`
+  variables.
+
+#### What is new
+
+- A runnable jar: `mvn package` → `target/jprolog.jar`; `java -jar target/jprolog.jar file.pl
+  -g main -t halt`. CLI options `-g`, `-t`, `--safe`, `--budget N`, `--max-solutions N`,
+  `--demo`, `--batch`, `--interactive`, `-q`.
+- The loaders (`consult/1`, `[F]`, `ensure_loaded/1`, `load_files/1,2`, `make/0`, `include/1`),
+  string streams, `read_term_from_atom/3`, `expand_term/2`, `term_expansion/2`, moded tabling.
+- A much larger CLP(FD): `ins/2`, `sum/3`, `scalar_product/4`, reification, `element/3`,
+  `tuples_in/2`, `global_cardinality/2`, `all_distinct/1` (Régin), lazy labeling with options.
+- SWI threads: mutexes, selective receive, `thread_property/2`, `thread_exit/1`,
+  `concurrent_forall/2,3`.
+- Performance: nrev/loop −59..71 %, deriv −51..55 %, O(1) `asserta/assertz/retract`, linear
+  `retractall/1`, `bagof/setof` O(n log n), `.jpc` format 0x04 (loads in 23 % of the consult time).
+
+#### Deleted
+
+`builtin/io/Read`, `builtin/io/ReadTerm`, `builtin/term/AtomToTerm`, `builtin/term/TermToAtom`,
+`builtin/arithmetic/Between`, `DCGUtils.DCGTranslateRule` (unreachable; placeholders keep the
+registry names) and the never-run `BuiltInTests.java`.
+
+#### Known limitations
+
+LIM-040 .. LIM-046 in `docs/tracking/track-limitations.md` (new in this release): cyclic terms
+cannot be stored; CLP(FD) residue; call-site caching scope; built-in residue; loader/reader
+residue; hardening residue (including the missing `thread_signal/2`); tabled negation without
+WFS.
+
+---
+
 ## Release 4.4.0 - 2026-08-26
 
 ### Wave D of 4.3: ISO error conformance, indexed `retractall/1`, `bounded = false`, the cleanup catch escape

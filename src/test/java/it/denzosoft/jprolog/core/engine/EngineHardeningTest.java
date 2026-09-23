@@ -320,18 +320,13 @@ public class EngineHardeningTest {
     /** Cyclic-term protection (ISS-2025-0313) must survive the iterative resolve() rewrite. */
     @Test
     public void testISS0428_CyclicTermStillDetected() {
-        // X = f(X) then forcing a resolve of X must not hang or loop forever
-        try {
-            prolog.solve("X = f(X), copy_term(X, Y).");
-        } catch (RuntimeException expected) {
-            // representation_error(cyclic_term) or resource_error(stack_overflow) — see LIM-032
-        }
-        // a cycle reached through a NON-last argument must still be caught
-        try {
-            prolog.solve("X = f(X, a), Y = X, atom_length(Y, _).");
-        } catch (RuntimeException expected) {
-            // fine
-        }
+        // START_CHANGE: ISS-2025-0662 - exact outcomes instead of "any RuntimeException":
+        // rational trees are supported (design B.17), so copy_term of a cycle SUCCEEDS with an
+        // equal cycle, and a cycle through a non-last argument reaches the ordinary type error
+        assertTrue(succeeds("X = f(X), copy_term(X, Y), Y == X, Y = f(Z), Z == Y"));
+        assertTrue(succeeds("catch((X = f(X, a), Y = X, atom_length(Y, _)), error(E, _), true), "
+            + "E = type_error(T, C), T == atom, C = f(_, A), A == a"));
+        // END_CHANGE: ISS-2025-0662
         // and the engine must still be usable afterwards
         assertTrue(succeeds("X = f(a), X == f(a)"));
     }
@@ -380,8 +375,15 @@ public class EngineHardeningTest {
      *  (OOM with a 2 GB heap at N = 10 000 after 27 s). It must now be linear and fast. */
     @Test
     public void testISS0430_RegistryBuiltinLoopIsLinear() {
+        // START_CHANGE: ISS-2025-0665 - atom_length/2 has been native since 4.1 wave B, so the loop
+        // no longer crossed the bridge it is about; get_time/1 is still a registry built-in
+        // (asserted, so the test notices if it too goes native and must be retargeted again)
+        assertFalse("get_time/1 must still be bridged for this test to mean anything",
+            prolog.getV4Engine().natives().keys().contains("get_time/1"));
+        assertTrue(prolog.getBuiltInRegistry().getBuiltInNames().contains("get_time"));
         prolog.consult("eng11_loop(0) :- !.\n"
-                     + "eng11_loop(N) :- atom_length(abc, _), N1 is N-1, eng11_loop(N1).\n");
+                     + "eng11_loop(N) :- get_time(_), N1 is N-1, eng11_loop(N1).\n");
+        // END_CHANGE: ISS-2025-0665
         long start = System.nanoTime();
         assertTrue("loop2(200000) must complete", succeeds("eng11_loop(200000)"));
         long ms = (System.nanoTime() - start) / 1000000L;
@@ -484,14 +486,17 @@ public class EngineHardeningTest {
                 "forall(between(1,100000000,_), true)",
                 "aggregate_all(count, eng04_loop(100000000), _C)" }) {
             final Thread target = Thread.currentThread();
+            // ISS-2025-0664: latch-synchronised — the killer interrupts once the query runs
+            final it.denzosoft.jprolog.test.support.QueryStartLatch latch =
+                new it.denzosoft.jprolog.test.support.QueryStartLatch();
             Thread killer = new Thread(() -> {
-                try { Thread.sleep(400); } catch (InterruptedException ignored) { }
+                try { latch.await(20); Thread.sleep(50); } catch (InterruptedException ignored) { }
                 target.interrupt();
             });
             killer.setDaemon(true);
             killer.start();
             try {
-                prolog.solve(q + ".");
+                latch.solve(prolog, it.denzosoft.jprolog.test.support.QueryStartLatch.ANNOUNCE + q + ".");
                 fail("Stop did not reach: " + q);
             } catch (it.denzosoft.jprolog.core.engine.QueryCancelledException expected) {
                 // correct
@@ -581,14 +586,31 @@ public class EngineHardeningTest {
      *  closure per clause before trying a single head unification. */
     @Test
     public void testISS0433_FactTableLookupIsIndexed() {
+        // START_CHANGE: ISS-2025-0664 - no absolute wall-clock bound (it was "< 50 us per lookup",
+        // which a loaded machine breaks). The property is that the cost does NOT grow with the
+        // table: a lookup in a 20 000-fact table vs one in a 200-fact table, min of 5 interleaved
+        // rounds after a warm-up. Unindexed, the ratio is ~100; the bound is a generous 10. (The
+        // exact bucket contents are pinned structurally in EngineV4IndexingTest.)
         consultFactTable(20000);
-        prolog.consult("eng13_lk(0) :- !.\neng13_lk(N) :- eng13_f(19999,_), N1 is N-1, eng13_lk(N1).\n");
-        assertTrue("warm up", succeeds("eng13_lk(200)"));
-        long start = System.nanoTime();
-        assertTrue(succeeds("eng13_lk(2000)"));
-        long micros = (System.nanoTime() - start) / 1000L / 2000L;
-        assertTrue("a 20 000-fact lookup must cost well under 50 us, measured " + micros + " us",
-            micros < 50);
+        StringBuilder small = new StringBuilder();
+        for (int i = 0; i < 200; i++) small.append("eng13_g(").append(i).append(",").append(i).append(").\n");
+        prolog.consult(small.toString());
+        prolog.consult("eng13_lk(0) :- !.\neng13_lk(N) :- eng13_f(19999,_), N1 is N-1, eng13_lk(N1).\n"
+                     + "eng13_sm(0) :- !.\neng13_sm(N) :- eng13_g(199,_), N1 is N-1, eng13_sm(N1).\n");
+        assertTrue("warm up", succeeds("eng13_lk(20000), eng13_sm(20000)"));
+        long big = Long.MAX_VALUE, sm = Long.MAX_VALUE;
+        for (int round = 0; round < 5; round++) {
+            long t0 = System.nanoTime();
+            assertTrue(succeeds("eng13_lk(20000)"));
+            long t1 = System.nanoTime();
+            assertTrue(succeeds("eng13_sm(20000)"));
+            long t2 = System.nanoTime();
+            big = Math.min(big, t1 - t0);
+            sm = Math.min(sm, t2 - t1);
+        }
+        assertTrue("a lookup in 20 000 facts must cost about the same as in 200: " + big + " ns vs "
+            + sm + " ns", big < 10 * sm);
+        // END_CHANGE: ISS-2025-0664
     }
 
     /** Indexing must never DROP a clause (the ISS-2025-0340 hazard that got it reverted). */

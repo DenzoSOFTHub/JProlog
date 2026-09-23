@@ -96,7 +96,7 @@ public class AtomTable {
             });
         }
         if (reclaimed[0] > 0) {
-            LOGGER.fine("Atom GC: reclaimed " + reclaimed[0] + " atoms");
+            if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine("Atom GC: reclaimed " + reclaimed[0] + " atoms");   // ISS-2025-0550: lazy
         }
         return reclaimed[0];
         // END_CHANGE: Round5 minor

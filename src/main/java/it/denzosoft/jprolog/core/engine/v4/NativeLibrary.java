@@ -119,7 +119,7 @@ final class NativeLibrary {
             fast = Unify.deref(tail(fast));
             slow = Unify.deref(tail(slow));
             if (fast == slow) return null;                        // cyclic
-            if ((++n & 0x3FF) == 0 && g != null) g.step();
+            if ((++n & 0x3FF) == 0 && g != null) { g.step(); g.charge(2048); }   // ISS-2025-0624
         }
         return isNil(fast) ? out : null;
     }
@@ -137,7 +137,7 @@ final class NativeLibrary {
             fast = Unify.deref(tail(fast));
             slow = Unify.deref(tail(slow));
             if (fast == slow) return null;                        // cyclic
-            if ((++n & 0x3FF) == 0 && g != null) g.step();
+            if ((++n & 0x3FF) == 0 && g != null) { g.step(); g.charge(2048); }   // ISS-2025-0624
         }
         return fast;
     }
@@ -214,6 +214,7 @@ final class NativeLibrary {
                     Term built = listOf(skipped,
                         new CompoundTerm(DOT, Arrays.asList(x, (Term) new Variable())));
                     m.guard().step();
+                    m.guard().charge(k);                  // ISS-2025-0624: O(k) per solution
                     if (m.unifyOrUndo(cur, built)) return true;
                     return false;                       // the tail cannot be a list at all
                 }
@@ -266,6 +267,7 @@ final class NativeLibrary {
                 Generator open = new Generator() {
                     @Override public boolean next(Machine mm) {
                         int n = extra[0]++;
+                        mm.guard().charge(n + prefix.size());   // ISS-2025-0624: O(n) per solution
                         List<Term> fresh = new ArrayList<Term>(n);
                         for (int i = 0; i < n; i++) fresh.add(new Variable());
                         Bindings b = mm.bindings();
@@ -286,36 +288,22 @@ final class NativeLibrary {
                 return m.pushGenerator(open) ? Outcome.SUSPENDED : Outcome.FAILURE;
                 // END_CHANGE: ISS-2025-0468
             }
-            final int max = c.size();
-            final int[] k = {0};
-            Generator gen = new Generator() {
-                @Override
-                public boolean next(Machine mm) {
-                    while (k[0] <= max) {
-                        int n = k[0]++;
-                        if (k[0] > max) mm.lastSolution();
-                        List<Term> fresh = new ArrayList<Term>(n);
-                        for (int i = 0; i < n; i++) fresh.add(new Variable());
-                        Bindings b = mm.bindings();
-                        int mark = b.mark();
-                        b.forceTrail++;
-                        boolean ok;
-                        try {
-                            ok = Unify.unify(args[0], listOf(fresh, NIL), b)
-                              && Unify.unify(args[2], listOf(fresh, args[1]), b);
-                            if (!ok) b.undo(mark);                 // ISS-2025-0448 ordering
-                        } finally {
-                            b.forceTrail--;
-                        }
-                        if (ok) return true;
-                        if (n > 0 && (n & 0x3FF) == 0) mm.guard().step();
-                    }
-                    return false;
-                }
-            };
-            return m.pushGenerator(gen) ? Outcome.SUSPENDED : Outcome.FAILURE;
+            // START_CHANGE: ISS-2025-0548 - wave P2.10: the split mode (List3 proper) runs the
+            // two-clause helper '$append_split'/3 of library(lists) instead of a generator that
+            // built a fresh n-element prefix for EVERY split n and unified both lists against it
+            // — O(n) per split, so append(_, [Last], L) over 1e4 elements took 8 s (3e4: 83 s).
+            // The clauses share the prefix through the bindings the recursion leaves behind:
+            // O(1) per split, the same answers in the same order, and deterministic on the last.
+            m.engine().modules4().ensureLoaded("lists");
+            m.pushGoal(new CompoundTerm(new Atom(Modules.MCTX), Arrays.asList((Term) LISTS,
+                new CompoundTerm(APPEND_SPLIT, Arrays.asList(args[2], args[0], args[1])))));
+            return Outcome.SUSPENDED;
+            // END_CHANGE: ISS-2025-0548
         }
     }
+
+    private static final Atom LISTS = new Atom("lists");                 // ISS-2025-0548
+    private static final Atom APPEND_SPLIT = new Atom("$append_split");  // ISS-2025-0548
 
     // ------------------------------------------------------------------ select/3, selectchk/3
 
@@ -385,6 +373,7 @@ final class NativeLibrary {
             Term idx = m.deref(args[0]);
             if (idx instanceof Number) {
                 if (!((Number) idx).isInteger()) throw Errors.type("integer", idx, ind);
+                if (!((Number) idx).fitsInLong()) return Outcome.FAILURE;
                 long want = ((Number) idx).longValue() - base;
                 if (want < 0) return Outcome.FAILURE;
                 Term cur = Unify.deref(args[1]);
@@ -395,17 +384,46 @@ final class NativeLibrary {
                     k++;
                     if ((k & 0x3FF) == 0) m.guard().step();
                 }
+                // START_CHANGE: ISS-2025-0603 - P4.10: a partial list is EXTENDED to the index
+                // (SWI: nth0(1, L, x) gives L = [_, x|_]) instead of failing at its open tail.
+                if (cur instanceof Variable) {
+                    if (want - k > 10_000_000L) throw Errors.resource("memory", ind);
+                    Term ext = new CompoundTerm(DOT, new Term[] { args[2], new Variable() });
+                    for (long i = k; i < want; i++) {
+                        ext = new CompoundTerm(DOT, new Term[] { new Variable(), ext });
+                        if ((i & 0x3FF) == 0) m.guard().step();
+                    }
+                    return m.unify(cur, ext) ? Outcome.SUCCESS : Outcome.FAILURE;
+                }
+                // END_CHANGE: ISS-2025-0603
                 return Outcome.FAILURE;
             }
             if (!(idx instanceof Variable)) throw Errors.type("integer", idx, ind);
             final int b0 = base;
             final Term[] cursor = { args[1] };
             final long[] pos = {0};
+            // START_CHANGE: ISS-2025-0603 - past the elements of a partial list, an unbound
+            // index enumerates ever longer extensions of its open tail (SWI's nth_gen).
+            final Term[] open = { null };
+            final long[] ext = {0};
+            // END_CHANGE: ISS-2025-0603
             Generator gen = new Generator() {
                 @Override
                 public boolean next(Machine mm) {
                     while (true) {
+                        // START_CHANGE: ISS-2025-0603
+                        if (open[0] != null) {
+                            long e = ext[0]++;
+                            Term list = new CompoundTerm(DOT, new Term[] { args[2], new Variable() });
+                            for (long i = 0; i < e; i++) list = new CompoundTerm(DOT, new Term[] { new Variable(), list });
+                            mm.guard().step();
+                            mm.guard().charge(e);                 // ISS-2025-0624: O(e) per solution
+                            if (unifyPair(mm, open[0], list, args[0], Number.valueOf(pos[0] + e + b0))) return true;
+                            continue;
+                        }
                         Term cur = Unify.deref(cursor[0]);
+                        if (cur instanceof Variable) { open[0] = cur; continue; }
+                        // END_CHANGE: ISS-2025-0603
                         if (!isCons(cur)) return false;
                         Term h = head(cur);
                         long p = pos[0]++;
@@ -422,7 +440,8 @@ final class NativeLibrary {
                             bb.forceTrail--;
                         }
                         if (ok) {
-                            if (!isCons(Unify.deref(cursor[0]))) mm.lastSolution();
+                            Term nx = Unify.deref(cursor[0]);
+                            if (!isCons(nx) && !(nx instanceof Variable)) mm.lastSolution();   // ISS-2025-0603
                             return true;
                         }
                         mm.guard().step();
@@ -433,6 +452,22 @@ final class NativeLibrary {
         }
     }
 
+    // START_CHANGE: ISS-2025-0603 - two unifications in ONE mark/undo extent (invariant 1)
+    static boolean unifyPair(Machine m, Term a, Term b, Term c, Term d) {
+        Bindings bb = m.bindings();
+        int mark = bb.mark();
+        bb.forceTrail++;
+        boolean ok;
+        try {
+            ok = Unify.unify(a, b, bb) && Unify.unify(c, d, bb);
+            if (!ok) bb.undo(mark);
+        } finally {
+            bb.forceTrail--;
+        }
+        return ok;
+    }
+    // END_CHANGE: ISS-2025-0603
+
     // ------------------------------------------------------------------ last/2, reverse/2
 
     /** ISS-2025-0380: a partial list gets its open tail closed with {@code []}; an improper list
@@ -440,14 +475,34 @@ final class NativeLibrary {
     private static final class LastB implements Builtin {
         @Override
         public Outcome call(Machine m, Term[] args) {
-            List<Term> es = new ArrayList<Term>();
-            Term tail = spineTail(args[0], es, m.guard());
-            if (tail == null || es.isEmpty()) return Outcome.FAILURE;
+            final List<Term> es = new ArrayList<Term>();
+            final Term tail = spineTail(args[0], es, m.guard());
+            if (tail == null) return Outcome.FAILURE;
+            // START_CHANGE: ISS-2025-0603 - P4.10: a partial list enumerates (SWI's last/2):
+            // the open tail becomes [], [Last], [_, Last], ... (last(L, x) gives L = [x] first).
             if (tail instanceof Variable) {
-                if (!m.unifyOrUndo(tail, NIL)) return Outcome.FAILURE;
-            } else if (!isNil(tail)) {
-                return Outcome.FAILURE;
+                final Term lastArg = args[1];
+                final long[] k = { es.isEmpty() ? 1 : 0 };
+                Generator gen = new Generator() {
+                    @Override
+                    public boolean next(Machine mm) {
+                        while (true) {
+                            long e = k[0]++;
+                            mm.guard().step();
+                            if (e == 0) {
+                                if (unifyPair(mm, tail, NIL, lastArg, es.get(es.size() - 1))) return true;
+                                continue;
+                            }
+                            Term list = new CompoundTerm(DOT, new Term[] { lastArg, NIL });
+                            for (long i = 1; i < e; i++) list = new CompoundTerm(DOT, new Term[] { new Variable(), list });
+                            if (mm.unifyOrUndo(tail, list)) return true;
+                        }
+                    }
+                };
+                return m.pushGenerator(gen) ? Outcome.SUSPENDED : Outcome.FAILURE;
             }
+            // END_CHANGE: ISS-2025-0603
+            if (es.isEmpty() || !isNil(tail)) return Outcome.FAILURE;
             return m.unify(args[1], es.get(es.size() - 1)) ? Outcome.SUCCESS : Outcome.FAILURE;
         }
     }
@@ -500,6 +555,10 @@ final class NativeLibrary {
                 throw Errors.type("list", m.resolve(args[0]), "length/2");
             }
             Term want = Unify.deref(args[1]);
+            // START_CHANGE: ISS-2025-0603 - P4.10: length(L, L) (the length IS the open tail)
+            // has no solution: fail instead of type_error(integer, _).
+            if (want == tail) return Outcome.FAILURE;
+            // END_CHANGE: ISS-2025-0603
             if (!(want instanceof Number) || !((Number) want).isInteger()) {
                 throw Errors.type("integer", m.resolve(want), "length/2");
             }
@@ -509,6 +568,7 @@ final class NativeLibrary {
             // END_CHANGE: ISS-2025-0509
             long extra = n - len[0];
             if (extra > Integer.MAX_VALUE) return Outcome.FAILURE;
+            g.charge(extra);                      // ISS-2025-0624: builds an extra-element list
             List<Term> fresh = new ArrayList<Term>((int) extra);
             for (long i = 0; i < extra; i++) fresh.add(new Variable());
             return m.unify(tail, listOf(fresh, NIL)) ? Outcome.SUCCESS : Outcome.FAILURE;
@@ -528,7 +588,7 @@ final class NativeLibrary {
                 fast = Unify.deref(tail(fast));
                 slow = Unify.deref(tail(slow));
                 if (fast == slow) return null;
-                if ((n & 0x3FF) == 0 && g != null) g.step();
+                if ((n & 0x3FF) == 0 && g != null) { g.step(); g.charge(1024); }   // ISS-2025-0624
             }
             lengthOut[0] = n;
             return fast;
@@ -546,6 +606,7 @@ final class NativeLibrary {
             final ResourceGuard g = m.guard();
             List<Term> es = elements(args[0], g);
             if (es == null) throw notAProperList(m, args[0], dedup ? "sort/2" : "msort/2");
+            g.charge(es.size());                  // ISS-2025-0624: the sort itself is O(n log n)
             Collections.sort(es, new java.util.Comparator<Term>() {
                 @Override public int compare(Term a, Term b) { return Unify.compareTerms(a, b, g); }
             });
@@ -570,26 +631,37 @@ final class NativeLibrary {
 
     // ------------------------------------------------------------------ sum_list/2, numlist/3
 
+    // START_CHANGE: ISS-2025-0603 - P4.10: SWI's sum_list/2 (Sum is Sum0 + X): elements are
+    // evaluated, so sum_list([a], S) is type_error(evaluable, a/0) instead of a silent failure,
+    // and an integer sum is exact past 2^63 (the long accumulator overflowed).
     private static final class SumListB implements Builtin {
         @Override
         public Outcome call(Machine m, Term[] args) {
             List<Term> es = elements(args[0], m.guard());
-            if (es == null) return Outcome.FAILURE;
-            boolean allIntegers = true;
-            long longSum = 0;
-            double doubleSum = 0;
-            for (int i = 0; i < es.size(); i++) {
+            if (es == null) throw notAProperList(m, args[0], "sum_list/2");
+            long acc = 0;                     // exact while every element is a long and no overflow
+            int i = 0;
+            int n = es.size();
+            for (; i < n; i++) {
                 Term e = Unify.deref(es.get(i));
-                if (!(e instanceof Number)) return Outcome.FAILURE;
-                Number num = (Number) e;
-                doubleSum += num.getValue();
-                if (allIntegers && num.isInteger() && !num.isBigInteger()) longSum += num.longValue();
-                else allIntegers = false;
+                if (!(e instanceof Number)) break;
+                Number x = (Number) e;
+                if (!x.isInteger() || !x.fitsInLong()) break;
+                long y = x.longValue();
+                long r = acc + y;
+                if (((acc ^ r) & (y ^ r)) < 0) break;         // overflow: continue exactly
+                acc = r;
             }
-            Term sum = allIntegers ? Number.valueOf(longSum) : new Number(doubleSum);
+            Number sum = Number.valueOf(acc);
+            Atom plus = new Atom("+");
+            for (; i < n; i++) {
+                sum = m.evalNum(new CompoundTerm(plus, new Term[] { sum, es.get(i) }), "sum_list/2");
+                if ((i & 0x3FF) == 0) m.guard().step();
+            }
             return m.unify(args[1], sum) ? Outcome.SUCCESS : Outcome.FAILURE;
         }
     }
+    // END_CHANGE: ISS-2025-0603
 
     private static final class NumlistB implements Builtin {
         @Override
@@ -657,15 +729,20 @@ final class NativeLibrary {
             // a call does; a bound first argument used to cost a full scan of the predicate
             // (5.6 s for 4 000 lookups into a 20 000-clause table). select(null) — an unbound or
             // unindexable first argument — is still the whole list.
-            final Clause[] candidates = p.select(Clause.argKey1(head));
+            // START_CHANGE: ISS-2025-0546 - a window over the store, not a copy
+            ClauseStore.View w = new ClauseStore.View();
+            p.view(Clause.argKey1(head), w);
+            final Clause[] candidates = w.a;
+            final int limit = w.to;
+            // END_CHANGE: ISS-2025-0546
             // END_CHANGE: ISS-2025-0502
-            if (candidates.length == 0) return Outcome.FAILURE;
+            if (w.size() == 0) return Outcome.FAILURE;
             final long gen = m.engine().store().generation();
-            final int[] i = {0};
+            final int[] i = {w.from};
             Generator g = new Generator() {
                 @Override
                 public boolean next(Machine mm) {
-                    while (i[0] < candidates.length) {
+                    while (i[0] < limit) {
                         Clause cl = candidates[i[0]++];
                         if (!cl.isAlive(gen)) continue;
                         CompoundTerm t = (CompoundTerm) cl.toTerm();     // ':-'(Head, Body), renamed
@@ -681,7 +758,7 @@ final class NativeLibrary {
                             b.forceTrail--;
                         }
                         if (ok) {
-                            if (i[0] >= candidates.length) mm.lastSolution();
+                            if (i[0] >= limit) mm.lastSolution();
                             return true;
                         }
                         mm.guard().step();
@@ -727,35 +804,49 @@ final class NativeLibrary {
             } else {
                 if (src instanceof Variable) throw Errors.instantiation(ind);
                 // END_CHANGE: ISS-2025-0509
-                if (!(src instanceof PrologString)) return Outcome.FAILURE;
-                text = ((PrologString) src).getStringValue();
+                // START_CHANGE: ISS-2025-0599 - P4.7: sub_string/5 takes any text (an atom, a
+                // number, a code list), as SWI does; the old path failed for sub_string(abc, ...).
+                String t = NativeText.atomicText(src);
+                if (t == null && isCons(src)) {
+                    t = NativeText.textOfList(m, src, m.deref(head(src)) instanceof Atom, ind);
+                }
+                if (t == null) throw Errors.type("string", m.resolve(src), ind);
+                text = t;
+                // END_CHANGE: ISS-2025-0599
             }
-            final int n = text.length();
+            // START_CHANGE: ISS-2025-0599 - P4.7: positions are CODE POINTS (as atom_length/2
+            // counts them), so a supplementary character is never split into a lone surrogate;
+            // a negative Before/Length/After FAILS (SWI) instead of raising type_error(integer).
+            final int[] cps = (text.codePointCount(0, text.length()) == text.length())
+                ? null : text.codePoints().toArray();
+            final int n = (cps == null) ? text.length() : cps.length;
             final Integer before = intArg(m, args[1], ind);
             final Integer length = intArg(m, args[2], ind);
             final Integer after = intArg(m, args[3], ind);
             final String sub = subArg(m, args[4], ind);
+            if (neg(before) || neg(length) || neg(after)) return Outcome.FAILURE;
 
-            Generator gen = new SubAtomGen(atoms, text, n, before, length, after, sub, args);
+            Generator gen = new SubAtomGen(atoms, text, cps, n, before, length, after, sub, args);
             return m.pushGenerator(gen) ? Outcome.SUSPENDED : Outcome.FAILURE;
         }
+
+        /** -1 marks an integer argument no position can equal (negative or beyond int). */
+        private static final Integer NEGATIVE = Integer.valueOf(-1);
+        private static boolean neg(Integer v) { return v != null && v.intValue() < 0; }
 
         private Integer intArg(Machine m, Term t, String ind) {
             Term x = m.deref(t);
             if (x instanceof Variable) return null;
-            if (x instanceof Number) {
+            if (x instanceof Number && ((Number) x).isInteger()) {
                 Number num = (Number) x;
-                if (num.isInteger() && num.longValue() >= 0) return Integer.valueOf((int) num.longValue());
-                // START_CHANGE: ISS-2025-0509
-                if (atoms) throw Errors.type("integer", m.resolve(x), ind);
-                // END_CHANGE: ISS-2025-0509
-                return null;                                   // sub_string/5 is permissive here
+                if (num.fitsInLong() && num.longValue() >= 0 && num.longValue() <= Integer.MAX_VALUE) {
+                    return Integer.valueOf((int) num.longValue());
+                }
+                return NEGATIVE;
             }
-            // START_CHANGE: ISS-2025-0509
-            if (atoms) throw Errors.type("integer", m.resolve(x), ind);
-            // END_CHANGE: ISS-2025-0509
-            return null;
+            throw Errors.type("integer", m.resolve(x), ind);
         }
+        // END_CHANGE: ISS-2025-0599
 
         private String subArg(Machine m, Term t, String ind) {
             Term x = m.deref(t);
@@ -766,7 +857,11 @@ final class NativeLibrary {
                 throw Errors.type("atom", m.resolve(x), ind);
                 // END_CHANGE: ISS-2025-0509
             }
-            return (x instanceof PrologString) ? ((PrologString) x).getStringValue() : null;
+            // START_CHANGE: ISS-2025-0599 - any text for sub_string/5's Sub
+            String st = NativeText.atomicText(x);
+            if (st == null) throw Errors.type("string", m.resolve(x), ind);
+            return st;
+            // END_CHANGE: ISS-2025-0599
         }
     }
 
@@ -774,6 +869,7 @@ final class NativeLibrary {
     private static final class SubAtomGen implements Generator {
         private final boolean atoms;
         private final String text;
+        private final int[] cps;                 // ISS-2025-0599: code points, null when all BMP
         private final int n;
         private final Integer before, length, after;
         private final String sub;
@@ -781,9 +877,9 @@ final class NativeLibrary {
         private int b, len, idx;
         private boolean done;
 
-        SubAtomGen(boolean atoms, String text, int n, Integer before, Integer length, Integer after,
+        SubAtomGen(boolean atoms, String text, int[] cps, int n, Integer before, Integer length, Integer after,
                    String sub, Term[] args) {
-            this.atoms = atoms; this.text = text; this.n = n;
+            this.atoms = atoms; this.text = text; this.cps = cps; this.n = n;
             this.before = before; this.length = length; this.after = after; this.sub = sub;
             this.args = args;
             this.b = (before != null) ? before.intValue() : 0;
@@ -814,8 +910,16 @@ final class NativeLibrary {
                         int at = text.indexOf(sub, idx);
                         if (at < 0) { done = true; continue; }
                         idx = at + 1;
-                        cb = at; cl = sub.length();
-                        if (idx > n - cl) done = true;
+                        // START_CHANGE: ISS-2025-0599 - UTF-16 index -> code-point index
+                        if (cps == null) {
+                            cb = at; cl = sub.length();
+                            if (idx > n - cl) done = true;
+                        } else {
+                            cb = text.codePointCount(0, at);
+                            cl = sub.codePointCount(0, sub.length());
+                            if (idx > text.length() - sub.length()) done = true;
+                        }
+                        // END_CHANGE: ISS-2025-0599
                     }
                 } else {
                     if (b > n) { done = true; continue; }
@@ -826,7 +930,8 @@ final class NativeLibrary {
                 if (cb < 0 || cl < 0 || cb + cl > n) continue;
                 int ca = n - cb - cl;
                 if (after != null && after.intValue() != ca) continue;
-                String candidate = text.substring(cb, cb + cl);
+                String candidate = (cps == null) ? text.substring(cb, cb + cl)
+                                                 : new String(cps, cb, cl);   // ISS-2025-0599
                 if (sub != null && !sub.equals(candidate)) continue;
                 Bindings bb = m.bindings();
                 int mark = bb.mark();
@@ -836,8 +941,10 @@ final class NativeLibrary {
                     ok = Unify.unify(args[1], Number.valueOf(cb), bb)
                       && Unify.unify(args[2], Number.valueOf(cl), bb)
                       && Unify.unify(args[3], Number.valueOf(ca), bb)
-                      && Unify.unify(args[4], atoms ? (Term) new Atom(candidate)
-                                                    : (Term) new PrologString(candidate), bb);
+                      // ISS-2025-0599: a bound Sub already matched as TEXT (sub_string/5 takes
+                      // an atom Sub too), so it is not unified again with the string form
+                      && (sub != null || Unify.unify(args[4], atoms ? (Term) new Atom(candidate)
+                                                    : (Term) new PrologString(candidate), bb));
                     if (!ok) bb.undo(mark);
                 } finally {
                     bb.forceTrail--;

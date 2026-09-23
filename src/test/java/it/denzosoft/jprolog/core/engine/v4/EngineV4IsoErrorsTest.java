@@ -44,21 +44,18 @@ import static org.junit.Assert.assertTrue;
  *       {@code type_error(atomic, f(a))}: JProlog's atom_concat/3 requires atoms, not atomics
  *       (so {@code atom_concat(a, 1, R)} raises rather than answering {@code R = a1}), which
  *       ISS-2025-0278 pinned.</li>
- *   <li>{@code call((fail, 1))} <b>fails</b> where ISO 8.15.1.3 asks for
- *       {@code type_error(callable, (fail,1))}: the machine short-circuits the conjunction, as
- *       SWI does.</li>
  *   <li>{@code format("~w", X)} and {@code format("~q", a)} succeed: a non-list second argument is
  *       ONE argument (SWI), not a malformed list.</li>
- *   <li>{@code string_concat(X, Y, Z)} with nothing bound <b>fails</b> where
- *       {@code atom_concat/3} raises {@code instantiation_error}: ISS-2025-0188 decided that
- *       explicitly ("string_concat should fail gracefully, not throw").</li>
- *   <li>{@code atom_string(f(x), S)} fails rather than raising: atom_string/2 requires an atom on
- *       the left and has never accepted a compound.</li>
  *   <li>{@code X #= Y} with both unbound <b>succeeds</b> — it posts the constraint, as clpfd
  *       does everywhere.</li>
- *   <li>{@code tab(a)} and {@code tab(-1)} still FAIL (no ISO clause defines tab/1;
- *       {@code EngineV4IoTest} pins the failure).</li>
+ *   <li>(4.5 wave P4 removed three deviations: {@code string_concat(X, Y, Z)} now raises
+ *       instantiation_error and {@code atom_string(f(x), S)} type_error(atomic, f(x)),
+ *       ISS-2025-0596; {@code tab(a)} is type_error(evaluable, a/0) and {@code tab(-1)} succeeds,
+ *       ISS-2025-0604.)</li>
  * </ol>
+ *
+ * <p>The project-wide list of deliberate deviations (these rows, the engine design decisions and
+ * the 4.5.0 decisions) is {@code docs/references/ref-deviations.md} (ISS-2025-0669).
  *
  * <p>Rows are matched after whitespace normalisation, and an expectation ending in {@code *} is a
  * prefix match — that is how the context half of {@code error(Formal, Context)} is left free while
@@ -266,7 +263,11 @@ public class EngineV4IsoErrorsTest {
         // ---- 8.15 logic and control
         row("call(X)", "error(instantiation_error,*");
         row("call(1)", "error(type_error(callable, 1),*");
-        row("call((fail, 1))", "FAIL");
+        // START_CHANGE: ISS-2025-0518 - wave P1.5: no longer a deviation. The body is converted
+        // (and checked) before any of it runs, as ISO 8.15.1.3 asks and as SWI does too — the old
+        // deviation note claimed SWI fails here, which it does not.
+        row("call((fail, 1))", "error(type_error(callable, (fail,1)),*");
+        // END_CHANGE: ISS-2025-0518
         row("\\+ X", "error(instantiation_error,*");
         row("\\+ 1", "error(type_error(callable, 1),*");
         row("catch(X, _, true)", "SUCCESS");
@@ -337,6 +338,17 @@ public class EngineV4IsoErrorsTest {
         row("succ(-1, Y)", "error(type_error(not_less_than_zero, -1),*");
         row("plus(X, Y, Z)", "error(instantiation_error,*");
         row("plus(a, 1, Z)", "error(type_error(integer, a),*");
+        row("plus(1.5, 1, Z)", "error(type_error(integer, 1.5),*");        // ISS-2025-0593
+        row("tab(a)", "error(type_error(evaluable, a/0),*");                // ISS-2025-0604
+        row("abolish(foo/1.5)", "error(type_error(integer, 1.5),*");       // ISS-2025-0610
+        row("abolish(foo/100000000000)", "error(representation_error(max_arity),*");
+        row("char_type(a, bogus)", "error(domain_error(char_type, bogus),*"); // ISS-2025-0601
+        row("atomic_list_concat([f(x)], A)", "error(type_error(atomic, f(x)),*"); // ISS-2025-0597
+        row("atomic_list_concat(L, '', abc)", "error(domain_error(non_empty_atom, ''),*");
+        row("sum_list([a], S)", "error(type_error(evaluable, a/0),*");      // ISS-2025-0603
+        row("statistics(nokey, V)", "error(domain_error(statistics_key, nokey),*"); // ISS-2025-0608
+        row("format(\"~r\", [1])", "error(format(*");                         // ISS-2025-0595
+        row("format(\"~w\", [a, b])", "error(format(*");
         row("between(X, 2, 1)", "error(instantiation_error,*");
         row("between(1, X, 1)", "error(instantiation_error,*");
         row("between(a, 2, X)", "error(type_error(integer, a),*");
@@ -356,10 +368,10 @@ public class EngineV4IsoErrorsTest {
         row("upcase_atom(X, Y)", "error(instantiation_error,*");
         row("downcase_atom(X, Y)", "error(instantiation_error,*");
         row("atom_string(A, S)", "error(instantiation_error,*");
-        row("atom_string(f(x), S)", "FAIL");
+        row("atom_string(f(x), S)", "error(type_error(atomic, f(x)),*");      // ISS-2025-0596
         row("string_chars(X, Y)", "error(instantiation_error,*");
         row("string_codes(X, Y)", "error(instantiation_error,*");
-        row("string_concat(X, Y, Z)", "FAIL");
+        row("string_concat(X, Y, Z)", "error(instantiation_error,*");        // ISS-2025-0596 (§8)
         row("string_length(X, Y)", "error(instantiation_error,*");
         row("split_string(X, a, b, R)", "error(instantiation_error,*");
         row("split_string(\"a\", X, b, R)", "error(instantiation_error,*");

@@ -35,9 +35,12 @@ import java.util.Map;
  *   <li><b>Not shared</b>: the goal's TERM. Bindings live in the cells, so a cell reachable from
  *       two machines would be bound without either machine's trail knowing. Every goal handed to a
  *       worker is therefore {@code copy_term}'d in, and every answer is copied back out.</li>
- *   <li><b>Not shared</b>: the {@link ResourceGuard}. Each worker gets its own with the
- *       <em>same limit</em> as the parent, so one worker's steps cannot exhaust another's budget
- *       and each worker still polls its own thread's interrupt flag.</li>
+ *   <li><b>Not shared</b>: the {@link ResourceGuard} object. Each worker gets its own — a
+ *       {@link ResourceGuard#child() child} of the parent's that draws from the SAME budget pool
+ *       (ISS-2025-0624: one budget per query, not one per machine) — so each worker still polls
+ *       its own thread's interrupt flag.</li>
+ *   <li><b>Not shared</b>: the global variables ({@code nb_setval/2}); a worker has its own
+ *       store, as in SWI (ISS-2025-0633).</li>
  * </ul>
  *
  * <p>Cancellation: interrupting a worker thread makes its guard raise
@@ -73,6 +76,27 @@ public final class Workers {
      * @return true when at least one solution was found
      */
     public static boolean run(Engine engine, long budget, Term goal, AnswerSink sink) {
+        return run(engine, new ResourceGuard(budget), goal, sink);
+    }
+
+    // START_CHANGE: ISS-2025-0624 - wave P6.3: the worker's guard is a CHILD of the parent's — it
+    // shares the query's budget pool (one budget for all the machines of a query) instead of
+    // getting a fresh copy of the full limit. It still polls its own thread's interrupt flag.
+    /**
+     * Run {@code goal} on a new machine whose guard is {@code parentGuard.child()} (or an unlimited
+     * guard when {@code parentGuard} is null).
+     */
+    public static boolean run(Engine engine, ResourceGuard parentGuard, Term goal, AnswerSink sink) {
+        ResourceGuard guard = (parentGuard == null) ? new ResourceGuard(0L) : parentGuard.child();
+        try {
+            return runWith(engine, guard, goal, sink);
+        } finally {
+            guard.release();   // unused credit goes back to the query's pool
+        }
+    }
+    // END_CHANGE: ISS-2025-0624
+
+    private static boolean runWith(Engine engine, final ResourceGuard guard, Term goal, final AnswerSink sink) {
         final IdentityHashMap<Variable, Variable> in = new IdentityHashMap<Variable, Variable>();
         Term workerGoal = Unify.copy(Unify.resolve(goal, null), in, null);
 
@@ -89,18 +113,26 @@ public final class Workers {
         EngineState prevState = (prolog == null) ? null
             : EngineState.setCurrent(prolog.getEngineState());
         final boolean[] any = {false};
+        // START_CHANGE: ISS-2025-0633 - wave P6.5: global variables are per THREAD (SWI). A worker
+        // starts with an empty store of its own; the thread that runs the top-level query (and every
+        // non-worker thread: the CLI, an IDE background solve, an embedder) keeps the engine's.
+        Object prevGlobals = (prolog == null) ? null : prolog.enterWorkerGlobals();
+        // END_CHANGE: ISS-2025-0633
         try {
-            final Machine m = new Machine(engine, new ResourceGuard(budget));
+            final Machine m = new Machine(engine, guard);           // ISS-2025-0624
             m.asWorker();   // engine-wide query-boundary sweeps belong to the top-level query
             m.solve(workerGoal, new Machine.SolutionSink() {
                 @Override public boolean onSolution(Map<String, Term> ignored) {
                     any[0] = true;
                     Map<String, Term> answer = new HashMap<String, Term>();
+                    // ISS-2025-0622: ONE variable map for the whole answer, so two answer variables
+                    // the worker aliased (`Z = A2`) still share a variable in the copy.
+                    IdentityHashMap<Variable, Variable> out = new IdentityHashMap<Variable, Variable>();
                     for (int i = 0; i < origs.size(); i++) {
                         Term v = copies.get(i);
                         // resolve inside the worker, then copy OUT so the answer shares no cell
                         Term resolved = Unify.resolve(v, null);
-                        Term detached = Unify.copy(resolved, new IdentityHashMap<Variable, Variable>(), null);
+                        Term detached = Unify.copy(resolved, out, null);
                         answer.put(origs.get(i).getName(), detached);
                     }
                     return sink.onAnswer(answer);
@@ -108,6 +140,7 @@ public final class Workers {
             });
         } finally {
             if (prolog != null) {
+                prolog.exitWorkerGlobals(prevGlobals);                     // ISS-2025-0633
                 it.denzosoft.jprolog.core.system.PrologFlags.setCurrent(prevFlags);
                 EngineState.setCurrent(prevState);
             }
@@ -121,9 +154,15 @@ public final class Workers {
      */
     public static boolean solve(Engine engine, long budget, Term goal, Map<String, Term> bindings,
                                 final List<Map<String, Term>> solutions, final int maxSolutions) {
+        return solve(engine, new ResourceGuard(budget), goal, bindings, solutions, maxSolutions);
+    }
+
+    /** As above, with the worker's guard a child of {@code parentGuard} (ISS-2025-0624). */
+    public static boolean solve(Engine engine, ResourceGuard parentGuard, Term goal, Map<String, Term> bindings,
+                                final List<Map<String, Term>> solutions, final int maxSolutions) {
         Term g = (bindings == null || bindings.isEmpty()) ? goal : goal.resolveBindings(bindings);
         final Map<String, Term> base = (bindings == null || bindings.isEmpty()) ? null : bindings;
-        return run(engine, budget, g, new AnswerSink() {
+        return run(engine, parentGuard, g, new AnswerSink() {
             @Override public boolean onAnswer(Map<String, Term> answer) {
                 Map<String, Term> merged;
                 if (base == null) {

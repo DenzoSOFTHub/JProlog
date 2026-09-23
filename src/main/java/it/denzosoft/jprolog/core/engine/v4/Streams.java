@@ -61,7 +61,21 @@ public final class Streams {
     /** Redirect this thread's output to {@code ps} (null clears it). */
     public static void setThreadLocalOutput(PrintStream ps) {
         if (ps == null) THREAD_OUTPUT.remove(); else THREAD_OUTPUT.set(ps);
+        // START_CHANGE: ISS-2025-0606 - P4.13: remember WHICH current output the override
+        // replaces; an explicit set_output/1 to another stream afterwards wins over it.
+        if (ps == null) {
+            THREAD_OUTPUT_BASE.remove();
+        } else {
+            PrologStream base = null;
+            try { base = current().currentOutput(); } catch (RuntimeException e) { base = null; }
+            if (base == null) THREAD_OUTPUT_BASE.remove(); else THREAD_OUTPUT_BASE.set(base);
+        }
+        // END_CHANGE: ISS-2025-0606
     }
+
+    // START_CHANGE: ISS-2025-0606 - the current output the thread-local override stands for
+    private static final ThreadLocal<PrologStream> THREAD_OUTPUT_BASE = new ThreadLocal<PrologStream>();
+    // END_CHANGE: ISS-2025-0606
 
     /** The thread-local output override, or null when none is installed. */
     public static PrintStream threadLocalOutput() { return THREAD_OUTPUT.get(); }
@@ -253,8 +267,16 @@ public final class Streams {
      */
     public PrintStream out() {
         PrintStream tl = THREAD_OUTPUT.get();
-        if (tl != null) return tl;
         PrologStream s = currentOutput();
+        // START_CHANGE: ISS-2025-0606 - P4.13: the override captures the current output it was
+        // installed over (and user_output); a set_output/1 to a file inside the captured goal
+        // redirects to that file, as in SWI (with_output_to/2 only replaces current_output).
+        if (tl != null) {
+            if (s == userOutput) return tl;
+            PrologStream base = THREAD_OUTPUT_BASE.get();
+            if (base == null || base == s) return tl;
+        }
+        // END_CHANGE: ISS-2025-0606
         if (s == userOutput) return System.out;
         if (s == userError) return System.err;
         PrintStream ps = s.out();

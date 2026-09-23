@@ -244,9 +244,60 @@ public class Number extends Term {
         // so the blanket replace is safe.
         if (Double.isNaN(doubleValue)) return "nan";
         if (Double.isInfinite(doubleValue)) return doubleValue > 0 ? "inf" : "-inf";
-        return Double.toString(doubleValue).replace('E', 'e');
+        return formatFloat(doubleValue);   // ISS-2025-0563
         // END_CHANGE: ISS-2025-0390
     }
+
+    // START_CHANGE: ISS-2025-0563 - SWI's float text: the SHORTEST digits that read back to the
+    // same double (Double.toString's digits), laid out as SWI's format_float does — plain
+    // notation while the decimal point sits within 15 digits of the first one (1790168689.01,
+    // 100000000000000.0, 0.0001), exponent notation beyond (1.0e15, 1.0e-5, 1.5e20).
+    // Java's own layout switched to E notation at 1e7, so get_time/1 printed 1.79016868901e9.
+    public static String formatFloat(double d) {
+        String j = Double.toString(d);
+        // Java writes plain notation for 1e-3 <= |d| < 1e7 with the same shortest digits and the
+        // same layout as SWI ("0.001", "100.0", "-2.5", "-0.0"); otherwise "d.dddE[-]n", with ONE
+        // digit before the point, so the decimal point sits at decpt = n + 1.
+        int e = j.indexOf('E');
+        if (e < 0) return j;
+        int k = e + 1;
+        boolean negExp = j.charAt(k) == '-';
+        if (negExp) k++;
+        int exp = 0;
+        for (; k < j.length(); k++) exp = exp * 10 + (j.charAt(k) - '0');
+        if (negExp) exp = -exp;
+        int decpt = exp + 1;
+        int start = (j.charAt(0) == '-') ? 1 : 0;
+        // the significant digits: j[start] and j[start+2 .. e), trailing zeros dropped
+        int end = e;
+        while (end > start + 2 && j.charAt(end - 1) == '0') end--;
+        int n = 1 + (end - (start + 2));
+        if (decpt <= -4 || (decpt > 15 && n <= decpt)) {
+            return j.replace('E', 'e');                        // SWI's exponent form is Java's
+        }
+        StringBuilder out = new StringBuilder(n + 24);
+        if (start == 1) out.append('-');
+        if (decpt <= 0) {                                      // 0.000ddd
+            out.append("0.");
+            for (int i = 0; i < -decpt; i++) out.append('0');
+            out.append(j.charAt(start)).append(j, start + 2, end);
+            return out.toString();
+        }
+        // ddd.ddd or ddd000.0 (decpt >= 8 here)
+        out.append(j.charAt(start));
+        int placed = 1;
+        for (int i = start + 2; i < end; i++) {
+            if (placed == decpt) out.append('.');
+            out.append(j.charAt(i));
+            placed++;
+        }
+        if (placed <= decpt) {
+            for (; placed < decpt; placed++) out.append('0');
+            out.append(".0");
+        }
+        return out.toString();
+    }
+    // END_CHANGE: ISS-2025-0563
 
     @Override
     public Term copy() {

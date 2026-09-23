@@ -23,12 +23,14 @@ public class ListBuiltinsTest {
         Term result = solutions.get(0).get("Result");
         assertNotNull(result);
         // Should unify with [a,b,c,d] - we're checking it can be unified
-        List<Map<String, Term>> verify = prolog.solve("Result = [a,b,c,d].");
+        List<Map<String, Term>> verify = prolog.solve("append([a,b], [c,d], Result), Result == [a,b,c,d].");   // ISS-2025-0663: was a separate query (a tautology)
         assertEquals(1, verify.size());
         
         // Test variable append
         solutions = prolog.solve("append(X, Y, [a,b,c]).");
-        assertTrue(solutions.size() > 0);
+        assertEquals("four splits", 4, solutions.size());   // ISS-2025-0663 (was "> 0")
+        assertEquals(1, prolog.solve("findall(X-Y, append(X, Y, [a,b,c]), L), "
+            + "L == [[]-[a,b,c], [a]-[b,c], [a,b]-[c], [a,b,c]-[]].").size());
     }
 
     @Test
@@ -103,7 +105,7 @@ public class ListBuiltinsTest {
         Term sorted = solutions.get(0).get("Sorted");
         assertNotNull(sorted);
         // Should unify with [a,b,c] - we're checking it can be unified
-        List<Map<String, Term>> verify = prolog.solve("Sorted = [a,b,c].");
+        List<Map<String, Term>> verify = prolog.solve("sort([c,b,a,c], Sorted), Sorted == [a,b,c].");   // ISS-2025-0663: was a separate query (a tautology)
         assertEquals(1, verify.size());
     }
 
@@ -117,7 +119,7 @@ public class ListBuiltinsTest {
         Term sorted = solutions.get(0).get("Sorted");
         assertNotNull(sorted);
         // Should unify with [a,b,b,c,c] - we're checking it can be unified
-        List<Map<String, Term>> verify = prolog.solve("Sorted = [a,b,b,c,c].");
+        List<Map<String, Term>> verify = prolog.solve("msort([c,b,a,c,b], Sorted), Sorted == [a,b,b,c,c].");   // ISS-2025-0663: was a separate query (a tautology)
         assertEquals(1, verify.size());
     }
 
@@ -131,7 +133,7 @@ public class ListBuiltinsTest {
         Term reversed = solutions.get(0).get("Reversed");
         assertNotNull(reversed);
         // Should unify with [c,b,a] - we're checking it can be unified
-        List<Map<String, Term>> verify = prolog.solve("Reversed = [c,b,a].");
+        List<Map<String, Term>> verify = prolog.solve("reverse([a,b,c], Reversed), Reversed == [c,b,a].");   // ISS-2025-0663: was a separate query (a tautology)
         assertEquals(1, verify.size());
     }
 
@@ -145,7 +147,7 @@ public class ListBuiltinsTest {
         Term remainder = solutions.get(0).get("Remainder");
         assertNotNull(remainder);
         // Should unify with [a,c] - we're checking it can be unified
-        List<Map<String, Term>> verify = prolog.solve("Remainder = [a,c].");
+        List<Map<String, Term>> verify = prolog.solve("select(b, [a,b,c], Remainder), Remainder == [a,c].");   // ISS-2025-0663: was a separate query (a tautology)
         assertEquals(1, verify.size());
     }
 }

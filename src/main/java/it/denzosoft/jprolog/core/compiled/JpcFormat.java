@@ -35,7 +35,14 @@ public final class JpcFormat {
     // Rule.sourceLine survives compilation, so the IDE's line breakpoints
     // (Prolog.getPredicateIndicatorAtLine) work on .jpc-loaded files too. Older 0x01/0x02 files
     // fail the version check and are transparently recompiled.
-    public static final byte VERSION = 0x03;
+    // START_CHANGE: ISS-2025-0553 - 0x04 (wave P2.14): integers that fit in 64 bits are written as
+    // a zigzag varint (NUM_VARLONG) instead of 8 fixed bytes, and a variable's name is written
+    // only at its first occurrence in the clause (TERM_VAR_AGAIN = slot only afterwards). The
+    // reader still accepts 0x03, which is a 0x04 file that never uses those two encodings.
+    public static final byte VERSION = 0x04;
+    /** The previous format, still readable. */
+    public static final byte VERSION_V3 = 0x03;
+    // END_CHANGE: ISS-2025-0553
     // END_CHANGE: ISS-2025-0447
     // END_CHANGE: ISS-2025-0261
 
@@ -50,11 +57,14 @@ public final class JpcFormat {
     public static final byte TERM_PROLOG_STRING = 0x05;
     // START_CHANGE: ISS-2025-0185 - Rational number serialization
     public static final byte TERM_RATIONAL      = 0x06;
+    /** ISS-2025-0553: a later occurrence of a clause variable (slot only). */
+    public static final byte TERM_VAR_AGAIN     = 0x07;
 
     // START_CHANGE: ISS-2025-0261 - TERM_NUMBER subtype tags (preserve int/float + BigInteger)
     public static final byte NUM_LONG   = 0x00;  // signed 64-bit integer
     public static final byte NUM_FLOAT  = 0x01;  // IEEE-754 double
     public static final byte NUM_BIGINT = 0x02;  // arbitrary-precision integer (two's-complement bytes)
+    public static final byte NUM_VARLONG = 0x03; // ISS-2025-0553: 64-bit integer as a zigzag varint
     // END_CHANGE: ISS-2025-0261
     // END_CHANGE: ISS-2025-0185
 

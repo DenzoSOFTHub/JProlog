@@ -83,6 +83,13 @@ final class Tabling {
         boolean producing;
         /** The last round in which this table produced from its clauses. */
         long producedRound;
+        // START_CHANGE: ISS-2025-0572 - mode-directed tabling: per-argument modes (null = variant
+        // tabling) and the position of the one kept answer per index-argument key. A superseded
+        // answer's slot is set to null and the better answer APPENDED, so a consumer that is
+        // iterating by position still sees the improvement (and the SCC runs another round).
+        String[] modes;
+        java.util.HashMap<String, Integer> modedPos;
+        // END_CHANGE: ISS-2025-0572
 
         Table(String key, String indicator, Term template, long seq) {
             this.key = key;
@@ -312,6 +319,14 @@ final class Tabling {
 
     /** True while a tabled evaluation is in progress on this engine. */
     boolean evaluating() { return !producing.isEmpty(); }
+
+    // START_CHANGE: ISS-2025-0661 - negation over an incomplete table (see Machine.stepN)
+    /** True when the calling thread holds the evaluation claim. */
+    synchronized boolean ownedByCurrentThread() { return evalOwner == Thread.currentThread(); }
+
+    /** The sequence number of the most recently created table. */
+    long lastSeq() { return seqCounter; }
+    // END_CHANGE: ISS-2025-0661
 
     /** {@code abolish_all_tables/0}: drop every answer table (declarations are kept). */
     void abolishAll() {
@@ -568,6 +583,7 @@ final class Tabling {
          *  on the template ITSELF — the copy is only made for an answer that is actually new, which
          *  is what keeps a quadratic transitive closure (millions of duplicate solutions) cheap. */
         private void record() {
+            if (table.modes != null) { recordModed(); return; }   // ISS-2025-0572
             keyBuf.setLength(0);
             String k = appendKey(keyBuf, prod, m.guard()).toString();
             if (table.seen.add(k)) {
@@ -575,6 +591,53 @@ final class Tabling {
                 tb.answerRecorded();
             }
         }
+
+        // START_CHANGE: ISS-2025-0572
+        private void recordModed() {
+            Term p = Unify.deref(prod);
+            if (!(p instanceof CompoundTerm)) { table.modes = null; record(); return; }
+            List<Term> as = ((CompoundTerm) p).getArguments();
+            String[] modes = table.modes;
+            keyBuf.setLength(0);
+            for (int i = 0; i < as.size() && i < modes.length; i++) {
+                if ("index".equals(modes[i])) appendKey(keyBuf, as.get(i), m.guard());
+                else keyBuf.append('*');
+                keyBuf.append('\u0001');
+            }
+            String k = keyBuf.toString();
+            if (table.modedPos == null) table.modedPos = new java.util.HashMap<String, Integer>();
+            Integer pos = table.modedPos.get(k);
+            if (pos == null) {
+                table.answers.add(Unify.copy(prod, new IdentityHashMap<Variable, Variable>(), m.guard()));
+                table.modedPos.put(k, table.answers.size() - 1);
+                tb.answerRecorded();
+                return;
+            }
+            Term old = table.answers.get(pos);
+            List<Term> olds = ((CompoundTerm) old).getArguments();
+            boolean better = false;
+            for (int i = 0; i < modes.length && i < as.size(); i++) {
+                String md = modes[i];
+                if ("min".equals(md) || "max".equals(md)) {
+                    int c = Unify.compareTerms(Unify.deref(as.get(i)), olds.get(i), m.guard());
+                    better = "min".equals(md) ? c < 0 : c > 0;
+                    break;
+                }
+                if ("last".equals(md)) {
+                    StringBuilder a = new StringBuilder(), b = new StringBuilder();
+                    appendKey(a, as.get(i), m.guard());
+                    appendKey(b, olds.get(i), m.guard());
+                    better = !a.toString().equals(b.toString());
+                    break;
+                }
+            }
+            if (!better) return;
+            table.answers.set(pos, null);
+            table.answers.add(Unify.copy(prod, new IdentityHashMap<Variable, Variable>(), m.guard()));
+            table.modedPos.put(k, table.answers.size() - 1);
+            tb.answerRecorded();
+        }
+        // END_CHANGE: ISS-2025-0572
 
         @Override
         public Machine.Goal next(Machine.CP cp) {
@@ -609,6 +672,7 @@ final class Tabling {
                 if (phase == DEAD) return Machine.EXHAUSTED;
                 while (ai < table.answers.size()) {
                     Term ans = table.answers.get(ai++);
+                    if (ans == null) continue;                            // ISS-2025-0572: superseded
                     Term inst = Unify.copy(ans, new IdentityHashMap<Variable, Variable>(), m.guard());
                     if (!m.unifyOrUndo(callGoal, inst)) { m.guard().step(); continue; }
                     // Only a COMPLETE table can be trusted to have handed out its last answer; an

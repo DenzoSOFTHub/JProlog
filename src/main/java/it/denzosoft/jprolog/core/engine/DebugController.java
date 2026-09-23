@@ -125,11 +125,45 @@ public class DebugController {
 
     /** True when the port's goal has to be resolved into a stable snapshot before being reported. */
     public boolean needsGoalSnapshot() {
-        return (traceEnabled && listener != null)
+        boolean need = (traceEnabled && listener != null)
             || currentMode != DebugEvent.Action.CONTINUE
             || !breakpoints.isEmpty();
+        if (need) goalSnapshots.incrementAndGet();                   // ISS-2025-0529
+        return need;
     }
     // END_CHANGE: ISS-2025-0481
+
+    // START_CHANGE: ISS-2025-0529 - wave P1.16: "any breakpoint exists" is not a reason to snapshot
+    // EVERY port. The snapshot is a full resolve of the goal, so with one unrelated breakpoint a
+    // deterministic recursion over a 40 000-element list resolved the list at every port (47.9 s
+    // against 21 ms). A breakpoint can only fire for the goal's own indicator, so that is checked
+    // first — a string lookup instead of a term copy. A listener that renders the trace and the
+    // stepping modes (which may pause on this very port) still get a snapshot every time.
+    private final java.util.concurrent.atomic.AtomicLong goalSnapshots = new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * True when the port's goal ({@code goal}, not yet resolved) has to be snapshotted before being
+     * reported: a trace listener or a stepping mode needs it always, a breakpoint only when it is
+     * set on this goal's indicator (or bare name).
+     */
+    public boolean needsGoalSnapshot(Term goal) {
+        boolean need = (traceEnabled && listener != null)
+            || currentMode != DebugEvent.Action.CONTINUE
+            || (!breakpoints.isEmpty() && breakpointMayMatch(goal));
+        if (need) goalSnapshots.incrementAndGet();
+        return need;
+    }
+
+    private boolean breakpointMayMatch(Term goal) {
+        String name = (goal == null) ? null : goal.getName();
+        if (name == null) return false;
+        int arity = (goal.getArguments() == null) ? 0 : goal.getArguments().size();
+        return breakpoints.contains(name + "/" + arity) || breakpoints.contains(name);
+    }
+
+    /** Test hook: how many port goals this controller asked the engine to snapshot. */
+    public long getGoalSnapshotCount() { return goalSnapshots.get(); }
+    // END_CHANGE: ISS-2025-0529
 
     public boolean isTraceEnabled() {
         return traceEnabled;

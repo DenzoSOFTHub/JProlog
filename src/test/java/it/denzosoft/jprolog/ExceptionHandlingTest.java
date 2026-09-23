@@ -1,7 +1,7 @@
 package it.denzosoft.jprolog;
 
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
-import it.denzosoft.jprolog.builtin.exception.Throw;
+import it.denzosoft.jprolog.core.engine.Prolog;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
@@ -24,44 +24,38 @@ import static org.junit.Assert.*;
  */
 public class ExceptionHandlingTest {
     
-    private Throw throwPredicate;
+    // START_CHANGE: ISS-2025-0665 - the throw/1 tests drove the legacy builtin.exception.Throw
+    // class directly, which the engine never dispatches (throw/1 is a machine control
+    // construct; the registry entry only gives it its permission_error). They now run through
+    // the engine and assert the exact ball. The ISOErrorTerms factory tests are kept: that
+    // class is live (core.engine.v4.Errors builds every error term with it).
+    private Prolog prolog;
+    // END_CHANGE: ISS-2025-0665
     private Map<String, Term> bindings;
     private List<Map<String, Term>> solutions;
     
     @Before
     public void setUp() {
-        throwPredicate = new Throw();
+        prolog = new Prolog();
         bindings = new HashMap<>();
         solutions = new ArrayList<>();
     }
     
     @Test
     public void testBasicThrow() {
-        // Test: throw(my_error)
-        Term throwQuery = createCompoundTerm("throw", new Atom("my_error"));
-        
         try {
-            throwPredicate.execute(throwQuery, bindings, solutions);
+            prolog.solve("throw(my_error).");
             fail("Expected PrologException to be thrown");
         } catch (PrologException e) {
-            assertNotNull("Exception should have error term", e.getErrorTerm());
             assertEquals("Error term should match", new Atom("my_error"), e.getErrorTerm());
         }
+        assertEquals(1, prolog.solve("catch(throw(my_error), B, true), B == my_error.").size());
     }
     
     @Test
     public void testThrowWithVariable() {
-        // Test: throw(X) where X is unbound should fail with instantiation error
-        Term throwQuery = createCompoundTerm("throw", new Variable("X"));
-        
-        try {
-            throwPredicate.execute(throwQuery, bindings, solutions);
-            fail("Expected PrologException for unbound variable");
-        } catch (PrologException e) {
-            assertNotNull("Exception should have error term", e.getErrorTerm());
-            assertTrue("Should be instantiation error", 
-                      e.getErrorTerm().toString().contains("instantiation_error"));
-        }
+        assertEquals("throw(X) with X unbound raises instantiation_error", 1, prolog.solve(
+            "catch(throw(_), error(E, _), true), E == instantiation_error.").size());
     }
     
     @Test
@@ -141,23 +135,11 @@ public class ExceptionHandlingTest {
     
     @Test
     public void testThrowInvalidArity() {
-        // Test throw with wrong number of arguments
-        Term throwQuery0 = createCompoundTerm("throw");
-        Term throwQuery2 = createCompoundTerm("throw", new Atom("a"), new Atom("b"));
-        
-        try {
-            throwPredicate.execute(throwQuery0, bindings, solutions);
-            fail("Expected exception for wrong arity");
-        } catch (PrologException e) {
-            assertNotNull("Should have error term", e.getErrorTerm());
-        }
-        
-        try {
-            throwPredicate.execute(throwQuery2, bindings, solutions);
-            fail("Expected exception for wrong arity");
-        } catch (PrologException e) {
-            assertNotNull("Should have error term", e.getErrorTerm());
-        }
+        // throw/0 and throw/2 are unknown procedures
+        assertEquals(1, prolog.solve(
+            "catch(call(throw), error(E, _), true), E == existence_error(procedure, throw/0).").size());
+        assertEquals(1, prolog.solve(
+            "catch(call(throw, a, b), error(E, _), true), E == existence_error(procedure, throw/2).").size());
     }
     
     // Helper methods

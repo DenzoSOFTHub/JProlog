@@ -47,9 +47,116 @@ public final class TermReader {
     // plain failure). ISO wants a resource error naming the real resource, and the design requires
     // it never to be a silent failure: raise resource_error(parser_nesting) at a fixed depth well
     // below the JVM's own limit, so the error is deterministic and identical on every path.
-    private static final int MAX_NESTING = 1000;
+    // START_CHANGE: ISS-2025-0561 - P3.8/P3.12: operator chains (a body of 10 000 goals, a long
+    // ';' chain, 1+2+...+n) are parsed ITERATIVELY in parseOperators and no longer count as
+    // nesting. Only real nesting (brackets, arguments, prefix operators) recurses. Up to
+    // INLINE_NESTING levels are read on the caller's stack; deeper input is re-read from its
+    // first token on a helper thread with a large stack, where the limit is MAX_NESTING.
+    private static final int INLINE_NESTING = 1000;
+    private static final int MAX_NESTING = 200_000;
+    private static final long DEEP_STACK_BYTES = 1L << 30;   // reserved, committed only as used
+    private int maxNesting = INLINE_NESTING;
+    private boolean deepThread;
+    /** Signals "re-read this term on the deep-stack thread" (no stack trace: control flow). */
+    private static final class NeedsDeepStack extends RuntimeException {
+        NeedsDeepStack() { super(null, null, false, false); }
+    }
+    private static final NeedsDeepStack NEEDS_DEEP = new NeedsDeepStack();
+    // END_CHANGE: ISS-2025-0561
     private int depth = 0;
     // END_CHANGE: ISS-2025-0473
+
+    // START_CHANGE: ISS-2025-0566 - the flags the reader depends on are thread-local in the
+    // engine, so they are sampled on the CALLING thread at the start of every top-level read
+    // (a deep re-read runs on another thread). null = sample PrologFlags.
+    private String dqMode;
+    private String bqMode = "codes";
+    private String fixedDqMode;
+    /** Read runtime terms with FRESH unnamed variable cells (read/1, term_to_atom/2 ...). */
+    private boolean freshVariables;
+    /** Variable names in order of first appearance, and their occurrence counts (read_term). */
+    private final java.util.LinkedHashMap<String, Variable> namedOrder = new java.util.LinkedHashMap<>();
+    private final Map<String, Integer> occurrences = new HashMap<>();
+    private final List<Variable> allVariables = new ArrayList<>();
+
+    /** Fix the double_quotes mode instead of reading the flag (read_term option double_quotes). */
+    public TermReader withDoubleQuotes(String mode) { this.fixedDqMode = mode; return this; }
+    /** Give every variable of a read term a fresh, unnamed cell (the name stays in variableNames). */
+    public TermReader withFreshVariables(boolean b) { this.freshVariables = b; this.track = b; return this; }
+    /** Record variable names/occurrences (read_term's options); off for consult (it is not free). */
+    private boolean track;
+    /** Named variables of the last term, in order of first appearance. */
+    public java.util.LinkedHashMap<String, Variable> variableNames() { return namedOrder; }
+    /** How often each named variable occurred in the last term. */
+    public Map<String, Integer> variableOccurrences() { return occurrences; }
+    /** Every variable of the last term (anonymous ones included), left to right. */
+    public List<Variable> variables() { return allVariables; }
+
+    private void sampleFlags() {
+        if (fixedDqMode != null) { dqMode = fixedDqMode; return; }
+        Term flagValue = PrologFlags.getFlag("double_quotes");
+        dqMode = (flagValue instanceof Atom) ? ((Atom) flagValue).getName() : "codes";
+        Term bq = PrologFlags.getFlag("back_quotes");
+        bqMode = (bq instanceof Atom) ? ((Atom) bq).getName() : "codes";
+    }
+
+    /**
+     * Read one term at priority 1200 from the current token, with the deep-stack fallback.
+     * Every public entry point goes through here.
+     */
+    private Term readTop() {
+        dqMode = null;                        // sampled lazily, on the first string (stringTerm)
+        int start = idx;
+        java.util.HashMap<String, Variable> scopeBefore =
+            varScope.isEmpty() ? null : new java.util.HashMap<>(varScope);
+        if (track) { namedOrder.clear(); occurrences.clear(); allVariables.clear(); }
+        try {
+            depth = 0;
+            pTop = 0;
+            return readTerm(1200);
+        } catch (NeedsDeepStack | StackOverflowError e) {
+            pTop = 0;
+            idx = start;
+            varScope.clear();
+            if (scopeBefore != null) varScope.putAll(scopeBefore);
+            if (track) { namedOrder.clear(); occurrences.clear(); allVariables.clear(); }
+            sampleFlags();                    // on THIS thread: the flags are thread-local
+            return readDeep();
+        }
+    }
+
+    private Term readDeep() {
+        final Object[] result = new Object[1];
+        final Throwable[] failure = new Throwable[1];
+        Thread t = new Thread(null, () -> {
+            deepThread = true;
+            maxNesting = MAX_NESTING;
+            depth = 0;
+            pTop = 0;
+            try {
+                result[0] = readTerm(1200);
+            } catch (StackOverflowError so) {
+                failure[0] = new it.denzosoft.jprolog.core.exceptions.PrologException(
+                    it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("parser_nesting", "read"));
+            } catch (Throwable x) {
+                failure[0] = x;
+            } finally {
+                deepThread = false;
+                maxNesting = INLINE_NESTING;
+            }
+        }, "jprolog-deep-reader", DEEP_STACK_BYTES);
+        t.setDaemon(true);
+        t.start();
+        boolean interrupted = false;
+        for (;;) {
+            try { t.join(); break; } catch (InterruptedException ie) { interrupted = true; }
+        }
+        if (interrupted) Thread.currentThread().interrupt();
+        if (failure[0] instanceof RuntimeException) throw (RuntimeException) failure[0];
+        if (failure[0] instanceof Error) throw (Error) failure[0];
+        return (Term) result[0];
+    }
+    // END_CHANGE: ISS-2025-0566
 
     public TermReader(List<Lexer.Token> tokens, OperatorTable ops) {
         this.tokens = tokens;
@@ -61,11 +168,18 @@ public final class TermReader {
     /** Parse a single term (no trailing END required), e.g. a query. */
     public static Term parseTerm(String src, OperatorTable ops) {
         TermReader r = new TermReader(Lexer.tokenize(src), ops);
-        Term t = r.readTerm(1200);
-        if (r.peek().kind == Lexer.Kind.END) r.next();
-        r.expectEof();
+        return r.readSingle();
+    }
+
+    // START_CHANGE: ISS-2025-0566 - one term from a text (term_to_atom/2, read_term from a string):
+    // an optional END, then nothing else.
+    public Term readSingle() {
+        Term t = readTop();
+        if (peek().kind == Lexer.Kind.END) next();
+        expectEof();
         return t;
     }
+    // END_CHANGE: ISS-2025-0566
 
     /**
      * Read the next clause term, or null at end of input. Lets a consult driver parse a
@@ -77,7 +191,7 @@ public final class TermReader {
     public Term nextClause() {
         if (peek().kind == Lexer.Kind.EOF) return null;
         varScope.clear();
-        Term t = readTerm(1200);
+        Term t = readTop();   // ISS-2025-0561: deep-stack fallback
         if (peek().kind != Lexer.Kind.END) {
             throw err("operator expected (or missing '.')");
         }
@@ -105,7 +219,7 @@ public final class TermReader {
         List<Term> clauses = new ArrayList<>();
         while (r.peek().kind != Lexer.Kind.EOF) {
             r.varScope.clear();
-            Term t = r.readTerm(1200);
+            Term t = r.readTop();   // ISS-2025-0561
             if (r.peek().kind != Lexer.Kind.END) {
                 throw r.err("operator expected (or missing '.')");
             }
@@ -139,8 +253,9 @@ public final class TermReader {
 
     private Parsed parse(int maxPrec) {
         // ISS-2025-0473: deterministic nesting limit (see MAX_NESTING)
-        if (++depth > MAX_NESTING) {
+        if (++depth > maxNesting) {
             depth = 0;
+            if (!deepThread) throw NEEDS_DEEP;   // ISS-2025-0561: re-read on the deep-stack thread
             throw new it.denzosoft.jprolog.core.exceptions.PrologException(
                 it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError("parser_nesting", "read"));
         }
@@ -157,37 +272,70 @@ public final class TermReader {
     }
 
     /** Consume infix/postfix operators (left-to-right, respecting precedence/associativity). */
+    // START_CHANGE: ISS-2025-0561 - iterative: the right operand of an infix operator is read in
+    // the same loop, with the pending (left, operator, outer priority) frames on an explicit
+    // stack. Popping a frame restores the outer priority exactly as returning from the old
+    // recursive parse(rightPrecedence) did, so the terms built are identical.
+    // The pending frames live in four parallel arrays shared by the nested parseOperators calls
+    // (each call works above its own base index), so an operator costs no allocation.
+    private Term[] pLeft = new Term[16];
+    private String[] pName = new String[16];
+    private int[] pPrec = new int[16];
+    private int[] pOuter = new int[16];
+    private int pTop;
+
+    private void pushPending(Term left, String name, int prec, int outerMax) {
+        if (pTop == pLeft.length) {
+            int n = pTop * 2;
+            pLeft = java.util.Arrays.copyOf(pLeft, n);
+            pName = java.util.Arrays.copyOf(pName, n);
+            pPrec = java.util.Arrays.copyOf(pPrec, n);
+            pOuter = java.util.Arrays.copyOf(pOuter, n);
+        }
+        pLeft[pTop] = left; pName[pTop] = name; pPrec[pTop] = prec; pOuter[pTop] = outerMax;
+        pTop++;
+    }
+
     private Parsed parseOperators(Parsed left, int maxPrec) {
+        final int base = pTop;
         for (;;) {
             Operator op = peekInfixOrPostfix();
-            if (op == null) break;
-            if (op.getPrecedence() > maxPrec) break;
-            if (left.prec > op.getLeftPrecedence()) break;
-
-            String name = op.getName();
-            next(); // consume the operator token
-            if (op.isInfix()) {
-                Parsed right = parse(op.getRightPrecedence());
-                left = new Parsed(new CompoundTerm(new Atom(name),
-                        java.util.Arrays.asList(left.term, right.term)), op.getPrecedence());
-            } else { // postfix
-                left = new Parsed(new CompoundTerm(new Atom(name),
-                        java.util.Arrays.asList(left.term)), op.getPrecedence());
+            if (op != null && op.getPrecedence() <= maxPrec && left.prec <= op.getLeftPrecedence()) {
+                String name = op.getName();
+                next(); // consume the operator token
+                if (op.isInfix()) {
+                    pushPending(left.term, name, op.getPrecedence(), maxPrec);
+                    maxPrec = op.getRightPrecedence();
+                    left = parsePrimary(maxPrec);
+                } else { // postfix
+                    left = new Parsed(new CompoundTerm(new Atom(name),
+                            java.util.Arrays.asList(left.term)), op.getPrecedence());
+                }
+                continue;
             }
+            if (pTop == base) return left;
+            pTop--;
+            left = new Parsed(new CompoundTerm(new Atom(pName[pTop]),
+                    java.util.Arrays.asList(pLeft[pTop], left.term)), pPrec[pTop]);
+            pLeft[pTop] = null;
+            maxPrec = pOuter[pTop];
         }
-        return left;
     }
+    // END_CHANGE: ISS-2025-0561
 
     /**
      * Describe the current token as an infix or postfix operator, or null if it is not in
      * operator position. COMMA and BAR are treated as the synthetic operators {@code ','/2}
      * (1000 xfy) and {@code ;/2} (1100 xfy) respectively.
      */
+    private static final Operator COMMA_OP = new Operator(1000, Operator.Type.XFY, ",");
+    private static final Operator BAR_OP = new Operator(1100, Operator.Type.XFY, ";");
+
     private Operator peekInfixOrPostfix() {
         Lexer.Token t = peek();
         switch (t.kind) {
-            case COMMA: return new Operator(1000, Operator.Type.XFY, ",");
-            case BAR:   return new Operator(1100, Operator.Type.XFY, ";");
+            case COMMA: return COMMA_OP;     // ISS-2025-0561: shared, not one per token
+            case BAR:   return BAR_OP;
             case ATOM: {
                 Operator infix = ops.getInfixOperator(t.text);
                 if (infix != null) return infix;
@@ -209,6 +357,13 @@ public final class TermReader {
             case STRING:
                 next();
                 return new Parsed(stringTerm(t.text), 0);
+            // START_CHANGE: ISS-2025-0579 - `text` is a code list (SWI default back_quotes=codes)
+            case BACKQUOTE:
+                next();
+                if (dqMode == null) sampleFlags();
+                return new Parsed(stringTerm(t.text, "codes".equals(bqMode) || bqMode == null ? "codes"
+                        : ("symbol_char".equals(bqMode) ? "atom" : bqMode)), 0);
+            // END_CHANGE: ISS-2025-0579
             case LPAREN: {
                 next();
                 Term inner = readTerm(1200);
@@ -259,6 +414,18 @@ public final class TermReader {
             return new Parsed(new CompoundTerm(new Atom(name),
                     java.util.Arrays.asList(arg.term)), prefix.getPrecedence());
         }
+        // START_CHANGE: ISS-2025-0566 - SWI leniency: a prefix operator whose priority exceeds
+        // the context (`X = \+a`, `f(:- a)`, `[dynamic p]`) is still applied, with its operand
+        // read at the context priority and the result given that priority. Text that parsed
+        // before is unaffected: this only turns a syntax error into the reading SWI gives.
+        if (prefix != null && prefix.getPrecedence() > maxPrec && maxPrec < 1200 && canStartTerm(after)
+                && !isInfixOnlyAtomFollow(after) && !(after.kind == Lexer.Kind.ATOM && isOperatorAtomToken(after))) {
+            next();                       // operator atom
+            Parsed arg = parse(Math.min(prefix.getRightPrecedence(), maxPrec));
+            return new Parsed(new CompoundTerm(new Atom(name),
+                    java.util.Arrays.asList(arg.term)), maxPrec);
+        }
+        // END_CHANGE: ISS-2025-0566
 
         // (4) Plain atom (includes an operator used as an atom: X = -, foo(-, +), ...).
         next();
@@ -318,7 +485,7 @@ public final class TermReader {
     /** True if the token can begin a term (used for the operator-as-atom fallback). */
     private boolean canStartTerm(Lexer.Token t) {
         switch (t.kind) {
-            case NUMBER: case VAR: case STRING: case ATOM:
+            case NUMBER: case VAR: case STRING: case ATOM: case BACKQUOTE:
             case LPAREN: case LBRACKET: case LBRACE:
                 return true;
             default:
@@ -335,20 +502,39 @@ public final class TermReader {
      */
     private boolean isInfixOnlyAtomFollow(Lexer.Token after) {
         if (after.kind != Lexer.Kind.ATOM || after.quotedAtom) return false;
+        // ISS-2025-0566: `- mod(X)` — an infix-operator NAME followed by '(' is a compound
+        Lexer.Token next2 = tokens.get(Math.min(idx + 2, tokens.size() - 1));
+        if (next2.kind == Lexer.Kind.LPAREN && !next2.precededByLayout) return false;
         boolean infixOrPostfix = ops.getInfixOperator(after.text) != null
                 || ops.getPostfixOperator(after.text) != null;
         boolean prefix = ops.getPrefixOperator(after.text) != null;
         return infixOrPostfix && !prefix;
     }
 
+    /** ISS-2025-0566: an unquoted atom token that is an infix or postfix operator. */
+    private boolean isOperatorAtomToken(Lexer.Token t) {
+        return !t.quotedAtom && (ops.getInfixOperator(t.text) != null || ops.getPostfixOperator(t.text) != null);
+    }
+
     private Variable variable(String name) {
         if ("_".equals(name)) {
-            return new Variable("_"); // anonymous: a fresh variable each occurrence
+            Variable anon = new Variable("_"); // anonymous: a fresh variable each occurrence
+            if (track) allVariables.add(anon); // ISS-2025-0566
+            return anon;
         }
         Variable v = varScope.get(name);
         if (v == null) {
-            v = new Variable(name);
+            // ISS-2025-0566: a runtime read gets fresh cells (two reads never share a name)
+            v = freshVariables ? new Variable() : new Variable(name);
             varScope.put(name, v);
+            if (track) {
+                namedOrder.put(name, v);
+                allVariables.add(v);
+                occurrences.put(name, 1);
+            }
+        } else if (track) {
+            Integer n = occurrences.get(name);
+            occurrences.put(name, n == null ? 1 : n + 1);
         }
         return v;
     }
@@ -363,8 +549,11 @@ public final class TermReader {
 
     /** Convert a double-quoted string per the double_quotes flag (codes|chars|atom|string). */
     private Term stringTerm(String s) {
-        Term flagValue = PrologFlags.getFlag("double_quotes");
-        String mode = (flagValue instanceof Atom) ? ((Atom) flagValue).getName() : "codes";
+        if (dqMode == null) sampleFlags();                       // ISS-2025-0566: lazily, once per term
+        return stringTerm(s, dqMode);
+    }
+
+    private Term stringTerm(String s, String mode) {
         switch (mode) {
             case "atom":
                 return new Atom(s);

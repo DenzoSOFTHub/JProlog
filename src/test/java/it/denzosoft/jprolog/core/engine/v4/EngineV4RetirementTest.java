@@ -242,7 +242,8 @@ public class EngineV4RetirementTest {
     public void testISS0486_MigratedDeterministicBuiltins() {
         assertFalse(prolog.solve("max_list([3, 1, 4, 1, 5], M), M == 5.").isEmpty());
         assertFalse(prolog.solve("min_list([3, 1, 4, 1, 5], M), M == 1.").isEmpty());
-        assertTrue("a non-numeric element fails", prolog.solve("max_list([1, a], _).").isEmpty());
+        // ISS-2025-0603 (P4.10): SWI evaluates the elements, so a non-numeric one RAISES
+        assertEquals(1, prolog.solve("catch(max_list([1, a], _), error(type_error(evaluable, a/0), _), true).").size());
         assertTrue("an empty list fails", prolog.solve("max_list([], _).").isEmpty());
         assertFalse(prolog.solve("nb_setval(w9k, f(1)), nb_getval(w9k, V), V == f(1).").isEmpty());
         assertFalse(prolog.solve("b_setval(w9b, 42), b_getval(w9b, V), V == 42.").isEmpty());
@@ -257,17 +258,18 @@ public class EngineV4RetirementTest {
     /** The main thread owns a message queue, reachable as {@code main} (SWI). */
     @Test(timeout = 30000)
     public void testISS0487_MainThreadOwnsAMessageQueue() {
+        // ISS-2025-0633: selective receives — `main`'s queue is shared by every non-worker thread
         assertFalse("thread_send_message(main, T) then thread_get_message/1 on the main thread",
-            prolog.solve("thread_send_message(main, w9msg(1)), thread_get_message(M), M == w9msg(1).").isEmpty());
+            prolog.solve("thread_send_message(main, w9msg(1)), thread_get_message(w9msg(1)).").isEmpty());
         assertFalse("a worker can post to the main thread's queue",
             prolog.solve("thread_create(thread_send_message(main, w9from(worker)), T), "
-                       + "thread_join(T, true), thread_get_message(M), M == w9from(worker).").isEmpty());
+                       + "thread_join(T, true), thread_get_message(w9from(worker)).").isEmpty());
         // ISS-2025-0495 (4.1 wave A): thread_self/1 now reports the ALIAS of an aliased thread,
         // so the top-level thread answers `main` instead of its integer id. It is still a usable
         // thread_send_message/2 target, which is what this assertion is really about.
         assertFalse("thread_self/1 reports a usable id",
             prolog.solve("thread_self(S), S == main, thread_send_message(S, w9self), "
-                       + "thread_get_message(M), M == w9self.").isEmpty());
+                       + "thread_get_message(w9self).").isEmpty());
     }
 
     // ================================================================ ISS-2025-0490

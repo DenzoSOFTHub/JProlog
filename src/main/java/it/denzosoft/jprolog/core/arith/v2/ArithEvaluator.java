@@ -47,25 +47,161 @@ public final class ArithEvaluator {
     /** Evaluate {@code expr} dereferencing each node through {@code deref} (the v2 machine's
      *  binding store) instead of deep-copying the expression first. */
     public static Number evalDeref(Term expr, java.util.function.UnaryOperator<Term> deref) {
-        return new ArithEvaluator(deref).evaluate(expr);
+        Term t = deref.apply(expr);
+        if (t instanceof Number) return (Number) t;           // ISS-2025-0594: no evaluator needed
+        return new ArithEvaluator(deref).evaluate(t);
     }
     // END_CHANGE: ISS-2025-0434
 
+    // START_CHANGE: ISS-2025-0594 - P4.5: the error context is the predicate that evaluated the
+    // expression ('=:='/2, '<'/2, ...), not always is/2.
+    private String ctxPI;                 // a full indicator ("sum_list/2"), or null
+    private String ctxOp;                 // a comparison functor ("=:="), or null
+
+    /** The predicate indicator errors name; built only when an error is raised. */
+    private String ctx() {
+        if (ctxPI != null) return ctxPI;
+        if (ctxOp != null) return ctxOp + "/2";
+        return "is/2";
+    }
+
+    /** As {@link #evalDeref(Term, java.util.function.UnaryOperator)}, reporting errors in the
+     *  context {@code context} (a predicate indicator such as {@code "sum_list/2"}). */
+    public static Number evalDeref(Term expr, java.util.function.UnaryOperator<Term> deref, String context) {
+        ArithEvaluator ev = new ArithEvaluator(deref);
+        ev.ctxPI = context;
+        return ev.evaluate(expr);
+    }
+
+    /** One side of the arithmetic comparison {@code op}/2 (errors name {@code op/2}). */
+    public static Number evalCompare(Term expr, java.util.function.UnaryOperator<Term> deref, String op) {
+        Term t = deref.apply(expr);
+        if (t instanceof Number) return (Number) t;           // the common case: no evaluator
+        ArithEvaluator ev = new ArithEvaluator(deref);
+        ev.ctxOp = op;
+        return ev.evaluate(t);
+    }
+    // END_CHANGE: ISS-2025-0594
+
+    private Term derefNode(Term term) {
+        return (derefFn != null) ? derefFn.apply(term)
+             : (bindings != null) ? term.resolveBindings(bindings) : term;
+    }
+
+    // START_CHANGE: ISS-2025-0592 - P4.3: deep expressions. The recursive walk is kept for the
+    // common shallow case (it is the fast path of is/2); past RECURSION_LIMIT nesting levels the
+    // sub-expression is evaluated by an explicit-stack walker, so a left-deep sum of 10^5 terms
+    // no longer overflows the Java stack.
+    private static final int RECURSION_LIMIT = 400;
+
     public Number evaluate(Term term) {
-        Term t = (derefFn != null) ? derefFn.apply(term)
-               : (bindings != null) ? term.resolveBindings(bindings) : term;
+        return evalRec(term, 0);
+    }
+
+    private Number evalRec(Term term, int depth) {
+        Term t = derefNode(term);
         if (t instanceof Number) return (Number) t;
-        if (t instanceof Variable) throw new PrologException(ISOErrorTerms.instantiationError("is/2"));
+        if (t instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) t;
+            int n = c.arity();
+            if (n == 2) {
+                String name = c.getName();
+                if (!isListName(name)) {
+                    if (depth > RECURSION_LIMIT) return evalIter(c);
+                    Number a = evalRec(c.arg(0), depth + 1);
+                    return binary(name, a, evalRec(c.arg(1), depth + 1));
+                }
+            } else if (n == 1) {
+                if (depth > RECURSION_LIMIT) return evalIter(c);
+                return unary(c.getName(), evalRec(c.arg(0), depth + 1));
+            }
+        }
+        return leaf(t);
+    }
+
+    private static boolean isListCell(CompoundTerm c) {
+        return c.arity() == 2 && isListName(c.getName());
+    }
+
+    private static boolean isListName(String name) {
+        return ".".equals(name) || "[|]".equals(name);
+    }
+
+    /** A term that is not an evaluable unary/binary compound: a number, a variable, a constant,
+     *  a one-element list, a one-character string, or an error. */
+    private Number leaf(Term t) {
+        if (t instanceof Number) return (Number) t;
+        if (t instanceof Variable) throw new PrologException(ISOErrorTerms.instantiationError(ctx()));
         if (t instanceof Atom) return constant(((Atom) t).getName());
         if (t instanceof CompoundTerm) {
             CompoundTerm c = (CompoundTerm) t;
-            int n = c.getArguments().size();
-            if (n == 1) return unary(c.getName(), evaluate(c.getArguments().get(0)));
-            if (n == 2) return binary(c.getName(), evaluate(c.getArguments().get(0)), evaluate(c.getArguments().get(1)));
-            throw evaluableError(c.getName(), n);
+            // START_CHANGE: ISS-2025-0594 - P4.5: [X] evaluates X (SWI); a longer list is not
+            // evaluable and is reported as '[|]'/2, not as its tail's []/0.
+            if (isListCell(c)) {
+                Term tail = derefNode(c.arg(1));
+                if (tail instanceof Atom && "[]".equals(((Atom) tail).getName())) return evaluate(c.arg(0));
+                throw evaluableError("[|]", 2);
+            }
+            // END_CHANGE: ISS-2025-0594
+            throw evaluableError(c.getName(), c.arity());
         }
-        throw new PrologException(ISOErrorTerms.typeError("evaluable", t, "is/2"));
+        if (t instanceof it.denzosoft.jprolog.core.terms.PrologString) {
+            String s = ((it.denzosoft.jprolog.core.terms.PrologString) t).getStringValue();
+            if (s.codePointCount(0, s.length()) == 1) return i(s.codePointAt(0));   // SWI: "a" is 97
+            throw new PrologException(ISOErrorTerms.typeError("evaluable", t, ctx()));
+        }
+        throw new PrologException(ISOErrorTerms.typeError("evaluable", t, ctx()));
     }
+
+    /** Explicit-stack post-order evaluation of a (deep) evaluable compound. */
+    private Number evalIter(CompoundTerm root) {
+        CompoundTerm[] frames = new CompoundTerm[64];
+        Number[] firsts = new Number[64];
+        byte[] state = new byte[64];          // 0 = evaluating arg 0, 1 = evaluating arg 1
+        int sp = 0;
+        Term cur = root;
+        Number result;
+        while (true) {
+            // descend along argument 0 until a leaf
+            while (true) {
+                Term t = derefNode(cur);
+                if (t instanceof CompoundTerm) {
+                    CompoundTerm c = (CompoundTerm) t;
+                    int n = c.arity();
+                    if (n == 1 || (n == 2 && !isListCell(c))) {
+                        if (sp == frames.length) {
+                            frames = Arrays.copyOf(frames, sp * 2);
+                            firsts = Arrays.copyOf(firsts, sp * 2);
+                            state = Arrays.copyOf(state, sp * 2);
+                        }
+                        frames[sp] = c; firsts[sp] = null; state[sp] = 0; sp++;
+                        cur = c.arg(0);
+                        continue;
+                    }
+                }
+                result = leaf(t);
+                break;
+            }
+            // ascend, combining results, until a frame needs its second argument
+            while (true) {
+                if (sp == 0) return result;
+                CompoundTerm c = frames[sp - 1];
+                if (c.arity() == 1) {
+                    sp--; frames[sp] = null;
+                    result = unary(c.getName(), result);
+                } else if (state[sp - 1] == 0) {
+                    firsts[sp - 1] = result; state[sp - 1] = 1;
+                    cur = c.arg(1);
+                    break;
+                } else {
+                    sp--; frames[sp] = null;
+                    Number a = firsts[sp]; firsts[sp] = null;
+                    result = binary(c.getName(), a, result);
+                }
+            }
+        }
+    }
+    // END_CHANGE: ISS-2025-0592
 
     // ----------------------------------------------------------------- constants
     private Number constant(String name) {
@@ -110,12 +246,29 @@ public final class ArithEvaluator {
             case "acosh": checkDomain(x.doubleValue() >= 1, "acosh/1"); return fc(Math.log(x.doubleValue() + Math.sqrt(x.doubleValue() * x.doubleValue() - 1)), "acosh/1", x);
             case "atanh": checkDomain(Math.abs(x.doubleValue()) < 1, "atanh/1"); return f(0.5 * Math.log((1 + x.doubleValue()) / (1 - x.doubleValue())));
             case "cbrt": return f(Math.cbrt(x.doubleValue()));
+            // START_CHANGE: ISS-2025-0613 - documented evaluables the v2 evaluator never had
+            case "cot": return fc(1.0 / Math.tan(x.doubleValue()), "cot/1", x);
+            case "acot": return f(Math.atan(1.0 / x.doubleValue()));
+            case "lsb":
+                requireInt(x, "lsb/1");
+                if (x.bigIntegerValue().signum() <= 0) throw new PrologException(ISOErrorTerms.evaluationError("undefined", "lsb/1"));
+                return i(x.bigIntegerValue().getLowestSetBit());
+            case "popcount":
+                requireInt(x, "popcount/1");
+                if (x.bigIntegerValue().signum() < 0) throw new PrologException(ISOErrorTerms.typeError("not_less_than_zero", x, "popcount/1"));
+                return i(x.bigIntegerValue().bitCount());
+            // END_CHANGE: ISS-2025-0613
             case "float": return fc(x.doubleValue(), "float/1", x);
             // END_CHANGE: ISS-2025-0359 / ISS-2025-0360
-            case "integer": case "truncate": return roundToInt(x.doubleValue() < 0 ? Math.ceil(x.doubleValue()) : Math.floor(x.doubleValue()), op);
+            // START_CHANGE: ISS-2025-0590 - P4.1: an integer argument is returned unchanged (the
+            // old path went through doubleValue() and lost big integers); integer/1 ROUNDS like
+            // round/1 (SWI); round is half away from zero without the floor(x+0.5) double error
+            // (round(0.49999999999999994) was 1, round(-2.5) was -2).
+            case "truncate": return x.isInteger() ? x : roundToInt(truncTowardZero(x.doubleValue()), op);
+            case "integer": case "round": return x.isInteger() ? x : roundToInt(roundHalfAway(x.doubleValue()), op);
+            // END_CHANGE: ISS-2025-0590
             case "floor": return x.isInteger() ? x : roundToInt(Math.floor(x.doubleValue()), op);
             case "ceiling": return x.isInteger() ? x : roundToInt(Math.ceil(x.doubleValue()), op);
-            case "round": return x.isInteger() ? x : roundToInt(Math.floor(x.doubleValue() + 0.5), op);
             // START_CHANGE: ISS-2025-0407 - truncate toward zero in double math: the old (long)
             // cast saturated at +/-2^63, silently corrupting results for |x| >= 2^63
             case "float_integer_part": { double v = x.doubleValue(); return f(v < 0 ? Math.ceil(v) : Math.floor(v)); }
@@ -162,6 +315,14 @@ public final class ArithEvaluator {
                     if (b.bigIntegerValue().signum() == 0) throw new PrologException(ISOErrorTerms.zeroDivisorError("(/)/2"));
                     BigInteger[] qr = a.bigIntegerValue().divideAndRemainder(b.bigIntegerValue());
                     if (qr[1].signum() == 0) return big(qr[0]);              // exact -> integer
+                    // START_CHANGE: ISS-2025-0590 - P4.1: an operand past 2^53 has no exact double
+                    // image (10^400 is Infinity): divide exactly in decimal, then round once.
+                    if (a.bigIntegerValue().bitLength() > 53 || b.bigIntegerValue().bitLength() > 53) {
+                        double q = new BigDecimal(a.bigIntegerValue())
+                                .divide(new BigDecimal(b.bigIntegerValue()), java.math.MathContext.DECIMAL128).doubleValue();
+                        return fc(q, "(/)/2", a, b);
+                    }
+                    // END_CHANGE: ISS-2025-0590
                 }
                 if (b.doubleValue() == 0.0) throw new PrologException(ISOErrorTerms.zeroDivisorError("(/)/2"));
                 return fc(a.doubleValue() / b.doubleValue(), "(/)/2", a, b);
@@ -212,15 +373,14 @@ public final class ArithEvaluator {
             // START_CHANGE: ISS-2025-0361 - shift counts beyond int range must not raise a raw
             // java.lang.ArithmeticException from intValueExact(): (>>) has the exact mathematical
             // result (the sign extension), (<<) raises a catchable ISO resource_error.
-            case ">>": requireInt(a, "(>>)/2"); requireInt(b, "(>>)/2"); requireNonNegShift(b);
-                if (b.bigIntegerValue().bitLength() > 31) return i(a.bigIntegerValue().signum() < 0 ? -1 : 0);
-                return big(a.bigIntegerValue().shiftRight(b.bigIntegerValue().intValueExact()));
-            case "<<": requireInt(a, "(<<)/2"); requireInt(b, "(<<)/2"); requireNonNegShift(b);
-                if (b.bigIntegerValue().bitLength() > 31) {
-                    if (a.bigIntegerValue().signum() == 0) return i(0);
-                    throw new PrologException(ISOErrorTerms.resourceError("memory", "(<<)/2"));
-                }
-                return big(a.bigIntegerValue().shiftLeft(b.bigIntegerValue().intValueExact()));
+            // START_CHANGE: ISS-2025-0591 - P4.2: a negative shift count shifts the other way
+            // (SWI: 1 << -1 =:= 0, 8 >> -2 =:= 32) instead of raising the non-ISO
+            // evaluation_error(negative_shift).
+            case ">>": requireInt(a, "(>>)/2"); requireInt(b, "(>>)/2");
+                return shift(a, b, false, "(>>)/2");
+            case "<<": requireInt(a, "(<<)/2"); requireInt(b, "(<<)/2");
+                return shift(a, b, true, "(<<)/2");
+            // END_CHANGE: ISS-2025-0591
             // END_CHANGE: ISS-2025-0361
             case "/\\": requireInt(a, "(/\\)/2"); requireInt(b, "(/\\)/2"); return big(a.bigIntegerValue().and(b.bigIntegerValue()));
             case "\\/": requireInt(a, "(\\/)/2"); requireInt(b, "(\\/)/2"); return big(a.bigIntegerValue().or(b.bigIntegerValue()));
@@ -280,9 +440,48 @@ public final class ArithEvaluator {
     private void requireInt(Number n, String ctx) {
         if (!n.isInteger()) throw new PrologException(ISOErrorTerms.typeError("integer", n, ctx));
     }
-    private void requireNonNegShift(Number n) {
-        if (n.bigIntegerValue().signum() < 0) throw new PrologException(ISOErrorTerms.evaluationError("negative_shift", "shift/2"));
+    // START_CHANGE: ISS-2025-0591 - shift left by a signed count (negative = right shift)
+    private static Number shift(Number a, Number b, boolean left, String ctx) {
+        if (a.fitsInLong() && b.fitsInLong()) {              // primitive fast path
+            long x = a.longValue(), n = b.longValue();
+            long c = left ? n : -n;
+            if (c == Long.MIN_VALUE) c = -Long.MAX_VALUE;
+            if (c <= 0) {
+                long r = -c;
+                return i(r >= 63 ? (x < 0 ? -1 : 0) : x >> r);
+            }
+            if (c < 63 && (x == 0 || Long.numberOfLeadingZeros(x < 0 ? ~x : x) > c + 1)) return i(x << c);
+        }
+        return shift(a.bigIntegerValue(), left ? b.bigIntegerValue() : b.bigIntegerValue().negate(), ctx);
     }
+
+    private static Number shift(BigInteger v, BigInteger count, String ctx) {
+        if (count.bitLength() > 31) {                        // |count| beyond int range
+            if (count.signum() < 0) return i(v.signum() < 0 ? -1 : 0);
+            if (v.signum() == 0) return i(0);
+            throw new PrologException(ISOErrorTerms.resourceError("memory", ctx));
+        }
+        int c = count.intValue();
+        if (c < 0 && v.bitLength() <= 62) {
+            long x = v.longValue();
+            return i(c <= -63 ? (x < 0 ? -1 : 0) : x >> -c);
+        }
+        return big(v.shiftLeft(c));
+    }
+    // END_CHANGE: ISS-2025-0591
+
+    // START_CHANGE: ISS-2025-0590 - exact float -> integral-float conversions
+    private static final double TWO_52 = 4503599627370496.0;
+    private static double truncTowardZero(double v) { return v < 0 ? Math.ceil(v) : Math.floor(v); }
+    private static double roundHalfAway(double v) {
+        if (Double.isNaN(v) || Double.isInfinite(v)) return v;
+        double a = Math.abs(v);
+        if (a >= TWO_52) return v;                           // already integral
+        double t = Math.floor(a);
+        if (a - t >= 0.5) t += 1.0;                          // a - t is exact below 2^52
+        return v < 0 ? -t : t;
+    }
+    // END_CHANGE: ISS-2025-0590
     private void checkNonZero(Number n, String ctx) {
         if (n.isInteger() && n.bigIntegerValue().signum() == 0) throw new PrologException(ISOErrorTerms.zeroDivisorError(ctx));
     }
@@ -304,6 +503,6 @@ public final class ArithEvaluator {
 
     private PrologException evaluableError(String name, int arity) {
         Term pi = new CompoundTerm(new Atom("/"), Arrays.asList(new Atom(name), new Number((long) arity)));
-        return new PrologException(ISOErrorTerms.typeError("evaluable", pi, "is/2"));
+        return new PrologException(ISOErrorTerms.typeError("evaluable", pi, ctx()));
     }
 }

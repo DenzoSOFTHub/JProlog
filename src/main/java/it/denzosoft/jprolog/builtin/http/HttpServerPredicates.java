@@ -71,10 +71,26 @@ public class HttpServerPredicates implements BuiltIn {
     /** Counter for unique request IDs. */
     private static final AtomicInteger requestCounter = new AtomicInteger(0);
 
-    /** Shared HTTP client for outgoing requests. */
-    private static final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(30))
-            .build();
+    // START_CHANGE: ISS-2025-0638 - wave P6 (extra): the shared HTTP client is built on FIRST USE.
+    // It was a static initialiser, so every `new Prolog()` — which instantiates each registered
+    // built-in — built an HttpClient and its SSLContext: 3-4 % of a short JVM run in the profiles,
+    // for a client almost no program uses. The holder idiom makes it lazy and thread-safe.
+    /** Shared HTTP client for outgoing requests (created by the first request). */
+    private static final class ClientHolder {
+        static final HttpClient CLIENT = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(30))
+                .build();
+    }
+
+    /** Has the shared client been built? (Test hook for the laziness.) */
+    static volatile boolean clientBuilt;
+
+    private static HttpClient httpClient() {
+        HttpClient c = ClientHolder.CLIENT;
+        clientBuilt = true;
+        return c;
+    }
+    // END_CHANGE: ISS-2025-0638
 
     public HttpServerPredicates(Mode mode) {
         this.mode = mode;
@@ -294,7 +310,7 @@ public class HttpServerPredicates implements BuiltIn {
                 .timeout(Duration.ofSeconds(30))
                 .build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = httpClient().send(request, HttpResponse.BodyHandlers.ofString());
         Term responseTerm = buildResponseTerm(response);
         return unify(query.getArguments().get(1), responseTerm, bindings, solutions);
     }
@@ -316,7 +332,7 @@ public class HttpServerPredicates implements BuiltIn {
                 .timeout(Duration.ofSeconds(30))
                 .build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = httpClient().send(request, HttpResponse.BodyHandlers.ofString());
         Term responseTerm = buildResponseTerm(response);
         return unify(query.getArguments().get(2), responseTerm, bindings, solutions);
     }
@@ -381,7 +397,7 @@ public class HttpServerPredicates implements BuiltIn {
                 break;
         }
 
-        HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = httpClient().send(builder.build(), HttpResponse.BodyHandlers.ofString());
         Term responseTerm = buildResponseTerm(response);
         return unify(query.getArguments().get(2), responseTerm, bindings, solutions);
     }

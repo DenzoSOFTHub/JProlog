@@ -1,196 +1,79 @@
 package it.denzosoft.jprolog;
 
-import it.denzosoft.jprolog.builtin.system.OperatorDefinition;
-import it.denzosoft.jprolog.core.engine.ArithmeticEvaluator;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
-import it.denzosoft.jprolog.core.terms.Atom;
-import it.denzosoft.jprolog.core.terms.CompoundTerm;
-import it.denzosoft.jprolog.core.terms.Number;
-import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.engine.Prolog;
+import org.junit.Before;
 import org.junit.Test;
-
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 
 import static org.junit.Assert.*;
 
 /**
- * Integration tests for Phase 1 ISO compliance features.
- * Tests mathematical functions, operator system, and other Phase 1 implementations.
+ * Integration tests for the Phase 1 ISO features: the arithmetic functions and the operator
+ * system.
+ *
+ * <p>START_CHANGE: ISS-2025-0665 - retargeted at the engine. The class evaluated terms with the
+ * legacy {@code core.engine.ArithmeticEvaluator} (not the engine's arithmetic since 3.x; the
+ * engine runs {@code core.arith.v2.ArithEvaluator}) and defined operators through the legacy
+ * {@code OperatorDefinition} and its JVM-wide static table (shared with every other test class).
+ * Everything now goes through {@code is/2}, {@code op/3} and {@code current_op/3} on a private
+ * {@link Prolog}, with exact results (integer vs float included). END_CHANGE: ISS-2025-0665
  */
 public class Phase1FeaturesTest {
-    
-    @Test
-    public void testMathematicalFunctions() throws PrologEvaluationException {
-        Map<String, Term> bindings = new HashMap<>();
-        
-        // Test sqrt function
-        Term sqrtTerm = createFunction("sqrt", 16.0);
-        assertEquals(4.0, ArithmeticEvaluator.evaluate(sqrtTerm, bindings), 0.0001);
-        
-        // Test sin function
-        Term sinTerm = createFunction("sin", Math.PI / 2);
-        assertEquals(1.0, ArithmeticEvaluator.evaluate(sinTerm, bindings), 0.0001);
-        
-        // Test abs function
-        Term absTerm = createFunction("abs", -5.5);
-        assertEquals(5.5, ArithmeticEvaluator.evaluate(absTerm, bindings), 0.0001);
-        
-        // Test log function
-        Term logTerm = createFunction("log", Math.E);
-        assertEquals(1.0, ArithmeticEvaluator.evaluate(logTerm, bindings), 0.0001);
+
+    private Prolog prolog;
+
+    @Before
+    public void setUp() {
+        prolog = new Prolog();
     }
-    
+
+    private void holds(String query) {
+        assertEquals(query, 1, prolog.solve(query).size());
+    }
+
+    @Test
+    public void testMathematicalFunctions() {
+        holds("X is sqrt(16.0), X == 4.0.");
+        holds("X is sin(pi / 2), abs(X - 1.0) < 1.0e-12.");
+        holds("X is abs(-5.5), X == 5.5.");
+        holds("X is abs(-5), X == 5.");
+        holds("X is log(e), abs(X - 1.0) < 1.0e-12.");
+    }
+
     @Test
     public void testOperatorDefinitionSystem() {
-        OperatorDefinition opDef = new OperatorDefinition(OperatorDefinition.OperatorType.OP);
-        Map<String, Term> bindings = new HashMap<>();
-        List<Map<String, Term>> solutions = new ArrayList<>();
-        
-        // Test defining a new operator
-        Term opQuery = createOpQuery(500, "xfx", "myop");
-        assertTrue("Should define new operator successfully", 
-                  opDef.execute(opQuery, bindings, solutions));
-        assertEquals("Should have one solution", 1, solutions.size());
-        
-        // Verify operator was defined
-        OperatorDefinition.OperatorInfo opInfo = OperatorDefinition.getOperator("myop");
-        assertNotNull("Operator should be defined", opInfo);
-        assertEquals("Precedence should match", 500, opInfo.precedence);
-        assertEquals("Type should match", "xfx", opInfo.type);
+        holds("op(500, xfx, myop).");
+        holds("current_op(P, T, myop), P == 500, T == xfx.");
+        holds("X = (1 myop 2), X == myop(1, 2).");
     }
-    
+
     @Test
     public void testStandardOperatorsPreloaded() {
-        // Test that standard ISO operators are preloaded
-        // START_CHANGE: ISS-2025-0177 - getOperator now returns infix (most common) by default
-        OperatorDefinition.OperatorInfo plusOp = OperatorDefinition.getOperator("+");
-        assertNotNull("+ operator should be predefined", plusOp);
-        assertEquals("+ should have precedence 500 (infix)", 500, plusOp.precedence);
-        assertEquals("+ should be yfx (infix)", "yfx", plusOp.type);
-        // END_CHANGE: ISS-2025-0177
-        
-        // Test existential quantification operator
-        OperatorDefinition.OperatorInfo caretOp = OperatorDefinition.getOperator("^");
-        assertNotNull("^ operator should be predefined", caretOp);
-        assertEquals("^ should have precedence 200", 200, caretOp.precedence);
-        assertEquals("^ should be xfy", "xfy", caretOp.type);
-        
-        // Test univ operator
-        OperatorDefinition.OperatorInfo univOp = OperatorDefinition.getOperator("=..");
-        assertNotNull("=.. operator should be predefined", univOp);
-        assertEquals("=.. should have precedence 700", 700, univOp.precedence);
-        assertEquals("=.. should be xfx", "xfx", univOp.type);
+        holds("current_op(500, yfx, +).");
+        holds("current_op(200, xfy, ^).");
+        holds("current_op(700, xfx, =..).");
     }
-    
+
     @Test
     public void testCurrentOpQuery() {
-        OperatorDefinition currentOp = new OperatorDefinition(OperatorDefinition.OperatorType.CURRENT_OP);
-        Map<String, Term> bindings = new HashMap<>();
-        List<Map<String, Term>> solutions = new ArrayList<>();
-        
-        // Test querying existing operators
-        Term query = createCurrentOpQuery(700, "xfx", "=");
-        assertTrue("Should find = operator", 
-                  currentOp.execute(query, bindings, solutions));
-        assertTrue("Should have at least one solution", solutions.size() >= 1);
-        
-        // Test querying all operators with variables
-        solutions.clear();
-        Term allQuery = createCompoundTerm("current_op", 
-                                         new Variable("P"), 
-                                         new Variable("T"), 
-                                         new Variable("N"));
-        assertTrue("Should find multiple operators", 
-                  currentOp.execute(allQuery, bindings, solutions));
-        assertTrue("Should have many operators", solutions.size() > 10);
+        holds("current_op(700, xfx, =).");
+        assertTrue("many operators", prolog.solve("current_op(_, _, _).").size() > 10);
     }
-    
+
     @Test
-    public void testComplexArithmeticExpressions() throws PrologEvaluationException {
-        Map<String, Term> bindings = new HashMap<>();
-        
-        // Test nested function: sqrt(abs(-16))
-        Term absTerm = createFunction("abs", -16.0);
-        Term sqrtAbsTerm = createFunction("sqrt", absTerm);
-        assertEquals(4.0, ArithmeticEvaluator.evaluate(sqrtAbsTerm, bindings), 0.0001);
-        
-        // Test trigonometric identity: sin²(x) + cos²(x) = 1
-        double angle = Math.PI / 4; // 45 degrees
-        Term sinTerm = createFunction("sin", angle);
-        Term cosTerm = createFunction("cos", angle);
-        
-        double sinVal = ArithmeticEvaluator.evaluate(sinTerm, bindings);
-        double cosVal = ArithmeticEvaluator.evaluate(cosTerm, bindings);
-        double identity = sinVal * sinVal + cosVal * cosVal;
-        
-        assertEquals("sin²(x) + cos²(x) should equal 1", 1.0, identity, 0.0001);
+    public void testComplexArithmeticExpressions() {
+        holds("X is sqrt(abs(-16)), X == 4.0.");
+        holds("A is pi / 4, X is sin(A) ** 2 + cos(A) ** 2, abs(X - 1.0) < 1.0e-12.");
     }
-    
+
     @Test
-    public void testISOArithmeticFunctions() throws PrologEvaluationException {
-        Map<String, Term> bindings = new HashMap<>();
-        
-        // Test ISO-specific functions
-        Term signPos = createFunction("sign", 5.5);
-        assertEquals(1.0, ArithmeticEvaluator.evaluate(signPos, bindings), 0.0001);
-        
-        Term signNeg = createFunction("sign", -3.2);
-        assertEquals(-1.0, ArithmeticEvaluator.evaluate(signNeg, bindings), 0.0001);
-        
-        Term truncPos = createFunction("truncate", 3.8);
-        assertEquals(3.0, ArithmeticEvaluator.evaluate(truncPos, bindings), 0.0001);
-        
-        Term floorPos = createFunction("floor", 3.7);
-        assertEquals(3.0, ArithmeticEvaluator.evaluate(floorPos, bindings), 0.0001);
-        
-        Term ceilPos = createFunction("ceil", 3.2);
-        assertEquals(4.0, ArithmeticEvaluator.evaluate(ceilPos, bindings), 0.0001);
-    }
-    
-    // Helper methods
-    
-    private Term createFunction(String functionName, double value) {
-        List<Term> args = new ArrayList<>();
-        args.add(new Number(value));
-        return new CompoundTerm(new Atom(functionName), args);
-    }
-    
-    private Term createFunction(String functionName, Term arg) {
-        List<Term> args = new ArrayList<>();
-        args.add(arg);
-        return new CompoundTerm(new Atom(functionName), args);
-    }
-    
-    private Term createOpQuery(int precedence, String type, String name) {
-        List<Term> args = new ArrayList<>();
-        args.add(new Number((long) precedence));   // ISS-2025-0424: precedence is an ISO integer
-        args.add(new Atom(type));
-        args.add(new Atom(name));
-        return new CompoundTerm(new Atom("op"), args);
-    }
-    
-    private Term createCurrentOpQuery(int precedence, String type, String name) {
-        List<Term> args = new ArrayList<>();
-        args.add(new Number((long) precedence));   // ISS-2025-0424: precedence is an ISO integer
-        args.add(new Atom(type));
-        args.add(new Atom(name));
-        return new CompoundTerm(new Atom("current_op"), args);
-    }
-    
-    private Term createCompoundTerm(String functor, Term... args) {
-        List<Term> argList = new ArrayList<>();
-        for (Term arg : args) {
-            argList.add(arg);
-        }
-        return new CompoundTerm(new Atom(functor), argList);
-    }
-    
-    private static class Variable extends it.denzosoft.jprolog.core.terms.Variable {
-        public Variable(String name) {
-            super(name);
-        }
+    public void testISOArithmeticFunctions() {
+        holds("X is sign(5.5), X == 1.0.");
+        holds("X is sign(-3.2), X == -1.0.");
+        holds("X is sign(-3), X == -1.");
+        holds("X is truncate(3.8), X == 3.");
+        holds("X is floor(3.7), X == 3.");
+        holds("X is ceiling(3.2), X == 4.");
+        holds("X is round(2.5), X == 3.");
+        holds("catch(X is foo(1), error(E, _), true), E == type_error(evaluable, foo/1).");
     }
 }

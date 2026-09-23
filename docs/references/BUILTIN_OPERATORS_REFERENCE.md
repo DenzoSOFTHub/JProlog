@@ -34,6 +34,8 @@ In Prolog, operators have precedence levels (1-1200) that determine evaluation o
 1050: -> *-> (if-then, soft-cut)
 1000: ,  (conjunction / and)
  900: \+ (negation as failure, prefix)
+ 760: #<==>  750: #==> (xfy) #<== (yfx)  740: #\/  730: #\  720: #/\  710: #\ (fy)
+      (CLP(FD) reification connectives, SWI priorities, v4.5.0)
  700: = \= == \== @< @=< @> @>= =.. is =:= =\= < =< > >=
       in ins #= #\= #< #> #=< #>=   (CLP(FD))
  600: :  (module qualification)
@@ -46,7 +48,7 @@ In Prolog, operators have precedence levels (1-1200) that determine evaluation o
 
 The authoritative list is the *Operator Precedence Table* at the end of this document, and the
 engine itself: `findall(P-T-N, current_op(P, T, N), L)` in a fresh session returns exactly those
-60 operators.
+67 operators (60 before v4.5.0, which added the seven CLP(FD) reification connectives).
 
 ### Associativity
 - **Left-associative**: `a op b op c` = `(a op b) op c`
@@ -1488,12 +1490,19 @@ Complete precedence table for JProlog operators:
 | 700 | xfx | @< @=< @> @>= | Term comparison |
 | 700 | xfx | =.. is | Univ, arithmetic evaluation |
 | 700 | xfx | =:= =\\= < =< > >= | Arithmetic comparison |
-| 700 | xfx | in ins #= #\\= #< #> #=< #>= | CLP(FD) constraints (`ins` is reserved: it parses, but there is no `ins/2` predicate — use `in/2` per variable) |
+| 760 | yfx | #<==> | CLP(FD) reified equivalence (v4.5.0) |
+| 750 | xfy | #==> | CLP(FD) reified implication (v4.5.0) |
+| 750 | yfx | #<== | CLP(FD) reified reverse implication (v4.5.0) |
+| 740 | yfx | #\\/ | CLP(FD) reified disjunction (v4.5.0) |
+| 730 | yfx | #\\ | CLP(FD) reified exclusive or (v4.5.0) |
+| 720 | yfx | #/\\ | CLP(FD) reified conjunction (v4.5.0) |
+| 710 | fy | #\\ | CLP(FD) reified negation (v4.5.0) |
+| 700 | xfx | in ins #= #\\= #< #> #=< #>= | CLP(FD) constraints (`ins/2` is a predicate since v4.5.0: `[X,Y] ins 1..9`) |
 | 600 | xfy | : | Module qualification (`Module:Goal`) |
 | 500 | yfx | + - | Addition, subtraction |
 | 500 | yfx | /\\ \\/ xor | Bitwise and, or, exclusive or |
 | 450 | xfx | .. | CLP(FD) domain range (`X in 1..9`) |
-| 400 | yfx | * / // rem mod div rdiv << >> | Multiplication, division (`div`/`rdiv` new in v3.0.0), bit shifts. *v3.10.0, engine v4*: `>>` and `/` at this priority are also what makes a `library(yall)` lambda parse — `N/[X,Y]>>Body` reads as `>>( /(N,[X,Y]), Body)`, exactly as yall expects. No extra operator is declared. |
+| 400 | yfx | * / // rem mod div rdiv << >> | Multiplication, division (`div`/`rdiv` new in v3.0.0), bit shifts (*v4.5.0*: a negative count shifts the other way, `1 << -1 =:= 0`, SWI). *v3.10.0, engine v4*: `>>` and `/` at this priority are also what makes a `library(yall)` lambda parse — `N/[X,Y]>>Body` reads as `>>( /(N,[X,Y]), Body)`, exactly as yall expects. No extra operator is declared. |
 | 200 | xfx | ** | Exponentiation |
 | 200 | xfy | ^ | Existential quantification |
 | 200 | fy | + - \\ | Unary plus, unary minus, bitwise NOT |
@@ -1524,10 +1533,12 @@ binary writer and the IDE's source formatter all read it. Consequences:
   consults everything into one operator space and every already-read clause depends on it —
   narrowing *parsing* to the declaring module is a cross-engine decision, recorded as a deviation
   of wave W7 in `docs/reports/report-engine-v4-progress.md`.
-- **`op/3` is undone on backtracking**: `(op(700, xfx, tmp), fail ; true)` leaves no `tmp` operator.
+- **`op/3` is permanent** (*v4.5.0*, ISS-2025-0612, ISO 8.14.3 / SWI): `(op(700, xfx, tmp), fail ; true)`
+  leaves `tmp` defined, and `forall(member(O, [a1, a2]), op(700, xfx, O))` defines both. From
+  v4.1.0 to v4.4.0 `op/3` (and `char_conversion/2`) was undone on backtracking.
 - **Since v4.3.0 `op/3` is a v4 native** (ISS-2025-0500) and writes into the store of the engine
   whose machine is running — `m.engine().prolog().getOps()`, not a table captured at construction —
-  pushing its undo action straight onto that machine's trail. Everything above is unchanged; the
+  (until v4.4.0 pushing its undo action onto that machine's trail). Everything above is unchanged; the
   same release deletes `builtin.system.Op`, an unregistered `op/3` that really did capture
   `OperatorTable.getDefault()`. `char_conversion/2` and `current_char_conversion/2` moved to the
   same per-engine store in the same change: the character-conversion table used to be a
@@ -1535,6 +1546,33 @@ binary writer and the IDE's source formatter all read it. Consequences:
   backtracking.
 
 ---
+
+## Reading and writing operator terms (v4.5.0, wave P3)
+
+**Writing** (`writeq/1`, `print/1`, `write_canonical/1` and everything that uses the ISO writer,
+ISS-2025-0562): output is re-readable, checked by a property test that writes 4 000 random terms
+and reads them back.
+- `+`/`-` applied to an operand that starts with a number is written in canonical form, because
+  `-1` is a negative number: `-(1)`, `-(-1)`, `-(2^2)` (it printed `-2^2`, which reads as
+  `(-2)^2`), `-(1.5^a)`.
+- An operator atom used as an operand is bracketed (ISO: it has priority 1201):
+  `-(-,-)` prints `(-)-(-)` (it printed `- - -`, which reads as `-(-(-))`), `1-(-)` prints `1-(-)`.
+- A prefix operator followed by an opening parenthesis gets a space, so `-((a,b))` prints
+  `- (a,b)` (`-(a,b)` would read as `-/2`).
+- `'[]'(a,b)` and `'{}'(a,b)` keep their quotes; an atom starting with `_` is quoted.
+- Floats use SWI's shortest round-trip layout: exponent notation only below 1e-4 or from 1e15
+  (`10000000.0`, `1790168689.01`, `1.0e15`, `1.0e-5`); `writeq` writes the special floats as
+  `1.0Inf`, `-1.0Inf`, `1.5NaN`, which the reader accepts (`write/1` keeps `inf`, `nan`).
+
+**Reading** (ISS-2025-0561/0566):
+- An operator chain (`a :- b1, b2, ..., b20000`, a 5 000-way `;`) is parsed iteratively and does
+  not count as nesting; real nesting (brackets, arguments) is bounded by 200 000 levels.
+- SWI leniency: a prefix operator whose priority exceeds its context is still applied —
+  `X = \+a`, `f(:- a)` — instead of being a syntax error.
+- `name(...)` where `name` is an infix operator is a compound: `- mod(X)` is `-(mod(X))`.
+- Escapes (ISS-2025-0560): `\e` (27), `\s` (space), `\uXXXX`, `\UXXXXXXXX`, `\xHH..\`,
+  `\NNN\`; any other escape is a syntax error. `` `text` `` reads as a code list.
+- `(a|b)` still reads as `(a;b)` (SWI 7+ reads `'|'(a,b)`; see LIM-044).
 
 ## Summary
 

@@ -107,13 +107,18 @@ public class ClpfdV2EngineTest {
         assertEquals("50000000", s.get(0).get("X").toString());
     }
 
-    @Test public void labelHugeDomainRaisesResourceError() {
-        // Labeling a variable left on a huge domain raises a catchable resource_error (no OOM).
+    // START_CHANGE: ISS-2025-0642 - labeling is lazy (4.5 wave P5): a huge domain is no longer
+    // materialised (the old eager labeler raised resource_error), it hands out answers one by one.
+    @Test public void labelHugeDomainIsLazy() {
         Prolog p = clp();
-        List<Map<String, Term>> s = p.solve(
-            "catch((X in 1..3, Y in 1..2000000000, label([X,Y])), error(resource_error(_), _), true).");
+        List<Map<String, Term>> s = p.solve("X in 1..3, Y in 1..2000000000, once(label([X,Y])).");
         assertEquals(1, s.size());
+        assertEquals("1", s.get(0).get("Y").toString());
+        final int[] n = {0};
+        p.solveStream("X in 1..3, Y in 1..2000000000, label([X,Y]).", m -> ++n[0] < 5);
+        assertEquals(5, n[0]);
     }
+    // END_CHANGE: ISS-2025-0642
 
     @Test public void floatOperandRaisesTypeError() {
         Prolog p = clp();

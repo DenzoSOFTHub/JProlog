@@ -43,59 +43,68 @@ public class JpcReader {
      * @return the compiled program
      * @throws IOException if reading fails or format is invalid
      */
+    // START_CHANGE: ISS-2025-0553 - wave P2.14: the reader decodes from ONE byte array. It used to
+    // pull every byte through DataInputStream.readByte over a BufferedInputStream (a third of the
+    // load time was that call chain), allocate a new Atom per atom/functor occurrence and build
+    // each compound through a List that the CompoundTerm constructor then copied again. Now: the
+    // file is read in one go, atoms are made once per string-table entry (they are immutable),
+    // compounds adopt their argument array, and each clause reuses one variable frame. Format
+    // 0x04 (see JpcFormat) is read, and so is 0x03, which is a valid 0x04 file that never uses
+    // the two new encodings.
     public CompiledProgram read(InputStream in) throws IOException {
-        DataInputStream dis = new DataInputStream(new BufferedInputStream(in));
+        Buf b = new Buf(readAll(in));
 
         // Header
-        byte[] magic = new byte[3];
-        dis.readFully(magic);
-        if (magic[0] != JpcFormat.MAGIC[0] || magic[1] != JpcFormat.MAGIC[1] || magic[2] != JpcFormat.MAGIC[2]) {
+        if (b.remaining() < 12) throw new IOException("Invalid JPC file: truncated header");
+        byte m0 = b.u8b(), m1 = b.u8b(), m2 = b.u8b();
+        if (m0 != JpcFormat.MAGIC[0] || m1 != JpcFormat.MAGIC[1] || m2 != JpcFormat.MAGIC[2]) {
             throw new IOException("Invalid JPC file: bad magic bytes");
         }
-        byte version = dis.readByte();
-        if (version != JpcFormat.VERSION) {
+        byte version = b.u8b();
+        if (version != JpcFormat.VERSION && version != JpcFormat.VERSION_V3) {
             throw new IOException("Unsupported JPC version: " + version);
         }
-        long sourceHash = dis.readLong();
+        long sourceHash = b.int64();
 
         // String table
-        int stringCount = readVarint(dis);
+        int stringCount = b.varint();
+        if (stringCount < 0 || stringCount > b.remaining()) throw new IOException("Invalid string table size: " + stringCount);
         String[] strings = new String[stringCount];
         for (int i = 0; i < stringCount; i++) {
-            int len = readVarint(dis);
-            byte[] bytes = new byte[len];
-            dis.readFully(bytes);
-            strings[i] = new String(bytes, StandardCharsets.UTF_8);
+            int len = b.varint();
+            strings[i] = b.utf8(len);
         }
+        this.atoms = new Atom[stringCount];
 
         // Operators
-        int opCount = readVarint(dis);
-        List<Operator> operators = new ArrayList<>(opCount);
+        int opCount = b.varint();
+        List<Operator> operators = new ArrayList<>(Math.min(opCount, 4096));
         Operator.Type[] types = Operator.Type.values();
         for (int i = 0; i < opCount; i++) {
-            int precedence = readVarint(dis);
-            int typeOrdinal = dis.readByte() & 0xFF;
-            int nameIdx = readVarint(dis);
+            int precedence = b.varint();
+            int typeOrdinal = b.u8();
+            int nameIdx = b.varint();
             if (typeOrdinal >= types.length) {
                 throw new IOException("Invalid operator type ordinal: " + typeOrdinal);
             }
+            checkStringIndex(nameIdx, strings.length, "operator");
             operators.add(new Operator(precedence, types[typeOrdinal], strings[nameIdx]));
         }
 
         // Rules
-        int ruleCount = readVarint(dis);
-        List<Rule> rules = new ArrayList<>(ruleCount);
+        int ruleCount = b.varint();
+        List<Rule> rules = new ArrayList<>(Math.min(ruleCount, 1 << 20));
         for (int i = 0; i < ruleCount; i++) {
             // START_CHANGE: ISS-2025-0447 - one shared Variable per index, per CLAUSE (format 0x03)
-            List<Variable> frame = new ArrayList<>();
-            Term head = readTerm(dis, strings, frame);
-            int bodyCount = readVarint(dis);
+            frameSize = 0;
+            Term head = readTerm(b, strings);
+            int bodyCount = b.varint();
             List<Term> body = new ArrayList<>(bodyCount);
             for (int j = 0; j < bodyCount; j++) {
-                body.add(readTerm(dis, strings, frame));
+                body.add(readTerm(b, strings));
             }
             Rule r = new Rule(head, body);
-            r.setSourceLine(readVarint(dis) - 1);
+            r.setSourceLine(b.varint() - 1);
             rules.add(r);
             // END_CHANGE: ISS-2025-0447
         }
@@ -105,29 +114,165 @@ public class JpcReader {
 
     // ---------- internals ----------
 
+    /** One atom per string-table entry, made on first use. */
+    private Atom[] atoms;
+    /** The current clause's variables by slot; {@code frameSize} slots are valid. */
+    private Variable[] frame = new Variable[16];
+    private int frameSize;
+
+    private Atom atom(String[] strings, int idx) {
+        Atom a = atoms[idx];
+        if (a == null) { a = new Atom(strings[idx]); atoms[idx] = a; }
+        return a;
+    }
+
+    private static byte[] readAll(InputStream in) throws IOException {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream(1 << 16);
+        byte[] chunk = new byte[1 << 16];
+        int n;
+        while ((n = in.read(chunk)) > 0) bos.write(chunk, 0, n);
+        return bos.toByteArray();
+    }
+
+    /** A cursor over the file's bytes; every read is bounds-checked (a truncated file is an IOException). */
+    private static final class Buf {
+        final byte[] d;
+        int p;
+        Buf(byte[] d) { this.d = d; }
+        int remaining() { return d.length - p; }
+        private void need(int n) throws IOException {
+            if (n < 0 || p + n > d.length) throw new EOFException("Truncated JPC file");
+        }
+        byte u8b() throws IOException { need(1); return d[p++]; }
+        int u8() throws IOException { need(1); return d[p++] & 0xFF; }
+        int varint() throws IOException {
+            int value = 0, shift = 0;
+            while (true) {
+                need(1);
+                byte x = d[p++];
+                value |= (x & 0x7F) << shift;
+                if ((x & 0x80) == 0) return value;
+                shift += 7;
+                if (shift > 35) throw new IOException("Varint too large");
+            }
+        }
+        long varlong() throws IOException {
+            long value = 0;
+            int shift = 0;
+            while (true) {
+                need(1);
+                byte x = d[p++];
+                value |= (long) (x & 0x7F) << shift;
+                if ((x & 0x80) == 0) return value;
+                shift += 7;
+                if (shift > 63) throw new IOException("Varlong too large");
+            }
+        }
+        long int64() throws IOException {
+            need(8);
+            long v = 0;
+            for (int i = 0; i < 8; i++) v = (v << 8) | (d[p++] & 0xFF);
+            return v;
+        }
+        byte[] bytes(int n) throws IOException {
+            need(n);
+            byte[] out = java.util.Arrays.copyOfRange(d, p, p + n);
+            p += n;
+            return out;
+        }
+        String utf8(int n) throws IOException {
+            need(n);
+            String s = new String(d, p, n, StandardCharsets.UTF_8);
+            p += n;
+            return s;
+        }
+    }
+
+    private Variable slotVar(int slot, String name) throws IOException {
+        if (slot < 0 || slot > 1_000_000) throw new IOException("Invalid variable slot: " + slot);
+        if (slot >= frame.length) frame = java.util.Arrays.copyOf(frame, Math.max(slot + 1, frame.length * 2));
+        while (frameSize <= slot) frame[frameSize++] = null;
+        Variable v = frame[slot];
+        if (v == null) {
+            if (name == null) throw new IOException("Variable slot " + slot + " used before its first occurrence");
+            v = new Variable(name);
+            frame[slot] = v;
+        }
+        return v;
+    }
+    // END_CHANGE: ISS-2025-0553
+
     // START_CHANGE: ISS-2025-0190 - Add bounds checking on string table indices
-    private Term readTerm(DataInputStream dis, String[] strings, List<Variable> frame) throws IOException {
-        byte type = dis.readByte();
+    // START_CHANGE: ISS-2025-0561 - P3.12: compounds are decoded with an explicit stack, so a
+    // clause nested 100 000 deep loads from a .jpc as it consults (the recursion overflowed).
+    private static final class Frame {
+        final Atom f; final Term[] args; int i;
+        Frame(Atom f, Term[] args) { this.f = f; this.args = args; }
+    }
+
+    private Frame compoundFrame(Buf b, String[] strings) throws IOException {
+        int functorIdx = b.varint();
+        checkStringIndex(functorIdx, strings.length, "compound functor");
+        int argCount = b.varint();
+        if (argCount < 0 || argCount > b.remaining()) throw new IOException("Invalid arity: " + argCount);
+        return new Frame(atom(strings, functorIdx), new Term[argCount]);   // ISS-2025-0553: adopted
+    }
+
+    private Term readTerm(Buf b, String[] strings) throws IOException {
+        return readTerm(b, strings, 0);
+    }
+
+    /** Recursive (allocation-free) to depth 256, then the explicit stack for that subterm. */
+    private Term readTerm(Buf b, String[] strings, int depth) throws IOException {
+        byte type = b.u8b();
+        if (type != JpcFormat.TERM_COMPOUND) return readLeaf(b, strings, type);
+        if (depth < 256) {
+            Frame f = compoundFrame(b, strings);
+            for (int i = 0; i < f.args.length; i++) f.args[i] = readTerm(b, strings, depth + 1);
+            return new CompoundTerm(f.f, f.args);
+        }
+        ArrayList<Frame> stack = new ArrayList<Frame>();
+        stack.add(compoundFrame(b, strings));
+        for (;;) {
+            Frame f = stack.get(stack.size() - 1);
+            if (f.i == f.args.length) {
+                Term built = new CompoundTerm(f.f, f.args);
+                stack.remove(stack.size() - 1);
+                if (stack.isEmpty()) return built;
+                Frame parent = stack.get(stack.size() - 1);
+                parent.args[parent.i++] = built;
+                continue;
+            }
+            byte t = b.u8b();
+            if (t == JpcFormat.TERM_COMPOUND) stack.add(compoundFrame(b, strings));
+            else f.args[f.i++] = readLeaf(b, strings, t);
+        }
+    }
+    // END_CHANGE: ISS-2025-0561
+
+    private Term readLeaf(Buf b, String[] strings, byte type) throws IOException {
         switch (type) {
             case JpcFormat.TERM_ATOM: {
-                int idx = readVarint(dis);
+                int idx = b.varint();
                 checkStringIndex(idx, strings.length, "atom");
-                return new Atom(strings[idx]);
+                return atom(strings, idx);                                // ISS-2025-0553
             }
             case JpcFormat.TERM_NUMBER: {
                 // START_CHANGE: ISS-2025-0261 - read the subtype byte so int/float type and
                 // BigInteger precision are restored (v0x02 format).
-                byte subtype = dis.readByte();
+                byte subtype = b.u8b();
                 switch (subtype) {
                     case JpcFormat.NUM_LONG:
-                        return new it.denzosoft.jprolog.core.terms.Number(dis.readLong());
+                        return new it.denzosoft.jprolog.core.terms.Number(b.int64());
+                    case JpcFormat.NUM_VARLONG: {                             // ISS-2025-0553
+                        long z = b.varlong();
+                        return it.denzosoft.jprolog.core.terms.Number.valueOf((z >>> 1) ^ -(z & 1));
+                    }
                     case JpcFormat.NUM_FLOAT:
-                        return new it.denzosoft.jprolog.core.terms.Number(dis.readDouble(), false);
+                        return new it.denzosoft.jprolog.core.terms.Number(Double.longBitsToDouble(b.int64()), false);
                     case JpcFormat.NUM_BIGINT: {
-                        int len = readVarint(dis);
-                        byte[] b = new byte[len];
-                        dis.readFully(b);
-                        return new it.denzosoft.jprolog.core.terms.Number(new java.math.BigInteger(b));
+                        int len = b.varint();
+                        return new it.denzosoft.jprolog.core.terms.Number(new java.math.BigInteger(b.bytes(len)));
                     }
                     default:
                         throw new IOException("Unknown JPC number subtype: " + subtype);
@@ -136,40 +281,26 @@ public class JpcReader {
             }
             case JpcFormat.TERM_VARIABLE: {
                 // START_CHANGE: ISS-2025-0447 - index first, then the name; one cell per index.
-                int slot = readVarint(dis);
-                int idx = readVarint(dis);
+                int slot = b.varint();
+                int idx = b.varint();
                 checkStringIndex(idx, strings.length, "variable");
-                if (slot < 0 || slot > 1_000_000) throw new IOException("Invalid variable slot: " + slot);
-                while (frame.size() <= slot) frame.add(null);
-                Variable v = frame.get(slot);
-                if (v == null) { v = new Variable(strings[idx]); frame.set(slot, v); }
-                return v;
+                return slotVar(slot, strings[idx]);
                 // END_CHANGE: ISS-2025-0447
             }
-            case JpcFormat.TERM_COMPOUND: {
-                int functorIdx = readVarint(dis);
-                checkStringIndex(functorIdx, strings.length, "compound functor");
-                int argCount = readVarint(dis);
-                List<Term> args = new ArrayList<>(argCount);
-                for (int i = 0; i < argCount; i++) {
-                    args.add(readTerm(dis, strings, frame));
-                }
-                return new CompoundTerm(new Atom(strings[functorIdx]), args);
-            }
+            case JpcFormat.TERM_VAR_AGAIN:                                // ISS-2025-0553
+                return slotVar(b.varint(), null);
             case JpcFormat.TERM_PROLOG_STRING: {
-                int idx = readVarint(dis);
+                int idx = b.varint();
                 checkStringIndex(idx, strings.length, "prolog string");
                 return new PrologString(strings[idx]);
             }
     // END_CHANGE: ISS-2025-0190
             // START_CHANGE: ISS-2025-0185 - Rational number deserialization
             case JpcFormat.TERM_RATIONAL: {
-                int numLen = readVarint(dis);
-                byte[] numBytes = new byte[numLen];
-                dis.readFully(numBytes);
-                int denLen = readVarint(dis);
-                byte[] denBytes = new byte[denLen];
-                dis.readFully(denBytes);
+                int numLen = b.varint();
+                byte[] numBytes = b.bytes(numLen);
+                int denLen = b.varint();
+                byte[] denBytes = b.bytes(denLen);
                 return new Rational(new java.math.BigInteger(numBytes), new java.math.BigInteger(denBytes));
             }
             // END_CHANGE: ISS-2025-0185

@@ -261,14 +261,20 @@ public class EngineV4TablingTest {
         final Prolog c = new Prolog();
         c.consult(chain(100000, LEFT));
         final Throwable[] caught = new Throwable[1];
+        // ISS-2025-0664: latch-synchronised — the interrupt is sent once the query runs
+        final it.denzosoft.jprolog.test.support.QueryStartLatch latch =
+            new it.denzosoft.jprolog.test.support.QueryStartLatch();
         Thread t = new Thread(new Runnable() {
             @Override public void run() {
-                try { c.solve("path(1, 100001)."); } catch (Throwable e) { caught[0] = e; }
+                try {
+                    latch.solve(c, it.denzosoft.jprolog.test.support.QueryStartLatch.ANNOUNCE + "path(1, 100001).");
+                } catch (Throwable e) { caught[0] = e; }
             }
         });
         t.start();
         try {
-            Thread.sleep(150);
+            latch.await(20);
+            Thread.sleep(150);        // into the fixpoint
             t.interrupt();
             t.join(60000);
         } catch (InterruptedException ie) {
@@ -372,12 +378,7 @@ public class EngineV4TablingTest {
         prolog.consult(":- table fibt/2.\nfibt(0,0).\nfibt(1,1).\n"
                      + "fibt(N,F) :- N > 1, N1 is N-1, N2 is N-2, fibt(N1,F1), fibt(N2,F2), F is F1+F2.\n");
         // ISS-2025-0484 - wave W9: the recursive solver is deleted; assert that structurally.
-        try {
-            Class.forName("it.denzosoft.jprolog.core.engine.QuerySolver");
-            fail("the recursive QuerySolver must be deleted (wave W9, ISS-2025-0484)");
-        } catch (ClassNotFoundException expected) {
-            // the only correct outcome
-        }
+        // ISS-2025-0665: the "QuerySolver is deleted" check lives once, in EngineV4RetirementTest
         assertSucceeds("path(1, 201).");
         assertSucceeds("path(1, 51).");
         assertSucceeds("findall(Y, path(1, Y), L), length(L, 200).");

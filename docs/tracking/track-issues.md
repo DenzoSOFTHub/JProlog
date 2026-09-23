@@ -2,6 +2,843 @@
 
 ## Active and Resolved Issues
 
+## Wave P7 2026-09-23 (4.5.0 production-readiness program) — THE TEST SUITE AS A SAFETY NET + RELEASE
+
+Spec and wave record: `docs/reports/report-production-readiness-2026-09-23.md` sections 7 and 16.
+
+### ISS-2025-0660
+**Status**: RESOLVED (4.5.0, wave P7 — 7.1)
+**Problem**: `ISOComplianceTest` held seven tautologies (`assertTrue(true)`, `empty \|\| !empty`); `testISOComplianceLevel` called every predicate NAME at arity 0 with `unknown=fail` and counted "no exception" as implemented, which a missing predicate satisfies.
+**Fix**: Value assertions on the real answers; the level test checks 109 indicators with `predicate_property(H, defined)` plus a sentinel that must be undefined.
+**Test**: `ISOComplianceTest` (7 methods)
+
+### ISS-2025-0661
+**Status**: RESOLVED (4.5.0, wave P7 — §8 decision (not implemented by P1..P6))
+**Problem**: A tabled non-stratified negation (`:- table p/1. p(X) :- \+ p(X).`) answered inconsistently (`p(a)` succeeded).
+**Fix**: While a tabled evaluation runs, `\+ G` is an opaque sub-run whose floor is the current table sequence number; a consumer inside it that reads an incomplete table created before the negation raises `permission_error(negate, incomplete_table, G)`. Stratified negation is unaffected; outside tabling `\+` is the unchanged inline if-then-else. WFS itself: LIM-046.
+**Test**: `EngineV45ReleaseTest.testISS0661_TabledNegationOverAnIncompleteTableRaises`, `RefactorIssuesTest.testR5_tabledNegation`
+
+### ISS-2025-0662
+**Status**: RESOLVED (4.5.0, wave P7 — 7.2)
+**Problem**: Tests that accepted ANY exception (`catch (RuntimeException e) { /* acceptable */ }`) or an empty answer list in place of the specified error.
+**Fix**: Exact `error(Formal, _)` assertions: RefactorIssues R2/R3/R5, AuditRound5 test2/mustBe/test7, EngineHardening 0428, BugFix 0229/0363, builtin ExceptionHandling mismatch, ProductionAudit 0341 (the 200k-deep term and the 100k-deep input are now asserted to WORK).
+**Test**: the listed methods
+
+### ISS-2025-0663
+**Status**: RESOLVED (4.5.0, wave P7 — 7.3)
+**Problem**: Existence-only assertions (`!solutions.isEmpty()`, `>= N`, `toString().contains("1")`, "verify" queries that were separate queries and could not fail).
+**Fix**: `==` in the query or exact counts: MegaPredicateTest (19), ProductionAudit sorts, MetaPredicatesTest (once/1 over a nondeterministic goal), AnonymousVariableTest, ListBuiltinsTest, NegationAsFailure, JPrologComprehensive, BugFix (5 `>=`, 12 `contains`, the `'1'`/`1` check).
+**Test**: the listed methods
+
+### ISS-2025-0664
+**Status**: RESOLVED (4.5.0, wave P7 — 7.6)
+**Problem**: Flaky tests: sleep-then-interrupt races (EngineHardening 0431, BugFix 0320, EngineV4Threads 0480, EngineV4Tabling 0463), a 50 µs wall-clock bound (ENG-13), a GC-dependent test that could not fail (AuditRound5), a leaked stream (RefactorIssues R3).
+**Fix**: `test/support/QueryStartLatch`: the query announces it is running, the interrupt follows; the lookup bound is a 20 000-vs-200-fact ratio; the GC test is removed.
+**Test**: the listed methods
+
+### ISS-2025-0665
+**Status**: RESOLVED (4.5.0, wave P7 — 7.4)
+**Problem**: Dead tests: `BuiltInTests.java` (never run, `*Tests`), classes that drove legacy classes the engine no longer dispatches and mutated the JVM-wide operator table, duplicated "QuerySolver is deleted" checks, stale names, the ENG-11 loop on a now-native built-in.
+**Fix**: `BuiltInTests.java` deleted; `OperatorDefinitionTest`, `Phase1FeaturesTest`, root `ExceptionHandlingTest` retargeted at the engine; 3 duplicates removed; 3 renames; ENG-11 on `get_time/1` (asserted bridged).
+**Test**: `OperatorDefinitionTest.testOperatorsArePerEngine` and the listed classes
+
+### ISS-2025-0666
+**Status**: RESOLVED (4.5.0, wave P7 — 7.5)
+**Problem**: `FamousPrologProgramsTest` "adapted" every program to a toy (Hanoi checked a fact, queens looked up a fact).
+**Fix**: Nine real programs with their full answers: 8-queens (92, cross-checked by brute force), Hanoi move lists, quicksort vs msort, zebra, SEND+MORE via CLP(FD), Ackermann, sieve, DCG expression evaluator.
+**Test**: `FamousPrologProgramsTest` (9)
+
+### ISS-2025-0667
+**Status**: RESOLVED (4.5.0, wave P7 — 7.7)
+**Problem**: No regression net for the P2 complexity fixes.
+**Fix**: `test/performance/PerformanceRegressionTest`: N vs 4N growth tests (warm-up, min of 3, bound 10x + 50 ms) for retractall, retract loop, asserta loop, bound-key retract, assert + indexed call with a var-headed clause, assert/retract interleave, append split mode, predsort, bagof grouping (+ 40k witnesses), maplist/foldl.
+**Test**: `PerformanceRegressionTest` (10)
+
+### ISS-2025-0668
+**Status**: RESOLVED (4.5.0, wave P7 — 7.8)
+**Problem**: Trace ports: a phantom `Fail` after the Exit of a deterministic `once/ignore/forall` or last-clause call; a failure inside a single-clause predicate never printed its `Fail`; `maplist` printed `Fail` after the top-level Exit and leaked the internal `'$mctx'(user, dbl)` wrapper.
+**Fix**: Traced CLAUSES frames and the control-construct port frame stay until their Exit and are dropped there when nothing is above them; a traced frame looks ahead for a clause that can still match (per-argument key clash); `'$mctx'` prints as the plain closure. Untraced execution unchanged.
+**Test**: `EngineV4TraceTest` (7 oracles re-pinned, `testISS0668_Trace_ParentFailIsPrinted` new)
+
+### ISS-2025-0669
+**Status**: RESOLVED (4.5.0, wave P7 — 7.9)
+**Problem**: Deliberate deviations were spread over B.17, the IsoErrors class comment and the wave records; factual errors: `integer/1` cited as ISO 9.1.6.5, `call((fail, 1))` cited as ISO 8.15.1.3, the predicate reference still said `call((fail, 1))`/`string_concat(-,-,-)`/`tab` fail.
+**Fix**: `docs/references/ref-deviations.md`; citations and the reference corrected.
+**Test**: documentation
+
+### ISS-2025-0670
+**Status**: RESOLVED (4.5.0, wave P7 — leftover (P1, P3))
+**Problem**: Legacy classes no longer reachable: `builtin/io/Read`, `ReadTerm`, `builtin/term/AtomToTerm`, `TermToAtom`, `builtin/arithmetic/Between`, `DCGUtils.DCGTranslateRule` (whose `dcg_translate_rule/4` was a message-atom stub).
+**Fix**: Deleted; the registry keeps `ControlConstruct` placeholders under the names (permission_error, listings, safe-mode snapshot) with exact arity entries; `call_dcg/3` translates through the v2 DCG translator.
+**Test**: `EngineV45ReleaseTest.testISS0670_LegacyClassesDeletedNamesStillWork`; BugFix ISS0408 text test retargeted
+
+### ISS-2025-0671
+**Status**: RESOLVED (4.5.0, wave P7 — leftover (P6))
+**Problem**: A query that does not parse raised the message ATOM `'Error parsing query: ...'` (CLI: `Error: 'Error parsing query: ...'`).
+**Fix**: `error(syntax_error(Message), query)` from `solve` and `solveStream`.
+**Test**: `EngineV45ReleaseTest.testISS0671_QuerySyntaxErrorIsIso`, `PrologCliToplevelTest.testISS0671_ParseErrorLineIsIsoSyntaxError`
+
+### ISS-2025-0672
+**Status**: RESOLVED (4.5.0, wave P7 — leftover (P6))
+**Problem**: `halt/0,1` stayed callable in safe mode: untrusted code could end the embedder's query (and, in a host honouring the signal, its process).
+**Fix**: Denied by default with `permission_error(call, sandboxed, halt/halt(N))` (SWI sandbox); `SafeModeOptions.allowHalt()` restores it; the CLI's `--safe` allows it.
+**Test**: `EngineV45ReleaseTest.testISS0672_HaltIsSandboxedInSafeMode`, `PrologCliToplevelTest.testISS0672_SafeCliStillHalts`
+
+### ISS-2025-0673
+**Status**: RESOLVED (4.5.0, wave P7 — leftover (P3))
+**Problem**: `writeq('\e')` printed `'\33\'` (SWI: `'\e'`).
+**Fix**: `\e` escape in quoted atoms and strings.
+**Test**: `EngineV45ReleaseTest.testISS0673_WriteqEscapeCharacter`
+
+### ISS-2025-0674
+**Status**: RESOLVED (4.5.0, wave P7 — found in P7)
+**Problem**: Every `new Prolog()` logged 13 `WARNING: Overriding existing built-in predicate` lines (26 stderr lines per `java -jar jprolog.jar` start).
+**Fix**: Logged at FINE.
+**Test**: manual (jar run)
+
+### ISS-2025-0675
+**Status**: RESOLVED (4.5.0, wave P7 — found in P7)
+**Problem**: `current_prolog_flag(version, V)` answered `'2.0.15'` (`version_data`, `prolog_version` likewise).
+**Fix**: `40500`, `jprolog(4,5,0,[])`, `'jprolog-4.5.0'` (SWI shapes).
+**Test**: `EngineV45ReleaseTest.testISS0675_VersionFlags`
+
+## Wave P6 2026-09-23 (4.5.0 production-readiness program) — PRODUCTION HARDENING (SANDBOX, THREADS, CLI, BUDGET)
+
+Spec and wave record: `docs/reports/report-production-readiness-2026-09-23.md` sections 6 and 15.
+Tests: `core/engine/v4/EngineV45HardeningTest` and `test/cli/PrologCliToplevelTest` unless noted.
+
+### ISS-2025-0620
+**Status**: RESOLVED (4.5.0, wave P6.5 (extra))
+**Problem**: `thread_detach/1` raised a message atom (`thread_detach: unknown thread 18`) and raced the thread's end: `thread_create(true, D, [detached(true)]), thread_detach(D)` failed under load (the flaky `EngineV4ThreadsTest.testISS0479_ThreadCreate3Options`).
+**Fix**: SWI semantics decided under the thread record's lock: a live thread (detached or not) is detached; a finished, never-joined thread is reclaimed; an unknown/reclaimed one is `existence_error(thread, D)`. The old test now detaches a thread that is still alive (deterministic).
+**Test**: `EngineV45HardeningTest.testISS0620_ThreadDetachSemantics`; `EngineV4ThreadsTest.testISS0479_ThreadCreate3Options`
+
+### ISS-2025-0621
+**Status**: RESOLVED (4.5.0, wave P6.5)
+**Problem**: Thread errors were message atoms (`'thread_join: unknown thread alias nosuch'`); a duplicate `alias(dup)` was accepted.
+**Fix**: `builtin.threading.ThreadPredicates` rewritten on `core.engine.v4.Errors`: `existence_error(thread|message_queue|mutex, X)`, `permission_error(create, thread, Alias)`, `permission_error(join, thread, Id)` (detached, self, `main`), instantiation/type errors; arity entries in `BuiltInRegistry`.
+**Test**: `EngineV45HardeningTest.testISS0621_ThreadErrorsAreIsoTerms`
+
+### ISS-2025-0622
+**Status**: RESOLVED (4.5.0, wave P6.2)
+**Problem**: The concurrent family turned every worker exception into a message atom: the inference budget became a catchable ball (`catch(first_solution(X,[loop],[]), E, true)`), `catch(concurrent_and([throw(foo)],[]), foo, true)` did not catch; `concurrent_maplist` gave up after a hard 60 s (`'concurrent_maplist_2: null'`); worker answers lost the aliasing between variables.
+**Fix**: `ConcurrentPredicates.await` unwraps `ExecutionException`: control exceptions re-raised as themselves, Prolog balls as copies, siblings cancelled; no fixed timeout (interruptible waits); `concurrent/3` and `concurrent_maplist` unify the goals' bindings back (SWI); `Workers` copies an answer with ONE variable map.
+**Test**: `EngineV45HardeningTest.testISS0622_ConcurrentFamilyPropagatesBalls`
+
+### ISS-2025-0623
+**Status**: RESOLVED (4.5.0, wave P6.2)
+**Problem**: Argument faults of the concurrent family were message atoms.
+**Fix**: ISO `type_error(list|integer|callable, X)`, `instantiation_error`, `domain_error(positive_integer, N)`.
+**Test**: `EngineV45HardeningTest.testISS0623_ConcurrentArgumentErrorsAreIso`
+
+### ISS-2025-0624
+**Status**: RESOLVED (4.5.0, wave P6.3)
+**Problem**: Each worker got a fresh guard with the parent's FULL budget (N workers = N+1 budgets); natives doing O(N) work in one step (`length(L,N), fail`, open `append/3`, `member(a,L)`, `nth0/nth1`, `msort`, `copy_term`, `atom_codes`) made a 100 000-step budget run for minutes.
+**Fix**: `ResourceGuard` draws credit from ONE shared pool (`AtomicLong`, chunks of 1 024, exact for a single guard; `child()` for workers, unused credit released); `charge(n)` for O(n) work — the list walkers, the per-solution list builders, `msort/sort`, the copy walker (per node), `atom_codes/chars`. `charge` does not count as an inference in `statistics/2`.
+**Test**: `EngineV45HardeningTest.testISS0624_BudgetIsSharedByTheWorkers`, `testISS0624_BudgetChargesTheWorkOfNatives`
+
+### ISS-2025-0625
+**Status**: RESOLVED (4.5.0, wave P6.1)
+**Problem**: Safe mode leaked host file access beyond `open/3` (`csv_read_file`, `csv_write_file`, `log_to_file`) and never touched the native table.
+**Fix**: `Prolog.enableSafeMode()` also removes a deny list by NAME (`UNSAFE_PREDICATE_NAMES`: open, see/tell, the CSV file predicates, log_to_file, the loaders, ...) from the registry AND the native `BuiltinTable`; `enableSafeMode(SafeModeOptions)` with `allowFileRead(dir)` keeps read-only `open/3,4` and the loaders restricted to the directory (`checkSafeRead` in `loadSpec`, include, use_module). The survivors are pinned in `src/test/resources/safe-mode-allowlist.txt`.
+**Test**: `EngineV45HardeningTest.testISS0625_SafeModeSurvivorsArePinned`, `testISS0625_SafeModeDeniesTheFileLeaks`
+
+### ISS-2025-0626
+**Status**: RESOLVED (4.5.0, wave P6.1)
+**Problem**: `log_to_file/1` installed a JVM-wide `java.util.logging` FileHandler: one engine redirected every engine's log; `log_level/1` was global; errors were message atoms.
+**Fix**: Per-engine log state (level + sink: the engine's `user_error` or the file) in a weak map; ISO errors.
+**Test**: `EngineV45HardeningTest.testISS0626_LoggingIsPerEngine`
+
+### ISS-2025-0627
+**Status**: RESOLVED (4.5.0, wave P6.4 (extra 2))
+**Problem**: The CLI computed ALL solutions before printing (`between(1,inf,X).` and, since P4, `last([a|T], b).` ran out of memory; side effects of every solution ran before the first prompt); demo facts loaded by default; no command-line files/goals/options/exit status.
+**Fix**: Answers streamed in both modes through the new `Prolog.solveStream(String, AnswerSink)` (`Machine.hasAlternatives()` gives SWI's `.` vs ` ;` / `false.`); `--demo`, `-g`, `-t`, `--safe`, `--budget`, `--max-solutions`, `--interactive`, files as arguments, exit statuses (`halt(N)`, `-g` failure/error = 1, bad option = 2); `PrologCLI.run()` never calls `System.exit`. `test_all_examples.sh` (untracked) passes `--demo`: test_01's queries are about the demo facts.
+**Test**: `test/cli/PrologCliToplevelTest` (5 methods)
+
+### ISS-2025-0628
+**Status**: RESOLVED (4.5.0, wave P6.4)
+**Problem**: `mvn package` built no runnable jar; the pom's default exec mainClass `it.denzosoft.jprolog.Main` does not exist.
+**Fix**: `<finalName>jprolog</finalName>` + maven-jar-plugin manifest `Main-Class: it.denzosoft.jprolog.PrologCLI` (no runtime dependency, so the jar is self-contained); exec default mainClass = PrologCLI.
+**Test**: `test/cli/PrologCliToplevelTest.testISS0637_NoLegacyParserFieldAndRunnableJar`
+
+### ISS-2025-0629
+**Status**: RESOLVED (4.5.0, wave P6.5)
+**Problem**: `thread_get_message(Q, b(X))` failed when `a(1)` was at the head (no selective receive); `/1,2` gave up after 30 s; `thread_get_message/3` did not exist.
+**Fix**: Queues scan for the first message that unifies, block (interruptibly) until one arrives; `/3` with `timeout(T)`/`deadline(D)` fails on expiry; `thread_peek_message/1,2` selective too. Thread, queue and mutex ids share ONE counter (a queue id can no longer be taken for a thread id).
+**Test**: `EngineV45HardeningTest.testISS0629_SelectiveReceiveAndTimeouts`
+
+### ISS-2025-0630
+**Status**: RESOLVED (4.5.0, wave P6.5)
+**Problem**: Missing `thread_property/2`, `message_queue_destroy/1`, `message_queue_create/2`.
+**Fix**: Implemented (id/alias/status/detached; alias option; destroy wakes waiters with `existence_error`).
+**Test**: `EngineV45HardeningTest.testISS0630_ThreadProperty`, `testISS0629_...`
+
+### ISS-2025-0631
+**Status**: RESOLVED (4.5.0, wave P6.5)
+**Problem**: Missing mutexes and `thread_join/1`.
+**Fix**: `mutex_create/1,2`, `mutex_destroy/1`, `mutex_lock/1`, `mutex_trylock/1`, `mutex_unlock/1`, `mutex_unlock_all/0`, `with_mutex/2` (recursive; atoms auto-create; released when the goal fails/raises and when the owning thread ends); `thread_join/1` raises `thread_error(Id, Status)` unless `true`.
+**Test**: `EngineV45HardeningTest.testISS0631_MutexesAndWithMutex`
+
+### ISS-2025-0632
+**Status**: RESOLVED (4.5.0, wave P6.5)
+**Problem**: Missing `thread_exit/1` and the `at_exit/1` option.
+**Fix**: `core.engine.ThreadExitException` (a control exception: `ControlFlow` lets it through, catch/3 cannot see it; cleanups run) gives the status `exited(T)`; `thread_exit/1` in `main` is `permission_error(exit, thread, main)`.
+**Test**: `EngineV45HardeningTest.testISS0632_ThreadExit`
+
+### ISS-2025-0633
+**Status**: RESOLVED (4.5.0, wave P6.5)
+**Problem**: Global variables were shared across threads (SWI: per thread); `main` was claimed by whichever non-worker thread came first (two order-dependent tests).
+**Fix**: `Prolog.enterWorkerGlobals/exitWorkerGlobals` — a worker machine (`Workers`) gets its own store; every non-worker thread is `main` (id 1) with one queue. Two tests switched to selective receives.
+**Test**: `EngineV45HardeningTest.testISS0633_GlobalVariablesArePerThread`; `EngineV41RetirementTest`, `EngineV4RetirementTest` repinned
+
+### ISS-2025-0634
+**Status**: RESOLVED (4.5.0, wave P6.5)
+**Problem**: Missing `concurrent_forall/2,3`.
+**Fix**: Implemented (`threads(N)` option; failure/exception cancels the rest).
+**Test**: `EngineV45HardeningTest.testISS0634_ConcurrentForall`
+
+### ISS-2025-0635
+**Status**: RESOLVED (4.5.0, wave P6.6)
+**Problem**: `EngineV4StreamsTest.testISS0472` joined t1 before starting t2 (the threads never overlapped).
+**Fix**: Both threads redirect their output, rendezvous through two message queues, then write: the two current outputs are live at once.
+**Test**: `EngineV4StreamsTest.testISS0472_TwoThreadsHaveTheirOwnCurrentOutput`
+
+### ISS-2025-0636
+**Status**: RESOLVED (4.5.0, wave P6 (extra 3))
+**Problem**: `initialization(G, main)` did not halt after running G.
+**Fix**: `Prolog.setDeferInitializationMain/takeInitializationMain/runOnce`: the CLI loads its file arguments with the goals deferred, runs -g goals, then the main goals and exits (0; 1 on failure or error; N on `halt(N)`). An embedder that does not ask keeps the old behaviour (runs after the load, no halt).
+**Test**: `test/cli/PrologCliToplevelTest.testISS0636_InitializationMainHalts`
+
+### ISS-2025-0637
+**Status**: RESOLVED (4.5.0, wave P6 (extra 5))
+**Problem**: `PrologCLI` held an unused legacy `core.parser.Parser`.
+**Fix**: Removed.
+**Test**: `test/cli/PrologCliToplevelTest.testISS0637_NoLegacyParserFieldAndRunnableJar`
+
+### ISS-2025-0638
+**Status**: RESOLVED (4.5.0, wave P6 (extra 4))
+**Problem**: `new Prolog()` built an HttpClient + SSLContext in `HttpServerPredicates.<clinit>` (3-4 % of a short run).
+**Fix**: Holder-idiom lazy client, built by the first HTTP request.
+**Test**: `EngineV45HardeningTest.testISS0638_HttpClientIsLazy`
+
+### ISS-2025-0639
+**Status**: RESOLVED (4.5.0, wave P6 (extra 6))
+**Problem**: A directive that starts a thread which consults a file and joins it deadlocked on the per-engine load lock.
+**Fix**: `core.engine.LoadLock` (reentrant, interruptible) admits a thread as a GUEST while the owner is blocked in `thread_join` on it (`core.engine.ThreadWaits`, transitive). Other waits (message, concurrent_*) still block: LIM-045.
+**Test**: `EngineV45HardeningTest.testISS0639_DirectiveThreadThatConsultsDoesNotDeadlock`
+
+## Wave P3 2026-09-23 (4.5.0 production-readiness program) — LOADING, READING AND WRITING TERMS
+
+Spec and wave record: `docs/reports/report-production-readiness-2026-09-23.md` sections 3 and 14.
+Unless noted, every test is in `core/engine/v4/EngineV45LoadReadWriteTest`.
+
+### ISS-2025-0560
+**Status**: RESOLVED (4.5.0, wave P3.10)
+**Problem**: `'\e'` read as `e`, `'\s'` as `s`, `'\z'` accepted; no `\uXXXX`/`\UXXXXXXXX`.
+**Fix**: `core.parser.v2.Lexer.readEscape`: `\e`=27, `\s`=space, `\u`/`\U` fixed-width hex; any other escape is a syntax error (SWI/ISO).
+**Test**: `testISS0560_LexerEscapesFollowSwi`
+
+### ISS-2025-0561
+**Status**: RESOLVED (4.5.0, wave P3.8/P3.12)
+**Problem**: `MAX_NESTING = 1000` counted right-associative operator chains, so a clause body of >= 1000 goals or a long `;` chain raised `resource_error(parser_nesting)`; an 8000-deep term could not be consulted.
+**Fix**: `TermReader.parseOperators` is iterative (pending infix frames on an explicit stack); only brackets/arguments/prefix operators nest. Input nested beyond 1000 levels is re-read on a helper thread with a 1 GB (reserved) stack, where the limit is 200 000; a StackOverflowError there becomes `resource_error(parser_nesting)`. P3.12: `JpcWriter` (string collection, term writer) and `JpcReader.readTerm` made iterative beyond depth 256 — a deep clause failed to compile/load as `.jpc`.
+**Test**: `testISS0561_OperatorChainsAndDeepTermsLoad; EngineV4StreamsTest.testISS0473 repinned (250 000 levels)`
+
+### ISS-2025-0562
+**Status**: RESOLVED (4.5.0, wave P3.9)
+**Problem**: writeq output did not read back: `-(2^2)` printed `-2^2`, `-(-,-)` printed `- - -`, `1-(-)` printed `1- -`, `'[]'(a,b)` printed `[](a,b)`, DEL raw, `'_x'` unquoted, `-((a,b))` printed `-(a,b)`.
+**Fix**: `core.engine.v4.Writer`: +/-(operand starting with a number) canonical, operator atoms as operands bracketed, prefix operator + `(` spaced, `[]`/`{}` functors quoted, control characters as octal escapes, `_`-initial atoms quoted. The reader: SWI-lenient prefix operators above the context priority, `op(...)` after a prefix op is a compound. BugFixVerificationTest:3740/3751 and EngineV4WriterTest repinned.
+**Test**: `testISS0562_WriterOutputReadsBack, testISS0562_WriteqReadRoundTripProperty (4 000 random terms)`
+
+### ISS-2025-0563
+**Status**: RESOLVED (4.5.0, wave extra)
+**Problem**: Floats >= 1e7 printed in E notation (`get_time(T)` showed `1.79016868901e9`).
+**Fix**: `Number.formatFloat`: SWI's shortest round-trip layout (exponent only below 1e-4 or from 1e15). BugFixVerificationTest.testISS0390 repinned.
+**Test**: `testISS0563_FloatsPrintInSwiShortestForm`
+
+### ISS-2025-0564
+**Status**: RESOLVED (4.5.0, wave P3.9)
+**Problem**: `inf`/`nan` were written as atoms by writeq and did not read back.
+**Fix**: writeq/print write `1.0Inf`, `-1.0Inf`, `1.5NaN`; the lexer reads them. `write/1` keeps `inf`/`nan`.
+**Test**: `testISS0564_InfAndNanReadBack`
+
+### ISS-2025-0565
+**Status**: RESOLVED (4.5.0, wave extra)
+**Problem**: The CLI's uncaught-error line printed canonical terms (`existence_error(procedure, /(foo,0))`).
+**Fix**: `PrologCLI.errorText`: writeq through `core.engine.v4.Writer` with the engine's operators.
+**Test**: `testISS0565_CliErrorLineUsesTheWriter`
+
+### ISS-2025-0566
+**Status**: RESOLVED (4.5.0, wave P3.4)
+**Problem**: `read/1,2`, `read_term/2,3` used the legacy parser (writeq output did not read back, user operators and syntax errors wrong); read variables were named cells.
+**Fix**: New `core.engine.v4.NativeRead`: a clause collector (quote/comment/0'c aware) + the v2 parser with the engine's operators and flags; fresh variable cells; options variables, variable_names, singletons, term_position, double_quotes, syntax_errors, comments; read_term_from_atom/3. EngineV4StreamsTest.testISS0473_ReadTermOptions repinned (variable names).
+**Test**: `testISS0566_ReadersUseTheV2Parser`
+
+### ISS-2025-0567
+**Status**: RESOLVED (4.5.0, wave extra)
+**Problem**: `read/2` with a non-stream raised a message atom; `read_term` read stdin for an unknown stream.
+**Fix**: Stream argument through `IOStreamUtils.inputStream` (ISO errors).
+**Test**: `testISS0567_ReadStreamArgumentErrorsAreIso`
+
+### ISS-2025-0568
+**Status**: RESOLVED (4.5.0, wave P3.4)
+**Problem**: `term_to_atom/2`, `term_string/2`, `atom_to_term/3` on the legacy parser; syntax errors failed silently; `_Y` missing from the bindings.
+**Fix**: All through `NativeRead.parse` (v2 parser, engine operators); syntax errors raise; bindings list every named variable. EngineV4TermTest.testISS0498_AtomToTerm repinned.
+**Test**: `testISS0568_TextToTermOnV2`
+
+### ISS-2025-0569
+**Status**: RESOLVED (4.5.0, wave P3.5)
+**Problem**: No in-memory input: `open_string/2`, `with_input_from/2`, `read_line_to_string/2`, `read_line_to_codes/2,3`, `read_string/3,5` missing.
+**Fix**: Implemented in `NativeRead` over `PrologStream` raw input streams.
+**Test**: `testISS0569_InMemoryInput`
+
+### ISS-2025-0570
+**Status**: RESOLVED (4.5.0, wave P3.7)
+**Problem**: `listing/1` printed `Rule.toString()` (`;(,(>(...`, `lst(A b, it's)`, `_G27`): not re-readable.
+**Fix**: `Writer.portrayClause` = SWI layout (quoted, `A, B`, `_` singletons, control blocks), iterative numbering; `Prolog.getListingOutput` groups by predicate with `:- dynamic` headers. EngineV4DatabaseTest/EngineV4WriterTest repinned.
+**Test**: `testISS0570_ListingIsReReadable`
+
+### ISS-2025-0571
+**Status**: RESOLVED (4.5.0, wave P3.11)
+**Problem**: `dcg_translate_rule/2` (legacy DCGUtils) produced wrong clauses; `expand_term/2` missing; consult ignored `term_expansion/2`.
+**Fix**: `core.engine.v4.NativeExpand` on the v2 translator; consult and `.jpc` loads apply a user term_expansion/2.
+**Test**: `testISS0571_DcgTranslateRuleAndExpandTerm`
+
+### ISS-2025-0572
+**Status**: RESOLVED (4.5.0, wave P3.3)
+**Problem**: `:- table ev/1, od/1.`, `:- table([..])`, mode-directed `:- table sp(_,_,min).` were ignored (logged) and the program looped.
+**Fix**: `TableStore.declareSpec`: comma lists, lists, `Name//N`, `as`; mode-directed tabling (min/max/first/last/-, answer replacement in `Tabling.TableFrame.recordModed`); lattice/po raise `domain_error(table_mode, M)`; `predicate_property(P, tabled)`.
+**Test**: `testISS0572_TableDirectiveForms`
+
+### ISS-2025-0573
+**Status**: RESOLVED (4.5.0, wave P3.2)
+**Problem**: A `:- module/2` never went out of scope: consulting m1 then m2 hid m1's exports, a plain file after a module file went into the module; every module test appended `:- module(user, []).`
+**Fix**: Every consult is one load with a context; at its end the current module is restored and the modules it declared are imported. `:- module(user, _)` switches back instead of replacing the user module. Workarounds removed from EngineV4ModulesTest, EngineV41RetirementTest, AuditRound5Test; RefactorIssuesTest.testR2 made one load.
+**Test**: `testISS0573_ModuleScopeEndsWithTheLoad`
+
+### ISS-2025-0574
+**Status**: RESOLVED (4.5.0, wave P3.1)
+**Problem**: No file loading from Prolog: `consult/1`, `[F]`, `ensure_loaded/1` (a silent no-op), `load_files/2`, `make/0` missing.
+**Fix**: `builtin.filesystem.LoadFiles` (safe-mode denied) over `Prolog.loadFromGoal`: relative paths against the loading file, `.pl` added, `library(X)`, reconsult wipes the file's predicates, directives run once in the loaded module on the caller's machine; `use_module(File)` loads a module file.
+**Test**: `testISS0574_ConsultEnsureLoadedLoadFiles`
+
+### ISS-2025-0575
+**Status**: RESOLVED (4.5.0, wave P3.1)
+**Problem**: `:- include(F)` unsupported.
+**Fix**: Textual inclusion in the same load (`Prolog.includeFile`); permission_error in safe mode.
+**Test**: `testISS0575_IncludeIsTextual`
+
+### ISS-2025-0576
+**Status**: RESOLVED (4.5.0, wave P3.1)
+**Problem**: `source_file/1,2`, `prolog_load_context/2` missing.
+**Fix**: `builtin.system.SourceFiles` over the loader's file records and load stack.
+**Test**: `testISS0576_SourceFileAndLoadContext`
+
+### ISS-2025-0577
+**Status**: RESOLVED (4.5.0, wave P3.6)
+**Problem**: The `.jpc` compiler used the legacy parser (`a ===> b`, `'a''b'`, backquotes failed; `{}` became `{true}`), ran every directive at compile time and loaded DCG rules untranslated.
+**Fix**: `Prolog.compile` reads with the v2 reader and records clauses as read; `.jpc` loads go through the consult clause handler (one load context). Consult-vs-jpc equivalence test over examples/*.pl.
+**Test**: `testISS0577_JpcCompilesThroughTheV2Reader, testISS0577_ConsultAndJpcAreEquivalentOnEveryExample`
+
+### ISS-2025-0578
+**Status**: RESOLVED (4.5.0, wave extra)
+**Problem**: CLI `:consult` reported lines ending in `.` as the clause count.
+**Fix**: `PrologCLI` loads through `Prolog.loadFile` and prints the real count and errors.
+**Test**: `testISS0578_CliCountsClausesNotLines`
+
+### ISS-2025-0579
+**Status**: RESOLVED (4.5.0, wave P3.4)
+**Problem**: `` `ab` `` read as a string.
+**Fix**: Backquoted text is a code list (SWI `back_quotes=codes`).
+**Test**: `testISS0566_ReadersUseTheV2Parser`
+
+## Wave P4 2026-09-23 (4.5.0 production-readiness program) — BUILT-IN CONFORMANCE: ARITHMETIC, TEXT, FORMAT, I/O, LISTS, DATABASE
+
+Spec and wave record: `docs/reports/report-production-readiness-2026-09-23.md` sections 4 and 13.
+Unless noted, every test is in `core/engine/v4/EngineV45ConformanceTest`.
+
+### ISS-2025-0590
+**Status**: RESOLVED (4.5.0, wave P4.1)
+**Problem**: `integer/1` truncated (`integer(2.5)` = 2); `round(0.49999999999999994)` = 1 and `round(-2.5)` = -2 (`floor(x+0.5)`); `truncate`/`integer` of a big integer went through `doubleValue()`; `(10^400+1)/10^400` raised `evaluation_error(undefined)`.
+**Fix**: `core.arith.v2.ArithEvaluator`: an integer argument of every rounding function is returned unchanged; `integer/1` = `round/1` = half away from zero computed exactly (`floor(|x|)` + fraction test, identity past 2^52); an integer division whose operands exceed 2^53 is done in `BigDecimal` (DECIMAL128) and rounded once. Pins `BugFixVerificationTest.testISS0225_*` changed (decision §8).
+**Test**: `core/engine/v4/EngineV45ConformanceTest.testISS0590_RoundingFunctionsAndBigIntegerDivision`
+
+### ISS-2025-0591
+**Status**: RESOLVED (4.5.0, wave P4.2)
+**Problem**: `1 << -1` and `8 >> -2` raised the non-ISO `evaluation_error(negative_shift)`.
+**Fix**: a negative count shifts the other way (SWI): `1 << -1 =:= 0`, `8 >> -2 =:= 32`; primitive `long` fast path. Pins `BugFixVerificationTest.testISS0180_*` changed.
+**Test**: `testISS0591_NegativeShiftShiftsTheOtherWay`
+
+### ISS-2025-0592
+**Status**: RESOLVED (4.5.0, wave P4.3)
+**Problem**: `is/2` on a left-deep expression of ~10 000 terms overflowed the Java stack.
+**Fix**: the recursive evaluator keeps its fast path to depth 400 and then evaluates the sub-expression with an explicit stack (`evalIter`).
+**Test**: `testISS0592_DeepExpressionsEvaluateIteratively`
+
+### ISS-2025-0593
+**Status**: RESOLVED (4.5.0, wave P4.4)
+**Problem**: `plus(1.5, 2.5, X)` answered `4.0`; the integer path used `long` arithmetic (overflow).
+**Fix**: `plus/3` is integer-only (`type_error(integer, F)`, SWI) and exact (BigInteger). `AdvancedArithmeticTest.testPlusWithFloats` repinned.
+**Test**: `testISS0593_PlusIsIntegerOnly`
+
+### ISS-2025-0594
+**Status**: RESOLVED (4.5.0, wave P4.5)
+**Problem**: `1 =:= a` reported context `is/2`; `X is [1,2]` reported the culprit `[]/0`; `X is [3]` did not evaluate.
+**Fix**: comparisons evaluate with their own indicator (`=:=/2`, `</2`, ...; built lazily, only on error); `[X]` evaluates `X`, a longer list is `type_error(evaluable, '[|]'/2)`; a one-character string evaluates to its code (SWI). A number argument skips the evaluator object entirely.
+**Test**: `testISS0594_ArithmeticErrorContextAndOneElementList`
+
+### ISS-2025-0595
+**Status**: RESOLVED (4.5.0, wave P4.6)
+**Problem**: `format/2,3`: `~d`/`~D` truncated big integers; no fill characters (``~`-t``, `~Nt`); no `~W`/`~k`; `~+` ignored its default of 8; `~Nn` printed one newline; surplus arguments were ignored; `~e/~f/~g` of a non-number printed `0.000000`; `~c` of `foo`/`-1` and `~a` of a compound succeeded; `~g` was Java's `%g`; `~r` without a radix printed hex; no `codes(C, T)`/`chars(C, T)` sinks; `~@` ran every solution of its goal.
+**Fix**: `NativeIo.Fmt` rewritten after SWI's pl-fmt.c: exact integers, C-printf `~e/~f/~g` on the exact binary value (half-even, `%g` strips zeros), column stops with per-fill-point characters, every argument fault / missing / surplus argument raises `error(format(Message), _)`, `~@` runs once, `print_message/2` shares the engine. `~Nw`/`~Nq` right-alignment kept as a JProlog extension. Repins: `EngineV4IoTest` (`~r`, `~d` error), `BugFixVerificationTest.testISS0409_FormatDirectiveDRequiresInteger`.
+**Test**: `core/engine/v4/EngineV4FormatTest` (85 directive rows + the sinks)
+
+### ISS-2025-0596
+**Status**: RESOLVED (4.5.0, wave P4.7)
+**Problem**: `string_concat(1,2,S)` gave `"nullnull"`; `string_concat(X,Y,Z)` failed; `string_length(123,L)`, `atom_string(42,S)`, `atom_string(A,42)`, `sub_string(abc,...)` failed.
+**Fix**: the string built-ins take any atomic text (and code/char lists); `string_concat/3` with nothing bound raises `instantiation_error` (decision §8, reverses ISS-2025-0188); a compound raises `type_error`. Repins: `BugFixVerificationTest.testISS0188_*`, `EngineV4TextTest`, two `EngineV4IsoErrorsTest` rows (deviations 5 and 6 removed).
+**Test**: `testISS0596_StringBuiltinsTakeAnyText`
+
+### ISS-2025-0597
+**Status**: RESOLVED (4.5.0, wave P4.7)
+**Problem**: `atomic_list_concat([a,B,c],'-','a-x-c')` failed; `[f(x)]`, `[a,B]` and `abc` failed silently; `atomic_list_concat(L,'',abc)` split into characters.
+**Fix**: SWI modes: split mode also for a list with holes, `type_error(atomic, E)`, `instantiation_error`, `type_error(list, L)`, `domain_error(non_empty_atom, '')`; any atomic separator. `EngineV4TextTest.testISS0497_AtomicListConcat` repinned.
+**Test**: `testISS0597_AtomicListConcatModesAndErrors`
+
+### ISS-2025-0598
+**Status**: RESOLVED (4.5.0, wave P4.7)
+**Problem**: `string_upper/2`, `string_lower/2` did not exist.
+**Fix**: native, any text in, a string out.
+**Test**: `testISS0598_StringUpperLower`
+
+### ISS-2025-0599
+**Status**: RESOLVED (4.5.0, wave P4.7)
+**Problem**: `sub_atom(abc,-1,1,A,S)` raised `type_error(integer,-1)`; `sub_atom` counted UTF-16 units (a lone surrogate for `sub_atom('a😀b',1,1,_,S)`); `atom_concat/3` split mode could split a surrogate pair.
+**Fix**: positions are code points everywhere; a negative Before/Length/After fails (SWI); `sub_string/5` takes any text.
+**Test**: `testISS0599_SubAtomCodePointsAndNegativePositions`
+
+### ISS-2025-0600
+**Status**: RESOLVED (4.5.0, wave P4.7)
+**Problem**: `print/1` did not quote.
+**Fix**: `print/1,2` and `~p` = `portray` + `writeq` + `numbervars` (SWI). Repins: `EngineV4IoTest.testISS0496_WriteFamilyQuoting`, `BugFixVerificationTest.testISS0378_Print1WritesWithNumbervars`.
+**Test**: `testISS0600_PrintQuotes`
+
+### ISS-2025-0601
+**Status**: RESOLVED (4.5.0, wave P4.8)
+**Problem**: `char_type`/`code_type`: no `xdigit(W)`; `space` included 28..31; `code_type(-1, end_of_file)` failed; no `prolog_*` classes; an unknown class failed silently; characters outside the BMP were rejected.
+**Fix**: SWI `iswspace` set, `white` = space/tab, `xdigit(W)`, `prolog_var_start`, `prolog_atom_start`, `prolog_identifier_continue`, `prolog_symbol`, `-1`/`end_of_file`, code points; unknown class `domain_error(char_type, T)`. `EngineV4CharTypeTest` repinned.
+**Test**: `testISS0601_CharTypeConformance`
+
+### ISS-2025-0602
+**Status**: RESOLVED (4.5.0, wave P4.9)
+**Problem**: `flatten/2` overflowed the stack at ~6000 elements and answered `resource_error(cyclic_term)` past 10 000.
+**Fix**: explicit-stack walk; a cyclic term (checked once, lazily, after 65 536 cells) is `type_error(acyclic_term, L)`.
+**Test**: `testISS0602_FlattenIsIterative`
+
+### ISS-2025-0603
+**Status**: RESOLVED (4.5.0, wave P4.10)
+**Problem**: `sum_list([a],S)`, `max_list([1,a],_)` failed; `sum_list` overflowed `long`; `length(L,L)` raised; `nth0(1,L,x)`, `nth1(2,L,x)`, `last(L,x)` on a partial list failed; `permutation/2` order differed from SWI; `intersection/3`, `union/3` removed duplicates.
+**Fix**: SWI semantics: elements are evaluated (`type_error(evaluable, ...)`), exact sums; `length(L,L)` fails; `nth0/nth1` extend a partial list and enumerate past its end with an unbound index; `last/2` enumerates a partial list; `permutation/2`, `intersection/3`, `union/3`, `subtract/3` are SWI's clauses in `prelude/lists.pl`. `nth0(-1, L, X)` keeps failing (SWI `nth0/3` fails; only `nth0/4` checks `must_be(nonneg)`). Repins: `EngineV4RetirementTest` (max_list), `EngineV4LibraryTest`/`BugFixVerificationTest.testISS0380_*` (last/2 now nondeterministic), `testISS0187`/`0190`/`0192` (decision §8).
+**Test**: `testISS0603_ListLibraryConformance`
+
+### ISS-2025-0604
+**Status**: RESOLVED (4.5.0, wave P4.11)
+**Problem**: `tab(1+1)` and `tab(a)` failed; `tab(-1)` failed.
+**Fix**: `tab/1,2` evaluates its count; `type_error(evaluable, a/0)`, `type_error(integer, F)`; a negative count prints nothing (SWI). Repins: `EngineV4IoTest`, `BugFixVerificationTest.testISS0192_tabNegativeFails`, `EngineV4IsoErrorsTest` deviation 8 removed.
+**Test**: `testISS0604_TabEvaluates`
+
+### ISS-2025-0605
+**Status**: RESOLVED (4.5.0, wave P4.12)
+**Problem**: `eof_action(error)` raised at the FIRST read at the end; `read/1` never raised past the end; the culprit was the handle name `stream_1001`; a closed stream was `domain_error`; `open(F,read,s)` failed; `get_char` on a binary / `get_byte` on a text stream succeeded; `stream_property(S, badprop(x))` failed; `get_char(S, foo(x))` failed.
+**Fix**: ISO: the first read at the end answers `end_of_file` and a read while already past raises `permission_error(input, past_end_of_stream, '$stream'(N))` (`IOStreamUtils.beforeRead`, also in `read/1,2` and `read_term/3`); `existence_error(stream, S)` for a closed `'$stream'(N)`; `uninstantiation_error(S)`; `permission_error(input, binary_stream|text_stream, S)`; `domain_error(stream_property, P)`; `type_error(in_character, C)` / `representation_error(in_character_code)`.
+**Test**: `testISS0605_StreamConformance`
+
+### ISS-2025-0606
+**Status**: RESOLVED (4.5.0, wave P4.13)
+**Problem**: `with_output_to/2` (and any thread-local capture) swallowed output sent to a file after an explicit `set_output(S)`.
+**Fix**: `Streams` remembers the current output the override was installed over; after `set_output/1` to another stream `out()` returns that stream. `with_output_to/2` codes/chars sinks are code points.
+**Test**: `testISS0606_WithOutputToYieldsToExplicitSetOutput`
+
+### ISS-2025-0607
+**Status**: RESOLVED (4.5.0, wave P4.14)
+**Problem**: `print_message(_, format(F, A))` printed the raw term.
+**Fix**: `print_message/2` is native: `format(F, A)` is formatted, `error(F, context(P, M))` is rendered SWI-style (`P: ...`), anything else is `Unknown message: T`; `ERROR: `/`Warning: ` prefixes on every line to `user_error`, `% ` for the other kinds. `EngineV4WriterTest.testISS0475_*` repinned.
+**Test**: `testISS0607_PrintMessageFormatsMessages`
+
+### ISS-2025-0608
+**Status**: RESOLVED (4.5.0, wave P4.15)
+**Problem**: `statistics/2`: `cputime` was a list of wall-clock ms; `runtime`/`walltime` were compared with `equals` so `[T|_]`/`[T0,_]` failed; `process_cputime`, `inferences`, `real_time`, `epoch`, ... missing; fake values (`atoms` = 1000).
+**Fix**: native `statistics/2,0`: SWI keys and shapes (float seconds for `cputime`/`process_cputime`/`epoch`, `[Total, SinceLast]` for `runtime`/`walltime`/`real_time`/`system_time`), `inferences` from the machine step counter (per-engine total + the running query), unknown key `domain_error(statistics_key, K)`, output unified.
+**Test**: `testISS0608_StatisticsSwiShapes`
+
+### ISS-2025-0609
+**Status**: RESOLVED (4.5.0, wave extra)
+**Problem**: `get_time/1` returned integer milliseconds (SWI: float seconds); `stamp_date_time/3` and `date_time_stamp/2` did not exist; `format_time/3` had only the historical `(Format, Stamp, Atom)` order.
+**Fix**: `get_time/1` float seconds; `parse_time/3` and a numeric `format_time/3` stamp are seconds too; SWI's `format_time(+Out, +Format, +Stamp)` order with `%` strftime directives is recognised next to the historical one; `stamp_date_time/3` (`local`, `'UTC'`, offset west) and `date_time_stamp/2` added.
+**Test**: `testISS0609_GetTimeIsFloatSeconds`
+
+### ISS-2025-0610
+**Status**: RESOLVED (4.5.0, wave P4.16)
+**Problem**: `abolish/1` left the dynamic flag (a later call failed silently); `abolish(foo/1.5)` and `abolish(foo/100000000000)` succeeded; an empty declared-dynamic predicate was neither `dynamic` nor `current_predicate`; no `number_of_clauses/1`; `predicate_property` of a module-exported predicate answered `exported` and `undefined`.
+**Fix**: `KnowledgeBase.abolishPredicate` drops the dynamic flag (existence_error afterwards); `type_error(integer, A)` / `representation_error(max_arity)`; `current_predicate/1` lists defined-dynamic predicates (`KnowledgeBase.getDefinedPredicates`); `predicate_property/2` for a bound head is answered natively from the three stores (`dynamic`/`static`, `number_of_clauses(N)`, `built_in`, `defined`, `visible`, module properties), and fails for an undefined predicate (SWI).
+**Test**: `testISS0610_AbolishAndDynamicProperties`
+
+### ISS-2025-0611
+**Status**: RESOLVED (4.5.0, wave P4.17)
+**Problem**: `assertz(m3:k(1)), m3:k(X)` raised `existence_error`; a qualified call to a module's non-exported predicate failed.
+**Fix**: `M:G` runs the module's own definition whether exported or not (export governs import only, decision §8, reverses ISS-2025-0314); a qualified call to a non-module finds flat `m3:k(...)` clauses. Repins: `EngineV4ModulesTest.testISS0466_ExportEnforcementOnQualifiedCalls`, `AuditRound5Test.test7_*`, `RefactorIssuesTest.testR2_*`.
+**Test**: `testISS0611_QualifiedCallsRunInTheModule`
+
+### ISS-2025-0612
+**Status**: RESOLVED (4.5.0, wave P4.18)
+**Problem**: `op/3` and `char_conversion/2` were undone on backtracking.
+**Fix**: permanent (ISO/SWI, decision §8). Repins: `EngineV4OpsTest` (3), `EngineV41RetirementTest.testISS0492_OpIsUndoneOnBacktracking`, `RefactorIssuesTest.testR1_opRedefinitionBacktrackable`.
+**Test**: `testISS0612_OpIsPermanent`
+
+## Wave P2 2026-09-23 (4.5.0 production-readiness program) — PERFORMANCE: CALL PATH, CLAUSE STORE, DATABASE
+
+Spec and wave record: `docs/reports/report-production-readiness-2026-09-23.md` sections 2 and 12.
+Every test below is in `core/engine/v4/EngineV45PerformanceTest`.
+
+### ISS-2025-0540
+**Status**: RESOLVED (4.5.0, wave P2.1)
+**Problem**: Every call of a user predicate re-resolved it: ~40 string comparisons in `stepN`, a native-table probe, a registry probe, the tabling set, `ClauseStore.lookup` and `KnowledgeBase.getPredicateVersion`, each building `name + "/" + arity` (≈30 % of nrev/loop/deriv).
+**Fix**: every compound body goal of a compiled clause is a `Clause.Skel`, which caches a `Machine.CallSite` the first time it resolves to a plain user predicate (or to its context module's own clauses, with the meta spec). The site is valid while `Engine.dispatchStamp()` — the modification counters of the native table, the registry and the table declarations plus the ModuleManager stamp — is unchanged. `,`/`;`/`->`/`*->` in clause bodies are expanded lazily over the frame (`Machine.stepControlSkel`), so the goals inside an if-then-else get sites too and an untaken branch is never built.
+**Test**: `testISS0540_BodyGoalCallSiteIsCachedAndInvalidated`, `testISS0540_CallSiteRespectsTablingDeclaredLater`, `testISS0549_LibraryRecursionUsesCallSites`
+
+### ISS-2025-0541
+**Status**: RESOLVED (4.5.0, wave P2.2)
+**Problem**: `ClauseStore.Predicate.sync` asked `KnowledgeBase.getPredicateVersion(name, arity)` (string concatenation + map probe) on every call.
+**Fix**: a `ClauseStore.Predicate` holds the KnowledgeBase's own `PredEntry` for the predicate (a stable handle) and reads its version as a volatile field; the store finds a predicate by name and then by arity (no key string).
+**Test**: `testISS0541_StoreReadsTheKnowledgeBaseHandle`
+
+### ISS-2025-0542
+**Status**: RESOLVED (4.5.0, wave P2.3)
+**Problem**: per-call flag checks: `BuiltinTable.lookup` and `TableStore.isTabled` built a key string per call; `stepN` compared the functor with ~40 names before reaching natives/user predicates.
+**Fix**: `BuiltinTable` keeps a name → arity-indexed array; `isTabled` answers from an empty-set fast path; a functor that `stepN` never special-cases skips all comparisons with one set probe (`Machine.stepPlain`). Modification counters feed the call-site stamp.
+**Test**: `testISS0542_DispatchTablesAnswerWithoutStringKeys`
+
+### ISS-2025-0543
+**Status**: RESOLVED (4.5.0, wave P2.4)
+**Problem**: `Clause.instantiate` (20 % self time) walked every ground sub-term of a clause on every activation and built each term through two lists (`CompoundTerm` copied its argument list), plus a `Collections.unmodifiableList` wrapper on first access.
+**Fix**: `CompoundTerm` stores a `Term[]` (`arity()`, `arg(i)`, an adopting constructor, an array-backed read-only list view); skeleton nodes that contain variables are `Clause.Skel`, ground sub-terms are shared untouched; head unification and the unifier read arguments without list views. A body goal carrying a 2 000-element ground list: 35 KB → 0.5 KB allocated per activation.
+**Test**: `testISS0543_InstantiateDoesNotWalkGroundSubterms`, `testISS0543_ArgumentViewIsUnmodifiableAndLive`
+
+### ISS-2025-0544
+**Status**: RESOLVED (4.5.0, wave P2.5/P2.7/P2.8)
+**Problem**: the KnowledgeBase kept every clause in a global list, a per-predicate list and a per-first-argument list: `asserta` inserted at the front of the global list (1e5: 5–16 s), `retract(Rule)` scanned the global list (≈48 µs per retract in a 200 000-clause base), `retractall` removed matches one at a time from the front (25k/50k/100k: 0.17/0.61/3.5 s).
+**Fix**: one `PredEntry` per predicate with a gap-buffer `RuleSeq` (amortised O(1) at both ends, O(1) removal of the stored Rule through a slot hint, one-pass bulk removal); no global list (getRules() rebuilds the old global order from per-rule sequence numbers) and no KB first-argument index (the two legacy index accessors filter the predicate's list). The dynamic flag lives on the entry.
+**Test**: `testISS0544_KnowledgeBaseWritesAreLinear`
+
+### ISS-2025-0545
+**Status**: RESOLVED (4.5.0, wave P2.5)
+**Problem**: `retractall/1` went to `KnowledgeBase.retractAllClauses` (quadratic, see 0544) and its version bumps forced the clause store to re-sync the whole predicate on the next call.
+**Fix**: `retractall/1` selects through the clause store's first-argument index and retracts each match with `ClauseStore.retractClause` (death generation, store stays in step); a head of distinct unbound variables skips the unification; candidates are test-unified on a private trail with no attribute handler. retractall of 100 000 clauses: 7.7 s → 12 ms.
+**Test**: `testISS0545_RetractallGoesThroughTheStore`
+
+### ISS-2025-0546
+**Status**: RESOLVED (4.5.0, wave P2.6/P2.7)
+**Problem**: `retract(p(_))` used `Predicate.all()`, an exact copy of the predicate re-made after every write (1e5 retract-first loop: 6–13 s); `asserta` allocated a new clause array per call.
+**Fix**: the clause store keeps its lists in gap buffers (`ClauseStore.Seq`) and hands out `View` windows over them (logical update view with no copy: a write never lands inside a captured window); a window starts past the dead prefix. Calls, `retract/1`, `clause/2` and `retractall/1` all use views. retract-first 1e5: 6.0 s → 0.2 s; asserta 1e5: 16 s → 0.1 s.
+**Test**: `testISS0546_RetractAndAssertaDoNotCopyThePredicate`
+
+### ISS-2025-0547
+**Status**: RESOLVED (4.5.0, wave P2.9)
+**Problem**: with a variable-headed clause, every write invalidated every bucket and each re-merge rescanned the whole predicate: assert interleaved with indexed calls, 3e4 iterations: 5.5–10 s.
+**Fix**: clauses carry a source-order ordinal; a bucket is merged with the variable-headed clauses by ordinal in O(|bucket| + |var-headed|) and the merge is cached until one of the two lists gets a new clause. 3e4: 10.2 s → 0.07 s.
+**Test**: `testISS0547_MergedBucketViewIsIncremental`
+
+### ISS-2025-0548
+**Status**: RESOLVED (4.5.0, wave P2.10)
+**Problem**: the native `append/3` split mode (List1 open, List3 proper) built a fresh n-element prefix for every split: `append(_, [Last], L)` over 1e4 elements took 8–13 s.
+**Fix**: that mode runs the private two-clause helper `lists:'$append_split'/3` (indexed on List3, deterministic on the last split); same answers, same order. 1e4: 13 s → 0.07 s.
+**Test**: `testISS0548_AppendSplitModeIsLinear`
+
+### ISS-2025-0549
+**Status**: RESOLVED (4.5.0, wave P2.11)
+**Problem**: `predsort/3` copied sub-lists at every merge level and built each comparator goal through lists and a fresh functor atom; library meta-predicates (maplist/foldl/include) re-resolved their own recursion in module context per element.
+**Fix**: array merge sort with one prefetched comparator goal shape; module-context call sites (0540) for library clauses. predsort 1e5 random: 2.5 s → 1.2 s (loaded machine); maplist 1e5: ≈2× faster. A native maplist was not done (see LIM-042).
+**Test**: `testISS0549_PredsortSemantics`, `testISS0549_LibraryRecursionUsesCallSites`
+
+### ISS-2025-0550
+**Status**: RESOLVED (4.5.0, wave P2.12)
+**Problem**: FINE-level log calls built their message (rendering whole terms with `toString()`) even when FINE was off.
+**Fix**: the nine remaining sites (Prolog directives, AtomTable, ListTerm, PhraseWithOptions) are guarded with `LOGGER.isLoggable(Level.FINE)` (the KnowledgeBase ones were done in P1, ISS-2025-0524); a source-scan test keeps it that way.
+**Test**: `testISS0550_FineLogsAreLazy`
+
+### ISS-2025-0551
+**Status**: RESOLVED (4.5.0, found during wave P2)
+**Problem**: `p(Y) :- q(Z), X is Z + 1, Y = X.` with `q(1). q(2).` answered only `Y = 2` (4.4.0 too; findall/forall hid it because they force trailing).
+**Root cause**: a body-only variable's cell was created when the goal that first mentions it was reached — after `q/1` had pushed a choice point — so the cell counted as younger than that choice point, its binding was not trailed, and on backtracking the frame still held the bound cell.
+**Fix**: a clause's body-only frame slots are created at activation (`Clause.fillBodySlots`), so they have the frame's age (as the WAM's permanent variables).
+**Test**: `testISS0551_BodyVariableFirstBoundAfterAChoicePoint`
+
+### ISS-2025-0552
+**Status**: RESOLVED (4.5.0, wave P2.13)
+**Problem**: `get_char/2` decoded every character through a `CharsetDecoder` call with a one-char buffer and built a new atom per character (1.6 MB: 3.1 s).
+**Fix**: bytes below 0x80 of a UTF-8/ASCII stream (every byte of a Latin-1 one) are answered without the decoder; one-character atoms of the Latin-1 range are shared; the error context string is built once. 1.6 MB: 3.1 s → 0.75 s (the rest is the Prolog loop).
+**Test**: `testISS0552_GetCharSkipsTheDecoderForAscii`
+
+### ISS-2025-0553
+**Status**: RESOLVED (4.5.0, wave P2.14)
+**Problem**: `.jpc` loading was slower than consulting the source for simple programs and the file was 24–30 % larger than the source.
+**Fix**: format 0x04 — 64-bit integers as zigzag varints, a variable's name only at its first occurrence in the clause (0x03 files are still read); the reader decodes from one byte array, makes one atom per string-table entry and lets compounds adopt their argument arrays. 40 000 clauses: jpc load 23–45 % of consult; file 69–102 % of the source size.
+**Test**: `testISS0553_JpcIsCompactAndLoadsTheSameProgram`
+
+## 4.5 wave P5 2026-09-23 (v4.5.0) — CLP(FD): PROPAGATION, DOMAINS WITH HOLES, LAZY LABELING, BIG INTEGERS, THE MISSING LIBRARY
+
+Spec: `docs/reports/report-production-readiness-2026-09-23.md` section 5 (P5.1–P5.5); wave record
+in section 11 of the same report. Reference semantics: SWI-Prolog library(clpfd). Regression
+suite: `builtin/clpfd/v2/ClpfdV45Test` (19 tests, one or more per ISS id below).
+
+### ISS-2025-0640
+**Status**: RESOLVED (v4.5.0) — P5.1
+**Problem**: binding a CLP(FD) variable by plain unification narrowed the store but never bound
+the variables propagation had fixed: `X in 0..9, Y in 0..9, X+Y #= 9, X = 4` left `Y` unbound
+(the store knew `Y in 5..5`), `X #= Y+Z, Y = 1, Z = 2, X == 3` failed.
+**Fix**: the v4 attribute hook (`Coroutining`, `'$clpfd_unify_hook'`) calls
+`ClpfdNative.onBound`, which narrows/propagates through the bridge and then binds every FD cell
+whose domain is a singleton (`bindDetermined`), exactly as a posting goal does.
+**Test**: `ClpfdV45Test.testISS0640_PlainUnificationPropagatesAndBindsSingletons`.
+
+### ISS-2025-0641
+**Status**: RESOLVED (v4.5.0) — P5.2
+**Problem**: `#\=` never removed interior values (`X in 1..5, Y in 1..5, X #\= Y, X #= 2` left
+`Y in 1..5`); `X in 1..3 \/ 5..7` was not accepted; `fd_dom/2` could not print a union.
+**Fix**: `IntervalDomain` is a sorted interval list with `union`/`complement`; `in/2`/`ins/2`
+parse `N`, `Lo..Hi` (`inf`/`sup` bounds) and `D1 \/ D2` (`type_error(clpfd_domain, D)` /
+`instantiation_error` otherwise); `Constraint.LinearNE` removes the value as soon as all but one
+variable are fixed; `X #= Y` intersects whole domains (holes kept); `fd_dom/2` prints `A\/B`.
+**Test**: `ClpfdV45Test.testISS0641_DisequalityRemovesInteriorValues`, `testISS0641_DomainsWithHolesAndUnions`.
+
+### ISS-2025-0642
+**Status**: RESOLVED (v4.5.0) — P5.3 — **user-visible behaviour change**
+**Problem**: `label/1`/`labeling/2` computed ALL solutions before returning the first
+(`once(queens(12))` > 4 min; a huge domain raised `resource_error`); `label/1` was first-fail;
+`bisect`/`enum`/`ffc` were missing or ignored.
+**Fix**: labeling is a v4 `Generator` on the machine's own choice points
+(`ClpfdNative.step` + `StepGen`/`EnumGen`/`BisectGen`, continuation `'$clpfd_label'/2`):
+select a variable (`leftmost` default, `ff`, `ffc`, `min`, `max`), branch (`step` default,
+`enum`, `bisect`) in `up`/`down` order, propagate, backtrack through the trail. Every variable
+needs a finite domain (`instantiation_error`, SWI); a repeated / conflicting option raises
+`domain_error(nonrepeating_labeling_options, Os)` / `domain_error(consistent_labeling_options,
+Os)`. `indomain/1` = `label([X])`. The store's hot path was reworked for per-node use
+(domain and watcher lists on the variable, fix-only watchers, array trail).
+Re-pinned tests: `BugFixVerificationTest.testISS0263_clpfdHugeDomainRejected` and
+`ClpfdV2EngineTest.labelHugeDomainIsLazy` (formerly `labelHugeDomainRaisesResourceError`) — a huge
+domain now hands out its first value at once instead of raising `resource_error`.
+**Test**: `ClpfdV45Test.testISS0642_TwentyQueensFirstSolutionIsLazy`,
+`testISS0642_EightQueensAllSolutions`, `testISS0642_LabelingOptions`.
+
+### ISS-2025-0643
+**Status**: RESOLVED (v4.5.0) — P5.3
+**Problem**: `labeling([min(E)]/[max(E)], Vs)` sorted the whole solution list.
+**Fix**: branch and bound (`ClpfdV2Bridge.optimum`, each round tightens the objective), then
+SWI's order `(E #= Opt, labeling(Rest, Vs) ; E #\= Opt, labeling(Opts, Vs))` — solutions in
+objective order, ties in labeling order, several objectives lexicographic.
+**Test**: `ClpfdV45Test.testISS0643_BranchAndBoundObjectiveOrder`.
+
+### ISS-2025-0644
+**Status**: RESOLVED (v4.5.0) — P5.4
+**Problem**: bounds were saturating longs: `X #= 1000000000000*1000000000000` failed; an
+unconstrained variable was `-10^8..10^8` instead of `inf..sup`.
+**Fix**: `IntervalDomain.INF/SUP` infinity markers with infinity-aware arithmetic in every
+propagator; `Linear` keeps its constant as a `BigInteger` with an exact fallback path; ground
+(sub-)expressions are evaluated exactly (`X #= 2^100`); an unconstrained variable is `inf..sup`.
+Values beyond the 64-bit range: an out-of-range binding is accepted when the domain reaches that
+infinity (`X #> 3, X = 10^23`), recorded exactly in a degenerate `sup..sup` domain
+(`IntervalDomain.bigValue`), and `Constraint.solveFor`/`ClpStore.exactValue` bind the last
+variable of a functional constraint exactly (`X #= Y*10^12, Y = 10^12` gives `X = 10^24`;
+`X #= Y+1, Y = 2^63-1` gives `2^63`). Coefficients must still fit 64 bits
+(`representation_error(max_integer)`), see LIM-041.
+**Test**: `ClpfdV45Test.testISS0644_BigIntegerArithmetic`.
+
+### ISS-2025-0645
+**Status**: RESOLVED (v4.5.0) — P5.4
+**Problem**: `X #> Y, Y #> X` ran 29 s and died with `resource_error(memory)`: bounds propagation
+crawls one value per round (and trails every step) on unbounded or huge domains.
+**Fix**: before a difference constraint (`x - y rel c`, incl. `X #> Y`, `X #= Y + c`) over a
+huge (> 10^6 values) or infinite domain is posted, `ClpfdV2Bridge.negativeDifferenceCycle` looks
+for a negative cycle through the new edge (queue-based Bellman-Ford from its head, bounded work);
+one means the system is unsatisfiable and the post fails. The propagation loop also polls the
+running machine's `ResourceGuard` (inference budget, Stop) through `ClpStore.setPollHook`.
+Measured: `X #> Y, Y #> X` fails in ~1–10 ms warm (the first query of a JVM ~0.4 s), also over
+`0..10^9`; a 3000-variable `#<` chain posts in 6.6 s (4.4.0: 48 s).
+**Test**: `ClpfdV45Test.testISS0645_CyclicInequalitiesFailFast`.
+
+### ISS-2025-0646
+**Status**: RESOLVED (v4.5.0) — P5.5
+**Problem**: `ins/2` (the operator existed), `sum/3` and `scalar_product/4` were missing.
+**Fix**: `ins/2` native; `sum/3`/`scalar_product/4` are exported by the new prelude library
+module `clpfd` (`src/main/resources/prelude/clpfd.pl`, so a user's own `sum/3` wins) over the
+internal natives `'$clpfd_sum'/3`, `'$clpfd_scalar_product'/4`; a bad relation raises
+`domain_error(scalar_product_relation, Op)`.
+**Test**: `ClpfdV45Test.testISS0646_InsSumScalarProduct`, `testISS0646_SendMoreMoneyUniqueAndFast`,
+`testISS0646_MagicSquare3x3`.
+
+### ISS-2025-0647
+**Status**: RESOLVED (v4.5.0) — P5.5
+**Problem**: no reification: `#<==>`, `#==>`, `#<==`, `#\/`, `#/\`, `#\` were missing.
+**Fix**: natives over `Constraint.Reified`/`Bool`/`InDomain` (reifiable: the six comparisons,
+`X in D`, 0/1 variables and integers, nested connectives); entailment/disentailment binds the
+boolean, a known boolean posts the constraint or its negation;
+`domain_error(clpfd_reifiable_expression, E)` otherwise.
+**Test**: `ClpfdV45Test.testISS0647_ReificationAndConnectives`.
+
+### ISS-2025-0648
+**Status**: RESOLVED (v4.5.0) — P5.5
+**Problem**: `//`, `div`, `rem`, `^` and `mod` with a variable modulus were not expressions.
+**Fix**: `Constraint.ArithFn` (TDIV, FDIV, REM, MOD, POW) — sound bounds propagation, exact once
+the operands are fixed, division by zero fails; `abs`/`min`/`max` as before.
+**Test**: `ClpfdV45Test.testISS0648_ExpressionFunctions`.
+
+### ISS-2025-0649
+**Status**: RESOLVED (v4.5.0) — P5.5
+**Problem**: `fd_inf/2`, `fd_sup/2`, `fd_var/1` missing; `fd_dom/2`/`fd_size/2` could not
+express unbounded domains and were bridged.
+**Fix**: all five are v4 natives; unbounded bounds are `inf`/`sup`, an unbounded size is `sup`,
+an integer `N` has domain `N..N`, other terms raise `type_error(integer, T)`.
+**Test**: `ClpfdV45Test.testISS0649_DomainReflection`.
+
+### ISS-2025-0650
+**Status**: RESOLVED (v4.5.0) — P5.5
+**Problem**: `element/3`, `tuples_in/2`, `global_cardinality/2` and `transpose/2` missing.
+**Fix**: propagators in `Constraint` (element: index/value support; tuples_in: table support;
+gcc: basic counting), public names in `prelude/clpfd.pl`, plus a Prolog `transpose/2`.
+**Test**: `ClpfdV45Test.testISS0650_ElementTuplesGcc`.
+
+### ISS-2025-0651
+**Status**: RESOLVED (v4.5.0) — P5.5
+**Problem**: `all_distinct/1` was `all_different/1` (pairwise + pigeonhole).
+**Fix**: `all_distinct/1` posts a Régin matching-based propagator (generalised arc consistency):
+Hall sets prune (`X,Y in 1..2, Z in 1..3` gives `Z = 3` without labeling).
+**Test**: `ClpfdV45Test.testISS0651_AllDistinctIsStrongerThanAllDifferent`, `testISS0651_HardSudoku`.
+
+### ISS-2025-0652
+**Status**: RESOLVED (v4.5.0) — P5.5
+**Problem**: the reification connectives were not operators.
+**Fix**: `OperatorTable` defines SWI's `#<==>` 760 yfx, `#==>` 750 xfy, `#<==` 750 yfx,
+`#\/` 740 yfx, `#\` 730 yfx, `#/\` 720 yfx, `#\` 710 fy (the default table now has 67
+operators, was 60).
+**Test**: `ClpfdV45Test.testISS0652_ReificationOperatorsParse`.
+
+## Wave P1 2026-09-23 (4.5.0 production-readiness program) — ENGINE SEMANTICS
+
+Spec and wave record: `docs/reports/report-production-readiness-2026-09-23.md` sections 1 and 10.
+Every test below is in `core/engine/v4/EngineV45SemanticsTest`.
+
+### ISS-2025-0514
+**Status**: RESOLVED (4.5.0, wave P1.1)
+**Problem**: Answers leaked later bindings: `X = f(Y) ; Y = 1` delivered `X = f(1)` as its first answer; `(true ; X = 1)` showed `X = 1` twice.
+**Root cause**: `Machine.snapshot` used `Unify.resolve`, which keeps unbound cells live; the machine went on binding them after the answer was handed out.
+**Fix**: each top-level answer (and each `solveStream` answer) is a copy with ONE variable map per answer (`Unify.copyAnswer`): fresh cells keep the original print name, sharing inside the answer is kept, attributed cells stay live for `residualGoals`.
+**Test**: `testISS0514_AnswersDoNotLeakLaterBindings`
+
+### ISS-2025-0515
+**Status**: RESOLVED (4.5.0, wave P1.2)
+**Problem**: Anonymous query variables appeared in answers: `data(a, _)` gave `{_G1=1}`.
+**Root cause**: each `_` is its own cell with a generated name and was added to the answer map.
+**Fix**: anonymous cells are skipped when the answer variables are collected; named `_Foo` variables stay. Three test workarounds removed (EngineV4IoTest, EngineV4ModulesTest, EngineV4TermTest); AnonymousVariableTest asserts the exact key set.
+**Test**: `testISS0515_AnonymousVariablesNotInAnswers`
+
+### ISS-2025-0516
+**Status**: RESOLVED (4.5.0, wave P1.3)
+**Problem**: A cut in the Recovery of `catch/3` was not local: `r(X) :- catch(throw(x), x, (X = 1, !)). r(2).` lost `X = 2`.
+**Root cause**: the recovery was installed with the catch goal's own cut barrier.
+**Fix**: Recovery runs as `call(Recovery)` with a fresh barrier (ISO 7.8.9).
+**Test**: `testISS0516_CutInCatchRecoveryIsLocal`
+
+### ISS-2025-0517
+**Status**: RESOLVED (4.5.0, wave P1.4)
+**Problem**: A variable goal bound to `!` was not opaque: `G = !, (X = 1 ; X = 2), G` gave one answer; `t6(X) :- G = (!, fail), (G ; X = alt).` failed.
+**Root cause**: the drive loop dereferenced a body variable and ran it with the clause barrier.
+**Fix**: a goal whose skeleton is a variable and which derefs to `!` or a control construct is re-pushed as `call(G)` with a fresh barrier.
+**Test**: `testISS0517_VariableGoalBoundToCutIsOpaque`
+
+### ISS-2025-0518
+**Status**: RESOLVED (4.5.0, wave P1.5)
+**Problem**: `call((write(a), nl, 1))` printed `a` before raising; `call((fail, 1))` failed instead of raising `type_error(callable, (fail,1))`.
+**Root cause**: the control spine was checked lazily, leaf by leaf, as it ran.
+**Fix**: `Machine.checkBody` walks the `,`/`;`/`->`/`*->`/`\+` spine once before running for call/N, the query, catch/3, findall/3,4, `\+`, once, ignore, forall, bagof/setof and aggregate_all. EngineV4IsoErrorsTest deviation 4 removed (SWI raises too).
+**Test**: `testISS0518_CallBodyCheckedBeforeRunning`
+
+### ISS-2025-0519
+**Status**: RESOLVED (4.5.0, wave P1.6)
+**Problem**: `setof(X, member(X, [Y, Y]), L)` gave `[Y, Y]` instead of `[Y]`.
+**Root cause**: the copies were sorted/deduplicated before the witness unification made them identical.
+**Fix**: each group is sorted after its witnesses are unified (ISO 8.10.3.4), lazily per group.
+**Test**: `testISS0519_SetofDedupsAfterWitnessUnification`
+
+### ISS-2025-0520
+**Status**: RESOLVED (4.5.0, wave P1.7)
+**Problem**: `bagof/3` grouping was O(W^2) in distinct witnesses (10k: 7.6 s, 20k: 60.5 s on the verification machine; 40k over 7 min).
+**Root cause**: pairwise `subsumes` against every group found so far.
+**Fix**: variant keys (variables numbered in first-occurrence order) + one stable sort + adjacent-run grouping; 40k witnesses now ~0.2-0.3 s.
+**Test**: `testISS0520_BagofGroupingIsNotQuadratic`
+
+### ISS-2025-0521
+**Status**: RESOLVED (4.5.0, wave P1.8)
+**Problem**: `between(9223372036854775806, 9223372036854775807, X)` wrapped and never stopped; big-integer bounds fell to the eager legacy `Between` (OOM).
+**Root cause**: the generator tested the bound after incrementing a long; non-long bounds were not handled natively.
+**Fix**: exact long counter that continues into BigInteger when the range requires it; big-integer bounds lazy; a bound third argument is a range test.
+**Test**: `testISS0521_BetweenStopsAtLongMaxAndHandlesBigints`
+
+### ISS-2025-0522
+**Status**: RESOLVED (4.5.0, wave P1.9)
+**Problem**: `aggregate_all/3` did not follow SWI: `max(X, W)` gave a list, `sum(X*2)` raised, an unknown spec silently became `bag`, count/sum/max/min built the whole list.
+**Root cause**: the native built all forms on `findall` and compared raw values.
+**Fix**: SWI forms (`count`, `count(T)`, `sum/max/min(Expr)`, `max/min(Expr, Witness)`, `bag`, `set`), expressions evaluated, O(1) accumulation through `Machine.forEachSolution`, `domain_error(aggregate_spec, S)` / `instantiation_error` on a bad spec. Pinned tests ISS-2025-0413/0414/0452 updated (errors are now `type_error(evaluable, a/0)`; `max(V-W)` replaced by `max(V, W)`).
+**Test**: `testISS0522_AggregateAllSwiForms`
+
+### ISS-2025-0523
+**Status**: RESOLVED (4.5.0, wave P1.10)
+**Problem**: Cleanups did not run when a query was abandoned (solveStream sink stop, inference budget, cancellation): a stream opened in setup stayed open.
+**Root cause**: the machine was dropped with its CLEANUP frames still on the choice-point stack.
+**Fix**: `Machine.cutQuietly` pops the remaining frames running their cleanups on early stop and on a control-exception exit (top level and nested drives); cleanup exceptions are swallowed so the primary exception propagates; `ResourceGuard` gives the teardown a 100 000-step allowance.
+**Test**: `testISS0523_CleanupRunsWhenQueryIsAbandoned`
+
+### ISS-2025-0524
+**Status**: RESOLVED (4.5.0, wave P1.11)
+**Problem**: Terms nested deeper than 2000 levels in a non-last argument were silently mis-copied (copy_term/findall shared cells with the original, assertz lost a binding); asserting a 1e5-deep term overflowed the stack.
+**Root cause**: `Unify.resolve/copy` returned the sub-term unchanged past `MAX_ARG_DEPTH`; `Clause.toSkeleton/instantiate` and `CompoundTerm.isGround` recursed; `KnowledgeBase` rendered every asserted clause with `toString()` for a disabled `LOGGER.fine`.
+**Fix**: an explicit-stack walker (`Unify.deepWalk`, `Clause.mapDeep`) takes over past the recursion cap; `isGround` fully iterative; the KB fine-level logs are guarded by `isLoggable`. Tested at depth 1e5 and 1e6.
+**Test**: `testISS0524_DeepTermsCopiedCompletely`
+
+### ISS-2025-0525
+**Status**: RESOLVED (4.5.0, wave P1.12)
+**Problem**: Concurrent `assertz` duplicated clauses (4 threads x 300 asserts gave 1201-1202 clauses).
+**Root cause**: `ClauseStore.assertRule` wrote the KB outside the predicate lock; a concurrent `sync()` rebuilt from the KB (already holding the clause) and the assert then inserted it again.
+**Fix**: KB write + store insert (and test-and-retract) under the predicate lock; atomic generation counter; the store adopts the KB version only when it moved by exactly that one write. Stress: 8 threads x 2000 asserts/retracts x 20 reps, plus thread_create workers.
+**Test**: `testISS0525_ConcurrentAssertsAreNotDuplicated`
+
+### ISS-2025-0526
+**Status**: RESOLVED (4.5.0, wave P1.13)
+**Problem**: `nb_setval(k, f(X)), (X = 1 ; X = 2)` left the global reading `f(2)`.
+**Root cause**: the value was stored with `resolve`, keeping the caller's cells live.
+**Fix**: `nb_setval/2` stores a copy; `b_setval/2` keeps its backtrackable semantics.
+**Test**: `testISS0526_NbSetvalStoresACopy`
+
+### ISS-2025-0527
+**Status**: RESOLVED (4.5.0, wave P1.14)
+**Problem**: `X = f(X), assertz(cyc(X))` silently stored `cyc(f(_))`.
+**Root cause**: the copy cut the cycle by keeping the original cell, whose binding was later undone.
+**Fix**: `Unify.copyAcyclic`; assert and nb_setval raise `representation_error(cyclic_term)`.
+**Test**: `testISS0527_AssertingCyclicTermRaises`
+
+### ISS-2025-0528
+**Status**: RESOLVED (4.5.0, wave P1.15)
+**Problem**: After a catch, the recovery was traced one level too deep and the unwound goal showed no port.
+**Root cause**: nothing reset `portDepth` when a ball was caught.
+**Fix**: the catch frame records its depth; `unwindPorts` emits an `Exception` port for each unwound open call and restores the depth. EngineV4TraceTest `Trace_CatchThrow` oracle updated deliberately.
+**Test**: `testISS0528_TraceDepthAfterCatch`
+
+### ISS-2025-0529
+**Status**: RESOLVED (4.5.0, wave P1.16)
+**Problem**: With one unrelated breakpoint, `len/2` over a 40 000-element list took 171 s on the verification machine (47.9 s in the audit).
+**Root cause**: `needsGoalSnapshot()` was true whenever any breakpoint existed, so every port resolved its goal.
+**Fix**: the snapshot is taken only for a rendering listener, a stepping mode, or a breakpoint on THIS goal's indicator; 40k now ~0.6 s (same as without the breakpoint).
+**Test**: `testISS0529_DebuggerBreakpointDoesNotSnapshotEveryPort`
+
 ## 4.3 wave D 2026-08-26 (v4.4.0) — ISO ERROR CONFORMANCE, INDEXED `retractall/1`, `bounded = false`, THE CLEANUP CATCH ESCAPE
 
 The four items section 18.7 named. Wave record:

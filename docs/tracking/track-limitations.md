@@ -3,9 +3,168 @@
 This document describes current limitations in JProlog implementation.
 When an issue is resolved, the corresponding limitation should be removed from this file.
 
-**Last updated**: 2026-08-26 (v4.4.0, 4.3 wave D)
+**Last updated**: 2026-09-23 (release 4.5.0: waves P1..P7 of the production-readiness program)
 
 ---
+
+## LIM-046: tabled negation is not the well-founded semantics (4.5 wave P7)
+
+**Found in 4.5 wave P7 (ISS-2025-0661, decision §8 of the production-readiness program).**
+`\+ G` inside a tabled evaluation, where `G` reads a table that is still being evaluated by an
+ancestor of the negation (a non-stratified program such as `:- table p/1. p(X) :- \+ p(X).` or the
+`win/1` game over a cycle), raises `error(permission_error(negate, incomplete_table, G), (\+)/1)`.
+4.4.0 answered such queries inconsistently (`p(a)` succeeded). SWI-Prolog answers them with the
+well-founded semantics (`tnot/1`, delay lists, residual program, "undefined" answers); JProlog has
+none of that: no `tnot/1`, no `undefined/0`, no answer subsumption. Stratified negation under
+tabling (the negated goal's tables complete inside the negation) is unaffected.
+
+**Workaround**: stratify the program (compute the negated relation in its own tabled predicate
+first) or drop `:- table` for the predicates involved in the negative cycle.
+
+---
+
+## LIM-045: production-hardening residue after 4.5 wave P6
+
+**Found in 4.5 wave P6 (ISS-2025-0620..0639).** What the wave deliberately left out:
+- **Load lock** (ISS-2025-0639): a thread may load while the lock's owner is blocked in
+  `thread_join` on it. Any OTHER wait still deadlocks: a directive that waits with
+  `thread_get_message/1,2` for a message the loading thread sends after its load, or a
+  `concurrent_*` call from a directive whose workers load files.
+- **Threads**: thread, queue and mutex tables are JVM-wide, not per engine (as they were); every
+  non-worker thread (CLI, IDE background solve, embedder, JUnit body) is the Prolog thread `main`
+  and they share its one queue; missing `thread_signal/2`, `thread_statistics/3`,
+  `message_queue_property/2`, `thread_send_message/3`, `mutex_property/2`, `thread_create_in_pool`;
+  a mutex still held when its thread ends is released silently (SWI warns); a worker stopped by
+  the budget reports `exception(inference_limit_exceeded)` (an atom, not a `resource_error`); the
+  tabling store is still not safe for two threads producing the same table (see `Workers`).
+- **Budget** (ISS-2025-0624): one pool per query, drawn in chunks of 1 024 steps, so with several
+  machines the overshoot is bounded by the credit the others hold; "work" is approximated per list
+  element / copied node; the bridged extended libraries (regex, xml, json, crypto, csv) are not
+  charged at all — a pathological regular expression is CPU the budget cannot see.
+- **Safe mode** (ISS-2025-0625): ~~`halt/0,1` stays~~ — resolved in 4.5 wave P7 (ISS-2025-0672):
+  safe mode raises `permission_error(call, sandboxed, halt)` unless `SafeModeOptions.allowHalt()`
+  (the CLI's `--safe` allows it); stream predicates work on the standard streams; `source_file/1,2` and
+  `prolog_load_context/2` still report paths; `allowFileRead(dir)` checks the canonical path when
+  the file is opened (a link swapped afterwards is not re-checked); memory and wall-clock time need
+  the embedder's own limits.
+- **CLI** (ISS-2025-0627): one query per input line; `--max-solutions N` ends the Nth answer with
+  `.`; ~~the uncaught-error line of a parse error keeps its message-atom form~~ — resolved in 4.5
+  wave P7 (ISS-2025-0671: `error(syntax_error(Msg), query)`).
+
+**Workaround**: as noted per point.
+
+---
+
+## LIM-044: loading, reading and writing residue after 4.5 wave P3
+
+**Found in 4.5 wave P3 (ISS-2025-0560..0579).** What the wave deliberately left out:
+- **Mode-directed tabling**: `lattice(PI)` and `po(PI)` raise `domain_error(table_mode, M)`
+  (not implemented); a call whose MODED argument is already bound evaluates with it bound (SWI
+  evaluates with it free and unifies the best answer); `min`/`max` use the standard order of
+  terms. `Spec as Options` ignores the options (every table is a variant table; `as` is not an
+  operator, so write `table(as(p/1, subsumptive))`).
+- **Loader**: loads of one engine are serialised (a per-engine lock — see LIM-045 for the one
+  wait it now recognises); no `multifile/1` semantics
+  (reconsulting a file wipes every user predicate it defined, even clauses other files added);
+  `goal_expansion/2` is not applied; `library(X)` resolves only the prelude modules and a fixed
+  list of libraries JProlog implements natively (no library search path);
+  `initialization(G, main)` halts only under the CLI (ISS-2025-0636; an embedder gets the goal
+  run after the load); `make/0` does not track
+  included files; `use_module(File, Imports)` imports the whole module.
+- **Reader**: `(a|b)` reads as `(a;b)` (SWI 7+ reads `'|'(a,b)`); `term_position/1` is the
+  start position only and `subterm_positions/1`/`comments/1` answer nothing useful; reading
+  more than 1 000 nesting levels re-reads the term on a helper thread (one thread per such term),
+  and 200 000 levels is the hard limit (`resource_error(parser_nesting)`).
+- **Console input**: `read/1` on `user_input` shares the engine's stdin reader with
+  `get_char/1`, not with the CLI's own query reader (unchanged from 4.4.0).
+
+**Workaround**: as noted per point.
+
+---
+
+## LIM-043: built-in conformance residue after 4.5 wave P4
+
+**Found in 4.5 wave P4 (ISS-2025-0590..0612).** What the conformance wave deliberately left out:
+- `format/2,3` column stops count from the start of the format output, not from the output
+  stream's current column (SWI uses the stream's line position), so `write(abc),
+  format("~t~w~10|", [x])` pads as if the line were empty.
+- `format/2,3` argument faults are `error(format(Message), _)`; SWI 9 reports some of them as
+  `error(format_argument_type(Directive, Arg), _)`. `~Nw`/`~Nq` right-align (a JProlog extension
+  SWI ignores).
+- `eof_action(reset)` behaves like `eof_code` (no tty re-arm); `read/1` on `user_input` does not
+  track the past-end state.
+- `print_message/2` has no `message_hook/3` and no `prolog:message//1` user extension; only
+  `format/2`, `error/2` and unknown terms are rendered.
+- `statistics/2`: `atoms`, `functors`, `codes`, `errors`, `warnings` answer 0; the memory keys
+  are JVM heap/non-heap figures; `cputime`/`runtime` are the calling thread's CPU time.
+- `format_time/3` implements the common strftime subset (`%Y %y %m %d %e %H %I %M %S %f %j %p
+  %P %a %A %b %h %B %u %w %s %z %Z %F %D %T %R %c %n %t %%`); a format without `%` is a Java
+  `DateTimeFormatter` pattern (the historical form).
+- `last/2`, `nth0/3`, `nth1/3` on a partial list now enumerate without end (SWI): a caller that
+  backtracks into them must bound the search (cut, `once/1`, a length test).
+- `limit/2` and the rest of `library(solution_sequences)` do not exist.
+
+**Workaround**: as noted per point.
+
+---
+
+## LIM-042: call-path caching covers compiled clause bodies only (4.5 wave P2)
+
+**Found in 4.5 wave P2 (ISS-2025-0540..0553).** The call-site cache (ISS-2025-0540) lives on
+the compiled skeleton of a clause body goal, so:
+- a goal built at run time — `call/N`, the goal of `findall/3`, `forall/2`, `\+/1`, `once/1`, a
+  maplist closure, a query typed at the top level — is resolved on every call (the resolution
+  itself is much cheaper than in 4.4.0: no key strings, one set probe instead of ~40 comparisons);
+- in a module context a goal is cached only when that module defines the predicate itself;
+  goals resolved through imports, `user` or autoload are resolved per call;
+- `maplist/2..7`, `foldl/4..7`, `include/3`, `exclude/3`, `partition/4,5` stay Prolog clauses in
+  `library(apply)` with one meta-call per element (≈1 µs per element, about 1.5× a hand-written
+  recursion); a native iteration was not done because the closure may leave choice points and
+  must keep its four ports.
+- `predsort/3` runs each comparison as a nested drive (≈0.5 µs per comparison).
+
+**Workaround**: none needed for correctness; for hot loops prefer a first-order recursive
+predicate over a meta-call.
+
+---
+
+## LIM-041: CLP(FD) — what library(clpfd) features are still missing (4.5 wave P5)
+
+**Found in 4.5 wave P5 (ISS-2025-0640..0652).** The P5 wave made the solver SWI-compatible for
+the common subset (propagation after unification, domains with holes and `inf..sup`, lazy
+labeling with all SWI options and branch and bound, reification, `sum`/`scalar_product`,
+`element`/`tuples_in`/`global_cardinality`, a domain-consistent `all_distinct`). What remains:
+
+- **64-bit domains.** Bounds are longs with `inf`/`sup` markers. Ground expressions are exact
+  big integers, and a value beyond the range is bound exactly when a functional constraint
+  determines it (`X #= Y*10^12, Y = 10^12`), but propagation treats such a value as an infinite
+  bound (sound, weaker), and a **coefficient** beyond 64 bits (`X*10^20 #= Y`) raises
+  `representation_error(max_integer)`.
+- **Slow convergence outside difference constraints.** A cycle of difference constraints
+  (`X #> Y, Y #> X`, `X #>= Y + 5, ...`) fails at once (negative-cycle check), but a
+  non-difference cycle over a huge domain (`2*X #> Y, Y #> 2*X`) still converges one bound step
+  per round; it is interruptible (inference budget, Stop) but not fast. SWI has the same
+  behaviour on some such systems.
+- **Answers print domains, not residual constraints**: `X #> Y` answers `X`/`Y` unconstrained
+  in the CLI instead of SWI's `Y#=<X+ -1`.
+- **Not implemented**: `circuit/1`, `cumulative/1,2`, `disjoint2/1`, `automaton/3,8`, `chain/2`,
+  `lex_chain/1`, `zcompare/3`, `fd_degree/2`, `(#=)/3`-style reified arithmetic beyond the six
+  comparisons and `in/2`; `global_cardinality/3` options. `global_cardinality/2` does counting
+  propagation only (not Régin's flow-based GAC).
+- `labeling/2` with `min(E)`/`max(E)` runs each branch-and-bound round with the store's eager
+  recursive labeler (depth = number of variables); the solutions themselves are then produced
+  lazily in objective order.
+
+---
+
+## LIM-040: cyclic terms cannot be stored (4.5.0 wave P1, ISS-2025-0527)
+
+Rational trees are supported as live terms (design B.17), but a cyclic term cannot be STORED:
+`assertz/1`/`asserta/1` of a clause containing one, and `nb_setval/2` of a cyclic value, raise
+`representation_error(cyclic_term)` (SWI-Prolog refuses cyclic clauses too). Before 4.5.0 such a
+clause was stored with its cycle cut at an original cell — silently wrong once that binding was
+undone. Supporting stored rational trees would need cycle-aware clause compilation (skeletons
+are trees today); not planned.
 
 ## LIM-038: the EXTENDED LIBRARIES still raise message atoms, not ISO `error/2` terms
 
@@ -77,7 +236,8 @@ can still reach the adapter** in v4.3.0 (234 in v4.2.0, 305 before wave B; the v
 - **the extended libraries, 191 names** — `jdbc` 28, `filesystem` 15, `threading` 15, `crypto` 14,
   `ffi` 14, `graph` 13, `network` 13, `persistence` 13, `os` 12, `http` 11, `datetime` 10,
   `json` 6, `logging` 6, `regex` 6, `dcg` 5 (the non-default translators), `csv` 4, `xml` 3,
-  `clpfd` 3 (`fd_dom`, `fd_size`, `indomain`). **None of them has a hot-path claim**: every one is
+  `clpfd` 3 (`fd_dom`, `fd_size`, `indomain` — **native since 4.5 wave P5**, ISS-2025-0642/0649,
+  so the count is 188 names / 226 in total after P5). **None of them has a hot-path claim**: every one is
   a call into a database, a socket, the file system, a process or a Java object, and the adapter
   hop is invisible next to what it does. They can stay bridged indefinitely.
 - **19 `io` predicates** — `open/3,4`, `close/1,2`, `read/1,2`, `read_term/2,3`,
@@ -148,13 +308,11 @@ ONE `Prolog` instance is still outside the contract — a top-level query owns t
 engine-wide query boundary and abandons every EVALUATING table when it ends; use
 `concurrent_maplist/2,3,4`, `concurrent/3` or `thread_create/2,3` from one query instead.
 
-## LIM-036: .jpc compilation stores source lines, but only for the legacy-parser path
+## LIM-036: RESOLVED in 4.5.0 (wave P3.6, ISS-2025-0577) — .jpc source lines
 
-`.jpc` format 0x03 (ISS-2025-0447) carries `Rule.sourceLine`, and `Prolog.compile` stamps it from
-the clause start lines `Parser.extractClauses` now records. That is the LEGACY parser's clause
-splitter; a clause whose head sits on a different line from the first token of the clause text
-(after a block comment, say) gets the line of the first token. `consultWithDiagnostics` on the v2
-parser path remains the accurate source of line information for the IDE.
+`Prolog.compile` reads with the v2 reader, which stamps every clause with the line of its first
+token (`TermReader.peekLine`), exactly as consult does; the legacy clause splitter is no longer
+on the compile path.
 
 ## LIM-034: RESOLVED in v3.14.0 — engine state is per engine
 
@@ -207,7 +365,7 @@ findings. The eight highest-confidence, low-risk items were fixed in v3.0.0
 | ~~LIM-017~~ | Parser | **RESOLVED v3.0.0** — clean-room v2 parser (default): single-pass `Lexer` is quote/escape/char-code aware; clause splitting is token-based. |
 | ~~LIM-019~~ | Parser | **RESOLVED v3.0.0** — v2 parser (default): canonical functor `-(1,2)` and operator-as-atom (`X = -`, `foo(-,+)`) handled. `-Djprolog.parser=legacy` to fall back. |
 | ~~LIM-021~~ | DCG | **RESOLVED v3.0.0** — clean-room v2 DCG translator (`core.dcg.v2.DCGTranslator`, now default): single recursive pass handling ISO head push-back, `[]`/terminal lists, strings, `{}`, `!`, `\+`, `(A,B)`/`(A;B)`/`(A\|B)`/`(A->B)`, `call//N`, and variable bodies. `-Djprolog.dcg=legacy` to fall back. |
-| ~~LIM-022~~ | CLP(FD) | **RESOLVED v3.0.0** — clean-room v2 CLP(FD) (now default): interval domains (no OOM, no `TreeSet`), per-query identity store (no singleton leak), trail-backtracked **sound** labeling, real `#\=` propagation, `all_different` pigeonhole. Remaining = future *features* (`global_cardinality`, Hall-interval pruning, lazy labeling), not correctness gaps. `-Djprolog.clpfd=legacy` to fall back. |
+| ~~LIM-022~~ | CLP(FD) | **RESOLVED v3.0.0** — clean-room v2 CLP(FD) (now default): interval domains (no OOM, no `TreeSet`), per-query identity store (no singleton leak), trail-backtracked **sound** labeling, real `#\=` propagation, `all_different` pigeonhole. Remaining = future *features* (`global_cardinality`, Hall-interval pruning, lazy labeling), not correctness gaps — all three delivered in 4.5 wave P5 (ISS-2025-0642/0650/0651); what is still missing is LIM-041. `-Djprolog.clpfd=legacy` to fall back. |
 | ~~LIM-023~~ | Engine | **RESOLVED in 4.0.0** (waves W1-W9). The recursive engine that recursed in Java is deleted (ISS-2025-0484); the default `core.engine.v4.Machine` is iterative over mutable cells with compiled clause skeletons and first-argument indexing, every term walker is iterative and cycle-safe, and residual deep-structure `StackOverflowError`s in bridged built-ins still convert to `resource_error` terms (ISS-2025-0341). (The v2 `MachineSolver` fallback, which kept its own first-argument index — ISS-2025-0433 — is deleted in 4.1.0.) |
 | ~~LIM-024~~ | Concurrency | **RESOLVED in v4.0.0** (wave W8, ISS-2025-0479/0480). `thread_create/2,3` and the `concurrent_*` family run every goal on a **fresh `core.engine.v4.Machine` over the same `Engine`** (`core.engine.v4.Workers`): shared clause store (thread-safe by birth/death generations), shared flags/operators/modules, per-thread current streams, one `ResourceGuard` per worker carrying the parent's budget, and a `copy_term`'d goal so no `Variable` cell is shared between machines. Interrupting the parent cancels the workers. (The old shared-solver behaviour survived on the fallback engines; both are deleted — the recursive one in 4.0.0, the v2 machine in 4.1.0.) |
 | LIM-025 | Resource | **RESOLVED in v3.14.0** (wave W7, ISS-2025-0472): `with_output_to/2` on **both** engines, `format/3` with `atom/string/codes/chars`, `format ~@` and the `~p` portray path capture through the per-thread `StreamManager` output override alone — no `System.setOut`, no `user_output` stream swap — so two threads can capture concurrently and a capture never garbles unrelated output. The last built-ins that printed to `System.out` directly (`spy/1`, `nospy/1`, `leash/1`, `debugging/0`) were routed through `StreamManager.out()`. (Earlier: RESOLVED in v3.0.0 the `open/4` dangling-alias handle — ISS-0305; `StreamManager` map thread-safety, HTTP disconnect, JDBC statement leaks — ISS-0257..0260, 0265.) |

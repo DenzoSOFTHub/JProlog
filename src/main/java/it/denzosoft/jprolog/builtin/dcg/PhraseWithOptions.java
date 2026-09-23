@@ -160,14 +160,14 @@ public class PhraseWithOptions implements BuiltIn {
         // Apply tracing if enabled
         if (options.trace) {
             // START_CHANGE: ISS-2025-0178 - Replace System.out.println with Logger
-            LOGGER.fine("DCG TRACE: Executing " + dcgBody + " on " + inputList);
+            if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine("DCG TRACE: Executing " + dcgBody + " on " + inputList);   // ISS-2025-0550: lazy
             // END_CHANGE: ISS-2025-0178
         }
         
         // Apply debugging if enabled
         if (options.debug) {
             // START_CHANGE: ISS-2025-0178 - Replace System.out.println with Logger
-            LOGGER.fine("DCG DEBUG: Body=" + dcgBody + ", Input=" + inputList + ", Rest=" + restList);
+            if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine("DCG DEBUG: Body=" + dcgBody + ", Input=" + inputList + ", Rest=" + restList);   // ISS-2025-0550: lazy
             // END_CHANGE: ISS-2025-0178
         }
         
@@ -196,7 +196,7 @@ public class PhraseWithOptions implements BuiltIn {
             
             if (options.trace) {
                 // START_CHANGE: ISS-2025-0178 - Replace System.out.println with Logger
-                LOGGER.fine("DCG TRACE: Result=" + result);
+                if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine("DCG TRACE: Result=" + result);   // ISS-2025-0550: lazy
                 // END_CHANGE: ISS-2025-0178
             }
             

@@ -37,6 +37,12 @@ public final class Engine {
     // name-keyed solution maps (ISS-2025-0491: and now they live ONLY here).
     private final Tabling tabling = new Tabling();
     // END_CHANGE: ISS-2025-0463
+    // START_CHANGE: ISS-2025-0608 - P4.15: statistics(inferences, N) — the steps of every
+    // finished top-level query of this engine (the running query adds its guard's count).
+    private final java.util.concurrent.atomic.AtomicLong inferences = new java.util.concurrent.atomic.AtomicLong();
+    void addInferences(long n) { if (n > 0) inferences.addAndGet(n); }
+    long inferences() { return inferences.get(); }
+    // END_CHANGE: ISS-2025-0608
     // START_CHANGE: ISS-2025-0466 - wave W6: the v4 module owner (design B.10). It REPLACES
     // ModuleManager as the resolver on the v4 path; the manager stays the consult-time recorder
     // shared with the legacy and v2 engines, and `modules4` mirrors the user-defined modules from
@@ -72,5 +78,18 @@ public final class Engine {
     public ClauseStore store() { return store; }
     public BuiltinTable natives() { return natives; }
     Tabling tabling() { return tabling; }
+
+    // START_CHANGE: ISS-2025-0540 - wave P2.1: the dispatch stamp. A body goal's call-site cache
+    // (Machine.CallSite) records that "name/arity is a plain user predicate" — not a native, not a
+    // registry built-in, not tabled — and that answer depends only on these three tables. Each only
+    // ever counts up, so their sum changes whenever any of them does.
+    /** Changes whenever the native table, the built-in registry or the table declarations do. */
+    long dispatchStamp() {
+        return (long) natives.modCount()
+            + (registry == null ? 0 : registry.modCount())
+            + (tables == null ? 0 : tables.modCount())
+            + modules4.stamp();
+    }
+    // END_CHANGE: ISS-2025-0540
 }
 // END_CHANGE: ISS-2025-0444

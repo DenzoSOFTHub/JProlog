@@ -38,26 +38,22 @@ public class BugFixVerificationTest {
 
     // ======================== ISS-2025-0180: Core Engine Fixes ========================
 
+    // START_CHANGE: ISS-2025-0591 - P4.2 (decision §8): a negative shift count shifts the other
+    // way, as SWI does; 4.4.0 raised the non-ISO evaluation_error(negative_shift).
     @Test
     public void testISS0180_negativeShiftThrows() {
-        // Negative shift amounts should throw evaluation_error
-        try {
-            prolog.solve("X is 1 << -1.");
-            fail("Negative shift should throw");
-        } catch (Exception e) {
-            assertTrue(e.getMessage().contains("negative_shift") || e.getMessage().contains("shift"));
-        }
+        List<Map<String, Term>> s = prolog.solve("X is 1 << -1.");
+        assertEquals(1, s.size());
+        assertEquals("0", s.get(0).get("X").toString());
     }
 
     @Test
     public void testISS0180_negativeRightShiftThrows() {
-        try {
-            prolog.solve("X is 8 >> -2.");
-            fail("Negative right shift should throw");
-        } catch (Exception e) {
-            assertTrue(e.getMessage().contains("negative_shift") || e.getMessage().contains("shift"));
-        }
+        List<Map<String, Term>> s = prolog.solve("X is 8 >> -2.");
+        assertEquals(1, s.size());
+        assertEquals("32", s.get(0).get("X").toString());
     }
+    // END_CHANGE: ISS-2025-0591
 
     // ======================== ISS-2025-0181: Term System Fixes ========================
 
@@ -173,6 +169,7 @@ public class BugFixVerificationTest {
         assertEquals(1, solutions.size());
         String result = solutions.get(0).get("L").toString();
         assertTrue(result.contains("1") && result.contains("2") && result.contains("3"));
+        assertEquals("ISS-2025-0663: the exact value", 1, prolog.solve("numlist(1, 3, L), L == [1,2,3].").size());
     }
 
     @Test
@@ -194,6 +191,7 @@ public class BugFixVerificationTest {
         assertEquals(1, solutions.size());
         String result = solutions.get(0).get("S").toString();
         assertTrue(result.contains("1") && result.contains("2") && result.contains("3"));
+        assertEquals("ISS-2025-0663: the exact value", 1, prolog.solve("sort([3, 1, 2, 1, 3], S), S == [1,2,3].").size());
     }
 
     @Test
@@ -256,7 +254,8 @@ public class BugFixVerificationTest {
     public void testISS0186_nth0Enumeration() {
         // nth0/3 should enumerate index-element pairs
         List<Map<String, Term>> solutions = prolog.solve("nth0(I, [a, b, c], E).");
-        assertTrue("nth0 should enumerate", solutions.size() >= 3);
+        assertEquals("nth0 enumerates exactly three pairs", 3, solutions.size());   // ISS-2025-0663
+        assertEquals(1, prolog.solve("findall(I-E, nth0(I, [a, b, c], E), L), L == [0-a, 1-b, 2-c].").size());
     }
 
     @Test
@@ -278,14 +277,9 @@ public class BugFixVerificationTest {
 
     @Test
     public void testISS0187_intersectionDeduplication() {
-        // intersection/3 should deduplicate results
-        List<Map<String, Term>> solutions = prolog.solve("intersection([1, 1, 2], [1, 2, 3], R).");
-        assertEquals(1, solutions.size());
-        String result = solutions.get(0).get("R").toString();
-        // Should contain 1 and 2, but 1 only once
-        int firstOne = result.indexOf("1");
-        int lastOne = result.lastIndexOf("1");
-        assertEquals("1 should appear only once", firstOne, lastOne);
+        // ISS-2025-0603 (P4.10, decision §8): intersection/3 KEEPS duplicates of its first
+        // argument, as SWI's library(lists) does (4.4.0 deduplicated).
+        assertEquals(1, prolog.solve("intersection([1, 1, 2], [1, 2, 3], R), R == [1, 1, 2].").size());
     }
 
     @Test
@@ -390,6 +384,7 @@ public class BugFixVerificationTest {
         assertFalse("2 should be removed", result.contains("2"));
         assertTrue("1 should remain", result.contains("1"));
         assertTrue("3 should remain", result.contains("3"));
+        assertEquals("ISS-2025-0663: the exact value", 1, prolog.solve("delete([1, 2, 3, 2, 1], 2, R), R == [1,3,1].").size());
     }
 
     @Test
@@ -399,6 +394,7 @@ public class BugFixVerificationTest {
         assertEquals(1, solutions.size());
         String result = solutions.get(0).get("L").toString();
         assertTrue(result.contains("1") && result.contains("5"));
+        assertEquals("ISS-2025-0663: the exact value", 1, prolog.solve("numlist(1, 5, L), L == [1,2,3,4,5].").size());
     }
 
     @Test
@@ -425,14 +421,10 @@ public class BugFixVerificationTest {
 
     @Test
     public void testISS0188_stringConcatGracefulFailure() {
-        // string_concat with insufficient args should fail, not throw
-        try {
-            List<Map<String, Term>> solutions = prolog.solve("string_concat(X, Y, Z).");
-            // Should fail (return empty) or at most return false
-            assertTrue("Should fail gracefully", solutions.isEmpty());
-        } catch (Exception e) {
-            fail("string_concat should fail gracefully, not throw: " + e.getMessage());
-        }
+        // ISS-2025-0596 (P4.7, decision §8): string_concat/3 with nothing bound raises
+        // instantiation_error, as in SWI (this test's "fail gracefully" decision is reversed)
+        assertEquals(1, prolog.solve(
+            "catch(string_concat(_, _, _), error(instantiation_error, _), true).").size());
     }
 
     // ======================== ISS-2025-0189: Fifth-Round Deep Analysis Fixes ========================
@@ -608,6 +600,7 @@ public class BugFixVerificationTest {
         assertEquals(1, solutions.size());
         String result = solutions.get(0).get("L").toString();
         assertTrue(result.contains("red") && result.contains("green") && result.contains("blue"));
+        assertEquals("ISS-2025-0663: the exact value", 1, prolog.solve("findall(X, color(X), L), L == [red,green,blue].").size());
     }
 
     @Test
@@ -628,6 +621,7 @@ public class BugFixVerificationTest {
         assertEquals(1, solutions.size());
         String result = solutions.get(0).get("R").toString();
         assertTrue(result.contains("1") && result.contains("4"));
+        assertEquals("ISS-2025-0663: the exact value", 1, prolog.solve("append([1, 2], [3, 4], R), R == [1,2,3,4].").size());
     }
 
     @Test
@@ -659,6 +653,7 @@ public class BugFixVerificationTest {
         String result = solutions.get(0).get("R").toString();
         assertTrue(result.contains("1") && result.contains("3"));
         assertFalse(result.contains("4"));
+        assertEquals("ISS-2025-0663: the exact value", 1, prolog.solve("subtract([1, 2, 3, 4], [2, 4], R), R == [1,3].").size());
     }
 
     @Test
@@ -674,6 +669,7 @@ public class BugFixVerificationTest {
         assertEquals(1, solutions.size());
         String result = solutions.get(0).get("R").toString();
         assertTrue(result.contains("1") && result.contains("3") && result.contains("4"));
+        assertEquals("ISS-2025-0663: the exact value", 1, prolog.solve("flatten([1, [2, [3]], 4], R), R == [1,2,3,4].").size());
     }
 
     @Test
@@ -794,7 +790,8 @@ public class BugFixVerificationTest {
     // #2 Intersection structural deduplication
     @Test
     public void testISS0190_intersectionStructuralDedup() {
-        prolog.consult("test_int :- intersection([a, a, b], [a, b, c], X), X = [a, b].");
+        // ISS-2025-0603 (P4.10): duplicates of the first list are kept (SWI)
+        prolog.consult("test_int :- intersection([a, a, b], [a, b, c], X), X = [a, a, b].");
         List<Map<String, Term>> solutions = prolog.solve("test_int.");
         assertEquals(1, solutions.size());
     }
@@ -895,6 +892,7 @@ public class BugFixVerificationTest {
         // Verify sorting works — result should contain 1, 2, 3 in order
         String result = solutions.get(0).get("X").toString();
         assertTrue("Expected sorted list, got: " + result, result.contains("1") && result.contains("2") && result.contains("3"));
+        assertEquals("ISS-2025-0663: the exact value", 1, prolog.solve("predsort(my_cmp, [3, 1, 2], X), X == [1,2,3].").size());
     }
 
     // #5 TableStore exact matching (internal unit test)
@@ -934,7 +932,8 @@ public class BugFixVerificationTest {
     @Test
     public void testISS0191_nth1Enumeration() {
         List<Map<String, Term>> solutions = prolog.solve("nth1(N, [a, b, c], b).");
-        assertTrue(solutions.size() >= 1);
+        assertEquals(1, solutions.size());   // ISS-2025-0663 (was ">= 1")
+        assertEquals(1, prolog.solve("nth1(N, [a, b, c], b), N == 2.").size());
         assertEquals("2", solutions.get(0).get("N").toString());
     }
 
@@ -991,13 +990,9 @@ public class BugFixVerificationTest {
     // #2 Union deduplicates Set1
     @Test
     public void testISS0192_unionDeduplicatesSet1() {
-        List<Map<String, Term>> solutions = prolog.solve("union([1, 1, 2], [3], R).");
-        assertEquals(1, solutions.size());
-        String result = solutions.get(0).get("R").toString();
-        // 1 should appear only once
-        int first1 = result.indexOf("1");
-        int last1 = result.lastIndexOf("1");
-        assertEquals("1 should appear only once in union result", first1, last1);
+        // ISS-2025-0603 (P4.10, decision §8): union/3 keeps the duplicates of its first
+        // argument, as SWI's library(lists) does (4.4.0 deduplicated).
+        assertEquals(1, prolog.solve("union([1, 1, 2], [3], R), R == [1, 1, 2, 3].").size());
     }
 
     // #3 Clause/2 uses TermCopier for proper variable renaming
@@ -1005,7 +1000,8 @@ public class BugFixVerificationTest {
     public void testISS0192_clauseVariableRenaming() {
         prolog.consult("parent(tom, bob). parent(bob, ann).");
         List<Map<String, Term>> solutions = prolog.solve("clause(parent(X, Y), true).");
-        assertTrue("Should find at least 2 clauses", solutions.size() >= 2);
+        assertEquals("exactly the 2 clauses", 2, solutions.size());   // ISS-2025-0663
+        assertEquals(1, prolog.solve("findall(X-Y, clause(parent(X, Y), true), L), L == [tom-bob, bob-ann].").size());
     }
 
     // #4 SumList preserves integer precision
@@ -1046,8 +1042,9 @@ public class BugFixVerificationTest {
     // #8 Tab with negative N fails
     @Test
     public void testISS0192_tabNegativeFails() {
+        // ISS-2025-0604 (P4.11, decision §8): tab(-1) succeeds and prints nothing (SWI)
         List<Map<String, Term>> solutions = prolog.solve("tab(-1).");
-        assertEquals("tab(-1) should fail", 0, solutions.size());
+        assertEquals("tab(-1) succeeds", 1, solutions.size());
     }
 
     // #9 ListTerm resolveBindings optimization (no allocation when unchanged)
@@ -1069,6 +1066,7 @@ public class BugFixVerificationTest {
         String result = solutions.get(0).get("R").toString();
         assertTrue(result.contains("1") && result.contains("2") && result.contains("3"));
         assertFalse(result.contains("a"));
+        assertEquals("ISS-2025-0663: the exact value", 1, prolog.solve("include(number, [1, a, 2, b, 3], R), R == [1,2,3].").size());
     }
 
     @Test
@@ -1078,6 +1076,7 @@ public class BugFixVerificationTest {
         String result = solutions.get(0).get("R").toString();
         assertTrue(result.contains("a") && result.contains("b"));
         assertFalse(result.contains("1"));
+        assertEquals("ISS-2025-0663: the exact value", 1, prolog.solve("exclude(number, [1, a, 2, b, 3], R), R == [a,b].").size());
     }
 
     // ==================== ISS-2025-0193: Ninth-Round Deep Analysis Fixes ====================
@@ -1166,6 +1165,7 @@ public class BugFixVerificationTest {
         assertEquals(1, solutions.size());
         String result = solutions.get(0).get("R").toString();
         assertTrue(result.contains("a") && result.contains("b"));
+        assertEquals("ISS-2025-0663: the exact value", 1, prolog.solve("include(atom, [a, 1, b, 2], R), R == [a,b].").size());
     }
 
     // #9 StringCodes basic (verifies no regression after supplementary Unicode fix)
@@ -1230,7 +1230,8 @@ public class BugFixVerificationTest {
         prolog.solve("assert((call_cut(b))).");
         List<Map<String, Term>> solutions = prolog.solve("call_cut(X).");
         // call(!) isolates cut per ISO, so both clauses should be tried
-        assertTrue(solutions.size() >= 1);
+        assertEquals("ISS-2025-0663 (was >= 1): the cut is local, so BOTH clauses answer", 2, solutions.size());
+        assertEquals(1, prolog.solve("findall(X, call_cut(X), L), L == [a, b].").size());
     }
 
     // #6 Cut does not escape once/1
@@ -1240,7 +1241,8 @@ public class BugFixVerificationTest {
         prolog.solve("assert((once_cut(b))).");
         List<Map<String, Term>> solutions = prolog.solve("once_cut(X).");
         // once(!) isolates cut, so both clauses should be tried
-        assertTrue(solutions.size() >= 1);
+        assertEquals("ISS-2025-0663 (was >= 1): the cut is local, so BOTH clauses answer", 2, solutions.size());
+        assertEquals(1, prolog.solve("findall(X, once_cut(X), L), L == [a, b].").size());
     }
 
     // #7 Cut does not escape negation
@@ -1410,20 +1412,24 @@ public class BugFixVerificationTest {
     }
     // END_CHANGE: ISS-2025-0224
 
-    // START_CHANGE: ISS-2025-0225 - integer/1 evaluable truncates toward zero
+    // START_CHANGE: ISS-2025-0225 - integer/1 evaluable
+    // START_CHANGE: ISS-2025-0590 - P4.1 (decision §8): integer/1 ROUNDS to the nearest integer,
+    // half away from zero (SWI; integer/1 is NOT an ISO evaluable — ISS-2025-0669 corrected the
+    // "ISO 9.1.6.5" citation, which is truncate/1's clause); 4.4.0 truncated (3.7 -> 3).
     @Test
     public void testISS0225_integerEvaluable() {
         List<Map<String, Term>> s = prolog.solve("X is integer(3.7).");
         assertEquals(1, s.size());
-        assertEquals("3", s.get(0).get("X").toString());
+        assertEquals("4", s.get(0).get("X").toString());
     }
 
     @Test
     public void testISS0225_integerEvaluableNegative() {
         List<Map<String, Term>> s = prolog.solve("X is integer(-3.7).");
         assertEquals(1, s.size());
-        assertEquals("-3", s.get(0).get("X").toString());
+        assertEquals("-4", s.get(0).get("X").toString());
     }
+    // END_CHANGE: ISS-2025-0590
     // END_CHANGE: ISS-2025-0225
 
     // START_CHANGE: ISS-2025-0226 - hyperbolic functions
@@ -1455,12 +1461,9 @@ public class BugFixVerificationTest {
     // START_CHANGE: ISS-2025-0229 - 0.0**negative throws undefined
     @Test
     public void testISS0229_zeroFloatNegPowerErrors() {
-        try {
-            prolog.solve("X is 0.0 ** -1.");
-            org.junit.Assert.fail("expected evaluation_error(undefined)");
-        } catch (RuntimeException e) {
-            // accept ISO error wrapping
-        }
+        // ISS-2025-0662: the exact ISO error term, not "any RuntimeException"
+        assertEquals(1, prolog.solve(
+            "catch(X is 0.0 ** -1, error(E, _), true), E == evaluation_error(undefined).").size());
     }
     // END_CHANGE: ISS-2025-0229
 
@@ -1819,11 +1822,17 @@ public class BugFixVerificationTest {
     @Test
     public void testISS0263_clpfdHugeDomainRejected() {
         // A ~2-billion-value range was materialized as boxed Integers (OOM) and the int loop
-        // counter would overflow at Integer.MAX_VALUE and never terminate. Now it raises a
-        // catchable resource_error.
-        List<Map<String, Term>> s = prolog.solve(
-            "catch((X in 1..2000000000, indomain(X)), error(resource_error(_), _), true).");
+        // counter would overflow at Integer.MAX_VALUE and never terminate.
+        // START_CHANGE: ISS-2025-0642 - labeling is lazy since 4.5 (wave P5): nothing is
+        // materialised any more, so the huge domain hands out its values one at a time instead of
+        // raising resource_error.
+        List<Map<String, Term>> s = prolog.solve("X in 1..2000000000, once(indomain(X)).");
         assertEquals(1, s.size());
+        assertEquals("1", s.get(0).get("X").toString());
+        final int[] n = {0};
+        prolog.solveStream("X in 1..2000000000, indomain(X).", m -> ++n[0] < 3);
+        assertEquals(3, n[0]);
+        // END_CHANGE: ISS-2025-0642
     }
     // END_CHANGE: ISS-2025-0263
 
@@ -1849,6 +1858,8 @@ public class BugFixVerificationTest {
         List<Map<String, Term>> s = prolog.solve("subtract([1,'1'], [1], R).");
         assertEquals(1, s.size());
         assertEquals("[1]", s.get(0).get("R").toString()); // the atom '1' remains (number 1 removed)
+        // ISS-2025-0663: toString() cannot tell '1' from 1 — assert the TYPE with ==
+        assertEquals(1, prolog.solve("subtract([1,'1'], [1], R), R == ['1'].").size());
 
         s = prolog.solve("intersection([1], ['1'], R).");
         assertEquals(1, s.size());
@@ -2122,7 +2133,7 @@ public class BugFixVerificationTest {
 
     // START_CHANGE: ISS-2025-0331 - the v2 engine fires four-port DebugController events (IDE debugging)
     @Test(timeout = 15000)
-    public void testISS0331_V2EngineDebugPorts() throws Exception {
+    public void testISS0331_DebugPorts() throws Exception {
         Prolog p = new Prolog();
         p.consult("parent(tom, bob).\nparent(bob, ann).\ngrandparent(X, Z) :- parent(X, Y), parent(Y, Z).");
         it.denzosoft.jprolog.core.engine.DebugController dc = new it.denzosoft.jprolog.core.engine.DebugController();
@@ -2210,15 +2221,18 @@ public class BugFixVerificationTest {
         Prolog p = new Prolog();
         p.consult("loop :- loop.");
         final boolean[] cancelled = {false};
+        // ISS-2025-0664: latch-synchronised — interrupt once the query is known to be running
+        final it.denzosoft.jprolog.test.support.QueryStartLatch latch =
+            new it.denzosoft.jprolog.test.support.QueryStartLatch();
         Thread t = new Thread(() -> {
             try {
-                p.solve("loop.");
+                latch.solve(p, it.denzosoft.jprolog.test.support.QueryStartLatch.ANNOUNCE + "loop.");
             } catch (it.denzosoft.jprolog.core.engine.QueryCancelledException ce) {
                 cancelled[0] = true;
             } catch (Throwable ignore) { /* other terminal outcomes are not what we test here */ }
         });
         t.start();
-        Thread.sleep(400);            // let it spin in the resolution loop
+        latch.await(10);
         t.interrupt();                // == the IDE Stop button
         t.join(8000);
         assertFalse("the interrupted solver thread must terminate", t.isAlive());
@@ -2623,7 +2637,7 @@ public class BugFixVerificationTest {
     }
 
     @Test
-    public void testISS0348_StringIdentityAndAtomicOnDefaultEngine() {
+    public void testISS0348_StringIdentityAndAtomic() {
         // ==/\==/atomic for strings on the default engine (ISS-2025-0491: v4 inlines them)
         assertEquals("\"abc\" == \"abc\" must succeed", 1, prolog.solve("\"abc\" == \"abc\".").size());
         assertEquals("\"abc\" == \"abd\" must fail", 0, prolog.solve("\"abc\" == \"abd\".").size());
@@ -3081,13 +3095,17 @@ public class BugFixVerificationTest {
     @Test
     public void testISS0363_UnboundBallNotTrappedByUnrelatedCatcher() {
         // The fresh-variable ball used to unify with ANY catcher and run the recovery goal
-        List<Map<String, Term>> solutions;
+        // ISS-2025-0662: it escapes to Java as exactly error(instantiation_error, _)
         try {
-            solutions = prolog.solve("catch(throw(_), very_specific_catcher(abc), R = wrongly_caught).");
-        } catch (Exception e) {
-            solutions = java.util.Collections.emptyList();   // escaping to Java as an error is correct
+            prolog.solve("catch(throw(_), very_specific_catcher(abc), R = wrongly_caught).");
+            org.junit.Assert.fail("an unrelated catcher must not trap the instantiation_error");
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException e) {
+            Term ball = e.getErrorTerm();
+            assertTrue(ball instanceof it.denzosoft.jprolog.core.terms.CompoundTerm);
+            assertEquals("error", ((it.denzosoft.jprolog.core.terms.CompoundTerm) ball).getName());
+            assertEquals("instantiation_error",
+                ((it.denzosoft.jprolog.core.terms.CompoundTerm) ball).getArguments().get(0).toString());
         }
-        assertTrue("an unrelated catcher must not trap the instantiation_error", solutions.isEmpty());
     }
 
     // ======================== ISS-2025-0364: functor/3 compound Name raises type_error(atomic, Name) ========================
@@ -3524,7 +3542,8 @@ public class BugFixVerificationTest {
         List<Map<String, Term>> solutions = new java.util.ArrayList<>();
         String out = captureStdout("print(hello), print(' '), print('$VAR'(0)).", solutions);
         assertEquals("print/1 must succeed", 1, solutions.size());
-        assertEquals("hello A", out);
+        // ISS-2025-0600 (P4.7, decision §8): print/1 quotes (portray + writeq, SWI)
+        assertEquals("hello' 'A", out);
     }
 
     @Test
@@ -3573,7 +3592,9 @@ public class BugFixVerificationTest {
     @Test
     public void testISS0380_LastClosesPartialListTail() {
         // last([a|T],X) must bind T=[] (first standard solution), never leave T unconstrained
-        List<Map<String, Term>> solutions = prolog.solve("last([a|T],X), T == [], X == a.");
+        // ISS-2025-0603 (P4.10): the partial list now ENUMERATES (SWI); T = [] is still the
+        // FIRST answer, taken with a cut.
+        List<Map<String, Term>> solutions = prolog.solve("last([a|T],X), T == [], X == a, !.");
         assertEquals("last/2 on a partial list must close the tail with []", 1, solutions.size());
     }
 
@@ -3740,7 +3761,8 @@ public class BugFixVerificationTest {
     @Test
     public void testISS0387_WriteqSeparatesMergingSymbolicTokens() {
         List<Map<String, Term>> solutions = new java.util.ArrayList<>();
-        assertEquals("-(1) is a compound, not the integer -1", "- 1", captureStdout("writeq(-(1)).", solutions));
+        // ISS-2025-0562 (P3.9): SWI's canonical +/-(Number) form
+        assertEquals("-(1) is a compound, not the integer -1", "-(1)", captureStdout("writeq(-(1)).", solutions));
         solutions.clear();
         assertEquals("1--1 re-tokenizes as the atom '--'", "1- -1", captureStdout("X = 1 - -1, writeq(X).", solutions));
         solutions.clear();
@@ -3748,7 +3770,8 @@ public class BugFixVerificationTest {
         solutions.clear();
         assertEquals("2^ -1", captureStdout("writeq(2^ -1).", solutions));
         solutions.clear();
-        assertEquals("- - -", captureStdout("writeq(-(-,-)).", solutions));
+        // ISS-2025-0562 (P3.9): "- - -" re-read as -(-(-)); operator atoms as operands are bracketed
+        assertEquals("(-)-(-)", captureStdout("writeq(-(-,-)).", solutions));
     }
 
     @Test
@@ -3811,15 +3834,19 @@ public class BugFixVerificationTest {
     @Test
     public void testISS0390_FloatExponentLowercaseAndInfNan() {
         List<Map<String, Term>> solutions = new java.util.ArrayList<>();
-        assertEquals("1.0e10", captureStdout("writeq(1.0e10).", solutions));
+        // ISS-2025-0563/0564 (P3.9): SWI's float layout (exponent only from 1e15) and the
+        // re-readable special floats under writeq
+        assertEquals("10000000000.0", captureStdout("writeq(1.0e10).", solutions));
         solutions.clear();
         assertEquals("1.0e-6", captureStdout("writeq(0.000001).", solutions));
         solutions.clear();
-        assertEquals("inf", captureStdout("X is inf, writeq(X).", solutions));
+        assertEquals("1.0Inf", captureStdout("X is inf, writeq(X).", solutions));
         solutions.clear();
-        assertEquals("-inf", captureStdout("X is -inf, writeq(X).", solutions));
+        assertEquals("-1.0Inf", captureStdout("X is -inf, writeq(X).", solutions));
         solutions.clear();
-        assertEquals("nan", captureStdout("X is nan, writeq(X).", solutions));
+        assertEquals("1.5NaN", captureStdout("X is nan, writeq(X).", solutions));
+        solutions.clear();
+        assertEquals("inf", captureStdout("X is inf, write(X).", solutions));
         // Direct checks on the single source of the rendering (Java's 'Infinity'/'NaN'
         // re-read as fresh VARIABLES, silently changing the term).
         assertEquals("inf", new Number(Double.POSITIVE_INFINITY, false).toString());
@@ -4084,10 +4111,12 @@ public class BugFixVerificationTest {
 
     @Test
     public void testISS0413_AggregateAllMaxMinTypeErrorOnNonNumber() {
-        assertEquals("max over non-numbers must raise type_error(number, _), not -Infinity", 1,
-            prolog.solve("catch(aggregate_all(max(X), member(X, [a, c, b]), _M), error(type_error(number, _), _), true).").size());
-        assertEquals("min over a mixed list must raise type_error(number, _)", 1,
-            prolog.solve("catch(aggregate_all(min(X), member(X, [1, a]), _M), error(type_error(number, _), _), true).").size());
+        // ISS-2025-0522 (P1.9): the expression is EVALUATED (SWI), so a non-number is
+        // type_error(evaluable, Name/0) — formerly type_error(number, _)
+        assertEquals("max over non-numbers must raise type_error(evaluable, _), not -Infinity", 1,
+            prolog.solve("catch(aggregate_all(max(X), member(X, [a, c, b]), _M), error(type_error(evaluable, a/0), _), true).").size());
+        assertEquals("min over a mixed list must raise type_error(evaluable, _)", 1,
+            prolog.solve("catch(aggregate_all(min(X), member(X, [1, a]), _M), error(type_error(evaluable, a/0), _), true).").size());
         // numeric extrema still work
         List<Map<String, Term>> s = prolog.solve("aggregate_all(max(X), member(X, [3, 1, 2]), M).");
         assertEquals(1, s.size());
@@ -4103,9 +4132,10 @@ public class BugFixVerificationTest {
     // START_CHANGE: ISS-2025-0414 - exact big-integer sums, typed results, type_error on non-numbers
     @Test
     public void testISS0414_AggregateAllSumExactAndTyped() {
-        // a non-numeric solution raises type_error(number, a) instead of being silently skipped
+        // a non-numeric solution raises instead of being silently skipped; since ISS-2025-0522
+        // (P1.9) the expression is evaluated as in SWI, so the error is type_error(evaluable, a/0)
         assertEquals(1, prolog.solve(
-            "catch(aggregate_all(sum(X), member(X, [1, a, 2]), _S), error(type_error(number, a), _), true).").size());
+            "catch(aggregate_all(sum(X), member(X, [1, a, 2]), _S), error(type_error(evaluable, a/0), _), true).").size());
         // exact big-integer sum (the double accumulator rounded this to ...680)
         List<Map<String, Term>> s = prolog.solve("aggregate_all(sum(X), member(X, [123456789012345678, 1]), S).");
         assertEquals(1, s.size());
@@ -4538,14 +4568,16 @@ public class BugFixVerificationTest {
     public void testISS0408_ReadTermTextTokenAwareness() throws Exception {
         // graphic token =.. and float dots must not terminate the term; the reader position
         // is preserved between calls so the next term can be read from the same reader
-        java.io.StringReader r = new java.io.StringReader("p(X) :- X =.. L, q(3.14). rest(1).");
-        assertEquals("p(X) :- X =.. L, q(3.14)", it.denzosoft.jprolog.builtin.io.Read.readTermText(r));
-        assertEquals("rest(1)", it.denzosoft.jprolog.builtin.io.Read.readTermText(r));
-        assertNull("EOF must yield null (end_of_file)", it.denzosoft.jprolog.builtin.io.Read.readTermText(r));
+        // ISS-2025-0670: retargeted at the engine's reader (the legacy Read.readTermText helper
+        // is deleted with its class); the same texts, read through a string stream
+        assertEquals(1, prolog.solve("open_string(\"p(X) :- X =.. L, q(3.14). rest(1).\", S), "
+            + "read(S, A), read(S, B), read(S, C), close(S), "
+            + "A = (H :- (U, Q)), H = p(V), U = (V2 =.. _), V == V2, Q == q(3.14), "
+            + "B == rest(1), C == end_of_file.").size());
         // dots inside quoted atoms, strings and 0'. char literals must not end the term
-        java.io.StringReader q = new java.io.StringReader("x('a.b', \"c.d\", 0'.). next.");
-        assertEquals("x('a.b', \"c.d\", 0'.)", it.denzosoft.jprolog.builtin.io.Read.readTermText(q));
-        assertEquals("next", it.denzosoft.jprolog.builtin.io.Read.readTermText(q));
+        assertEquals(1, prolog.solve("open_string(\"x('a.b', \\\"c.d\\\", 0'.). next.\", S), "
+            + "read(S, A), read(S, B), close(S), A = x(P, Str, Code), P == 'a.b', "
+            + "string(Str), string_concat(\"c.d\", \"\", Str), Code == 0'., B == next.").size());
     }
     // END_CHANGE: ISS-2025-0408
 
@@ -4562,10 +4594,11 @@ public class BugFixVerificationTest {
 
     @Test
     public void testISS0409_FormatDirectiveDRequiresInteger() {
-        assertEquals("~d with a float must raise type_error(integer, 3.7)", 1, prolog.solve(
-            "catch(format('~d~n', [3.7]), error(type_error(integer, _), _), true).").size());
-        assertEquals("~d with an atom must raise type_error(integer, foo)", 1, prolog.solve(
-            "catch(format('~d~n', [foo]), error(type_error(integer, foo), _), true).").size());
+        // ISS-2025-0595 (P4.6): every format argument fault is error(format(Message), _) (SWI)
+        assertEquals("~d with a float must raise", 1, prolog.solve(
+            "catch(format('~d~n', [3.7]), error(format(_), _), true).").size());
+        assertEquals("~d with an atom must raise", 1, prolog.solve(
+            "catch(format('~d~n', [foo]), error(format(_), _), true).").size());
     }
 
     @Test

@@ -66,14 +66,9 @@ public class EngineV4LibraryTest {
           + "tpath(X, Y) :- tpath(X, Z), edge(Z, Y).\n");
         // ISS-2025-0484 - wave W9: the recursive QuerySolver the probe counted entries into no
         // longer exists. The structural fact replaces the counter; the queries stay.
-        try {
-            Class.forName("it.denzosoft.jprolog.core.engine.QuerySolver");
-            fail("the recursive QuerySolver must be deleted (wave W9, ISS-2025-0484)");
-        } catch (ClassNotFoundException expected) {
-            // the only correct outcome
-        }
+        // ISS-2025-0665: the "QuerySolver is deleted" check lives once, in EngineV4RetirementTest
         assertEquals(1, prolog.solve("phrase(greeting, [hello, world]).").size());
-        assertEquals(2, prolog.solve("bagof(X, Y^q(Y, X), L).").size() + 1);
+        assertEquals(1, prolog.solve("bagof(X, Y^q(Y, X), L).").size());
         assertEquals(1, prolog.solve("setof(X, p(X), [1,2,3]).").size());
         assertEquals(1, prolog.solve("aggregate_all(count, p(_), 3).").size());
         assertEquals(1, prolog.solve("forall(p(X), integer(X)).").size());
@@ -187,11 +182,12 @@ public class EngineV4LibraryTest {
         assertTrue(prolog.solve("aggregate_all(max(X), fail, _M).").isEmpty());
         // ISS-2025-0414: exact big-integer sums, float contagion
         assertEquals(1, prolog.solve("aggregate_all(sum(X), member(X, [1.5, 2.5]), S), float(S), S =:= 4.0.").size());
-        // the Value-Witness pair form
-        assertEquals(1, prolog.solve("aggregate_all(max(V-W), member(V-W, [1-a, 3-b, 2-c]), 3-b).").size());
+        // the Value-Witness form — ISS-2025-0522 (P1.9): SWI's max(Expr, Witness) answering
+        // max(Value, Witness); the old non-standard max(V-W) pair form is gone (V-W is evaluated)
+        assertEquals(1, prolog.solve("aggregate_all(max(V, W), member(V-W, [1-a, 3-b, 2-c]), max(3, b)).").size());
         try {
             prolog.solve("aggregate_all(sum(X), member(X, [1, a]), _S).");
-            fail("a non-numeric element must raise type_error(number, a)");
+            fail("a non-numeric element must raise type_error(evaluable, a/0)");   // ISS-2025-0522
         } catch (PrologException e) {
             assertTrue(String.valueOf(e.getErrorTerm()).contains("type_error"));
         }
@@ -244,7 +240,9 @@ public class EngineV4LibraryTest {
         assertEquals(1, prolog.solve("nth1(1, [a,b,c], a).").size());
         assertEquals(3, prolog.solve("nth0(_I, [a,b,c], _E).").size());
         assertEquals(1, prolog.solve("last([1,2,3], 3).").size());
-        assertEquals(1, prolog.solve("last([a|T], X), T == [], X == a.").size());
+        // ISS-2025-0603 (P4.10): last/2 on a partial list ENUMERATES (SWI) — T = [], [X], [_,X], ...
+        // — so the first answer is taken with a cut.
+        assertEquals(1, prolog.solve("last([a|T], X), T == [], X == a, !.").size());
         assertTrue(prolog.solve("last([a|b], _X).").isEmpty());
         assertEquals(1, prolog.solve("reverse([1,2,3], [3,2,1]).").size());
         assertEquals(1, prolog.solve("reverse(L, [1,2]), L == [2,1].").size());

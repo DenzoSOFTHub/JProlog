@@ -33,9 +33,26 @@ Conventions used throughout:
 JProlog is a Prolog interpreter written in Java (source level 1.8, runs on any modern JDK). It has no
 runtime dependencies beyond the JDK.
 
-**Command-line console** — start it with `java -cp target/classes it.denzosoft.jprolog.PrologCLI`
-(or run the jar). Queries are typed after the `?-` prompt and end with a full stop. The console also
-understands these commands:
+**Command-line console** — start it with `java -cp target/classes it.denzosoft.jprolog.PrologCLI`,
+or build the runnable jar with `mvn package -DskipTests` and run `java -jar target/jprolog.jar`.
+Queries are typed after the `?-` prompt and end with a full stop.
+
+Command line: `jprolog [options] [file.pl ...]` consults the files in order, then:
+
+| Option | Effect |
+|---|---|
+| `-g Goal` | run Goal once after loading (repeatable); failure or an uncaught error exits with status 1 |
+| `-t Goal` | run Goal as the toplevel instead of the interactive loop (`-t halt` ends after `-g`) |
+| `--safe` | safe mode: no files, processes, network, threads, CSV files or log file |
+| `--budget N` | inference budget per query |
+| `--max-solutions N` | print at most N answers per query |
+| `--demo` | load the demo facts (`father/2`, `mother/2`, `parent/2`, `likes/2`, `color/1`) |
+| `--batch` / `-q` | print answers without prompting (`-q` also drops the banner) |
+| `--interactive` | prompt for `;` even when stdin is not a terminal |
+
+`halt(N)` ends the process with status N, and a file containing `:- initialization(main, main).`
+runs `main` after loading and then exits (0 on success, 1 on failure or an uncaught error) — a
+Prolog script. The console also understands these commands:
 
 | Command | Effect |
 |---|---|
@@ -48,12 +65,13 @@ understands these commands:
 | `:help` (`:h`) | Show the command list |
 | `:quit` (`:q`) | Exit |
 
-When several solutions exist the console prints the first, writes ` ;` and waits: type `;` and Enter
-for the next one, or Enter alone to stop. **When stdin is not a terminal** — a pipe, a here-document,
-a redirected file, a CI job — or when the console is started with `--batch` or `-q`, it prints
-*every* solution at once instead, separated by ` ;` and terminated by `.`, and reads nothing back
-(before v4.0.0 it consumed the next input line as the answer to that prompt, silently swallowing the
-next query):
+Answers are computed one at a time (v4.5.0): the console prints an answer and, when more may
+follow, writes ` ;` and waits — type `;` and Enter to compute the next one, or Enter alone to stop.
+An answer that is certainly the last ends in `.`; a `;` that finds nothing more prints `false.`.
+**When stdin is not a terminal** — a pipe, a here-document, a redirected file, a CI job — or when
+the console is started with `--batch` or `-q`, it prints the answers as they are found, separated by
+` ;` and terminated by `.`, and reads nothing back (an infinite enumeration therefore prints forever
+in constant memory; bound it with `--max-solutions`):
 
 ```
 $ printf 'between(1, 3, X).\n:quit\n' | java -cp target/classes it.denzosoft.jprolog.PrologCLI
@@ -89,6 +107,7 @@ prolog.solveStream("between(1, inf, N)", sol -> ((Number) sol.get("N")).intValue
 
 // Hardening for untrusted programs (see Appendix B)
 prolog.enableSafeMode();          // remove OS/file/network/JDBC/FFI/thread built-ins
+// or: prolog.enableSafeMode(new SafeModeOptions().allowFileRead("data"));  // read-only, one tree
 prolog.setInferenceBudget(1_000_000);   // abort runaway queries
 ```
 
@@ -243,8 +262,14 @@ active table.
 | 1050 | xfy | `->`  `*->` | If-then, soft-cut |
 | 1000 | xfy | `,` | Conjunction |
 | 900 | fy | `\+` | Negation as failure |
+| 760 | yfx | `#<==>` | CLP(FD) reified equivalence |
+| 750 | xfy / yfx | `#==>` / `#<==` | CLP(FD) reified implication |
+| 740 | yfx | `#\/` | CLP(FD) reified disjunction |
+| 730 | yfx | `#\` | CLP(FD) reified exclusive or |
+| 720 | yfx | `#/\` | CLP(FD) reified conjunction |
+| 710 | fy | `#\` | CLP(FD) reified negation |
 | 700 | xfx | `=` `\=` `==` `\==` `@<` `@=<` `@>` `@>=` `=..` `is` `=:=` `=\=` `<` `=<` `>` `>=` | Unification, comparison, arithmetic |
-| 700 | xfx | `in` `ins` `#=` `#\=` `#<` `#>` `#=<` `#>=` | CLP(FD) constraints (`ins` is reserved: parsed, not implemented) |
+| 700 | xfx | `in` `ins` `#=` `#\=` `#<` `#>` `#=<` `#>=` | CLP(FD) constraints |
 | 600 | xfy | `:` | Module qualification |
 | 500 | yfx | `+` `-` `/\` `\/` `xor` | Additive and bitwise |
 | 450 | xfx | `..` | CLP(FD) domain range |

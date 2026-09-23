@@ -120,7 +120,7 @@ final class NativeDb {
                 }
             }
             final List<Term> all = new ArrayList<Term>();
-            for (String s : prolog(m, "current_predicate/1").getCurrentPredicates()) {
+            for (String s : m.engine().kb().getDefinedPredicates()) {         // ISS-2025-0610
                 int slash = s.lastIndexOf('/');
                 if (slash <= 0) continue;
                 int arity;
@@ -163,7 +163,7 @@ final class NativeDb {
             String f = (head instanceof Atom) ? ((Atom) head).getName() : ((CompoundTerm) head).getName();
             int n = (head instanceof Atom) ? 0 : ((CompoundTerm) head).getArguments().size();
             checkModifiable(m, f, n, "retractall/1");
-            prolog(m, "retractall/1").retractAllClauses(m.resolve(head));
+            m.retractAllClauses(head);                          // ISS-2025-0545: via the store
             return Outcome.SUCCESS;
         }
     }
@@ -194,15 +194,23 @@ final class NativeDb {
                 throw new PrologException(ISOErrorTerms.typeError("atom", m.resolve(ft),
                     "abolish/1: functor must be an atom"));
             }
-            if (!(at instanceof Number)) {
+            // START_CHANGE: ISS-2025-0610 - P4.16: a float arity is type_error(integer, A) (it was
+            // rounded: abolish(foo/1.5) succeeded); an arity past the largest one a compound can
+            // have is representation_error(max_arity) (foo/100000000000 was cast to an int).
+            if (!(at instanceof Number) || !((Number) at).isInteger()) {
                 throw new PrologException(ISOErrorTerms.typeError("integer", m.resolve(at),
                     "abolish/1: arity must be an integer"));
             }
-            int arity = (int) Math.round(((Number) at).getValue());
-            if (arity < 0) {
+            Number an = (Number) at;
+            if (an.bigIntegerValue().signum() < 0) {
                 throw new PrologException(ISOErrorTerms.domainError("not_less_than_zero", at,
                     "abolish/1: arity must be non-negative"));
             }
+            if (!an.fitsInLong() || an.longValue() > Integer.MAX_VALUE - 8) {
+                throw Errors.representation("max_arity", "abolish/1");
+            }
+            int arity = (int) an.longValue();
+            // END_CHANGE: ISS-2025-0610
             String functor = ((Atom) ft).getName();
             checkModifiable(m, functor, arity, "abolish/1");
             prolog(m, "abolish/1").abolishPredicate(functor, arity);
@@ -326,7 +334,23 @@ final class NativeDb {
                     }
                 });
             }
-            p.nbSetval(name, m.resolve(args[1]));
+            // START_CHANGE: ISS-2025-0526 - wave P1.13: nb_setval/2 stores a COPY (SWI:
+            // duplicate_term). It stored m.resolve(Value), which keeps every unbound cell LIVE, so
+            // `nb_setval(k, f(X)), (X = 1 ; X = 2)` left the global reading f(2): the caller's later
+            // bindings wrote straight through into the stored value. b_setval/2 keeps the resolved
+            // term — its value is backtrackable by definition, so sharing the caller's cells is its
+            // documented semantics.
+            // START_CHANGE: ISS-2025-0527 - and a cyclic value cannot be stored (see Machine.assertClause)
+            Term value;
+            if (backtrackable) {
+                value = m.resolve(args[1]);
+            } else {
+                value = Unify.copyAcyclic(args[1], new java.util.IdentityHashMap<Variable, Variable>(), m.guard());
+                if (value == null) throw Errors.representation("cyclic_term", ctx);
+            }
+            p.nbSetval(name, value);
+            // END_CHANGE: ISS-2025-0527
+            // END_CHANGE: ISS-2025-0526
             return Outcome.SUCCESS;
         }
     }
@@ -496,6 +520,7 @@ final class NativeDb {
             if (!(goal instanceof Atom) && !(goal instanceof CompoundTerm)) {
                 throw Errors.type("callable", m.resolve(goal), "findall/4");
             }
+            m.checkBody(goal, "findall", 4);                               // ISS-2025-0518
             List<Term> found = m.findAll(args[0], args[1]);
             Term list = args[3];
             for (int i = found.size() - 1; i >= 0; i--) {

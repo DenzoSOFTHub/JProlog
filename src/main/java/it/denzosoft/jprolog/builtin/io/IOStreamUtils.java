@@ -75,6 +75,9 @@ public final class IOStreamUtils {
         }
         String alias = streamAlias(streamTerm);
         if (alias == null) {
+            if (isStreamHandle(streamTerm)) {                 // ISS-2025-0605: a closed stream
+                throw new PrologException(ISOErrorTerms.existenceError("stream", streamTerm, context));
+            }
             throw new PrologException(ISOErrorTerms.domainError("stream_or_alias", streamTerm, context));
         }
         PrintStream out = StreamManager.resolveOutput(alias);
@@ -103,7 +106,7 @@ public final class IOStreamUtils {
         if (t instanceof Variable) throw new PrologException(ISOErrorTerms.instantiationError(context));
         it.denzosoft.jprolog.core.engine.v4.PrologStream s = st.byTerm(t);
         if (s == null) {
-            if (streamAlias(t) == null) {
+            if (streamAlias(t) == null && !isStreamHandle(t)) {   // ISS-2025-0605: closed -> existence
                 throw new PrologException(ISOErrorTerms.domainError("stream_or_alias", t, context));
             }
             throw new PrologException(ISOErrorTerms.existenceError("stream", t, context));
@@ -128,7 +131,7 @@ public final class IOStreamUtils {
         if (t instanceof Variable) throw new PrologException(ISOErrorTerms.instantiationError(context));
         it.denzosoft.jprolog.core.engine.v4.PrologStream s = st.byTerm(t);
         if (s == null) {
-            if (streamAlias(t) == null) {
+            if (streamAlias(t) == null && !isStreamHandle(t)) {   // ISS-2025-0605: closed -> existence
                 throw new PrologException(ISOErrorTerms.domainError("stream_or_alias", t, context));
             }
             throw new PrologException(ISOErrorTerms.existenceError("stream", t, context));
@@ -144,12 +147,51 @@ public final class IOStreamUtils {
      * permission_error(input, past_end_of_stream, S), the other actions return the eof value.
      */
     public static void checkPastEof(it.denzosoft.jprolog.core.engine.v4.PrologStream s, String context) {
-        if ("error".equals(s.eofAction())) {
+        // START_CHANGE: ISS-2025-0605 - P4.12: ISO 7.10.2.9 / 8.13.1: the FIRST read at the end
+        // returns end_of_file and moves the stream to end_of_stream(past); only a read attempted
+        // while the stream is already past raises. The check moved BEFORE the read
+        // (beforeRead); this post-read hook is kept for source compatibility and does nothing.
+        // END_CHANGE: ISS-2025-0605
+    }
+
+    // START_CHANGE: ISS-2025-0605 - P4.12: the checks every input built-in makes before reading.
+    /**
+     * Raise permission_error(input, past_end_of_stream, S) when the stream is already past its
+     * end and its eof_action is {@code error}; S is the stream TERM ('$stream'(N)), not its
+     * internal handle name.
+     */
+    public static void beforeRead(it.denzosoft.jprolog.core.engine.v4.PrologStream s, String context) {
+        if (s.pastEndOfStream() && "error".equals(s.eofAction())) {
             throw new PrologException(ISOErrorTerms.permissionError(
-                "input", "past_end_of_stream", new Atom(
-                    it.denzosoft.jprolog.core.engine.v4.Streams.nameOf(s)), context));
+                "input", "past_end_of_stream", it.denzosoft.jprolog.core.engine.v4.Streams.termFor(s), context));
         }
     }
+
+    /**
+     * ISO 8.12 / 8.13: a character built-in on a binary stream is permission_error(input,
+     * binary_stream, S); a byte built-in on a text stream is permission_error(input, text_stream,
+     * S). The interactive user_input is exempt (it serves both).
+     */
+    public static void checkStreamType(it.denzosoft.jprolog.core.engine.v4.PrologStream s, boolean bytes,
+                                       String direction, String context) {
+        if (s == null || s.isSystemStream()) return;
+        boolean binary = "binary".equals(s.type());
+        if (bytes && !binary) {
+            throw new PrologException(ISOErrorTerms.permissionError(
+                direction, "text_stream", it.denzosoft.jprolog.core.engine.v4.Streams.termFor(s), context));
+        }
+        if (!bytes && binary) {
+            throw new PrologException(ISOErrorTerms.permissionError(
+                direction, "binary_stream", it.denzosoft.jprolog.core.engine.v4.Streams.termFor(s), context));
+        }
+    }
+
+    /** A {@code '$stream'(N)} term that names no open stream is existence_error(stream, S). */
+    private static boolean isStreamHandle(Term t) {
+        return t instanceof CompoundTerm && "$stream".equals(t.getName())
+            && t.getArguments() != null && t.getArguments().size() == 1;
+    }
+    // END_CHANGE: ISS-2025-0605
 
     /**
      * True when {@code t} looks like a stream argument rather than a term to write / a variable to

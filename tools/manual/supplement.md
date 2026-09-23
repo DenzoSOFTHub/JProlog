@@ -24,11 +24,16 @@ N = 5.
 
 ?- string_length(hello, N).
 N = 5.
+
+?- string_length(123, N).
+N = 3.
 ```
 
 ### string_concat/3
 **Purpose**: `string_concat(?S1, ?S2, ?S3)` — concatenation of strings; with `S3` bound and the
-others unbound it enumerates every split on backtracking.
+others unbound it enumerates every split on backtracking. Any atomic text is accepted
+(`string_concat(1, 2, S)` gives `"12"`); with too little bound it raises `instantiation_error`
+(4.5.0).
 
 ```prolog
 ?- string_concat("ab", "cd", S).
@@ -62,7 +67,8 @@ C = 98.
 
 ### sub_string/5
 **Purpose**: `sub_string(+String, ?Before, ?Length, ?After, ?Sub)` — enumerate or test substrings,
-exactly like `sub_atom/5` but producing strings.
+exactly like `sub_atom/5` but producing strings. `String` and `Sub` may be any text (atom, string,
+number); positions count code points; a negative position fails.
 
 ```prolog
 ?- sub_string("hello world", 6, 5, _, S).
@@ -76,7 +82,8 @@ B = 2, A = 0, S = "c".
 
 ### string_to_atom/2, atom_string/2
 **Purpose**: Convert between strings and atoms in either direction (`string_to_atom(?String, ?Atom)`,
-`atom_string(?Atom, ?String)`). At least one argument must be bound.
+`atom_string(?Atom, ?String)`). At least one argument must be bound. `atom_string/2` accepts any
+atomic text on either side: `atom_string(42, S)` gives `"42"`, `atom_string(A, 42)` gives `'42'`.
 
 ```prolog
 ?- atom_string(hello, S), string_to_atom("world", A).
@@ -451,7 +458,8 @@ L = [a, bb, ccc].
 ### min_list/2, max_list/2, sum_list/2, sumlist/2
 **Purpose**: Minimum, maximum and sum of a list of numbers (`sumlist/2` is an alias of
 `sum_list/2`). The result keeps the type of the operands: a list containing a float sums to a
-float.
+float. As in SWI-Prolog the elements are evaluated, so a non-number raises
+`type_error(evaluable, F/N)`, and integer sums are exact (4.5.0).
 
 ```prolog
 ?- min_list([3, 1.5, 2], Min), max_list([3, 1.5, 2], Max), sum_list([1, 2, 3], S), sum_list([1.5, 1.5], F).
@@ -459,7 +467,8 @@ Min = 1.5, Max = 3, S = 6, F = 3.0.
 ```
 
 ### nth0/3, nth1/3
-**Purpose**: Element at a 0-based / 1-based index; with the index unbound they enumerate.
+**Purpose**: Element at a 0-based / 1-based index; with the index unbound they enumerate. On a
+partial list a bound index extends the list (`nth0(1, L, x)` gives `L = [_, x|_]`).
 
 ```prolog
 ?- nth1(2, [a, b, c], X), nth0(I, [a, b, c], c).
@@ -617,9 +626,9 @@ operator; `Name` may be a list of atoms. `current_op(?Priority, ?Type, ?Name)` e
 active operators. Part III lists the default table.
 
 The operator store belongs to the `Prolog` instance: two engines in one JVM do not see each other's
-operators, an `op/3` inside a module file is local to that module for `current_op/3`, and an
-`op/3` executed in a branch that later fails is undone — `(op(700, xfx, tmp), fail ; true)` leaves
-no `tmp` operator.
+operators, and an `op/3` inside a module file is local to that module for `current_op/3`. Since
+4.5.0 an operator definition is permanent (ISO, SWI): `(op(700, xfx, tmp), fail ; true)` leaves
+`tmp` defined (4.1.0 to 4.4.0 undid it on backtracking).
 
 Since 4.4.0 both raise the ISO 13211-1 8.14.3.3 / 8.14.4.3 error terms (ISS-2025-0504): an unbound
 argument is `instantiation_error`; a non-integer priority `type_error(integer, P)`; a non-atom
@@ -666,14 +675,18 @@ E = error(representation_error(character), char_conversion/2).
 **Purpose**: Classify a character code (`code_type/2`) or a character (`char_type/2`). Both accept
 the same classes: `alpha`, `alnum`, `digit`, `xdigit`, `space`, `white`, `layout`, `upper`, `lower`,
 `punct`, `csym`, `csymf`, `end_of_line`, `newline`, `end_of_file`, `graph`, `print`, `ascii`,
-`cntrl`, `meta`, `solo`, `symbol`, `period`, `quote`, `paren`.
+`cntrl`, `meta`, `solo`, `symbol`, `period`, `quote`, `paren`, `prolog_var_start`,
+`prolog_atom_start`, `prolog_identifier_continue`, `prolog_symbol`. `space` is the C `isspace` set
+(tab, newline, vertical tab, form feed, carriage return, space, and the Unicode spaces); `white`
+is space and tab; `code_type(-1, end_of_file)` holds; an unknown class raises
+`domain_error(char_type, T)` (4.5.0).
 
 Both are nondeterministic: with the character unbound they generate (over the ASCII range), with the
 type unbound they enumerate every class the character belongs to, and with both unbound they
 enumerate every pair.
 
 The **parametric forms** — `digit(Weight)`, `upper(Lower)`, `lower(Upper)`, `to_lower(Lower)` and
-`to_upper(Upper)` — work in every mode: bound they test, unbound they bind, and with the character
+`to_upper(Upper)`, and `xdigit(Weight)` — work in every mode: bound they test, unbound they bind, and with the character
 unbound they generate. `char_type/2` gives a character where `code_type/2` gives a code;
 `digit(Weight)` gives an integer weight in both.
 
@@ -788,18 +801,28 @@ D = '/home/user/project'.
 T = 1787644907965.
 ```
 
-### format_time/3, parse_time/3
-**Purpose**: `format_time(+Pattern, +Timestamp, -Text)` formats epoch milliseconds (or a datetime
-atom) with a Java `DateTimeFormatter` pattern; `parse_time(+Pattern, +Text, -Millis)` is the
-inverse.
+### format_time/3, parse_time/3, stamp_date_time/3, date_time_stamp/2
+**Purpose**: `format_time(+Pattern, +Timestamp, -Text)` formats a time stamp in SECONDS since the
+epoch (as `get_time/1` returns it; a float) or a datetime atom with a Java `DateTimeFormatter`
+pattern; `parse_time(+Pattern, +Text, -Stamp)` is the inverse. SWI-Prolog's argument order
+`format_time(+Out, +Format, +Stamp)` — `Out` is `atom(A)`, `string(S)`, `codes(C)`, `chars(C)` or a
+stream, `Format` uses `%` strftime directives (`%Y-%m-%d %H:%M:%S`, `%a`, `%b`, `%F`, `%T`, `%z`,
+...) — is accepted as well. `stamp_date_time(+Stamp, -date(Y,M,D,H,Mn,S,Off,TZ,DST), +TimeZone)`
+(`TimeZone` is `local`, `'UTC'` or an offset in seconds west of UTC) and
+`date_time_stamp(+date(...), -Stamp)` convert between stamps and dates (4.5.0).
 
 ```prolog
-?- parse_time('yyyy-MM-dd HH:mm:ss', '2026-03-20 14:30:00', Ms),
-   format_time('dd/MM/yyyy', Ms, Day).
-Ms = 1774013400000, Day = '20/03/2026'.
+?- parse_time('yyyy-MM-dd HH:mm:ss', '2026-03-20 14:30:00', S),
+   format_time('dd/MM/yyyy', S, Day).
+S = 1774013400.0, Day = '20/03/2026'.
+
+?- stamp_date_time(0, D, 'UTC').
+D = date(1970, 1, 1, 0, 0, 0.0, 0, 'UTC', -).
+
+?- get_time(T), format_time(atom(A), '%Y-%m-%d', T).
 ```
 
-The millisecond value depends on the local time zone.
+The stamp of a local date and time depends on the local time zone.
 
 ## JDBC database access
 

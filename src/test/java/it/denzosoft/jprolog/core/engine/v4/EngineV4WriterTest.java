@@ -68,7 +68,7 @@ public class EngineV4WriterTest {
         assertEquals("1-2-3", out("write_term(1-2-3, [])"));
         assertEquals("1-(2-3)", out("write_term(1-(2-3), [])"));
         assertEquals("a- -1", out("write_term(a-(-1), [])"));
-        assertEquals("- 1", out("write_term(-(1), [])"));
+        assertEquals("-(1)", out("write_term(-(1), [])"));   // ISS-2025-0562: SWI's +/-(Number)
         assertEquals("-a", out("write_term(-(a), [])"));
         assertEquals("f(:-)", out("write_term(f(:-), [quoted(true)])"));
         assertEquals("a,b", out("write_term(','(a,b), [])"));
@@ -186,7 +186,8 @@ public class EngineV4WriterTest {
     public void testISS0475_PortrayClause() {
         assertEquals("a :-\n    b,\n    c.\n", out("portray_clause((a :- b, c))"));
         assertEquals("fact.\n", out("portray_clause(fact)"));
-        assertEquals("p(A,B) :-\n    q(A),\n    r(B).\n", out("portray_clause((p(X,Y) :- q(X), r(Y)))"));
+        // ISS-2025-0570 (P3.7): SWI argument spacing
+        assertEquals("p(A, B) :-\n    q(A),\n    r(B).\n", out("portray_clause((p(X,Y) :- q(X), r(Y)))"));
         assertEquals("'my atom'.\n", out("portray_clause('my atom')"));
     }
 
@@ -205,7 +206,10 @@ public class EngineV4WriterTest {
                 new Atom("x")))).contains("not sufficiently instantiated"));
         // print_message/2 succeeds and prints nothing for kind `silent`
         assertEquals("", out("print_message(silent, hello)"));
-        assertEquals("% hello\n", out("print_message(informational, hello)"));
+        // ISS-2025-0607 (P4.14): a term that is not a known message is "Unknown message: T" (SWI);
+        // format(F, A) is formatted
+        assertEquals("% Unknown message: hello\n", out("print_message(informational, hello)"));
+        assertEquals("% hello\n", out("print_message(informational, format('hello', []))"));
     }
 
     // ==================================================================

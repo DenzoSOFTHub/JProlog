@@ -31,9 +31,14 @@ public class GetByte implements BuiltIn {
         // START_CHANGE: ISS-2025-0472 - read through the engine's stream, so the byte position and
         // the character position of the same stream stay consistent.
         PrologStream s = IOStreamUtils.inputStream(streamArg, bindings, ctx);
+        // START_CHANGE: ISS-2025-0605 - P4.12: byte I/O on a text stream is
+        // permission_error(input, text_stream, S); reading past the end with eof_action(error)
+        // raises BEFORE the read, not at the first end_of_file.
+        IOStreamUtils.checkStreamType(s, true, "input", ctx);
+        IOStreamUtils.beforeRead(s, ctx);
+        // END_CHANGE: ISS-2025-0605
         try {
             int b = s.getByte();
-            if (b < 0) IOStreamUtils.checkPastEof(s, ctx);
             Map<String, Term> nb = new HashMap<>(bindings);
             if (byteTerm.unify(new Number((long) b), nb)) {
                 solutions.add(nb);

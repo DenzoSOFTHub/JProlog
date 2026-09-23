@@ -157,9 +157,30 @@ public class EngineV4TraceTest {
             "  Exit: (1) p(3)",
             "  Call: (1) 3>2",
             "  Exit: (1) 3>2",
-            "Exit: (0) q(3)",
-            "  Fail: (1) p(X)"
+            // ISS-2025-0668 (4.5 P7.8): no phantom Fail after a deterministic exit (SWI)
+            "Exit: (0) q(3)"
         ), trace("p(1).\np(2).\np(3).\nq(X) :- p(X), X > 2.\n",
+                 "q(X)"));
+    }
+
+
+    /** ISS-2025-0668 (4.5 P7.8): a failure inside a single-clause predicate's body reaches its
+     *  frame, so the predicate's own Fail port is printed (it was lost: the frame had been dropped
+     *  at activation, so only `Fail: (1) p(X)` appeared and never `Fail: (0) q(X)`). */
+    @Test
+    public void testISS0668_Trace_ParentFailIsPrinted() {
+        assertEquals(lines(
+            "Call: (0) q(X)",
+            "  Call: (1) p(X)",
+            "  Exit: (1) p(1)",
+            "  Call: (1) 1>5",
+            "  Fail: (1) 1>5",
+            "  Redo: (1) p(2)",
+            "  Exit: (1) p(2)",
+            "  Call: (1) 2>5",
+            "  Fail: (1) 2>5",
+            "Fail: (0) q(X)"
+        ), trace("p(1).\np(2).\nq(X) :- p(X), X > 5.\n",
                  "q(X)"));
     }
 
@@ -172,8 +193,8 @@ public class EngineV4TraceTest {
             "  Call: (1) 3>=5",
             "  Fail: (1) 3>=5",
             "Redo: (0) m(3,5,5)",
-            "Exit: (0) m(3,5,5)",
-            "Fail: (0) m(3,5,Z)"
+            // ISS-2025-0668 (4.5 P7.8): no phantom Fail after a deterministic exit (SWI)
+            "Exit: (0) m(3,5,5)"
         ), trace("m(X,Y,X) :- X >= Y, !.\nm(_,Y,Y).\n",
                  "m(3,5,Z)"));
     }
@@ -225,10 +246,14 @@ public class EngineV4TraceTest {
     /** Trace oracle for the query in the body. */
     @Test
     public void testISS0481_Trace_CatchThrow() {
+        // START_CHANGE: ISS-2025-0528 - wave P1.15, a deliberate oracle change: the goal a ball
+        // unwinds now reports an Exception port (it used to vanish after its Call).
         assertEquals(lines(
-            "Call: (0) boom"
+            "Call: (0) boom",
+            "Exception: (0) boom"
         ), trace("boom :- throw(oops).\n",
                  "catch(boom, E, true)"));
+        // END_CHANGE: ISS-2025-0528
     }
 
 
@@ -239,8 +264,8 @@ public class EngineV4TraceTest {
             "Call: (0) s(X)",
             "Exit: (0) s(1)",
             "Redo: (0) s(2)",
-            "Exit: (0) s(2)",
-            "Fail: (0) s(X)"
+            // ISS-2025-0668 (4.5 P7.8): no phantom Fail after a deterministic exit (SWI)
+            "Exit: (0) s(2)"
         ), trace("s(1).\ns(2).\n",
                  "findall(X, s(X), L)"));
     }
@@ -253,8 +278,8 @@ public class EngineV4TraceTest {
             "Call: (0) once(between(1,3,X))",
             "  Call: (1) between(1,3,X)",
             "  Exit: (1) between(1,3,1)",
-            "Exit: (0) once(between(1,3,1))",
-            "Fail: (0) once(between(1,3,X))"
+            // ISS-2025-0668 (4.5 P7.8): no phantom Fail after a deterministic exit (SWI)
+            "Exit: (0) once(between(1,3,1))"
         ), trace("",
                  "once(between(1,3,X))"));
     }
@@ -272,15 +297,14 @@ public class EngineV4TraceTest {
             "  Redo: (1) t(2)",
             "  Exit: (1) t(2)",
             "  Call: (1) 2>0",
+            // ISS-2025-0668 (4.5 P7.8): no phantom Fail after a deterministic exit (SWI)
+            // (t(2) is the last clause, so t(X) is not re-entered: no `Fail: (1) t(X)` either)
             "  Exit: (1) 2>0",
-            "  Fail: (1) t(X)",
             "Exit: (0) forall(t(X),X>0)",
             "Call: (0) ignore(t(9))",
             "  Call: (1) t(9)",
             "  Fail: (1) t(9)",
-            "Exit: (0) ignore(t(9))",
-            "Fail: (0) ignore(t(9))",
-            "Fail: (0) forall(t(X),X>0)"
+            "Exit: (0) ignore(t(9))"
         ), trace("t(1).\nt(2).\n",
                  "forall(t(X), X > 0), ignore(t(9))"));
     }
@@ -408,16 +432,18 @@ public class EngineV4TraceTest {
             "    Call: (2) _G is 1*2",
             "    Exit: (2) 2 is 1*2",
             "  Exit: (1) dbl(1,2)",
-            "  Call: (1) maplist($mctx(user,dbl),[2],_G)",
+            // ISS-2025-0668 (4.5 P7.8): the engine-internal '$mctx'(user, dbl) wrapper no longer
+            // leaks into the ports, and maplist(dbl, [], _) is deterministic (no Fail after the
+            // top-level Exit): the traced frame looks ahead for a clause that can still match
+            "  Call: (1) maplist(dbl,[2],_G)",
             "    Call: (2) dbl(2,_G)",
             "      Call: (3) _G is 2*2",
             "      Exit: (3) 4 is 2*2",
             "    Exit: (2) dbl(2,4)",
-            "    Call: (2) maplist($mctx(user,dbl),[],_G)",
-            "    Exit: (2) maplist($mctx(user,dbl),[],[])",
-            "  Exit: (1) maplist($mctx(user,dbl),[2],[4])",
-            "Exit: (0) maplist(dbl,[1,2],[2,4])",
-            "    Fail: (2) maplist($mctx(user,dbl),[],_G)"
+            "    Call: (2) maplist(dbl,[],_G)",
+            "    Exit: (2) maplist(dbl,[],[])",
+            "  Exit: (1) maplist(dbl,[2],[4])",
+            "Exit: (0) maplist(dbl,[1,2],[2,4])"
         ), trace("dbl(X,Y) :- Y is X*2.\n",
                  "maplist(dbl,[1,2],L)"));
     }
@@ -455,8 +481,8 @@ public class EngineV4TraceTest {
             "exit|1|p(3)",
             "call|1|3>2",
             "exit|1|3>2",
-            "exit|0|q(3)",
-            "fail|1|p(X)"
+            // ISS-2025-0668 (4.5 P7.8): no phantom Fail after a deterministic exit (SWI)
+            "exit|0|q(3)"
         ), ports);
     }
 

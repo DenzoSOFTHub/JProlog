@@ -213,8 +213,9 @@ public class EngineV4TextTest {
         assertEquals("error(instantiation_error,'string_chars/2')", err("string_chars(S, L)"));
         assertEquals("error(instantiation_error,'string_length/2')", err("string_length(S, L)"));
         assertEquals("error(instantiation_error,'atom_string/2')", err("atom_string(A2, S2)"));
-        // string_concat/3 still FAILS with nothing bound: ISS-2025-0188 decided that explicitly.
-        assertTrue(prolog.solve("string_concat(X, Y, Z).").isEmpty());
+        // ISS-2025-0596 (P4.7, decision §8): string_concat/3 with nothing bound is
+        // instantiation_error, as in SWI (ISS-2025-0188's graceful failure is reversed).
+        assertEquals("error(instantiation_error,'string_concat/3')", err("string_concat(X, Y, Z)"));
         // END_CHANGE: ISS-2025-0506
         assertEquals("42", all("number_string(N, \"42\")", "N"));
         assertEquals("\"42\"", all("number_string(42, S)", "S"));
@@ -262,13 +263,18 @@ public class EngineV4TextTest {
         // END_CHANGE: ISS-2025-0506
         assertEquals("'a-b'", all("atomic_list_concat([a,b], '-', X)", "X"));
         assertEquals("[a,b,c]", all("atomic_list_concat(L, '-', 'a-b-c')", "L"));
-        assertEquals("[a,b,c]", all("atomic_list_concat(L, '', abc)", "L"));
-        assertEquals("false", all("atomic_list_concat([a,_], '-', 'a-b')", "L"));
+        // ISS-2025-0597 (P4.7, decision §8): an empty separator cannot split —
+        // domain_error(non_empty_atom, '') — and a list with holes is split into (SWI)
+        assertEquals("error(domain_error(non_empty_atom,''),'atomic_list_concat/3')",
+            err("atomic_list_concat(L, '', abc)"));
+        assertEquals("b", all("atomic_list_concat([a,X], '-', 'a-b')", "X"));
         // START_CHANGE: ISS-2025-0506
         assertEquals("error(instantiation_error,'atomic_list_concat/3')",
             err("atomic_list_concat(_, _, _)"));
-        assertEquals("error(type_error(atom,1),'atomic_list_concat/3')",
-            err("atomic_list_concat([a], 1, _)"));
+        // ISS-2025-0597: any atomic separator is text (SWI): 1 joins like '1'
+        assertEquals("a1b", all("atomic_list_concat([a,b], 1, X)", "X"));
+        assertEquals("error(type_error(atomic,f(x)),'atomic_list_concat/3')",
+            err("atomic_list_concat([a], f(x), _)"));
         assertEquals("error(instantiation_error,'atomic_list_concat/2')",
             err("atomic_list_concat(L2, X2)"));
         // END_CHANGE: ISS-2025-0506

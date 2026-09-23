@@ -106,7 +106,7 @@ public final class SolverFacade implements SolverContext {
     @Override
     public boolean solveInWorker(Term goal, Map<String, Term> bindings,
                                  List<Map<String, Term>> solutions, int maxSolutions) {
-        return Workers.solve(machine.engine(), machine.guard().getBudget(),
+        return Workers.solve(machine.engine(), machine.guard(),          // ISS-2025-0624
                              goal, bindings, solutions, maxSolutions);
     }
     // END_CHANGE: ISS-2025-0479

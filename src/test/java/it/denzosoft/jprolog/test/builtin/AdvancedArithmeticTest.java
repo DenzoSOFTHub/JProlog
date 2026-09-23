@@ -156,22 +156,19 @@ public class AdvancedArithmeticTest {
         assertEquals("-3", solutions.get(0).get("X").toString());
     }
     
+    // START_CHANGE: ISS-2025-0593 - P4.4 (decision §8): plus/3 is integer-only, as in SWI:
+    // a float argument raises type_error(integer, F). 4.4.0 computed 1.5 + 2.5 = 4.0.
     @Test
     public void testPlusWithFloats() {
-        // Test with floating point numbers
-        List<Map<String, Term>> solutions = prolog.solve("plus(1.5, 2.5, X)");
-        assertFalse("plus(1.5, 2.5, X) should succeed", solutions.isEmpty());
-        // START_CHANGE: ISS-2025-0424 - ENG-02: 1.5 + 2.5 is the FLOAT 4.0, not the integer 4.
-        // This assertion encoded the pre-fix bug (Number(double) auto-classified integral doubles
-        // as ISO integers); ISO 9.1.3 forbids that implicit float -> integer conversion.
-        assertEquals("4.0", solutions.get(0).get("X").toString());
-        // END_CHANGE: ISS-2025-0424
-        
-        solutions = prolog.solve("plus(X, 1.5, 3.7)");
-        assertFalse("plus(X, 1.5, 3.7) should succeed", solutions.isEmpty());
-        assertEquals("2.2", solutions.get(0).get("X").toString());
+        List<Map<String, Term>> solutions = prolog.solve(
+            "catch(plus(1.5, 2.5, X), error(type_error(integer, 1.5), _), true), var(X)");
+        assertEquals(1, solutions.size());
+        solutions = prolog.solve(
+            "catch(plus(X, 1.5, 3.7), error(type_error(integer, 1.5), _), true), var(X)");
+        assertEquals(1, solutions.size());
     }
-    
+    // END_CHANGE: ISS-2025-0593
+
     @Test
     public void testSimpleIntegration() {
         // Test simple combination of predicates

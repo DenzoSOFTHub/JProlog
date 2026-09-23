@@ -26,13 +26,15 @@ public final class ControlFlow {
         if (t instanceof InferenceLimitException) throw (InferenceLimitException) t;
         if (t instanceof QueryCancelledException) throw (QueryCancelledException) t;
         if (t instanceof DebugController.DebugStopException) throw (DebugController.DebugStopException) t;
+        if (t instanceof ThreadExitException) throw (ThreadExitException) t;          // ISS-2025-0632
     }
 
     /** True when {@code t} is an engine-control exception (for callers that need to test, not throw). */
     public static boolean isControl(Throwable t) {
         return t instanceof InferenceLimitException
             || t instanceof QueryCancelledException
-            || t instanceof DebugController.DebugStopException;
+            || t instanceof DebugController.DebugStopException
+            || t instanceof ThreadExitException;                                     // ISS-2025-0632
     }
 }
 // END_CHANGE: ISS-2025-0431

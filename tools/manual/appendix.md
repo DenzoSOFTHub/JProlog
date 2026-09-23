@@ -65,11 +65,13 @@ choice must be made before constructing the engine (or upgraded with `prolog.ena
 | `consultWithDiagnostics(program, fileName)` | per-clause compilation returning every error with its line |
 | `solve(String query)` | all solutions as `List<Map<String, Term>>` |
 | `solveStream(query, sink)` | lazy enumeration; the sink returns `false` to stop |
+| `solveStream(query, AnswerSink)` | the same, also telling whether more answers may follow (what a toplevel needs to print `.` or ` ;`) |
 | `compileFile("p.pl")`, `consultCompiled("p.jpc")`, `consultSmart("p.pl")` | binary `.jpc` compilation and cached loading |
 | `asserta/assertz/retract(String clause)` | modify the database from Java |
 | `nbSetval/nbGetval/nbDelete` | global variables from Java |
-| `enableSafeMode()` | sandbox: remove every OS, FFI, filesystem, network, HTTP, JDBC, persistence and threading built-in (irreversible for the instance) |
-| `setInferenceBudget(long steps)` | abort a query with `InferenceLimitException` after the given number of resolution steps (0 = unlimited); enforced inside meta-calls and worker threads too |
+| `enableSafeMode()` | sandbox: remove every OS, FFI, filesystem, network, HTTP, JDBC, persistence and threading built-in, `open/3,4`, the loaders, the CSV file predicates and `log_to_file/1` — from the legacy registry and the native table (irreversible for the instance) |
+| `enableSafeMode(SafeModeOptions)` | the same; `new SafeModeOptions().allowFileRead(dir)` keeps read-only `open/3,4` and the loaders for files inside `dir` |
+| `setInferenceBudget(long steps)` | abort a query with `InferenceLimitException` after the given number of resolution steps (0 = unlimited); ONE budget shared by the query's meta-calls and worker threads, and natives that walk or build long lists charge per element |
 | `getFlags()`, `setTracing(boolean)`, `isTracing()` | per-engine ISO flag store and `trace/0` state (each `Prolog` instance is isolated) |
 | `getPredicateIndicatorAtLine(int line)` | map a source line to its clause (IDE breakpoints) |
 | `getEngineContext()` | the durable per-engine context: `setDebugController`/`getDebugController` (IDE debugger wiring) and the running query's `ResourceGuard` |

@@ -2,6 +2,7 @@ package it.denzosoft.jprolog.core.engine.v4;
 
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
+import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
 
@@ -75,12 +76,35 @@ final class ModuleBuiltins {
             if (f != null && isModuleProperty(prop)) {
                 return moduleProperty(m, f, n, prop) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
-            if (f != null && prop instanceof Variable) {
-                // Enumerating: hand the module properties out first, then the registry's.
-                List<Term> extra = new ArrayList<Term>();
-                addModuleProperties(m, f, n, extra);
-                if (!extra.isEmpty()) return enumerate(m, args, prop, extra);
+            // START_CHANGE: ISS-2025-0610 - P4.16: a bound head is answered here, from the three
+            // stores (registry/native table, the KnowledgeBase with its dynamic flag, the module
+            // owner). A declared-but-empty dynamic predicate is `dynamic` and `defined`; consulted
+            // clauses are `static`; number_of_clauses(N) is reported; a predicate nothing defines
+            // FAILS (SWI) instead of answering `undefined` — which also stops a module-exported
+            // predicate from being `exported` and `undefined` at once.
+            if (f != null) {
+                final List<Term> props = propertiesOf(m, f, n);
+                if (props == null) return Outcome.FAILURE;
+                if (!(prop instanceof Variable)) {
+                    for (int i = 0; i < props.size(); i++) {
+                        if (m.unifyOrUndo(prop, props.get(i))) return Outcome.SUCCESS;
+                    }
+                    return Outcome.FAILURE;
+                }
+                final int[] i = {0};
+                Generator gen = new Generator() {
+                    @Override public boolean next(Machine mm) {
+                        while (i[0] < props.size()) {
+                            Term p = props.get(i[0]++);
+                            if (i[0] >= props.size()) mm.lastSolution();
+                            if (mm.unifyOrUndo(prop, p)) return true;
+                        }
+                        return false;
+                    }
+                };
+                return m.pushGenerator(gen) ? Outcome.SUSPENDED : Outcome.FAILURE;
             }
+            // END_CHANGE: ISS-2025-0610
             int r = LegacyBuiltinAdapter.run(m, rebuild(args), "predicate_property", 2);
             return (r == 1) ? Outcome.SUSPENDED : Outcome.FAILURE;
         }
@@ -111,6 +135,41 @@ final class ModuleBuiltins {
             };
             return m.pushGenerator(gen) ? Outcome.SUSPENDED : Outcome.FAILURE;
         }
+
+        // START_CHANGE: ISS-2025-0610
+        /** The properties of f/n, or null when nothing defines it. */
+        private static List<Term> propertiesOf(Machine m, String f, int n) {
+            List<Term> props = new ArrayList<Term>();
+            addModuleProperties(m, f, n, props);
+            boolean inModule = !props.isEmpty();
+            String key = f + "/" + n;
+            Engine e = m.engine();
+            boolean builtin = (e.registry() != null && e.registry().isBuiltIn(f, n)) || e.natives().isNativeKey(key);
+            it.denzosoft.jprolog.core.engine.KnowledgeBase kb = e.kb();
+            List<it.denzosoft.jprolog.core.engine.Rule> rules = (kb == null) ? null : kb.getRulesForPredicate(f, n);
+            int clauses = (rules == null) ? 0 : rules.size();
+            boolean dyn = kb != null && kb.isDynamic(f, n);
+            boolean user = clauses > 0 || dyn;
+            boolean lib = e.modules4().isLibraryIndicatorKey(key);
+            if (!builtin && !user && !lib && !inModule) return null;
+            if (builtin && !user) {
+                props.add(new Atom("built_in"));
+                props.add(new Atom("system"));
+            }
+            props.add(new Atom("defined"));
+            props.add(new Atom("visible"));
+            if (user) {
+                props.add(new Atom(dyn ? "dynamic" : "static"));
+                props.add(new CompoundTerm(new Atom("number_of_clauses"),
+                    Arrays.<Term>asList(Number.valueOf((long) clauses))));
+            } else {
+                props.add(new Atom("static"));
+            }
+            // ISS-2025-0572: predicate_property(P, tabled)
+            if (e.tables() != null && e.tables().isTabled(f, n)) props.add(new Atom("tabled"));
+            return props;
+        }
+        // END_CHANGE: ISS-2025-0610
 
         private static boolean isModuleProperty(Term p) {
             if (p instanceof Atom) return "exported".equals(((Atom) p).getName());

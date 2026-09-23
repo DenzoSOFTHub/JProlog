@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -123,7 +124,8 @@ public class EngineV4TermTest {
         assertEquals(1, sols.size());
         java.util.TreeMap<String, Term> t = new java.util.TreeMap<String, Term>();
         for (Map.Entry<String, Term> e : sols.get(0).entrySet()) {
-            if (!e.getKey().startsWith("_") && !"T".equals(e.getKey())) t.put(e.getKey(), e.getValue());
+            // ISS-2025-0515: no `_`-skip workaround — anonymous variables are not answer keys
+            if (!"T".equals(e.getKey())) t.put(e.getKey(), e.getValue());
         }
         StringBuilder sb = new StringBuilder("[{");
         boolean first = true;
@@ -197,8 +199,9 @@ public class EngineV4TermTest {
 
     @Test
     public void testISS0498_AtomToTerm() {
-        assertEquals("f(X,Y)", all("atom_to_term('f(X,Y)', T, B)", "T"));
-        assertEquals("['X'=X,'Y'=Y]", all("atom_to_term('f(X,Y)', T, B)", "B"));
+        // ISS-2025-0568 (P3.4): the term's variables are fresh cells, named only in the bindings
+        assertFalse(prolog.solve("atom_to_term('f(X,Y)', T, B), T = f(P, Q), var(P), var(Q), P \\== Q,"
+            + " B == ['X'=P, 'Y'=Q].").isEmpty());
         assertEquals("[]", all("atom_to_term('foo', T, B)", "B"));
         // START_CHANGE: ISS-2025-0507 - 4.3 wave D: a real ISO error term, not the atom
         // 'type_error(atom, 3)' that a PrologEvaluationException carried.

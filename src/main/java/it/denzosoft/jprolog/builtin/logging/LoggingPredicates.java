@@ -1,16 +1,21 @@
 package it.denzosoft.jprolog.builtin.logging;
 
 // START_CHANGE: ISS-2025-0121 - Logging built-in predicates
-import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.builtin.io.StreamManager;
+import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
+import it.denzosoft.jprolog.core.engine.Prolog;
+import it.denzosoft.jprolog.core.engine.SolverContext;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.terms.Atom;
+import it.denzosoft.jprolog.core.terms.PrologString;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.terms.Variable;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.logging.*;
 
 /**
  * Logging predicates:
@@ -18,99 +23,133 @@ import java.util.logging.*;
  *   log_warning/1   - log_warning(+Message)
  *   log_error/1     - log_error(+Message)
  *   log_debug/1     - log_debug(+Message)
- *   log_level/1     - log_level(+Level)  set level: debug, info, warning, error, off
- *   log_to_file/1   - log_to_file(+FilePath)  redirect logging to file
+ *   log_level/1     - log_level(+Level)  set level: debug, info, warning, error, off, all
+ *   log_to_file/1   - log_to_file(+FilePath)  append the log to a file (host access: denied in
+ *                     safe mode)
+ *
+ * <p>START_CHANGE: ISS-2025-0626 - 4.5 wave P6.1: the log is PER ENGINE. It used to be the static
+ * JVM-wide {@code java.util.logging} logger "JProlog": {@code log_to_file/1} in one engine
+ * redirected the logging of every engine in the JVM (a sandboxed one included), and
+ * {@code log_level/1} changed everybody's level. Each {@link Prolog} now has its own level and
+ * sink — the engine's {@code user_error} stream, or the file named by {@code log_to_file/1} — kept
+ * in a weak map keyed by the engine. The argument errors are ISO terms. END_CHANGE: ISS-2025-0626
  */
-public class LoggingPredicates implements BuiltIn {
+public class LoggingPredicates implements BuiltInWithContext {
 
     public enum Mode { LOG_INFO, LOG_WARNING, LOG_ERROR, LOG_DEBUG, LOG_LEVEL, LOG_TO_FILE }
 
-    private final Mode mode;
+    private static final int DEBUG = 0, INFO = 1, WARNING = 2, ERROR = 3, OFF = 4;
+    private static final String[] NAMES = { "DEBUG", "INFO", "WARNING", "ERROR" };
 
-    private static final Logger LOGGER = Logger.getLogger("JProlog");
-    private static FileHandler fileHandler = null;
-
-    static {
-        LOGGER.setUseParentHandlers(true);
-        LOGGER.setLevel(Level.INFO);
+    /** One engine's log: its level and its file sink (null = the engine's user_error). */
+    private static final class LogState {
+        int level = INFO;
+        String file;
     }
+
+    private static final Map<Prolog, LogState> STATES = new WeakHashMap<>();
+    private static final LogState NO_ENGINE = new LogState();
+    private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    private final Mode mode;
 
     public LoggingPredicates(Mode mode) {
         this.mode = mode;
     }
 
+    private static LogState state(SolverContext solver) {
+        Prolog p = (solver == null) ? null : solver.getPrologContext();
+        if (p == null) return NO_ENGINE;
+        synchronized (STATES) {
+            LogState s = STATES.get(p);
+            if (s == null) { s = new LogState(); STATES.put(p, s); }
+            return s;
+        }
+    }
+
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
-        try {
-            switch (mode) {
-                case LOG_INFO:    return doLog(query, bindings, solutions, Level.INFO);
-                case LOG_WARNING: return doLog(query, bindings, solutions, Level.WARNING);
-                case LOG_ERROR:   return doLog(query, bindings, solutions, Level.SEVERE);
-                case LOG_DEBUG:   return doLog(query, bindings, solutions, Level.FINE);
-                case LOG_LEVEL:   return doLogLevel(query, bindings, solutions);
-                case LOG_TO_FILE: return doLogToFile(query, bindings, solutions);
-                default: return false;
+        return executeWithContext(null, query, bindings, solutions);
+    }
+
+    @Override
+    public boolean executeWithContext(SolverContext solver, Term query, Map<String, Term> bindings,
+                                      List<Map<String, Term>> solutions) {
+        LogState st = state(solver);
+        Term arg = query.getArguments().get(0).resolveBindings(bindings);
+        String ctx = modeName() + "/1";
+        switch (mode) {
+            case LOG_DEBUG:   log(st, DEBUG, text(arg, ctx)); break;
+            case LOG_INFO:    log(st, INFO, text(arg, ctx)); break;
+            case LOG_WARNING: log(st, WARNING, text(arg, ctx)); break;
+            case LOG_ERROR:   log(st, ERROR, text(arg, ctx)); break;
+            case LOG_LEVEL:   setLevel(st, arg, ctx); break;
+            case LOG_TO_FILE: setFile(st, arg, ctx); break;
+            default: return false;
+        }
+        solutions.add(new HashMap<>(bindings));
+        return true;
+    }
+
+    private static void log(LogState st, int level, String message) {
+        int threshold;
+        String file;
+        synchronized (st) { threshold = st.level; file = st.file; }
+        if (level < threshold) return;
+        String line = LocalDateTime.now().format(TS) + " " + NAMES[level] + ": " + message;
+        if (file != null) {
+            synchronized (st) {
+                try (Writer w = new OutputStreamWriter(new FileOutputStream(file, true), StandardCharsets.UTF_8)) {
+                    w.write(line);
+                    w.write(System.lineSeparator());
+                } catch (IOException e) {
+                    throw Errors.permission("open", "source_sink", new Atom(file), "log");
+                }
             }
-        } catch (Exception e) {
-            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
-            throw new PrologEvaluationException(modeName() + ": " + e.getMessage());
+        } else {
+            PrintStream err = StreamManager.resolveOutput("user_error");
+            if (err == null) err = StreamManager.out();
+            err.println(line);
+            err.flush();
         }
     }
 
-    private boolean doLog(Term query, Map<String, Term> bindings,
-            List<Map<String, Term>> solutions, Level level) {
-        checkArity(query, 1);
-        String message = resolveAtom(query.getArguments().get(0), bindings);
-        LOGGER.log(level, message);
-        solutions.add(bindings);
-        return true;
-    }
-
-    private boolean doLogLevel(Term query, Map<String, Term> bindings,
-            List<Map<String, Term>> solutions) {
-        checkArity(query, 1);
-        String levelStr = resolveAtom(query.getArguments().get(0), bindings);
-        Level level;
-        switch (levelStr.toLowerCase()) {
-            case "debug":   level = Level.FINE; break;
-            case "info":    level = Level.INFO; break;
-            case "warning": level = Level.WARNING; break;
-            case "error":   level = Level.SEVERE; break;
-            case "off":     level = Level.OFF; break;
-            case "all":     level = Level.ALL; break;
-            default: throw new PrologEvaluationException("log_level/1: unknown level: " + levelStr);
+    private static void setLevel(LogState st, Term arg, String ctx) {
+        String s = atom(arg, ctx);
+        int level;
+        switch (s.toLowerCase()) {
+            case "debug":   level = DEBUG; break;
+            case "all":     level = DEBUG; break;
+            case "info":    level = INFO; break;
+            case "warning": level = WARNING; break;
+            case "error":   level = ERROR; break;
+            case "off":     level = OFF; break;
+            default: throw Errors.domain("log_level", arg, ctx);
         }
-        LOGGER.setLevel(level);
-        solutions.add(bindings);
-        return true;
+        synchronized (st) { st.level = level; }
     }
 
-    private boolean doLogToFile(Term query, Map<String, Term> bindings,
-            List<Map<String, Term>> solutions) throws IOException {
-        checkArity(query, 1);
-        String path = resolveAtom(query.getArguments().get(0), bindings);
-        synchronized (LOGGER) {
-            if (fileHandler != null) {
-                LOGGER.removeHandler(fileHandler);
-                fileHandler.close();
-            }
-            fileHandler = new FileHandler(path, true);
-            fileHandler.setFormatter(new SimpleFormatter());
-            LOGGER.addHandler(fileHandler);
+    private static void setFile(LogState st, Term arg, String ctx) {
+        String path = (arg instanceof PrologString) ? ((PrologString) arg).getStringValue() : atom(arg, ctx);
+        try (OutputStream probe = new FileOutputStream(path, true)) {
+            // opened (and created) now, so a bad path is reported here and not at the first message
+        } catch (IOException e) {
+            throw Errors.permission("open", "source_sink", arg, ctx);
         }
-        solutions.add(bindings);
-        return true;
+        synchronized (st) { st.file = path; }
     }
 
-    private void checkArity(Term query, int expected) {
-        if (query.getArguments().size() != expected)
-            throw new PrologEvaluationException(modeName() + " requires " + expected + " arguments.");
+    private static String atom(Term t, String ctx) {
+        if (t instanceof Variable) throw Errors.instantiation(ctx);
+        if (!(t instanceof Atom)) throw Errors.type("atom", t, ctx);
+        return ((Atom) t).getName();
     }
 
-    private String resolveAtom(Term term, Map<String, Term> bindings) {
-        Term resolved = term.resolveBindings(bindings);
-        if (!(resolved instanceof Atom)) throw new PrologEvaluationException(modeName() + ": argument must be an atom.");
-        return ((Atom) resolved).getName();
+    private static String text(Term t, String ctx) {
+        if (t instanceof Variable) throw Errors.instantiation(ctx);
+        if (t instanceof PrologString) return ((PrologString) t).getStringValue();
+        if (t instanceof Atom) return ((Atom) t).getName();
+        return it.denzosoft.jprolog.core.util.TermFormatter.format(t, false, false, true, 1200);
     }
 
     private String modeName() { return mode.name().toLowerCase(); }

@@ -53,9 +53,11 @@ public class RefactorIssuesTest {
         // Define operator temporarily under a choicepoint, then fail.
         // After fail, operator should be gone. Use a unique name to avoid test-suite cross-pollution.
         String uniq = "myop_r1_" + System.nanoTime();
+        // ISS-2025-0612 (P4.18, decision §8): op/3 is permanent (ISO/SWI) — the operator defined
+        // in the failed branch stays. (Method name kept.)
         prolog.solve("(op(700, xfx, " + uniq + "), fail ; true).");
         List<Map<String, Term>> r = prolog.solve("current_op(_, _, " + uniq + ").");
-        assertEquals(0, r.size());
+        assertEquals(1, r.size());
     }
 
     @Test
@@ -76,9 +78,9 @@ public class RefactorIssuesTest {
 
     @Test
     public void testR2_operatorLocalToModule() {
-        prolog.consult(":- module(m1, []).");
-        prolog.consult(":- op(800, xfx, mylocalop).");
-        prolog.consult(":- module(m2, []).");
+        // ISS-2025-0573 (P3.2): a module's scope ends with the load that declared it, so the
+        // three directives must be ONE load (as separate consults the op was declared in user)
+        prolog.consult(":- module(m1, []).\n:- op(800, xfx, mylocalop).\n:- module(m2, []).\n");
         // Inside m2, mylocalop should be undefined → parsing X = a mylocalop b
         // should fail with syntax error or unify as plain atom-sequence.
         List<Map<String, Term>> r = prolog.solve("current_op(_, _, mylocalop).");
@@ -90,12 +92,10 @@ public class RefactorIssuesTest {
     public void testR2_emptyExportListHidesAll() {
         prolog.consult(":- module(secret, []).");
         prolog.consult("hidden(42).");
-        try {
-            List<Map<String, Term>> r = prolog.solve("secret:hidden(X).");
-            assertEquals("hidden predicate must not be visible", 0, r.size());
-        } catch (RuntimeException e) {
-            // existence_error is also acceptable
-        }
+        // ISS-2025-0611 (P4.17, decision §8): M:G runs G in M, exported or not (SWI)
+        // ISS-2025-0662: no catch-anything — the answer is asserted exactly
+        List<Map<String, Term>> r = prolog.solve("secret:hidden(X), X == 42.");
+        assertEquals("a qualified call reaches the module's own predicate", 1, r.size());
     }
 
     // ===================================================================
@@ -121,14 +121,13 @@ public class RefactorIssuesTest {
         f.deleteOnExit();
         java.nio.file.Files.write(f.toPath(), "a".getBytes());
         String path = f.getAbsolutePath().replace("\\", "\\\\");
-        try {
-            prolog.solve(
-                "open('" + path + "', read, S, [eof_action(error)]), " +
-                "get_char(S, _), get_char(S, _), get_char(S, _).");
-            fail("Expected permission_error / past end-of-stream");
-        } catch (RuntimeException e) {
-            // expected
-        }
+        // START_CHANGE: ISS-2025-0662 - the exact ISO error, and the stream is closed (it leaked)
+        List<Map<String, Term>> r = prolog.solve(
+            "open('" + path + "', read, S, [eof_action(error)]), " +
+            "catch((get_char(S, _), get_char(S, _), get_char(S, _)), E, true), close(S), " +
+            "E = error(permission_error(input, past_end_of_stream, S1), _), S1 == S.");
+        assertEquals(1, r.size());
+        // END_CHANGE: ISS-2025-0662
     }
 
     @Test
@@ -213,16 +212,16 @@ public class RefactorIssuesTest {
     public void testR5_tabledNegation() {
         prolog.consult(":- table p/1.");
         prolog.consult("p(X) :- \\+ p(X).");
-        // Under WFS, p(a) is undefined; should NOT loop infinitely.
-        // Implementation may choose: undefined → fail, or "unknown" atom.
-        try {
-            long start = System.currentTimeMillis();
-            prolog.solve("p(a).");
-            long elapsed = System.currentTimeMillis() - start;
-            assertTrue("must terminate within 1s under WFS", elapsed < 1000);
-        } catch (RuntimeException e) {
-            // explicit undefined/loop_error is acceptable
-        }
+        // START_CHANGE: ISS-2025-0661 - under WFS p(a) is undefined; WFS is not implemented
+        // (LIM-046), so negation over the incomplete table raises (decision §8) instead of
+        // answering `true` as it did.
+        List<Map<String, Term>> r = prolog.solve("catch(p(a), E, true), "
+            + "E = error(permission_error(negate, incomplete_table, G), _), G == p(a).");
+        assertEquals(1, r.size());
+        // a stratified negation under tabling is unaffected
+        prolog.consult(":- table w/1.\nw(X) :- m(X, Y), \\+ w(Y).\nm(a, b). m(b, c).");
+        assertEquals(1, prolog.solve("findall(X, w(X), L), L == [b].").size());
+        // END_CHANGE: ISS-2025-0661
     }
 
     // ===================================================================

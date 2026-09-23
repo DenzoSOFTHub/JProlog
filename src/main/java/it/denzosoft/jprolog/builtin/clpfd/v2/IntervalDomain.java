@@ -21,9 +21,48 @@ public final class IntervalDomain {
 
     public static final IntervalDomain EMPTY = new IntervalDomain(new ArrayList<>());
 
+    // START_CHANGE: ISS-2025-0644 - unbounded domains (SWI inf..sup). Long.MIN_VALUE stands for
+    // -infinity and Long.MAX_VALUE for +infinity; representable finite values are strictly between.
+    // A bound that is computed beyond the representable range is clamped to the matching infinity,
+    // which only ever LOSES pruning (sound), and a domain whose only "value" is an infinity is never
+    // a singleton, so propagation can never bind a variable to a wrong clamped value.
+    /** -infinity marker ({@code inf}). */
+    public static final long INF = Long.MIN_VALUE;
+    /** +infinity marker ({@code sup}). */
+    public static final long SUP = Long.MAX_VALUE;
+    /** The unconstrained domain {@code inf..sup}. */
+    public static final IntervalDomain ALL = interval(INF, SUP);
+
+    /** True when {@code v} is one of the two infinity markers. */
+    public static boolean isInfinite(long v) { return v == INF || v == SUP; }
+    // END_CHANGE: ISS-2025-0644
+
+    // START_CHANGE: ISS-2025-0644 - a value beyond the 64-bit range: the degenerate domain sup..sup
+    // (or inf..inf) that ALSO remembers the exact value, so a constraint whose other variables are
+    // all fixed can solve for its last variable exactly (X #= Y + 1, Y = 2^63 binds X = 2^63+1).
+    // Propagation sees only the infinite bound (sound: it can only lose pruning).
+    private final java.math.BigInteger exact;
+
     private IntervalDomain(List<long[]> ranges) {
-        this.ranges = ranges;
+        this(ranges, null);
     }
+
+    private IntervalDomain(List<long[]> ranges, java.math.BigInteger exact) {
+        this.ranges = ranges;
+        this.exact = exact;
+    }
+
+    /** The degenerate domain of an integer beyond the representable range. */
+    public static IntervalDomain bigValue(java.math.BigInteger v) {
+        long end = v.signum() > 0 ? SUP : INF;
+        List<long[]> r = new ArrayList<>(1);
+        r.add(new long[]{end, end});
+        return new IntervalDomain(r, v);
+    }
+
+    /** The exact out-of-range value this domain stands for, or null. */
+    public java.math.BigInteger exactBig() { return exact; }
+    // END_CHANGE: ISS-2025-0644
 
     /** A single contiguous interval [lo, hi]; empty if lo > hi. */
     public static IntervalDomain interval(long lo, long hi) {
@@ -56,7 +95,21 @@ public final class IntervalDomain {
     }
 
     public boolean isEmpty() { return ranges.isEmpty(); }
-    public boolean isSingleton() { return ranges.size() == 1 && ranges.get(0)[0] == ranges.get(0)[1]; }
+    // START_CHANGE: ISS-2025-0644 - an infinity marker is not a value
+    public boolean isSingleton() {
+        if (ranges.size() != 1) return false;
+        long[] r = ranges.get(0);
+        return r[0] == r[1] && !isInfinite(r[0]);
+    }
+
+    /** Both bounds finite (labeling needs this; SWI raises an instantiation error otherwise). */
+    public boolean isFinite() {
+        return !isEmpty() && ranges.get(0)[0] != INF && ranges.get(ranges.size() - 1)[1] != SUP;
+    }
+
+    /** Number of disjoint intervals. */
+    public int intervalCount() { return ranges.size(); }
+    // END_CHANGE: ISS-2025-0644
 
     /** The disjoint intervals as {lo, hi} pairs (a copy), sorted ascending. */
     public long[][] rangeArray() {
@@ -79,6 +132,7 @@ public final class IntervalDomain {
 
     /** Number of values, capped at {@link Long#MAX_VALUE} (intervals can be huge). */
     public long size() {
+        if (!isEmpty() && !isFinite()) return Long.MAX_VALUE;    // ISS-2025-0644: unbounded
         long n = 0;
         for (long[] r : ranges) {
             // ISS-2025-0297: overflow-safe (MIN..MAX would wrap with r[1]-r[0]+1)
@@ -101,7 +155,7 @@ public final class IntervalDomain {
 
     /** Remove all values below {@code bound} (keep >= bound). */
     public IntervalDomain removeBelow(long bound) {
-        List<long[]> out = new ArrayList<>();
+        List<long[]> out = new ArrayList<>(ranges.size());
         for (long[] r : ranges) {
             if (r[1] < bound) continue;
             out.add(new long[]{Math.max(r[0], bound), r[1]});
@@ -111,7 +165,7 @@ public final class IntervalDomain {
 
     /** Remove all values above {@code bound} (keep <= bound). */
     public IntervalDomain removeAbove(long bound) {
-        List<long[]> out = new ArrayList<>();
+        List<long[]> out = new ArrayList<>(ranges.size());
         for (long[] r : ranges) {
             if (r[0] > bound) continue;
             out.add(new long[]{r[0], Math.min(r[1], bound)});
@@ -121,8 +175,9 @@ public final class IntervalDomain {
 
     /** Remove a single value (may split an interval). */
     public IntervalDomain removeValue(long v) {
+        if (isInfinite(v)) return this;                           // ISS-2025-0644: not a value
         if (!contains(v)) return this;
-        List<long[]> out = new ArrayList<>();
+        List<long[]> out = new ArrayList<>(ranges.size() + 1);
         for (long[] r : ranges) {
             if (v < r[0] || v > r[1]) { out.add(r); continue; }
             if (r[0] < v) out.add(new long[]{r[0], v - 1});
@@ -133,7 +188,12 @@ public final class IntervalDomain {
 
     /** Intersect with another domain. */
     public IntervalDomain intersect(IntervalDomain other) {
-        List<long[]> out = new ArrayList<>();
+        // ISS-2025-0642: the common "restriction contains this domain" case allocates nothing
+        if (other.ranges.size() == 1 && !ranges.isEmpty()) {
+            long[] o = other.ranges.get(0);
+            if (o[0] <= ranges.get(0)[0] && o[1] >= ranges.get(ranges.size() - 1)[1]) return this;
+        }
+        List<long[]> out = new ArrayList<>(ranges.size() + other.ranges.size());
         int i = 0, j = 0;
         while (i < ranges.size() && j < other.ranges.size()) {
             long[] a = ranges.get(i), b = other.ranges.get(j);
@@ -144,6 +204,62 @@ public final class IntervalDomain {
         }
         return out.isEmpty() ? EMPTY : new IntervalDomain(out);
     }
+
+    // START_CHANGE: ISS-2025-0641 - domains with holes: unions and complements (X in 1..3 \/ 5..7,
+    // the negation of a reified X in D).
+    /** The union of two domains (sorted, disjoint, adjacent intervals merged). */
+    public IntervalDomain union(IntervalDomain other) {
+        if (other.isEmpty()) return this;
+        if (isEmpty()) return other;
+        List<long[]> all = new ArrayList<>(ranges.size() + other.ranges.size());
+        int i = 0, j = 0;
+        while (i < ranges.size() || j < other.ranges.size()) {
+            long[] next;
+            if (j >= other.ranges.size() || (i < ranges.size() && ranges.get(i)[0] <= other.ranges.get(j)[0])) {
+                next = ranges.get(i++);
+            } else {
+                next = other.ranges.get(j++);
+            }
+            if (!all.isEmpty()) {
+                long[] last = all.get(all.size() - 1);
+                if (last[1] == SUP || next[0] <= last[1] + 1) {    // overlapping or adjacent
+                    if (next[1] > last[1]) last[1] = next[1];
+                    continue;
+                }
+            }
+            all.add(new long[]{next[0], next[1]});
+        }
+        return new IntervalDomain(all);
+    }
+
+    /** Every value of {@code inf..sup} NOT in this domain. */
+    public IntervalDomain complement() {
+        List<long[]> out = new ArrayList<>();
+        long from = INF;                                          // start of the next uncovered gap
+        boolean open = true;                                      // false once a range reaches sup
+        for (long[] r : ranges) {
+            if (r[0] != INF && from <= r[0] - 1) out.add(new long[]{from, r[0] - 1});
+            if (r[1] == SUP) { open = false; break; }
+            from = r[1] + 1;
+        }
+        if (open) out.add(new long[]{from, SUP});
+        return out.isEmpty() ? EMPTY : new IntervalDomain(out);
+    }
+
+    /** True when every value of this domain is also in {@code other}. */
+    public boolean subsetOf(IntervalDomain other) {
+        return intersect(other).equals(this);
+    }
+
+    /** The largest value strictly below {@code v} in the domain, or {@link #INF} if none. */
+    public long prevBelow(long v) {
+        for (int i = ranges.size() - 1; i >= 0; i--) {
+            long[] r = ranges.get(i);
+            if (r[0] < v) return Math.min(r[1], v - 1);
+        }
+        return INF;
+    }
+    // END_CHANGE: ISS-2025-0641
 
     /** All values in ascending order (use only for labeling a reasonably-sized domain). */
     public Iterable<Long> values() {
@@ -163,6 +279,7 @@ public final class IntervalDomain {
         if (!(o instanceof IntervalDomain)) return false;
         IntervalDomain d = (IntervalDomain) o;
         if (ranges.size() != d.ranges.size()) return false;
+        if (exact == null ? d.exact != null : !exact.equals(d.exact)) return false;   // ISS-2025-0644
         for (int i = 0; i < ranges.size(); i++) {
             if (ranges.get(i)[0] != d.ranges.get(i)[0] || ranges.get(i)[1] != d.ranges.get(i)[1]) return false;
         }
@@ -183,8 +300,11 @@ public final class IntervalDomain {
         for (int i = 0; i < ranges.size(); i++) {
             if (i > 0) sb.append(" \\/ ");
             long[] r = ranges.get(i);
-            if (r[0] == r[1]) sb.append(r[0]);
-            else sb.append(r[0]).append("..").append(r[1]);
+            // ISS-2025-0644: infinity markers print as inf/sup
+            String lo = r[0] == INF ? "inf" : String.valueOf(r[0]);
+            String hi = r[1] == SUP ? "sup" : String.valueOf(r[1]);
+            if (r[0] == r[1]) sb.append(lo);
+            else sb.append(lo).append("..").append(hi);
         }
         return sb.toString();
     }

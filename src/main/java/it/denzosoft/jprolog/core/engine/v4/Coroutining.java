@@ -251,8 +251,10 @@ public final class Coroutining {
             Term cell = ((CompoundTerm) w).getArguments().get(0);   // raw: NOT dereferenced
             if (!(cell instanceof Variable)) return Outcome.SUCCESS;
             Term other = m.deref(args[1]);
-            return it.denzosoft.jprolog.builtin.clpfd.v2.ClpfdV2Bridge
-                .onBindCell((Variable) cell, other) ? Outcome.SUCCESS : Outcome.FAILURE;
+            // START_CHANGE: ISS-2025-0640 - bind what the binding determined (X+Y #= 9, X = 4
+            // must bind Y = 5); the bridge only narrowed the store.
+            return ClpfdNative.onBound(m, (Variable) cell, other);
+            // END_CHANGE: ISS-2025-0640
         }
     }
     // END_CHANGE: ISS-2025-0460

@@ -163,8 +163,9 @@ public class EngineV4DatabaseTest {
         buffer.reset();
         assertEquals("true", yn("listing(baz/0)"));
         String out = buffer.toString();
-        assertTrue("listing/1 must print the clause, got: " + out, out.contains("baz :- true"));
-        assertTrue("listing/1 must name the predicate, got: " + out, out.contains("baz/0"));
+        // ISS-2025-0570 (P3.7): listing is portray_clause/1 — `baz.`, SWI's form, re-readable
+        assertTrue("listing/1 must print the clause, got: " + out, out.contains("baz."));
+        assertFalse("no Rule.toString() rendering, got: " + out, out.contains(":- true"));
         // START_CHANGE: ISS-2025-0508 - 4.3 wave D: a real instantiation_error.
         assertEquals("error(instantiation_error,'listing/1')", err("listing(X)"));
         // END_CHANGE: ISS-2025-0508

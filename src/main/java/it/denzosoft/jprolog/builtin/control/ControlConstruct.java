@@ -18,7 +18,8 @@ import java.util.Map;
 // permission_error(modify, static_procedure, call/1) instead of quietly redefining a control
 // construct. This placeholder keeps that answer true and nothing else.
 /**
- * Registry placeholder for a control construct that both engines implement natively.
+ * Registry placeholder for a control construct — or, since 4.5.0 (ISS-2025-0670), a built-in —
+ * that the engine implements natively or inline at every registered arity.
  *
  * <p>Executing it is a programming error: it means a dispatcher consulted the built-in registry for
  * a construct it was supposed to handle itself.

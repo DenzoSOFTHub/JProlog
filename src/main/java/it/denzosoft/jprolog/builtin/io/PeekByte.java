@@ -30,6 +30,12 @@ public class PeekByte implements BuiltIn {
 
         // START_CHANGE: ISS-2025-0472 - lookahead on the engine's stream buffer
         PrologStream s = IOStreamUtils.inputStream(streamArg, bindings, ctx);
+        // START_CHANGE: ISS-2025-0605 - P4.12: byte I/O on a text stream is
+        // permission_error(input, text_stream, S); reading past the end with eof_action(error)
+        // raises BEFORE the read, not at the first end_of_file.
+        IOStreamUtils.checkStreamType(s, true, "input", ctx);
+        IOStreamUtils.beforeRead(s, ctx);
+        // END_CHANGE: ISS-2025-0605
         try {
             int b = s.peekByte();
             Map<String, Term> nb = new HashMap<>(bindings);

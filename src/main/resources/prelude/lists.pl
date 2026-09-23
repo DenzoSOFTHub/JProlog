@@ -37,3 +37,54 @@ member(X, [_|T]) :- member(X, T).
 
 append([], L, L).
 append([H|T], L, [H|R]) :- append(T, L, R).
+
+% ISS-2025-0548 (wave P2.10): the split mode of the native append/3 — List1 not
+% a proper list, List3 a proper list — runs these two clauses. The native used
+% to build a fresh n-element prefix for every split, so append(_, [Last], L)
+% was quadratic (1e4: 8 s). Here each split costs O(1): the prefix is shared
+% through the bindings the recursion leaves behind. The FIRST argument is
+% List3, so first-argument indexing makes the last split deterministic (at
+% List3 = [] only the first clause is a candidate), as the native was.
+'$append_split'(L, [], L).
+'$append_split'([H|R], [H|T], L) :- '$append_split'(R, T, L).
+
+% ISS-2025-0603 (wave P4.10): permutation/2, intersection/3, union/3 and
+% subtract/3 are SWI-Prolog's library(lists) clauses. The registry versions
+% enumerated permutations in a different order ([3,2,1] before [3,1,2]),
+% computed all n! answers eagerly, and removed duplicates from intersection/3
+% and union/3 (SWI keeps them: intersection([1,1,2],[1,2],X) gives [1,1,2]).
+permutation(Xs, Ys) :-
+    (   is_list(Xs) -> length(Xs, N), length(Ys, N)
+    ;   is_list(Ys) -> length(Ys, N), length(Xs, N)
+    ;   length(Xs, N), length(Ys, N)
+    ),
+    '$perm'(Xs, Ys).
+
+'$perm'([], []).
+'$perm'(List, [First|Perm]) :-
+    select(First, List, Rest),
+    '$perm'(Rest, Perm).
+
+intersection([], _, []) :- !.
+intersection([X|T], L, Intersect) :-
+    (   memberchk(X, L)
+    ->  Intersect = [X|R],
+        intersection(T, L, R)
+    ;   intersection(T, L, Intersect)
+    ).
+
+union([], L, L) :- !.
+union([H|T], L, R) :-
+    memberchk(H, L),
+    !,
+    union(T, L, R).
+union([H|T], L, [H|R]) :-
+    union(T, L, R).
+
+subtract([], _, []) :- !.
+subtract([E|T], D, R) :-
+    memberchk(E, D),
+    !,
+    subtract(T, D, R).
+subtract([H|T], D, [H|R]) :-
+    subtract(T, D, R).

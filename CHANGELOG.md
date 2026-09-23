@@ -7,6 +7,180 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.5.0] - 2026-09-23
+
+### The production-readiness release: waves P1..P7
+
+A five-way audit of 4.4.0 (about 1 300 probes) was turned into seven implementation waves, each
+implemented by one agent and verified independently. Spec, decisions and every wave record (what
+was done, measurements, deviations): `docs/reports/report-production-readiness-2026-09-23.md`.
+The single list of deliberate deviations from ISO/SWI is new: `docs/references/ref-deviations.md`.
+Reference semantics: **ISO 13211-1 first, SWI-Prolog 9 where ISO is silent.**
+
+| Wave | Scope | Issues |
+|---|---|---|
+| P1 | engine semantics (`core.engine.v4`) | ISS-2025-0514 .. 0529 |
+| P2 | performance (call path, clause store, database, `.jpc`) | ISS-2025-0540 .. 0553 |
+| P3 | loading, reading and writing terms | ISS-2025-0560 .. 0579 |
+| P4 | built-in conformance (arithmetic, text, format, I/O, lists) | ISS-2025-0590 .. 0613 |
+| P5 | CLP(FD) | ISS-2025-0640 .. 0652 |
+| P6 | production hardening (sandbox, threads, CLI, budget) | ISS-2025-0620 .. 0639 |
+| P7 | the test suite as a safety net + this release | ISS-2025-0660 .. 0675 |
+
+Suite **1452/1452** (4.4.0: 1313; the arithmetic is in the P7 record); **20/20 example programs**
+with the per-program "Successful queries" counts unchanged (2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 2, 1, 0,
+0, 2, 0, 0, 0, 0, 0 — the local example script now passes `--demo`, see the CLI below).
+
+#### Behaviour changes (read this first)
+
+Decisions of the program (SWI-Prolog as the reference; all listed in `ref-deviations.md` §3):
+
+1. **`op/3` and `char_conversion/2` are permanent** — no longer undone on backtracking (ISO/SWI).
+2. **`integer/1` evaluable rounds** half away from zero (`integer(2.5) =:= 3`; it truncated).
+   A **negative shift count shifts the other way** (`1 << -1 =:= 0`), no `evaluation_error`.
+3. **`intersection/3`, `union/3`, `subtract/3` keep duplicates** (SWI library(lists) clauses);
+   `permutation/2` is SWI's too.
+4. **`string_concat(-, -, -)`** is `instantiation_error`; **`call((fail, 1))`** is
+   `type_error(callable, (fail,1))` — every meta-call body is checked before any of it runs;
+   **`plus/3` with floats** is `type_error(integer, _)`; **`atomic_list_concat(L, '', A)`** in
+   split mode is `domain_error(non_empty_atom, '')`; **`format ~r` without a radix** is an error.
+5. **`M:G` runs `G` in `M` whether or not `M` exports it** (SWI); export only governs import.
+6. **`print/1` quotes** (`portray` hook, then `writeq`); **`tab(Expr)` evaluates** its argument.
+7. **Global variables are per thread** (`nb_setval` in a worker is invisible to `main`, SWI).
+8. **The CLI no longer loads demo facts** (`father/2`, `likes/2`, `color/1`, …) — only with
+   `--demo`.
+9. **Tabled non-stratified negation raises** `permission_error(negate, incomplete_table, G)`
+   instead of answering inconsistently (WFS is not implemented, LIM-046).
+10. **Safe mode denies `halt/0,1`** (`permission_error(call, sandboxed, halt)`) unless
+    `SafeModeOptions.allowHalt()`; the CLI's `--safe` allows it.
+11. **A query that does not parse raises `error(syntax_error(Message), query)`**, not the atom
+    `'Error parsing query: ...'`.
+
+Other deliberate changes made by the waves:
+
+- **Answers are copies** (ISS-2025-0514): a `Map<String,Term>` answer no longer changes when the
+  engine goes on to the next one; `_`-prefixed anonymous variables are not in answers (0515).
+- **Directives run once** (ISO 7.4.2) and in the module being loaded (they ran once per
+  solution); a consulted file's errors are **warnings** on `user_error` and the load continues
+  (SWI) — `Prolog.consult(String)` still throws one exception listing them; a module's scope ends
+  with the load that declared it.
+- **`listing/1`** uses SWI's `portray_clause` layout (no `% Listing for` header; `_` singletons).
+- **Floats print in SWI's shortest layout** (`10000000.0`, exponent only below `1e-4` or from
+  `1e15`); `writeq` of infinities/NaN is `1.0Inf`, `-1.0Inf`, `1.5NaN`; `writeq('\e')` is `'\e'`;
+  `-(1)` and `- 1` are written unambiguously; the reader accepts `\e \s \uXXXX \UXXXXXXXX` and
+  rejects unknown escapes; `` `ab` `` reads as a code list.
+- **Cleanup runs when a query is abandoned** (a streaming sink stops, a budget or Stop aborts).
+- **`last/2`, `nth0/3`, `nth1/3` on a partial list enumerate** (SWI); a caller must bound them.
+- **`aggregate_all/3`**: the SWI forms (`max(X, W)`, `min(X, W)`, `count`, `bag`, `set`), and a
+  non-number in `max/min/sum` is `type_error(evaluable, …)`.
+- **CLP(FD) labeling is lazy** (the first solution of a huge domain comes at once), `label/1` is
+  leftmost; the huge-domain `resource_error` pins were re-pinned.
+- **The inference budget is ONE pool per query** shared by its worker threads, and O(N) natives
+  (`length`, `append`, `member`, `nth`, `msort`, `copy_term`, `findall` copying, `between`, …)
+  are charged per element.
+- **Trace ports follow SWI**: no `Fail` after a deterministic `Exit`; a failure inside a
+  single-clause predicate prints the predicate's `Fail`; the internal `'$mctx'` wrapper no longer
+  shows (ISS-2025-0668).
+- **`current_prolog_flag(version, V)`** is `40500`, `version_data` `jprolog(4,5,0,[])` (they said
+  2.0.15).
+
+#### Highlights by wave
+
+- **P1 — engine semantics.** Answer copies; cut in a `catch/3` Recovery is local; a variable goal
+  bound to `!` is opaque; `setof/3` dedups after witness unification; `bagof/setof` grouping is
+  O(n log n) (40 000 witnesses: 0.2–0.3 s, was > 7 min); `between/3` exact and lazy past 64 bits;
+  deep terms (10^6) copy/assert without a stack overflow; concurrent asserts are not duplicated;
+  `nb_setval` stores a copy; asserting a cyclic term raises `representation_error(cyclic_term)`;
+  trace depth after `catch/3`; a breakpoint no longer snapshots every port.
+- **P2 — performance.** Call-site caching for compiled clause bodies (lazy `,`/`;`/`->`/`*->`
+  expansion), array-backed `CompoundTerm`, gap-buffer clause sequences with O(1)
+  `asserta/assertz/retract`, `retractall/1` through the index, incremental merged buckets for
+  variable-headed clauses, linear `append(_, [Last], L)`, array merge `predsort/3`, byte fast path
+  for `get_char`. nrev −59..71 %, loop −58..71 %, deriv −51..55 %; retractall of 100k clauses
+  7.7 s → 0.017 s; asserta loop 1e5 16 s → 0.15 s. Semantics fix found on the way: a body-only
+  variable first bound after a choice point kept its binding across it (ISS-2025-0551, present in
+  4.4.0).
+- **P3 — loading, reading, writing.** `consult/1`, `[F]`, `ensure_loaded/1`, `load_files/1,2`,
+  `make/0`, `include/1`, `source_file/1,2`, `prolog_load_context/2`, `use_module(File)`;
+  `read/1,2`, `read_term/2,3`, `read_term_from_atom/3`, `term_to_atom/2`, `atom_to_term/3` on the
+  v2 reader (fresh variables, syntax errors raise); string streams (`open_string/2`,
+  `with_input_from/2`, `read_line_to_string/2`, `read_line_to_codes/2,3`, `read_string/3,5`);
+  `expand_term/2`, `term_expansion/2` at consult and `.jpc` load; `table/1` comma/list/`//`/`as`
+  and moded tabling; 200 000-deep terms read, consult, copy and write.
+- **P4 — built-in conformance.** Exact rounding and big-integer division; deep arithmetic;
+  `format/2,3` rewritten (85-row directive table; `~@` runs once); the string family on any atomic
+  text; `sub_atom/5` on code points; `char_type/code_type`; `flatten/2` cycle-safe;
+  `with_output_to/2`, `print_message/2`, `statistics/0,2`, `get_time/1`, `stamp_date_time/3`,
+  `date_time_stamp/2`, `format_time/3`, `abolish/1`, `dynamic/1`, `predicate_property/2`;
+  `cot/1`, `acot/1`, `lsb/1`, `popcount/1`.
+- **P5 — CLP(FD).** Propagation after plain `=`; domains with holes; lazy labeling with the SWI
+  options and `min/max` branch and bound; big integers and `inf..sup`; `X #> Y, Y #> X` fails
+  fast; `ins/2`, `sum/3`, `scalar_product/4`, reification (`#<==> #==> #<== #\/ #/\ #\`),
+  `// div rem mod ^ abs min max`, `fd_inf/fd_sup/fd_size/fd_dom/fd_var`, `element/3`,
+  `tuples_in/2`, `global_cardinality/2`, `transpose/2`, domain-consistent `all_distinct/1`
+  (Régin). 20-queens `ff` first solution 0.02–0.4 s; SEND+MORE 2–113 ms; hard sudoku < 0.5 s.
+- **P6 — production hardening.** `enableSafeMode(SafeModeOptions)` covers the native table and a
+  deny list by name (csv/logging file sinks, loaders, `open/3,4`) with `allowFileRead(dir)`;
+  per-engine logging; the concurrent family propagates balls and control exceptions (no 60 s
+  cap); SWI threads: selective `thread_get_message/1,2,3`, `thread_property/2`, mutexes
+  (`mutex_create/1,2`, `mutex_lock/unlock`, `with_mutex/2`), `thread_join/1`, `thread_exit/1`,
+  `message_queue_destroy/1`, `concurrent_forall/2,3`, `thread_self/1` = `main`, ISO thread errors;
+  a load that waits on a thread that loads no longer deadlocks; lazy HTTP client.
+- **P7 — the test suite.** Tautologies and catch-anything tests replaced by exact assertions,
+  flaky interrupt tests latch-synchronised, `FamousPrologProgramsTest` made of real programs,
+  `test/performance/PerformanceRegressionTest` (growth tests for every P2 item), trace oracles
+  fixed with the engine, `ref-deviations.md`.
+
+#### The CLI and the runnable jar (P6)
+
+- `mvn package` builds **`target/jprolog.jar`** (`Main-Class: it.denzosoft.jprolog.PrologCLI`);
+  `java -jar target/jprolog.jar [options] [file.pl ...]`. `mvn exec:java` works (the pom's
+  default mainClass is the CLI; it named a class that did not exist).
+- Options: `file.pl ...` (consult), `-g Goal` (run once after loading), `-t Goal` (toplevel goal),
+  `--safe`, `--budget N`, `--max-solutions N`, `--demo`, `--batch`, `--interactive`,
+  `-q/--quiet`, `-h/--help`.
+- **Answers are streamed** (`Prolog.solveStream(String, AnswerSink)`): interactive `;`/Enter, one
+  answer computed at a time; batch mode prints each answer as it is found (`between(1, inf, X).`
+  no longer exhausts the heap). An answer that leaves a choice point ends in `;` + `false.`.
+- **Exit status**: `halt(N)` → N; `-g` failure or uncaught error → 1; bad option → 2;
+  `initialization(G, main)` halts after `G`.
+- Uncaught errors print through the ISO writer (`Error: error(type_error(evaluable, foo/0), …)`);
+  `:consult` counts clauses, not lines; the 13 CLP(FD) "Overriding existing built-in" warnings
+  are logged at FINE (they were printed on every start).
+
+#### `.jpc` format 0x04 (P2, P3)
+
+Varint integers, variable names once per clause, an array reader, iterative past depth 256;
+compiled through the v2 reader with the clauses recorded as read and loaded through the consult
+handler (so `term_expansion/2` and directives apply). 0x03 files are still read; 0x02 and older
+are recompiled by `consultSmart`. 40k mixed clauses load in 23 % of the consult time (was 74 %).
+
+#### Deleted (P7, ISS-2025-0670)
+
+Unreachable legacy classes (the natives win at every registered arity; the registry keeps a
+`builtin.control.ControlConstruct` placeholder under each name, so `permission_error` on
+`assertz`, the safe-mode snapshot and name listings are unchanged):
+`builtin/io/Read`, `builtin/io/ReadTerm`, `builtin/term/AtomToTerm`, `builtin/term/TermToAtom`,
+`builtin/arithmetic/Between`, the inner class `builtin/dcg/DCGUtils.DCGTranslateRule` (its
+`dcg_translate_rule/4` was a message-atom stub and is now an unknown procedure; `call_dcg/3`
+translates through the v2 DCG translator). Tests: `BuiltInTests.java` (never run by surefire:
+`*Tests`).
+
+#### New limitations
+
+LIM-040 (cyclic terms cannot be stored), LIM-041 (CLP(FD) residue: 64-bit domains, non-difference
+cycles on huge domains, no residual-constraint printing, missing `circuit/1`, `cumulative`, …),
+LIM-042 (call-site caching covers compiled clause bodies only; no native maplist family),
+LIM-043 (built-in conformance residue: partial-list enumeration, `length(L, L)`, informational
+messages on the current output, no `message_hook/3`, `library(solution_sequences)` absent),
+LIM-044 (loading/reading/writing residue: `(a|b)`, `as`, lattice/po tabling modes, the load
+lock), LIM-045 (hardening residue: thread tables JVM-wide, `thread_signal/2` & co. missing,
+budget overshoot, safe-mode residue), LIM-046 (tabled negation is not the well-founded
+semantics). Resolved: LIM-036 (`.jpc` compile path), the safe-mode `halt` and CLI parse-error
+points of LIM-045.
+
+---
+
 ## [4.4.0] - 2026-08-26
 
 ### Wave D of 4.3: ISO error conformance, `retractall/1` through the index, `bounded = false`

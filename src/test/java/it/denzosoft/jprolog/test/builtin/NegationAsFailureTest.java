@@ -112,7 +112,10 @@ public class NegationAsFailureTest {
         
         // Test negation with variable binding - direct test
         List<Map<String, Term>> solutions = prolog.solve("\\+ fact(world)");
-        assertFalse("\\+ fact(world) should succeed", solutions.isEmpty());
+        assertEquals("\\+ fact(world) should succeed once", 1, solutions.size());
+        // ISS-2025-0663: the test's name was not checked — the negation leaves X unbound
+        assertEquals(1, prolog.solve("\\+ \\+ X = a, var(X)").size());
+        assertEquals(1, prolog.solve("X = b, \\+ fact(X), X == b").size());
         
         // Test negation of existing fact
         solutions = prolog.solve("\\+ fact(a)");

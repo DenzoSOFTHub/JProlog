@@ -228,27 +228,16 @@ final class NativeTerm {
             if (a instanceof Variable) throw Errors.instantiation("atom_to_term/3");
             if (!(a instanceof Atom)) throw Errors.type("atom", m.resolve(a), "atom_to_term/3");
             // END_CHANGE: ISS-2025-0507
-            Term parsed;
-            try {
-                parsed = new it.denzosoft.jprolog.core.parser.Parser().parseTerm(((Atom) a).getName());
-            } catch (PrologException pe) {
-                throw pe;
-            } catch (StackOverflowError so) {
-                throw new PrologException(ISOErrorTerms.resourceError("parser_nesting", "atom_to_term/3"));
-            } catch (RuntimeException e) {
-                ControlFlow.rethrowIfControl(e);
-                // START_CHANGE: ISS-2025-0507
-                throw Errors.syntax(String.valueOf(e.getMessage()), "atom_to_term/3");
-                // END_CHANGE: ISS-2025-0507
-            }
-            if (parsed == null) return Outcome.FAILURE;
-            Map<String, Variable> named = new LinkedHashMap<String, Variable>();
-            collectNamed(parsed, named);
-            List<Term> pairs = new ArrayList<Term>(named.size());
-            for (Map.Entry<String, Variable> e : named.entrySet()) {
+            // START_CHANGE: ISS-2025-0568 - P3.4: the v2 parser; the bindings list names every
+            // named variable in order of first occurrence, _Y included (SWI), '_' excluded
+            NativeRead.Parsed p = NativeRead.parse(((Atom) a).getName(), null, "atom_to_term/3");
+            Term parsed = p.term;
+            List<Term> pairs = new ArrayList<Term>();
+            for (Map.Entry<String, Variable> e : p.reader.variableNames().entrySet()) {
                 pairs.add(new CompoundTerm(new Atom("="),
                     Arrays.asList((Term) new Atom(e.getKey()), (Term) e.getValue())));
             }
+            // END_CHANGE: ISS-2025-0568
             if (!m.unifyOrUndo(args[1], parsed)) return Outcome.FAILURE;
             return m.unify(args[2], NativeLibrary.listOf(pairs, NIL)) ? Outcome.SUCCESS : Outcome.FAILURE;
         }
@@ -321,43 +310,26 @@ final class NativeTerm {
             int vars = (av ? 1 : 0) + (bv ? 1 : 0) + (cv ? 1 : 0);
             // START_CHANGE: ISS-2025-0507
             if (vars > 1) throw Errors.instantiation("plus/3");
-            if (!av && !(a instanceof Number)) throw Errors.type("integer", m.resolve(a), "plus/3");
-            if (!bv && !(b instanceof Number)) throw Errors.type("integer", m.resolve(b), "plus/3");
-            if (!cv && !(c instanceof Number)) throw Errors.type("integer", m.resolve(c), "plus/3");
             // END_CHANGE: ISS-2025-0507
+            // START_CHANGE: ISS-2025-0593 - P4.4: plus/3 is integer-only (SWI): a float raises
+            // type_error(integer, F); the arithmetic is exact (no long overflow).
+            if (!av && !isInt(a)) throw Errors.type("integer", m.resolve(a), "plus/3");
+            if (!bv && !isInt(b)) throw Errors.type("integer", m.resolve(b), "plus/3");
+            if (!cv && !isInt(c)) throw Errors.type("integer", m.resolve(c), "plus/3");
             if (vars == 0) {
-                if (!(a instanceof Number) || !(b instanceof Number) || !(c instanceof Number)) {
-                    return Outcome.FAILURE;
-                }
-                Number n1 = (Number) a, n2 = (Number) b, n3 = (Number) c;
-                if (n1.isInteger() && n2.isInteger() && n3.isInteger()) {
-                    return (n1.longValue() + n2.longValue() == n3.longValue())
-                        ? Outcome.SUCCESS : Outcome.FAILURE;
-                }
-                return (Double.compare(n1.getValue() + n2.getValue(), n3.getValue()) == 0)
-                    ? Outcome.SUCCESS : Outcome.FAILURE;
+                return big(a).add(big(b)).equals(big(c)) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
-            if (av) {
-                if (!(b instanceof Number) || !(c instanceof Number)) return Outcome.FAILURE;
-                return m.unify(args[0], sub((Number) c, (Number) b)) ? Outcome.SUCCESS : Outcome.FAILURE;
-            }
-            if (bv) {
-                if (!(a instanceof Number) || !(c instanceof Number)) return Outcome.FAILURE;
-                return m.unify(args[1], sub((Number) c, (Number) a)) ? Outcome.SUCCESS : Outcome.FAILURE;
-            }
-            if (!(a instanceof Number) || !(b instanceof Number)) return Outcome.FAILURE;
-            Number n1 = (Number) a, n2 = (Number) b;
-            Term r = (n1.isInteger() && n2.isInteger())
-                ? Number.valueOf(n1.longValue() + n2.longValue())
-                : new Number(n1.getValue() + n2.getValue());
-            return m.unify(args[2], r) ? Outcome.SUCCESS : Outcome.FAILURE;
+            if (av) return m.unify(args[0], num(big(c).subtract(big(b)))) ? Outcome.SUCCESS : Outcome.FAILURE;
+            if (bv) return m.unify(args[1], num(big(c).subtract(big(a)))) ? Outcome.SUCCESS : Outcome.FAILURE;
+            return m.unify(args[2], num(big(a).add(big(b)))) ? Outcome.SUCCESS : Outcome.FAILURE;
         }
 
-        private Term sub(Number x, Number y) {
-            return (x.isInteger() && y.isInteger())
-                ? Number.valueOf(x.longValue() - y.longValue())
-                : new Number(x.getValue() - y.getValue());
+        private static boolean isInt(Term t) { return t instanceof Number && ((Number) t).isInteger(); }
+        private static java.math.BigInteger big(Term t) { return ((Number) t).bigIntegerValue(); }
+        private static Term num(java.math.BigInteger v) {
+            return v.bitLength() <= 63 ? Number.valueOf(v.longValue()) : new Number(v);
         }
+        // END_CHANGE: ISS-2025-0593
     }
 
     // ------------------------------------------------------------------ the remaining type checks

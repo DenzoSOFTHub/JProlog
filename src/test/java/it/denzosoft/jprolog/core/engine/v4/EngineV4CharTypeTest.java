@@ -79,7 +79,8 @@ public class EngineV4CharTypeTest {
         succeeds("code_type(0'a, alpha).");
         succeeds("code_type(0'a, csym).");
         fails("char_type(a, digit).");
-        fails("char_type(a, zzz).");
+        // ISS-2025-0601 (P4.8): an unknown class is domain_error(char_type, T) (SWI), not a failure
+        assertTrue(prolog.solve("catch(char_type(a, zzz), error(domain_error(char_type, zzz), _), true).").size() == 1);
         fails("char_type(ab, alpha).");
         fails("char_type(1, alpha).");
         fails("code_type(a, alpha).");            // code_type wants a code, not an atom
@@ -208,12 +209,13 @@ public class EngineV4CharTypeTest {
 
     @Test
     public void testMalformedTypeTermsSimplyFail() {
-        fails("char_type(a, f(x, y)).");
-        fails("char_type(a, 3).");
-        fails("char_type(a, \"alpha\").");
-        fails("code_type(0'a, f(x, y)).");
+        // ISS-2025-0601 (P4.8): a malformed class is domain_error(char_type, T) now
+        assertTrue(prolog.solve("catch(char_type(a, f(x, y)), error(domain_error(char_type, f(x, y)), _), true).").size() == 1);
+        assertTrue(prolog.solve("catch(char_type(a, 3), error(domain_error(char_type, 3), _), true).").size() == 1);
+        assertTrue(prolog.solve("catch(char_type(a, \"alpha\"), error(domain_error(char_type, _), _), true).").size() == 1);
+        assertTrue(prolog.solve("catch(code_type(0'a, f(x, y)), error(domain_error(char_type, f(x, y)), _), true).").size() == 1);
         fails("code_type(1.5, alpha).");
-        fails("code_type(-1, alpha).");
+        fails("code_type(-1, alpha).");            // -1 is end_of_file only (ISS-2025-0601)
     }
 
     /** Both are protected procedures (invariant 59: the native registration is what says so). */

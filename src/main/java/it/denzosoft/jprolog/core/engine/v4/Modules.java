@@ -280,6 +280,21 @@ public final class Modules {
      * demand. {@code null} when the module does not define it. {@code user} always answers null:
      * its clauses are the flat store.
      */
+    // START_CHANGE: ISS-2025-0540 - wave P2.1: what a module call site caches. Only for a module
+    // that is already loaded (a site never triggers a load) and whose own clauses exist.
+    /** {@code m}'s own, loaded, non-empty clauses for {@code f/n}; null otherwise. */
+    Pred localPred(String m, String f, int n) {
+        Mod mm = mod(m);
+        if (mm == null || USER.equals(m) || SYSTEM.equals(m)) return null;
+        if (mm.isLibrary() && !mm.loaded) return null;
+        Pred p = mm.clauses.get(f + "/" + n);
+        return (p == null || p.all.length == 0) ? null : p;
+    }
+
+    /** Changes whenever the mirrored module structure may have (the ModuleManager's stamp). */
+    long stamp() { return (legacy == null) ? 0 : legacy.getStamp(); }
+    // END_CHANGE: ISS-2025-0540
+
     Clause[] localClauses(String m, String f, int n) { return localClauses(m, f, n, null); }
 
     Clause[] localClauses(String m, String f, int n, Object argKey) {

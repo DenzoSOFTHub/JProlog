@@ -68,8 +68,8 @@ public class JPrologComprehensiveTest {
         List<Map<String, Term>> solutions = prolog.solve("findall(X, fruit(X), Fruits)");
         assertEquals(1, solutions.size());
         
-        // Check that we got all fruits
-        assertTrue(solutions.get(0).containsKey("Fruits"));
+        // Check that we got all fruits (ISS-2025-0663: the value, not just the key)
+        assertEquals(1, prolog.solve("findall(X, fruit(X), Fruits), Fruits == [apple, orange, banana]").size());
     }
 
     @Test
@@ -103,15 +103,13 @@ public class JPrologComprehensiveTest {
         assertEquals("123", nValue.toString());
         
         // Test atom_chars conversion
-        solutions = prolog.solve("atom_chars('hello', L).");
+        // ISS-2025-0663: the values, not just "bound"
+        solutions = prolog.solve("atom_chars('hello', L), L == [h, e, l, l, o].");
         assertEquals(1, solutions.size());
-        Term lValue = solutions.get(0).get("L");
-        assertNotNull(lValue);
         
         // Test number_chars conversion
-        solutions = prolog.solve("number_chars(456, L).");
+        solutions = prolog.solve("number_chars(456, L), L == ['4', '5', '6'].");
         assertEquals(1, solutions.size());
-        lValue = solutions.get(0).get("L");
-        assertNotNull(lValue);
+        assertEquals(1, prolog.solve("atom_number('123', N), N == 123.").size());
     }
 }

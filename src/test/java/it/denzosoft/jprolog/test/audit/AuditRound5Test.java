@@ -40,19 +40,16 @@ public class AuditRound5Test {
         }
     }
 
+    // START_CHANGE: ISS-2025-0664 - test1_atomTable_sameInstanceUnderGC removed: it forced a GC
+    // and slept 50 ms, and could not fail for the property it named (a1 is strongly reachable
+    // for the whole method, so a GC can never collect it). Canonical interning of a live atom:
     @Test
-    public void test1_atomTable_sameInstanceUnderGC() {
-        // Two consecutive intern calls return same Atom instance (canonical interning)
-        // Forcing GC must not break interning
+    public void test1_atomTable_sameInstanceForLiveAtom() {
         Atom a1 = AtomTable.intern("audit_unique_atom_abc");
-        System.gc();
-        try { Thread.sleep(50); } catch (InterruptedException ignored) {}
-        Atom a2 = AtomTable.intern("audit_unique_atom_abc");
-        assertNotNull("a1 must not be null", a1);
-        assertNotNull("a2 must not be null", a2);
-        // Interning guarantees: if a1 is still referenced, a2 == a1
-        assertSame("intern must return same instance for live atom", a1, a2);
+        assertSame("intern must return same instance for live atom", a1,
+            AtomTable.intern("audit_unique_atom_abc"));
     }
+    // END_CHANGE: ISS-2025-0664
 
     // ===================================================================
     // #2 — .jpc serialization of cyclic terms
@@ -63,18 +60,14 @@ public class AuditRound5Test {
         // Cyclic term serialization must not stack-overflow.
         // Either throws a controlled error or handles cycle via visited set.
         prolog.solve("set_prolog_flag(occurs_check, false).");
-        try {
-            // X = f(X) creates cyclic term (occurs-check off)
-            // We can't directly test JpcWriter from Prolog without consulting,
-            // but the writer should handle cycles. Test via assertz which uses
-            // KB serialization paths internally.
-            prolog.solve("X = f(X), assertz(cyclic_term_test(X)).");
-            // No StackOverflowError — good
-        } catch (StackOverflowError e) {
-            fail("Cyclic term caused StackOverflowError — JpcWriter must use cycle detection");
-        } catch (RuntimeException e) {
-            // Any controlled error is acceptable
-        }
+        // START_CHANGE: ISS-2025-0662 - the exact error (ISS-2025-0527: a cyclic term cannot be
+        // stored), not "any RuntimeException"; nothing was asserted
+        List<Map<String, Term>> r = prolog.solve(
+            "catch((X = f(X), assertz(cyclic_term_test(X))), error(E, _), true), "
+            + "E == representation_error(cyclic_term).");
+        assertEquals(1, r.size());
+        assertEquals(0, prolog.solve("catch(cyclic_term_test(_), _, fail).").size());
+        // END_CHANGE: ISS-2025-0662
     }
 
     // ===================================================================
@@ -224,12 +217,10 @@ public class AuditRound5Test {
 
     @Test
     public void test_mustBeRejects() {
-        try {
-            prolog.solve("must_be(integer, hello).");
-            org.junit.Assert.fail("expected type_error");
-        } catch (RuntimeException e) {
-            // ISO type_error expected
-        }
+        // ISS-2025-0662: the exact ISO error term
+        List<Map<String, Term>> r = prolog.solve(
+            "catch(must_be(integer, hello), E, true), E = error(type_error(integer, hello), _).");
+        assertEquals(1, r.size());
     }
 
     @Test
@@ -250,22 +241,23 @@ public class AuditRound5Test {
 
     @Test
     public void test7_moduleQualifiedCall_exportEnforced() {
-        prolog.consult(":- module(secret_module_r5, [exported_pred/1]).");
-        prolog.consult("exported_pred(seen).");
-        prolog.consult("private_pred(hidden).");
-        // Module declared back to 'user' for caller
-        prolog.consult(":- module(user, []).");
+        // ISS-2025-0573 (P3.2): a module's scope is the load that declares it, so the module and
+        // its clauses are ONE consult; the load ends back in user (the old ':- module(user, [])'
+        // workaround is gone)
+        prolog.consult(":- module(secret_module_r5, [exported_pred/1]).\n"
+            + "exported_pred(seen).\nprivate_pred(hidden).\n");
 
         // exported_pred is accessible
         List<Map<String, Term>> r1 = prolog.solve("secret_module_r5:exported_pred(X).");
         assertEquals("exported predicate must be visible", 1, r1.size());
 
-        // private_pred must NOT be accessible
-        try {
-            List<Map<String, Term>> r2 = prolog.solve("secret_module_r5:private_pred(X).");
-            assertEquals("private predicate must not be visible", 0, r2.size());
-        } catch (RuntimeException e) {
-            // existence_error is also acceptable per ISO
-        }
+        // ISS-2025-0611 (P4.17, decision §8): a QUALIFIED call runs the module's own definition
+        // whether or not it is exported (SWI); export only governs import, so the unqualified
+        // call from user still cannot see it.
+        // ISS-2025-0662: no catch-anything around the assertions
+        List<Map<String, Term>> r2 = prolog.solve("secret_module_r5:private_pred(X), X == hidden.");
+        assertEquals("qualified call reaches the private predicate", 1, r2.size());
+        assertEquals(1, prolog.solve(
+            "catch(private_pred(_), error(existence_error(procedure, PI), _), true), PI == private_pred/1.").size());
     }
 }

@@ -71,6 +71,15 @@ public class Rule {
     // END_CHANGE: ISS-2025-0439
 
     /** Source line of this clause's head (1-based), or -1 if unknown. (ISS-2025-0322) */
+    // START_CHANGE: ISS-2025-0544 - wave P2.5/P2.7/P2.8: the KnowledgeBase keeps each predicate's
+    // clauses in its own gap buffer (no global list). kbSeq is this clause's position in the old
+    // global order (assertz counts up, asserta counts down) so getRules() can still return it;
+    // kbSlot is a HINT to the clause's slot, which makes an identity retract O(1). Neither is part
+    // of clause identity; both are maintained by KnowledgeBase only.
+    transient long kbSeq;
+    transient int kbSlot = -1;
+    // END_CHANGE: ISS-2025-0544
+
     public int getSourceLine() { return sourceLine; }
     public void setSourceLine(int line) { this.sourceLine = line; }
 

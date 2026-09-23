@@ -79,7 +79,13 @@ final class NativeChars {
         CSYM("csym", 0), CSYMF("csymf", 0), WHITE("white", 0),
         PERIOD("period", 0), QUOTE("quote", 0), PAREN("paren", 0),
         P_DIGIT("digit", 1), P_UPPER("upper", 1), P_LOWER("lower", 1),
-        P_TO_LOWER("to_lower", 1), P_TO_UPPER("to_upper", 1);
+        P_TO_LOWER("to_lower", 1), P_TO_UPPER("to_upper", 1),
+        // START_CHANGE: ISS-2025-0601 - P4.8: SWI's xdigit(Weight) and the prolog_* classes
+        P_XDIGIT("xdigit", 1), PROLOG_VAR_START("prolog_var_start", 0),
+        PROLOG_ATOM_START("prolog_atom_start", 0),
+        PROLOG_IDENTIFIER_CONTINUE("prolog_identifier_continue", 0),
+        PROLOG_SYMBOL("prolog_symbol", 0);
+        // END_CHANGE: ISS-2025-0601
 
         final String name;
         final int arity;
@@ -92,7 +98,9 @@ final class NativeChars {
         K.SPACE, K.UPPER, K.XDIGIT, K.NEWLINE, K.END_OF_FILE, K.END_OF_LINE, K.LAYOUT,
         K.META, K.SOLO, K.SYMBOL,
         K.CSYM, K.CSYMF, K.WHITE, K.PERIOD, K.QUOTE, K.PAREN,
-        K.P_DIGIT, K.P_UPPER, K.P_LOWER, K.P_TO_LOWER, K.P_TO_UPPER
+        K.P_DIGIT, K.P_UPPER, K.P_LOWER, K.P_TO_LOWER, K.P_TO_UPPER,
+        K.P_XDIGIT, K.PROLOG_VAR_START, K.PROLOG_ATOM_START, K.PROLOG_IDENTIFIER_CONTINUE,
+        K.PROLOG_SYMBOL                                                    // ISS-2025-0601
     };
 
     /** {@code code_type/2}'s enumeration order: the historical one, then the new classes. */
@@ -102,7 +110,9 @@ final class NativeChars {
         K.P_DIGIT, K.P_UPPER, K.P_LOWER,
         K.DIGIT, K.UPPER, K.LOWER, K.XDIGIT, K.NEWLINE, K.END_OF_FILE, K.LAYOUT,
         K.META, K.SOLO, K.SYMBOL, K.PERIOD, K.QUOTE, K.PAREN,
-        K.P_TO_LOWER, K.P_TO_UPPER
+        K.P_TO_LOWER, K.P_TO_UPPER,
+        K.P_XDIGIT, K.PROLOG_VAR_START, K.PROLOG_ATOM_START, K.PROLOG_IDENTIFIER_CONTINUE,
+        K.PROLOG_SYMBOL                                                    // ISS-2025-0601
     };
 
     private static final String PUNCT_CHARS = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
@@ -113,31 +123,43 @@ final class NativeChars {
     private static final String QUOTE_CHARS = "\"'`";
     private static final String PAREN_CHARS = "()";
 
-    /** Does {@code ch} belong to class {@code k}? (A parametric class tests its base condition.) */
-    private static boolean holds(char ch, K k) {
+    // START_CHANGE: ISS-2025-0601 - P4.8: SWI's iswspace set (tab, LF, VT, FF, CR, space and the
+    // Unicode spaces) — Character.isWhitespace also answered the separators 28..31.
+    private static boolean isSpace(int ch) {
+        if (ch == ' ' || (ch >= 9 && ch <= 13)) return true;
+        if (ch < 128) return false;
+        return ch == 0x85 || (Character.isWhitespace(ch) && ch != 0x2007 && ch != 0x202F);
+    }
+    private static final String PROLOG_SYMBOL_CHARS = "#$&*+-./:<=>?@\\^~";
+    // END_CHANGE: ISS-2025-0601
+
+    /** Does {@code ch} belong to class {@code k}? (A parametric class tests its base condition.)
+     *  {@code ch} is a code point; -1 is end_of_file and belongs to that class only. */
+    private static boolean holds(int ch, K k) {
+        if (ch < 0) return k == K.END_OF_FILE;                 // ISS-2025-0601
         switch (k) {
             case ALNUM:       return Character.isLetterOrDigit(ch);
             case ALPHA:       return Character.isLetter(ch);
             case ASCII:       return ch <= 127;
             case CNTRL:       return Character.isISOControl(ch);
             case DIGIT:       return Character.isDigit(ch);
-            case GRAPH:       return !Character.isWhitespace(ch) && !Character.isISOControl(ch) && ch != ' ';
+            case GRAPH:       return !isSpace(ch) && !Character.isWhitespace(ch) && !Character.isISOControl(ch);
             case LOWER:       return Character.isLowerCase(ch);
             case PRINT:       return !Character.isISOControl(ch);
             case PUNCT:       return PUNCT_CHARS.indexOf(ch) >= 0;
-            case SPACE:       return Character.isWhitespace(ch);
+            case SPACE:       return isSpace(ch);                                  // ISS-2025-0601
             case UPPER:       return Character.isUpperCase(ch);
             case XDIGIT:      return Character.isDigit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
             case NEWLINE:     return ch == '\n';
-            case END_OF_FILE: return ch == (char) -1;
+            case END_OF_FILE: return false;                                        // ISS-2025-0601: -1 only
             case END_OF_LINE: return ch == '\n' || ch == '\r';
-            case LAYOUT:      return Character.isWhitespace(ch);
+            case LAYOUT:      return isSpace(ch);                                  // ISS-2025-0601
             case META:        return META_CHARS.indexOf(ch) >= 0;
             case SOLO:        return SOLO_CHARS.indexOf(ch) >= 0;
             case SYMBOL:      return SYMBOL_CHARS.indexOf(ch) >= 0;
             case CSYM:        return Character.isLetterOrDigit(ch) || ch == '_';
             case CSYMF:       return Character.isLetter(ch) || ch == '_';
-            case WHITE:       return Character.isWhitespace(ch);
+            case WHITE:       return ch == ' ' || ch == '\t';                      // ISS-2025-0601 (SWI)
             case PERIOD:      return PERIOD_CHARS.indexOf(ch) >= 0;
             case QUOTE:       return QUOTE_CHARS.indexOf(ch) >= 0;
             case PAREN:       return PAREN_CHARS.indexOf(ch) >= 0;
@@ -146,14 +168,22 @@ final class NativeChars {
             case P_LOWER:     return Character.isLowerCase(ch);
             case P_TO_LOWER:  return true;
             case P_TO_UPPER:  return true;
+            // START_CHANGE: ISS-2025-0601
+            case P_XDIGIT:    return Character.digit(ch, 16) >= 0 && ch < 128;
+            case PROLOG_VAR_START:  return Character.isUpperCase(ch) || ch == '_';
+            case PROLOG_ATOM_START: return Character.isLowerCase(ch);
+            case PROLOG_IDENTIFIER_CONTINUE: return Character.isLetterOrDigit(ch) || ch == '_';
+            case PROLOG_SYMBOL: return PROLOG_SYMBOL_CHARS.indexOf(ch) >= 0;
+            // END_CHANGE: ISS-2025-0601
             default:          return false;
         }
     }
 
     /** A character as {@code char_type/2} reports it (a one-character atom) or {@code code_type/2}
      *  does (an integer code). */
-    private static Term charTerm(char ch, boolean chars) {
-        return chars ? (Term) new Atom(String.valueOf(ch)) : (Term) Number.valueOf(ch);
+    private static Term charTerm(int ch, boolean chars) {
+        if (ch < 0) return chars ? (Term) new Atom("end_of_file") : (Term) Number.valueOf(-1L);
+        return chars ? (Term) new Atom(new String(Character.toChars(ch))) : (Term) Number.valueOf((long) ch);
     }
 
     /**
@@ -161,12 +191,13 @@ final class NativeChars {
      * it. Unifying this with the caller's type term is what makes every mode of a parametric form
      * work — testing a bound argument and binding an unbound one are the same operation.
      */
-    private static Term typeTerm(char ch, K k, boolean chars) {
+    private static Term typeTerm(int ch, K k, boolean chars) {
         if (!holds(ch, k)) return null;
         if (k.arity == 0) return new Atom(k.name);
         Term arg;
         switch (k) {
             case P_DIGIT:    arg = Number.valueOf(Character.digit(ch, 10)); break;
+            case P_XDIGIT:   arg = Number.valueOf(Character.digit(ch, 16)); break;   // ISS-2025-0601
             case P_UPPER:    arg = charTerm(Character.toLowerCase(ch), chars); break;
             case P_LOWER:    arg = charTerm(Character.toUpperCase(ch), chars); break;
             case P_TO_LOWER: arg = charTerm(Character.toLowerCase(ch), chars); break;
@@ -191,7 +222,11 @@ final class NativeChars {
 
             // --- which classes can possibly match?
             final K[] kinds = kindsFor(tT);
-            if (kinds == null || kinds.length == 0) return Outcome.FAILURE;
+            // START_CHANGE: ISS-2025-0601 - P4.8: an unknown class is domain_error(char_type, T)
+            if (kinds == null || kinds.length == 0) {
+                throw Errors.domain("char_type", m.resolve(tT), chars ? "char_type/2" : "code_type/2");
+            }
+            // END_CHANGE: ISS-2025-0601
 
             // --- which characters can possibly match?
             final int[] cands;
@@ -199,7 +234,7 @@ final class NativeChars {
                 cands = candidateChars(tT);
             } else {
                 int ch = boundChar(cT);
-                if (ch < 0) return Outcome.FAILURE;
+                if (ch == NOT_A_CHAR) return Outcome.FAILURE;
                 cands = new int[] { ch };
             }
             if (cands.length == 0) return Outcome.FAILURE;
@@ -214,7 +249,7 @@ final class NativeChars {
                     int n = 0;
                     while (ci[0] < cands.length) {
                         if ((++n & 0x3FF) == 0 && g != null) g.step();
-                        char ch = (char) cands[ci[0]];
+                        int ch = cands[ci[0]];
                         K k = kinds[ki[0]];
                         advance(ci, ki, kinds.length);
                         Term tt = typeTerm(ch, k, asChars);
@@ -264,21 +299,27 @@ final class NativeChars {
             return null;                                   // an unknown class simply fails
         }
 
-        /** The bound character/code argument, or -1 when it is not one this predicate accepts. */
+        // START_CHANGE: ISS-2025-0601 - code points (not UTF-16 units); code -1 (and the atom
+        // end_of_file for char_type/2) is end_of_file.
+        private static final int NOT_A_CHAR = Integer.MIN_VALUE;
+
+        /** The bound character/code argument, or NOT_A_CHAR when it is not one this predicate accepts. */
         private int boundChar(Term cT) {
             if (chars) {
-                if (!(cT instanceof Atom)) return -1;
+                if (!(cT instanceof Atom)) return NOT_A_CHAR;
                 String s = ((Atom) cT).getName();
-                if (s.length() != 1) return -1;
-                char c = s.charAt(0);
-                return c == 0 ? -1 : c;                    // the registry version's own quirk
+                if ("end_of_file".equals(s)) return -1;
+                if (s.isEmpty() || Character.charCount(s.codePointAt(0)) != s.length()) return NOT_A_CHAR;
+                int c = s.codePointAt(0);
+                return c == 0 ? NOT_A_CHAR : c;            // the registry version's own quirk
             }
-            if (!(cT instanceof Number)) return -1;
+            if (!(cT instanceof Number)) return NOT_A_CHAR;
             Number n = (Number) cT;
-            if (!n.isInteger()) return -1;
+            if (!n.isInteger() || !n.fitsInLong()) return NOT_A_CHAR;
             long v = n.longValue();
-            return (v < 0 || v > Character.MAX_VALUE) ? -1 : (int) v;
+            return (v < -1 || v > Character.MAX_CODE_POINT) ? NOT_A_CHAR : (int) v;
         }
+        // END_CHANGE: ISS-2025-0601
 
         /**
          * The characters an unbound first argument enumerates: the ASCII range, plus any character

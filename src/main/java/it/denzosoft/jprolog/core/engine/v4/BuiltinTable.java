@@ -19,17 +19,50 @@ import java.util.Map;
 public final class BuiltinTable {
 
     private final Map<String, Builtin> entries = new HashMap<String, Builtin>();
+    // START_CHANGE: ISS-2025-0542 - wave P2.3: lookup() runs for every goal that is not a control
+    // construct; it used to build "name/arity" per call. A second map from the bare name to a small
+    // arity-indexed array answers without allocating. modCount lets a call-site cache (Machine)
+    // notice that the table changed.
+    private final Map<String, Builtin[]> byName = new HashMap<String, Builtin[]>();
+    private volatile int modCount;
+
+    /** Bumped by every register/unregister. */
+    public int modCount() { return modCount; }
+    // END_CHANGE: ISS-2025-0542
 
     private static String key(String name, int arity) { return name + "/" + arity; }
 
     /** Register a native v4 built-in. */
-    public void register(String name, int arity, Builtin b) { entries.put(key(name, arity), b); }
+    public void register(String name, int arity, Builtin b) {
+        entries.put(key(name, arity), b);
+        // START_CHANGE: ISS-2025-0542
+        Builtin[] a = byName.get(name);
+        if (a == null || a.length <= arity) {
+            Builtin[] bigger = new Builtin[arity + 1];
+            if (a != null) System.arraycopy(a, 0, bigger, 0, a.length);
+            a = bigger;
+            byName.put(name, a);
+        }
+        a[arity] = b;
+        modCount++;
+        // END_CHANGE: ISS-2025-0542
+    }
 
     /** Remove one (used by the sandbox). */
-    public void unregister(String name, int arity) { entries.remove(key(name, arity)); }
+    public void unregister(String name, int arity) {
+        entries.remove(key(name, arity));
+        // START_CHANGE: ISS-2025-0542
+        Builtin[] a = byName.get(name);
+        if (a != null && arity < a.length) a[arity] = null;
+        modCount++;
+        // END_CHANGE: ISS-2025-0542
+    }
 
     /** The native implementation of {@code name/arity}, or null. */
-    public Builtin lookup(String name, int arity) { return entries.get(key(name, arity)); }
+    public Builtin lookup(String name, int arity) {
+        Builtin[] a = byName.get(name);                                 // ISS-2025-0542
+        return (a != null && arity < a.length) ? a[arity] : null;
+    }
 
     public boolean isNative(String name, int arity) { return entries.containsKey(key(name, arity)); }
 
@@ -41,5 +74,10 @@ public final class BuiltinTable {
     // END_CHANGE: ISS-2025-0501
 
     public int size() { return entries.size(); }
+
+    // START_CHANGE: ISS-2025-0625 - wave P6.1: safe mode walks the native table too.
+    /** A snapshot of every registered {@code "name/arity"} key. */
+    public java.util.Set<String> keys() { return new java.util.TreeSet<String>(entries.keySet()); }
+    // END_CHANGE: ISS-2025-0625
 }
 // END_CHANGE: ISS-2025-0443

@@ -64,7 +64,7 @@ public class EngineV4ModulesTest {
         for (Map<String, Term> sol : prolog.solve(query + ".")) {
             java.util.TreeMap<String, String> m = new java.util.TreeMap<String, String>();
             for (Map.Entry<String, Term> e : sol.entrySet()) {
-                if (e.getKey().startsWith("_")) continue;
+                // ISS-2025-0515: no `_`-skip workaround — anonymous variables are not answer keys
                 m.put(e.getKey(), e.getValue().toString().replaceAll("_G[0-9]+", "_"));
             }
             out.add(m.toString());
@@ -104,10 +104,13 @@ public class EngineV4ModulesTest {
 
     @Test
     public void testISS0466_ExportEnforcementOnQualifiedCalls() {
-        // ISS-2025-0314 behaviour, preserved: a non-exported predicate is invisible from outside.
-        prolog.consult(":- module(secret_w6, [pub/1]).\npub(1).\npriv(2).\n:- module(user, []).\n");
+        // ISS-2025-0611 (P4.17, decision §8): export governs IMPORT only. An unqualified call from
+        // user cannot see the private predicate, but the qualified call M:G runs it in M (SWI);
+        // ISS-2025-0314's "invisible even when qualified" is reversed.
+        prolog.consult(":- module(secret_w6, [pub/1]).\npub(1).\npriv(2).\n");
         ok("secret_w6:pub(1)");
-        no("secret_w6:priv(2)");
+        ok("secret_w6:priv(2)");
+        ok("catch(priv(2), error(existence_error(procedure, priv/1), _), true)");
     }
 
     @Test
@@ -115,8 +118,7 @@ public class EngineV4ModulesTest {
         // M -> M's imports -> user -> autoload. `shared/1` is defined in user AND in the module;
         // the module's own definition must win for the module, user's for user.
         prolog.consult("shared(from_user).\n"
-                     + ":- module(mw6, [go/1]).\nshared(from_module).\ngo(X) :- shared(X).\n"
-                     + ":- module(user, []).\n");
+                     + ":- module(mw6, [go/1]).\nshared(from_module).\ngo(X) :- shared(X).\n");
         List<Map<String, Term>> r = prolog.solve("mw6:go(X).");
         assertEquals(1, r.size());
         assertEquals("from_module", r.get(0).get("X").toString());
@@ -130,7 +132,7 @@ public class EngineV4ModulesTest {
         // Before W6 the machine diverted EVERY unqualified call through ModuleManager the moment a
         // second module existed (the `modules.size() > 1` special case). A user predicate asserted
         // at run time then became unreachable from a module context.
-        prolog.consult("base(1).\n:- module(other_w6, []).\n:- module(user, []).\n");
+        prolog.consult("base(1).\n:- module(other_w6, []).\n");
         ok("assertz(base(2)), base(2)");
         assertEquals(2, count("base(_X)."));
         assertEquals(2, count("other_w6:base(_X)."));   // `other_w6` sees `user` too
@@ -142,8 +144,7 @@ public class EngineV4ModulesTest {
             ":- module(m1w6, [p/1]).\np(one).\n"
           + ":- module(m2w6, [p/1]).\np(two).\n"
           + ":- module(c1w6, [t1/1]).\n:- use_module(m1w6).\nt1(X) :- p(X).\n"
-          + ":- module(c2w6, [t2/1]).\n:- use_module(m2w6).\nt2(X) :- p(X).\n"
-          + ":- module(user, []).\n");
+          + ":- module(c2w6, [t2/1]).\n:- use_module(m2w6).\nt2(X) :- p(X).\n");
         List<Map<String, Term>> a = prolog.solve("c1w6:t1(X).");
         List<Map<String, Term>> b = prolog.solve("c2w6:t2(X).");
         assertEquals(1, a.size());
@@ -155,7 +156,7 @@ public class EngineV4ModulesTest {
     @Test
     public void testISS0466_UnknownProcedureStillRaisesWithModulesPresent() {
         // The `size() > 1 -> never raise` escape hatch of raiseUnknownIfRequired is gone.
-        prolog.consult(":- module(anymod_w6, []).\n:- module(user, []).\n");
+        prolog.consult(":- module(anymod_w6, []).\n");
         try {
             prolog.solve("no_such_predicate_w6(_X).");
             fail("expected existence_error");
@@ -310,8 +311,7 @@ public class EngineV4ModulesTest {
         ok("partition(a, b, c, d)");                              // the user's definition
         ok("apply:partition([X]>>(X > 2), [1,2,3,4], I, E), I == [3,4], E == [1,2]");
         // a definition inside a module overrides only for that module
-        prolog.consult(":- module(pm_w6, [go/1]).\npartition(mine).\ngo(X) :- partition(X).\n"
-                     + ":- module(user, []).\n");
+        prolog.consult(":- module(pm_w6, [go/1]).\npartition(mine).\ngo(X) :- partition(X).\n");
         List<Map<String, Term>> r = prolog.solve("pm_w6:go(X).");
         assertEquals(1, r.size());
         assertEquals("mine", r.get(0).get("X").toString());
@@ -329,8 +329,7 @@ public class EngineV4ModulesTest {
         // `apply` (and then in `user`), so one of the two answers would be wrong.
         prolog.consult(
             ":- module(mm1_w6, [go1/1]).\nhelper(m1).\ngo1(L) :- maplist(mk, [x], L).\nmk(_, R) :- helper(R).\n"
-          + ":- module(mm2_w6, [go2/1]).\nhelper(m2).\ngo2(L) :- maplist(mk, [x], L).\nmk(_, R) :- helper(R).\n"
-          + ":- module(user, []).\n");
+          + ":- module(mm2_w6, [go2/1]).\nhelper(m2).\ngo2(L) :- maplist(mk, [x], L).\nmk(_, R) :- helper(R).\n");
         List<Map<String, Term>> a = prolog.solve("mm1_w6:go1(L).");
         List<Map<String, Term>> b = prolog.solve("mm2_w6:go2(L).");
         assertEquals(1, a.size());
@@ -356,8 +355,7 @@ public class EngineV4ModulesTest {
     public void testISS0469_MetaCallInsideFindallAndForallKeepsTheContext() {
         prolog.consult(":- module(mf_w6, [all/1, every/0]).\nitem(1).\nitem(2).\n"
                      + "all(L) :- findall(X, item(X), L).\n"
-                     + "every :- forall(item(X), integer(X)).\n"
-                     + ":- module(user, []).\n");
+                     + "every :- forall(item(X), integer(X)).\n");
         List<Map<String, Term>> r = prolog.solve("mf_w6:all(L).");
         assertEquals(1, r.size());
         assertEquals("[1, 2]", r.get(0).get("L").toString());
@@ -464,7 +462,7 @@ public class EngineV4ModulesTest {
         java.io.PrintStream ps = new java.io.PrintStream(out);
         it.denzosoft.jprolog.builtin.io.StreamManager.setThreadLocalOutput(ps);
         try {
-            prolog.consult(":- module(tm_w6, [t/1]).\nt(1).\n:- module(user, []).\n");
+            prolog.consult(":- module(tm_w6, [t/1]).\nt(1).\n");
             prolog.setTracing(true);
             prolog.solve("tm_w6:t(_X).");
         } finally {
@@ -479,7 +477,7 @@ public class EngineV4ModulesTest {
 
     @Test
     public void testISS0466_ModulesAreIsolatedPerEngine() {
-        prolog.consult(":- module(iso_w6, [only/0]).\nonly.\n:- module(user, []).\n");
+        prolog.consult(":- module(iso_w6, [only/0]).\nonly.\n");
         ok("current_module(iso_w6)");
         Prolog other = new Prolog();
         assertTrue(other.solve("current_module(iso_w6).").isEmpty());

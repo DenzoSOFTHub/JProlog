@@ -40,6 +40,10 @@ final class NativeMisc {
     static void register(BuiltinTable t) {
         t.register("sort", 4, new Sort4());
         t.register("predsort", 3, new PredSort3());
+        // START_CHANGE: ISS-2025-0608 - P4.15: statistics/0,2 native, SWI keys and shapes
+        t.register("statistics", 2, new StatisticsB());
+        t.register("statistics", 0, new Statistics0B());
+        // END_CHANGE: ISS-2025-0608
         t.register("max_list", 2, new MinMaxList(true));
         t.register("min_list", 2, new MinMaxList(false));
         t.register("current_op", 3, new CurrentOp());
@@ -70,8 +74,8 @@ final class NativeMisc {
      *       {@code Ops.current()} since W7; the class that really did capture
      *       {@code OperatorTable.getDefault()} in its constructor was {@code builtin.system.Op},
      *       which was never registered at all and is deleted in this wave.)</li>
-     *   <li>the definition is undone on backtracking, because the undo action the store hands back
-     *       goes straight onto the running machine's trail;</li>
+     *   <li>the definition is permanent (ISS-2025-0612; until 4.4.0 it was undone on
+     *       backtracking through the running machine's trail);</li>
      *   <li>the module scoping W7 introduced is unchanged: {@code Ops.define/3} attributes the
      *       operator to the module currently in context, and {@code current_op/3} filters by it.</li>
      * </ul>
@@ -132,9 +136,13 @@ final class NativeMisc {
             }
             // END_CHANGE: ISS-2025-0504
             Ops ops = m.engine().prolog().getOps();
+            // START_CHANGE: ISS-2025-0612 - P4.18 (decision §8): op/3 is PERMANENT (ISO 8.14.3,
+            // SWI): the undo action the store hands back is no longer pushed on the trail, so
+            // forall(member(O, [zfoo, zbar]), op(700, xfx, O)) defines both operators.
             for (int i = 0; i < names.size(); i++) {
-                m.pushUndo(ops.define(precedence, type, names.get(i)));
+                ops.define(precedence, type, names.get(i));
             }
+            // END_CHANGE: ISS-2025-0612
             return Outcome.SUCCESS;
         }
     }
@@ -211,7 +219,7 @@ final class NativeMisc {
             }
             // END_CHANGE: ISS-2025-0504
             Ops ops = m.engine().prolog().getOps();
-            m.pushUndo(ops.convert(((Atom) f).getName().charAt(0), ((Atom) t).getName().charAt(0)));
+            ops.convert(((Atom) f).getName().charAt(0), ((Atom) t).getName().charAt(0));   // ISS-2025-0612: permanent
             return Outcome.SUCCESS;
         }
     }
@@ -364,42 +372,76 @@ final class NativeMisc {
             }
             List<Term> es = NativeLibrary.elements(args[1], m.guard());
             if (es == null) return Outcome.FAILURE;   // SWI: predsort fails on a non-list
-            List<Term> sorted = mergeSort(m, pred, es);
-            if (sorted == null) return Outcome.FAILURE;   // SWI: Pred failed on some pair
+            // START_CHANGE: ISS-2025-0549 - wave P2.11: an array merge sort (no sub-list copies
+            // per level) calling the comparator through one reusable goal shape: the functor atom
+            // and the fixed arguments are taken once, each call builds one argument array.
+            Term[] arr = es.toArray(new Term[es.size()]);
+            Cmp cmp = new Cmp(pred);
+            int n = mergeSort(m, cmp, arr, new Term[arr.length], 0, arr.length);
+            if (n < 0) return Outcome.FAILURE;   // SWI: Pred failed on some pair
+            List<Term> sorted = Arrays.asList(arr).subList(0, n);
             return m.unify(args[2], NativeLibrary.listOf(sorted, NIL)) ? Outcome.SUCCESS : Outcome.FAILURE;
         }
 
-        private static List<Term> mergeSort(Machine m, Term pred, List<Term> es) {
-            if (es.size() <= 1) return es;
-            int mid = es.size() / 2;
-            List<Term> l = mergeSort(m, pred, new ArrayList<Term>(es.subList(0, mid)));
-            if (l == null) return null;
-            List<Term> r = mergeSort(m, pred, new ArrayList<Term>(es.subList(mid, es.size())));
-            if (r == null) return null;
-            List<Term> out = new ArrayList<Term>(l.size() + r.size());
-            int i = 0, j = 0;
-            while (i < l.size() && j < r.size()) {
-                m.guard().step();
-                String o = compare(m, pred, l.get(i), r.get(j));
-                if (o == null) return null;
-                if ("<".equals(o))      out.add(l.get(i++));
-                else if (">".equals(o)) out.add(r.get(j++));
-                else                    { out.add(l.get(i++)); j++; }   // '=' merges
+        /** The comparator goal {@code call(Pred, O, A, B)} with Pred's functor and args prefetched. */
+        private static final class Cmp {
+            final Atom functor;
+            final Term[] fixed;
+            Cmp(Term pred) {
+                if (pred instanceof CompoundTerm) {
+                    CompoundTerm c = (CompoundTerm) pred;
+                    functor = c.getFunctor();
+                    fixed = new Term[c.arity()];
+                    for (int i = 0; i < fixed.length; i++) fixed[i] = c.arg(i);
+                } else {
+                    functor = (Atom) pred;
+                    fixed = new Term[0];
+                }
             }
-            while (i < l.size()) out.add(l.get(i++));
-            while (j < r.size()) out.add(r.get(j++));
-            return out;
+            Term goal(Term o, Term a, Term b) {
+                Term[] as = new Term[fixed.length + 3];
+                System.arraycopy(fixed, 0, as, 0, fixed.length);
+                as[fixed.length] = o;
+                as[fixed.length + 1] = a;
+                as[fixed.length + 2] = b;
+                return new CompoundTerm(functor, as);
+            }
         }
 
         /**
-         * One {@code call(Pred, Order, A, B)}. The comparison runs inside its own mark/undo extent
-         * (invariant 1: undo BEFORE closing the extent), so a comparator that binds parts of the
-         * elements leaves nothing behind — the registry version got that for free by running on a
-         * throw-away binding map.
+         * Sort {@code a[lo..hi)} in place (stable; '=' drops the right-hand element) and return the
+         * new end of the range, or -1 when the comparator failed or answered outside {@code <,=,>}.
          */
-        private static String compare(Machine m, Term pred, Term a, Term b) {
+        private static int mergeSort(Machine m, Cmp cmp, Term[] a, Term[] tmp, int lo, int hi) {
+            if (hi - lo <= 1) return hi;
+            int mid = (lo + hi) >>> 1;
+            int le = mergeSort(m, cmp, a, tmp, lo, mid);
+            if (le < 0) return -1;
+            int re = mergeSort(m, cmp, a, tmp, mid, hi);
+            if (re < 0) return -1;
+            int i = lo, j = mid, k = lo;
+            while (i < le && j < re) {
+                m.guard().step();
+                int o = compare(m, cmp, a[i], a[j]);
+                if (o == Integer.MIN_VALUE) return -1;
+                if (o < 0)      tmp[k++] = a[i++];
+                else if (o > 0) tmp[k++] = a[j++];
+                else            { tmp[k++] = a[i++]; j++; }   // '=' merges
+            }
+            while (i < le) tmp[k++] = a[i++];
+            while (j < re) tmp[k++] = a[j++];
+            System.arraycopy(tmp, lo, a, lo, k - lo);
+            return k;
+        }
+
+        /**
+         * One {@code call(Pred, Order, A, B)}: -1/0/1, or MIN_VALUE for "fail". The comparison runs
+         * inside its own mark/undo extent (invariant 1: undo BEFORE closing the extent), so a
+         * comparator that binds parts of the elements leaves nothing behind.
+         */
+        private static int compare(Machine m, Cmp cmp, Term a, Term b) {
             Variable order = new Variable();
-            Term goal = addArgs(pred, order, a, b);
+            Term goal = cmp.goal(order, a, b);
             Bindings bs = m.bindings();
             int mark = bs.mark();
             bs.forceTrail++;
@@ -413,25 +455,14 @@ final class NativeMisc {
             } finally {
                 bs.forceTrail--;
             }
-            if (out == null) return null;
             // An Order outside <, =, > makes predsort FAIL (SWI, ISS-2025-0419) - never an error,
             // and never a silent default ordering.
-            if ("<".equals(out) || ">".equals(out) || "=".equals(out)) return out;
-            return null;
+            if ("<".equals(out)) return -1;
+            if (">".equals(out)) return 1;
+            if ("=".equals(out)) return 0;
+            return Integer.MIN_VALUE;
         }
-
-        private static Term addArgs(Term pred, Term... extra) {
-            List<Term> as = new ArrayList<Term>();
-            String f;
-            if (pred instanceof CompoundTerm) {
-                f = ((CompoundTerm) pred).getName();
-                as.addAll(((CompoundTerm) pred).getArguments());
-            } else {
-                f = ((Atom) pred).getName();
-            }
-            as.addAll(Arrays.asList(extra));
-            return new CompoundTerm(new Atom(f), as);
-        }
+        // END_CHANGE: ISS-2025-0549
     }
 
     // ------------------------------------------------------------------ max_list/2, min_list/2
@@ -441,21 +472,179 @@ final class NativeMisc {
         private final boolean max;
         MinMaxList(boolean max) { this.max = max; }
 
+        // START_CHANGE: ISS-2025-0603 - P4.10: SWI's max_list/min_list evaluate their elements
+        // (Max is max(Max0, X)): a non-number raises type_error(evaluable, ...) instead of
+        // failing, big integers compare exactly, and a partial list is instantiation_error.
         @Override public Outcome call(Machine m, Term[] args) {
             List<Term> es = NativeLibrary.elements(args[0], m.guard());
-            if (es == null || es.isEmpty()) return Outcome.FAILURE;
-            Term first = Unify.deref(es.get(0));
-            if (!(first instanceof Number)) return Outcome.FAILURE;
-            Number best = (Number) first;
-            for (int i = 1; i < es.size(); i++) {
-                Term e = Unify.deref(es.get(i));
-                if (!(e instanceof Number)) return Outcome.FAILURE;
-                Number n = (Number) e;
-                if (max ? (n.getValue() > best.getValue()) : (n.getValue() < best.getValue())) best = n;
+            String ind = max ? "max_list/2" : "min_list/2";
+            if (es == null) throw NativeLibrary.notAProperList(m, args[0], ind);
+            if (es.isEmpty()) return Outcome.FAILURE;
+            Number best = m.evalNum(es.get(0), ind);
+            Atom fn = new Atom(max ? "max" : "min");
+            int n = es.size();
+            int i = 1;
+            if (best.isInteger() && best.fitsInLong()) {     // primitive scan while all are longs
+                long b = best.longValue();
+                int bi = 0;
+                for (; i < n; i++) {
+                    Term e = Unify.deref(es.get(i));
+                    if (!(e instanceof Number) || !((Number) e).isInteger() || !((Number) e).fitsInLong()) break;
+                    long y = ((Number) e).longValue();
+                    if (max ? y > b : y < b) { b = y; bi = i; }
+                }
+                best = (bi == 0) ? best : (Number) Unify.deref(es.get(bi));
+            }
+            for (; i < n; i++) {
+                best = m.evalNum(new CompoundTerm(fn, new Term[] { best, es.get(i) }), ind);
+                if ((i & 0x3FF) == 0) m.guard().step();
             }
             return m.unify(args[1], best) ? Outcome.SUCCESS : Outcome.FAILURE;
         }
+        // END_CHANGE: ISS-2025-0603
     }
+
+    // START_CHANGE: ISS-2025-0608 - P4.15: statistics/2 with SWI-Prolog's keys and value shapes.
+    // cputime/process_cputime are FLOAT seconds, inferences comes from the machine's step
+    // counter, runtime/walltime/real_time/system_time are [Total, SinceLast] pairs. The output is
+    // UNIFIED (statistics(runtime, [T|_]) works; the registry version compared with equals()).
+    // An unknown key is domain_error(statistics_key, K).
+    private static final ThreadLocal<long[]> LAST = new ThreadLocal<long[]>() {
+        @Override protected long[] initialValue() { return new long[4]; }  // runtime, walltime, real_time, system_time
+    };
+
+    private static long processCpuNanos() {
+        java.lang.management.OperatingSystemMXBean os = java.lang.management.ManagementFactory.getOperatingSystemMXBean();
+        if (os instanceof com.sun.management.OperatingSystemMXBean) {
+            long t = ((com.sun.management.OperatingSystemMXBean) os).getProcessCpuTime();
+            if (t >= 0) return t;
+        }
+        java.lang.management.ThreadMXBean tb = java.lang.management.ManagementFactory.getThreadMXBean();
+        return tb.isCurrentThreadCpuTimeSupported() ? tb.getCurrentThreadCpuTime() : System.nanoTime();
+    }
+
+    private static long threadCpuNanos() {
+        java.lang.management.ThreadMXBean tb = java.lang.management.ManagementFactory.getThreadMXBean();
+        return tb.isCurrentThreadCpuTimeSupported() ? tb.getCurrentThreadCpuTime() : processCpuNanos();
+    }
+
+    private static long threadUserNanos() {
+        java.lang.management.ThreadMXBean tb = java.lang.management.ManagementFactory.getThreadMXBean();
+        return tb.isCurrentThreadCpuTimeSupported() ? tb.getCurrentThreadUserTime() : processCpuNanos();
+    }
+
+    static long inferences(Machine m) {
+        ResourceGuard g = m.guard();
+        return m.engine().inferences() + (g == null ? 0 : g.getSteps());
+    }
+
+    private static Term pair(long total, int slot) {
+        long[] last = LAST.get();
+        long since = total - last[slot];
+        last[slot] = total;
+        return Machine.makeList(Arrays.<Term>asList(Number.valueOf(total), Number.valueOf(since)));
+    }
+
+    private static Term two(long a, long b) {
+        return Machine.makeList(Arrays.<Term>asList(Number.valueOf(a), Number.valueOf(b)));
+    }
+
+    static final List<String> STAT_KEYS = Arrays.asList(
+        "runtime", "cputime", "process_cputime", "inferences", "walltime", "real_time", "epoch",
+        "process_epoch", "system_time", "stack", "stack_limit", "localused", "globalused",
+        "trailused", "heapused", "local", "global", "trail", "heap", "threads",
+        "garbage_collection", "atoms", "functors", "predicates", "modules", "clauses", "codes",
+        "c_stack", "thread_cputime", "errors", "warnings");
+
+    static Term statistic(Machine m, String key) {
+        java.lang.management.MemoryMXBean mem = java.lang.management.ManagementFactory.getMemoryMXBean();
+        java.lang.management.RuntimeMXBean rt = java.lang.management.ManagementFactory.getRuntimeMXBean();
+        switch (key) {
+            case "runtime":         return pair(threadUserNanos() / 1_000_000L, 0);
+            case "cputime":         return new Number(threadCpuNanos() / 1e9);
+            case "thread_cputime":  return new Number(threadCpuNanos() / 1e9);
+            case "process_cputime": return new Number(processCpuNanos() / 1e9);
+            case "inferences":      return Number.valueOf(inferences(m));
+            case "walltime":        return pair(System.currentTimeMillis() - rt.getStartTime(), 1);
+            case "real_time":       return pair(System.currentTimeMillis() / 1000L, 2);
+            case "system_time": {
+                long sys = Math.max(0, threadCpuNanos() - threadUserNanos()) / 1_000_000L;
+                return pair(sys, 3);
+            }
+            case "epoch": case "process_epoch": return new Number(rt.getStartTime() / 1000.0);
+            case "stack": case "globalused": case "heapused":
+                return Number.valueOf(mem.getHeapMemoryUsage().getUsed());
+            case "stack_limit": {
+                long max = mem.getHeapMemoryUsage().getMax();
+                return Number.valueOf(max < 0 ? Runtime.getRuntime().maxMemory() : max);
+            }
+            case "localused": case "c_stack": return Number.valueOf(mem.getNonHeapMemoryUsage().getUsed());
+            case "trailused": return Number.valueOf(0L);
+            case "heap": case "global": {
+                long used = mem.getHeapMemoryUsage().getUsed();
+                return two(used, Math.max(0, mem.getHeapMemoryUsage().getCommitted() - used));
+            }
+            case "local": {
+                long used = mem.getNonHeapMemoryUsage().getUsed();
+                return two(used, Math.max(0, mem.getNonHeapMemoryUsage().getCommitted() - used));
+            }
+            case "trail": return two(0, 0);
+            case "threads": return Number.valueOf((long) Thread.activeCount());
+            case "garbage_collection": {
+                long count = 0, time = 0;
+                for (java.lang.management.GarbageCollectorMXBean b
+                        : java.lang.management.ManagementFactory.getGarbageCollectorMXBeans()) {
+                    if (b.getCollectionCount() > 0) count += b.getCollectionCount();
+                    if (b.getCollectionTime() > 0) time += b.getCollectionTime();
+                }
+                return Machine.makeList(Arrays.<Term>asList(Number.valueOf(count), Number.valueOf(0L), Number.valueOf(time)));
+            }
+            case "predicates": {
+                it.denzosoft.jprolog.core.engine.KnowledgeBase kb = m.engine().kb();
+                return Number.valueOf(kb == null ? 0L : (long) kb.getCurrentPredicates().size());
+            }
+            case "clauses": {
+                it.denzosoft.jprolog.core.engine.KnowledgeBase kb = m.engine().kb();
+                return Number.valueOf(kb == null ? 0L : (long) kb.getRules().size());
+            }
+            case "modules": return Number.valueOf((long) Math.max(1, m.engine().modules4().currentModuleTerms().size()));
+            case "atoms": case "functors": case "codes": case "errors": case "warnings":
+                return Number.valueOf(0L);
+            default: return null;
+        }
+    }
+
+    private static final class StatisticsB implements Builtin {
+        @Override public Outcome call(Machine m, final Term[] args) {
+            Term k = m.deref(args[0]);
+            if (k instanceof Variable) throw Errors.instantiation("statistics/2");
+            if (!(k instanceof Atom)) throw Errors.type("atom", m.resolve(k), "statistics/2");
+            Term v = statistic(m, ((Atom) k).getName());
+            if (v == null) throw Errors.domain("statistics_key", k, "statistics/2");
+            return m.unify(args[1], v) ? Outcome.SUCCESS : Outcome.FAILURE;
+        }
+    }
+
+    /** statistics/0: SWI's summary, to user_error. */
+    private static final class Statistics0B implements Builtin {
+        @Override public Outcome call(Machine m, Term[] args) {
+            java.lang.management.RuntimeMXBean rt = java.lang.management.ManagementFactory.getRuntimeMXBean();
+            java.lang.management.MemoryMXBean mem = java.lang.management.ManagementFactory.getMemoryMXBean();
+            double cpu = threadCpuNanos() / 1e9;
+            StringBuilder sb = new StringBuilder();
+            sb.append("% Started at ").append(new java.util.Date(rt.getStartTime())).append('\n');
+            sb.append(String.format(java.util.Locale.ROOT, "%% %.3f seconds cpu time for %,d inferences%n",
+                cpu, inferences(m)));
+            sb.append(String.format(java.util.Locale.ROOT, "%% %,d bytes heap in use, %,d bytes non-heap, %d threads%n",
+                mem.getHeapMemoryUsage().getUsed(), mem.getNonHeapMemoryUsage().getUsed(), Thread.activeCount()));
+            Streams st = it.denzosoft.jprolog.builtin.io.StreamManager.streams();
+            java.io.PrintStream ps = st.writerFor(st.userError());
+            ps.print(sb);
+            ps.flush();
+            return Outcome.SUCCESS;
+        }
+    }
+    // END_CHANGE: ISS-2025-0608
 
     // ------------------------------------------------------------------ current_op/3
 

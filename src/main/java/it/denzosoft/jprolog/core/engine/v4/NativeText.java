@@ -59,6 +59,10 @@ final class NativeText {
         t.register("char_code", 2, new CharCodeB());
         t.register("upcase_atom", 2, new CaseB(true));
         t.register("downcase_atom", 2, new CaseB(false));
+        // START_CHANGE: ISS-2025-0598 - P4.7: string_upper/2, string_lower/2 (SWI)
+        t.register("string_upper", 2, new StringCaseB(true));
+        t.register("string_lower", 2, new StringCaseB(false));
+        // END_CHANGE: ISS-2025-0598
         t.register("number_chars", 2, new NumberTextB(true));
         t.register("number_codes", 2, new NumberTextB(false));
         t.register("atom_number", 2, new AtomNumberB());
@@ -226,7 +230,10 @@ final class NativeText {
                 Generator gen = new Generator() {
                     @Override public boolean next(Machine mm) {
                         while (i[0] <= max) {
-                            int k = i[0]++;
+                            int k = i[0];
+                            // START_CHANGE: ISS-2025-0599 - split at code-point boundaries only
+                            i[0] = (k < max) ? k + Character.charCount(full.codePointAt(k)) : k + 1;
+                            // END_CHANGE: ISS-2025-0599
                             if (i[0] > max) mm.lastSolution();
                             Bindings bb = mm.bindings();
                             int mark = bb.mark();
@@ -252,23 +259,32 @@ final class NativeText {
                 return (s1 + s2).equals(s3) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
             // START_CHANGE: ISS-2025-0506 - atom_concat/3 raises instantiation_error with nothing
-            // bound; string_concat/3 keeps FAILING, because ISS-2025-0188 decided that explicitly
-            // ("string_concat should fail gracefully, not throw") and its test pins it. Recorded
-            // as a deliberate deviation in EngineV4IsoErrorsTest.
-            if (atoms) throw new PrologException(ISOErrorTerms.instantiationError(ctx));
-            return Outcome.FAILURE;
+            // bound.
+            // START_CHANGE: ISS-2025-0596 - P4.7 (decision §8): so does string_concat/3 (SWI);
+            // the ISS-2025-0188 "fail gracefully" decision is reversed.
+            throw new PrologException(ISOErrorTerms.instantiationError(ctx));
+            // END_CHANGE: ISS-2025-0596
             // END_CHANGE: ISS-2025-0506
         }
 
         private Term make(String s) { return atoms ? (Term) new Atom(s) : (Term) new PrologString(s); }
 
-        /** atom_concat/3 raises type_error(atom, C); string_concat/3 answers null and fails. */
+        /** atom_concat/3 raises type_error(atom, C); string_concat/3 takes any text (SWI). */
         private String text(Machine m, Term t, String ctx) {
-            String s = TextTerm.textOf(t);
-            if (s == null && atoms) {
-                throw new PrologException(ISOErrorTerms.typeError("atom", m.resolve(t), ctx));
+            if (atoms) {
+                String s = TextTerm.textOf(t);
+                if (s == null) throw new PrologException(ISOErrorTerms.typeError("atom", m.resolve(t), ctx));
+                return s;
             }
+            // START_CHANGE: ISS-2025-0596 - P4.7: string_concat(1, 2, S) gives "12" (the old
+            // path answered "nullnull"); a code/char list is text too; anything else raises.
+            String s = atomicText(t);
+            if (s == null && NativeLibrary.isCons(t)) {
+                s = textOfList(m, t, m.deref(NativeLibrary.head(t)) instanceof Atom, ctx);
+            }
+            if (s == null) throw Errors.type("atomic", m.resolve(t), ctx);
             return s;
+            // END_CHANGE: ISS-2025-0596
         }
     }
 
@@ -290,6 +306,7 @@ final class NativeText {
                     return atomText.equals(((PrologString) l).getStringValue())
                         ? Outcome.SUCCESS : Outcome.FAILURE;
                 }
+                m.guard().charge(atomText.length());     // ISS-2025-0624: O(length) work
                 Term built = chars ? charList(atomText) : codeList(atomText);
                 return m.unify(args[1], built) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
@@ -346,6 +363,27 @@ final class NativeText {
     }
 
     // ------------------------------------------------------------------ upcase_atom/2, downcase_atom/2
+
+    // START_CHANGE: ISS-2025-0598 - string_upper(+Text, -String) / string_lower(+Text, -String)
+    private static final class StringCaseB implements Builtin {
+        private final boolean up;
+        StringCaseB(boolean up) { this.up = up; }
+
+        @Override
+        public Outcome call(Machine m, Term[] args) {
+            String ind = up ? "string_upper/2" : "string_lower/2";
+            Term in = m.deref(args[0]);
+            if (in instanceof Variable) throw Errors.instantiation(ind);
+            String s = atomicText(in);
+            if (s == null && NativeLibrary.isCons(in)) {
+                s = textOfList(m, in, m.deref(NativeLibrary.head(in)) instanceof Atom, ind);
+            }
+            if (s == null) throw Errors.type("string", m.resolve(in), ind);
+            String r = up ? s.toUpperCase(java.util.Locale.ROOT) : s.toLowerCase(java.util.Locale.ROOT);
+            return m.unify(args[1], new PrologString(r)) ? Outcome.SUCCESS : Outcome.FAILURE;
+        }
+    }
+    // END_CHANGE: ISS-2025-0598
 
     private static final class CaseB implements Builtin {
         private final boolean up;
@@ -427,32 +465,29 @@ final class NativeText {
 
     // ------------------------------------------------------------------ atom_string/2
 
+    // START_CHANGE: ISS-2025-0596 - P4.7: atom_string/2 converts any atomic text both ways
+    // (SWI: atom_string(42, S) gives S = "42", atom_string(A, 42) gives A = '42').
     private static final class AtomStringB implements Builtin {
         @Override
         public Outcome call(Machine m, Term[] args) {
             Term a = m.deref(args[0]), s = m.deref(args[1]);
-            boolean ga = ground(m, a), gs = ground(m, s);
-            if (ga && !gs) {
-                if (!(a instanceof Atom)) return Outcome.FAILURE;
-                return m.unify(args[1], new PrologString(((Atom) a).getName()))
-                    ? Outcome.SUCCESS : Outcome.FAILURE;
+            if (!(a instanceof Variable)) {
+                String t = atomicText(a);
+                if (t == null) throw Errors.type("atomic", m.resolve(a), "atom_string/2");
+                if (s instanceof Variable) {
+                    return m.unify(args[1], new PrologString(t)) ? Outcome.SUCCESS : Outcome.FAILURE;
+                }
+                String u = atomicText(s);
+                if (u == null) throw Errors.type("string", m.resolve(s), "atom_string/2");
+                return t.equals(u) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
-            if (!ga && gs) {
-                if (!(s instanceof PrologString)) return Outcome.FAILURE;
-                return m.unify(args[0], new Atom(((PrologString) s).getStringValue()))
-                    ? Outcome.SUCCESS : Outcome.FAILURE;
-            }
-            if (ga && gs) {
-                if (!(a instanceof Atom) || !(s instanceof PrologString)) return Outcome.FAILURE;
-                return ((Atom) a).getName().equals(((PrologString) s).getStringValue())
-                    ? Outcome.SUCCESS : Outcome.FAILURE;
-            }
-            // START_CHANGE: ISS-2025-0506 - a real error(instantiation_error, atom_string/2),
-            // not the bare atom 'instantiation_error' that catch/3 could not match on.
-            throw Errors.instantiation("atom_string/2");
-            // END_CHANGE: ISS-2025-0506
+            if (s instanceof Variable) throw Errors.instantiation("atom_string/2");
+            String u = atomicText(s);
+            if (u == null) throw Errors.type("string", m.resolve(s), "atom_string/2");
+            return m.unify(args[0], new Atom(u)) ? Outcome.SUCCESS : Outcome.FAILURE;
         }
     }
+    // END_CHANGE: ISS-2025-0596
 
     // ------------------------------------------------------------------ number_string/2
 
@@ -616,8 +651,14 @@ final class NativeText {
             // START_CHANGE: ISS-2025-0506
             if (s instanceof Variable) throw Errors.instantiation("string_length/2");
             // END_CHANGE: ISS-2025-0506
-            String v = TextTerm.textOf(s);
-            if (v == null) return Outcome.FAILURE;
+            // START_CHANGE: ISS-2025-0596 - P4.7: any text (string_length(123, 3)); a code or
+            // char list counts too, anything else is type_error(string, S)
+            String v = atomicText(s);
+            if (v == null && NativeLibrary.isCons(s)) {
+                v = textOfList(m, s, m.deref(NativeLibrary.head(s)) instanceof Atom, "string_length/2");
+            }
+            if (v == null) throw Errors.type("string", m.resolve(s), "string_length/2");
+            // END_CHANGE: ISS-2025-0596
             return m.unify(args[1], Number.valueOf((long) v.codePointCount(0, v.length())))
                 ? Outcome.SUCCESS : Outcome.FAILURE;
         }
@@ -729,110 +770,99 @@ final class NativeText {
 
     // ------------------------------------------------------------------ atomic_list_concat/2,3
 
+    // START_CHANGE: ISS-2025-0597 - P4.7: atomic_list_concat/2,3 after SWI. Join mode needs a
+    // proper list of atomic elements (a var element is instantiation_error, a compound
+    // type_error(atomic, E), a non-list type_error(list, L)); when the list is not fully
+    // instantiated and the third argument is bound, /3 SPLITS — also with holes in a partial
+    // list ([a,B,c], '-', 'a-x-c' gives B = x); an empty separator cannot split
+    // (domain_error(non_empty_atom, '')).
     private static final class AtomicListConcatB implements Builtin {
         private final int arity;
         AtomicListConcatB(int arity) { this.arity = arity; }
 
         @Override
         public Outcome call(Machine m, Term[] args) {
+            String ctx = "atomic_list_concat/" + arity;
             if (arity == 2) {
-                // START_CHANGE: ISS-2025-0506 - an unbound or partial list is instantiation_error.
-                requireProperListOrRaise(m, args[0], "atomic_list_concat/2");
-                // END_CHANGE: ISS-2025-0506
-                List<String> parts = atomics(m, args[0]);
-                if (parts == null) return Outcome.FAILURE;
-                StringBuilder sb = new StringBuilder();
-                for (int i = 0; i < parts.size(); i++) sb.append(parts.get(i));
-                return m.unify(args[1], new Atom(sb.toString())) ? Outcome.SUCCESS : Outcome.FAILURE;
+                List<String> parts = joinParts(m, args[0], ctx, true);
+                return m.unify(args[1], new Atom(join(parts, ""))) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
-            Term listT = m.deref(args[0]);
             Term sepT = m.deref(args[1]);
             Term atomT = m.deref(args[2]);
-            // START_CHANGE: ISS-2025-0506
-            if (sepT instanceof Variable) throw Errors.instantiation("atomic_list_concat/3");
-            if (!(sepT instanceof Atom)) {
-                throw Errors.type("atom", m.resolve(sepT), "atomic_list_concat/3");
+            if (sepT instanceof Variable) throw Errors.instantiation(ctx);
+            String sep = atomicText(sepT);
+            if (sep == null) throw Errors.type("atomic", m.resolve(sepT), ctx);
+            if (atomT instanceof Variable) {
+                List<String> parts = joinParts(m, args[0], ctx, true);
+                return m.unify(args[2], new Atom(join(parts, sep))) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
-            // END_CHANGE: ISS-2025-0506
-            String sep = ((Atom) sepT).getName();
-            if (listT instanceof Variable && !(atomT instanceof Variable)) {
-                // START_CHANGE: ISS-2025-0506
-                if (!(atomT instanceof Atom)) {
-                    throw Errors.type("atom", m.resolve(atomT), "atomic_list_concat/3");
-                }
-                // END_CHANGE: ISS-2025-0506
-                String value = ((Atom) atomT).getName();
-                List<Term> out = new ArrayList<Term>();
-                if (sep.isEmpty()) {
-                    int i = 0;
-                    while (i < value.length()) {
-                        int cp = value.codePointAt(i);
-                        out.add(new Atom(new String(Character.toChars(cp))));
-                        i += Character.charCount(cp);
-                    }
-                } else {
-                    String[] ps = value.split(java.util.regex.Pattern.quote(sep), -1);
-                    for (int i = 0; i < ps.length; i++) out.add(new Atom(ps[i]));
-                }
-                return m.unify(args[0], listOf(out)) ? Outcome.SUCCESS : Outcome.FAILURE;
+            String value = atomicText(atomT);
+            if (value == null) throw Errors.type("atomic", m.resolve(atomT), ctx);
+            List<String> parts = joinParts(m, args[0], ctx, false);
+            if (parts != null) return join(parts, sep).equals(value) ? Outcome.SUCCESS : Outcome.FAILURE;
+            // split mode
+            if (sep.isEmpty()) throw Errors.domain("non_empty_atom", sepT, ctx);
+            List<Term> out = new ArrayList<Term>();
+            int from = 0;
+            while (true) {
+                int at = value.indexOf(sep, from);
+                if (at < 0) { out.add(new Atom(value.substring(from))); break; }
+                out.add(new Atom(value.substring(from, at)));
+                from = at + sep.length();
             }
-            if (!(listT instanceof Variable)) {
-                // START_CHANGE: ISS-2025-0506
-                requireProperListOrRaise(m, listT, "atomic_list_concat/3");
-                // END_CHANGE: ISS-2025-0506
-                List<String> parts = atomics(m, listT);
-                if (parts == null) return Outcome.FAILURE;
-                StringBuilder sb = new StringBuilder();
-                for (int i = 0; i < parts.size(); i++) {
-                    if (i > 0) sb.append(sep);
-                    sb.append(parts.get(i));
-                }
-                if (atomT instanceof Variable) {
-                    return m.unify(args[2], new Atom(sb.toString())) ? Outcome.SUCCESS : Outcome.FAILURE;
-                }
-                if (!(atomT instanceof Atom)) return Outcome.FAILURE;
-                return sb.toString().equals(((Atom) atomT).getName()) ? Outcome.SUCCESS : Outcome.FAILURE;
-            }
-            // START_CHANGE: ISS-2025-0506
-            throw Errors.instantiation("atomic_list_concat/3");
-            // END_CHANGE: ISS-2025-0506
+            return m.unify(args[0], listOf(out)) ? Outcome.SUCCESS : Outcome.FAILURE;
         }
 
-        // START_CHANGE: ISS-2025-0506 - ISO 7.12.2 (a): an unbound or PARTIAL list is
-        // instantiation_error, not a silent failure. A variable ELEMENT is deliberately left
-        // alone: atomic_list_concat([a,X], '-', 'a-b') still fails (the split-with-holes mode
-        // JProlog does not implement), which EngineV4TextTest pins.
-        private static void requireProperListOrRaise(Machine m, Term list, String ctx) {
-            Term cur = m.deref(list);
-            int n = 0;
-            while (cur instanceof CompoundTerm && ".".equals(cur.getName())
-                    && cur.getArguments().size() == 2) {
-                cur = m.deref(cur.getArguments().get(1));
-                if ((++n & 0x3FF) == 0) m.guard().step();
+        private static String join(List<String> parts, String sep) {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < parts.size(); i++) {
+                if (i > 0) sb.append(sep);
+                sb.append(parts.get(i));
             }
-            if (cur instanceof Variable) throw Errors.instantiation(ctx);
+            return sb.toString();
         }
-        // END_CHANGE: ISS-2025-0506
 
-        /** The atomic texts of a proper list; null when it is not one or holds a var/compound. */
-        private List<String> atomics(Machine m, Term list) {
+        /**
+         * The texts of a proper list of atomic elements. A compound element or a non-list raise
+         * a type_error; a partial list or a var element raise instantiation_error when
+         * {@code strict}, and answer null (split mode) otherwise.
+         */
+        private static List<String> joinParts(Machine m, Term list, String ctx, boolean strict) {
             List<String> out = new ArrayList<String>();
             Term cur = m.deref(list);
+            boolean holes = false;
             int n = 0;
-            while (cur instanceof CompoundTerm) {
-                CompoundTerm c = (CompoundTerm) cur;
-                if (!".".equals(c.getName()) || c.getArguments().size() != 2) break;
-                Term h = m.deref(c.getArguments().get(0));
-                if (h instanceof Atom) out.add(((Atom) h).getName());
-                else if (h instanceof PrologString) out.add(((PrologString) h).getStringValue());
-                else if (h instanceof Number) out.add(h.toString());
-                else return null;
-                cur = m.deref(c.getArguments().get(1));
+            while (NativeLibrary.isCons(cur)) {
+                Term h = m.deref(NativeLibrary.head(cur));
+                if (h instanceof Variable) {
+                    holes = true;
+                } else {
+                    String t = atomicText(h);
+                    if (t == null) throw Errors.type("atomic", m.resolve(h), ctx);
+                    out.add(t);
+                }
+                cur = m.deref(NativeLibrary.tail(cur));
                 if ((++n & 0x3FF) == 0) m.guard().step();
             }
-            return NativeLibrary.isNil(cur) ? out : null;
+            if (cur instanceof Variable) holes = true;
+            else if (!NativeLibrary.isNil(cur)) throw Errors.type("list", m.resolve(list), ctx);
+            if (holes) {
+                if (strict) throw Errors.instantiation(ctx);
+                return null;
+            }
+            return out;
         }
     }
+    // END_CHANGE: ISS-2025-0597
+
+    // START_CHANGE: ISS-2025-0596 - the text of an atomic term (atom, string, number), else null
+    static String atomicText(Term t) {
+        if (t instanceof Atom) return ((Atom) t).getName();
+        if (t instanceof PrologString) return ((PrologString) t).getStringValue();
+        if (t instanceof Number) return AtomNumber.formatNumberExact((Number) t);
+        return null;
+    }
+    // END_CHANGE: ISS-2025-0596
 
     // ------------------------------------------------------------------ term_to_atom/2, term_string/2
 
@@ -850,18 +880,10 @@ final class NativeText {
                 : ((text instanceof PrologString) ? ((PrologString) text).getStringValue()
                    : (text instanceof Atom) ? ((Atom) text).getName() : null);
             if (src != null) {
-                Term parsed;
-                try {
-                    parsed = new it.denzosoft.jprolog.core.parser.Parser().parseTerm(src);
-                } catch (PrologException pe) {
-                    throw pe;
-                } catch (StackOverflowError so) {
-                    throw new PrologException(ISOErrorTerms.resourceError("parser_nesting", ctx));
-                } catch (RuntimeException e) {
-                    ControlFlow.rethrowIfControl(e);
-                    return Outcome.FAILURE;
-                }
-                if (parsed == null) return Outcome.FAILURE;
+                // START_CHANGE: ISS-2025-0568 - P3.4: the v2 parser with the engine's operators;
+                // a syntax error RAISES error(syntax_error(D), _) (it failed silently before)
+                Term parsed = NativeRead.parseText(src, ctx);
+                // END_CHANGE: ISS-2025-0568
                 return m.unify(args[0], parsed) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
             // START_CHANGE: ISS-2025-0506 - with NEITHER argument bound there is nothing to write
@@ -938,31 +960,45 @@ final class NativeText {
         }
     }
 
+    // START_CHANGE: ISS-2025-0602 - P4.9: flatten/2 walks with an explicit stack (the recursive
+    // walk overflowed the Java stack at ~6000 elements and its depth counter answered
+    // resource_error(cyclic_term) for any list longer than 10000). SWI semantics: a variable
+    // element or tail is kept as an element, a non-list is a one-element list. A cyclic term
+    // cannot be flattened: type_error(acyclic_term, L) instead of looping.
     private static final class FlattenB implements Builtin {
-        private static final int MAX_DEPTH = 10000;
-
         @Override
         public Outcome call(Machine m, Term[] args) {
+            Term root = m.deref(args[0]);
             List<Term> flat = new ArrayList<Term>();
-            flatten(m, args[0], flat, 0);
+            ArrayList<Term> pending = new ArrayList<Term>();   // tails still to walk
+            pending.add(root);
+            int n = 0;
+            while (!pending.isEmpty()) {
+                Term cur = m.deref(pending.remove(pending.size() - 1));
+                while (true) {
+                    if ((++n & 0x3FF) == 0) {
+                        m.guard().step();
+                        // a long walk may be a cyclic term: check ONCE (nothing binds meanwhile)
+                        if (n == 0x10000 && Unify.isCyclic(root, m.guard())) {
+                            throw Errors.type("acyclic_term", root, "flatten/2");
+                        }
+                    }
+                    if (NativeLibrary.isNil(cur)) break;
+                    if (!NativeLibrary.isCons(cur)) { flat.add(cur); break; }
+                    Term h = m.deref(NativeLibrary.head(cur));
+                    Term tl = NativeLibrary.tail(cur);
+                    if (NativeLibrary.isCons(h)) {         // descend into the head, tail later
+                        pending.add(tl);
+                        cur = h;
+                        continue;
+                    }
+                    if (!NativeLibrary.isNil(h)) flat.add(h);
+                    cur = m.deref(tl);
+                }
+            }
             return m.unify(args[1], listOf(flat)) ? Outcome.SUCCESS : Outcome.FAILURE;
         }
-
-        private void flatten(Machine m, Term t, List<Term> out, int depth) {
-            if (depth > MAX_DEPTH) {
-                throw new PrologException(ISOErrorTerms.resourceError("cyclic_term", "flatten/2"));
-            }
-            Term cur = m.deref(t);
-            if (NativeLibrary.isNil(cur)) return;
-            if (NativeLibrary.isCons(cur)) {
-                Term h = m.deref(NativeLibrary.head(cur));
-                if (NativeLibrary.isNil(h) || NativeLibrary.isCons(h)) flatten(m, h, out, depth + 1);
-                else out.add(h);
-                flatten(m, NativeLibrary.tail(cur), out, depth + 1);
-                return;
-            }
-            out.add(cur);
-        }
     }
+    // END_CHANGE: ISS-2025-0602
 }
 // END_CHANGE: ISS-2025-0497

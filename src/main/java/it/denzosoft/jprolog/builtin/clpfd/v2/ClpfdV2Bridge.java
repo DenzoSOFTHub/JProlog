@@ -9,6 +9,7 @@ import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -33,6 +34,16 @@ public final class ClpfdV2Bridge {
         // place; it replaces Machine.nameIndex, the engine-wide shim of waves W1-W3, and it is reset
         // with the rest of the context at every top-level query.
         final Map<String, Variable> cells = new HashMap<>();
+        // START_CHANGE: ISS-2025-0642 - the same (cell, FdVar) registrations as two parallel lists
+        // in registration order, so determinedCells() is an array scan instead of a hash-map walk
+        // per labeling node. Truncated by the same (LIFO) undo actions that unregister the names.
+        final ArrayList<Variable> cellList = new ArrayList<>();
+        final ArrayList<FdVar> fdList = new ArrayList<>();
+        void register(Variable cell, FdVar fv) { cellList.add(cell); fdList.add(fv); }
+        void truncate(int n) {
+            while (cellList.size() > n) { cellList.remove(cellList.size() - 1); fdList.remove(fdList.size() - 1); }
+        }
+        // END_CHANGE: ISS-2025-0642
         // END_CHANGE: ISS-2025-0460
         // START_CHANGE: ISS-2025-0358 - counter for auxiliary difference variables
         int aux = 0;
@@ -85,10 +96,14 @@ public final class ClpfdV2Bridge {
         Ctx c = ctx();
         FdVar fv = c.vars.get(v.getName());
         if (fv == null) {
-            // default domain: a wide but finite interval (CLP(FD) requires bounded domains here)
-            fv = c.store.newVar(v.getName(), IntervalDomain.interval(-100_000_000L, 100_000_000L));
+            // START_CHANGE: ISS-2025-0644 - SWI: an unconstrained CLP(FD) variable is inf..sup (it used
+            // to be -10^8..10^8, which made X #> Y, Y #> X grind through 2*10^8 propagation rounds)
+            fv = c.store.newVar(v.getName(), IntervalDomain.ALL);
+            // END_CHANGE: ISS-2025-0644
             c.vars.put(v.getName(), fv);
             c.cells.put(v.getName(), v);                 // ISS-2025-0460
+            final int reg = c.cellList.size();           // ISS-2025-0642
+            c.register(v, fv);
             // START_CHANGE: ISS-2025-0355 - mark the engine variable as FD-constrained so binding it
             // fires onBind/onAlias; the registration is trailed, so backtracking out of the goal that
             // created the FdVar restores plain-variable semantics.
@@ -97,6 +112,7 @@ public final class ClpfdV2Bridge {
             recordUndo(() -> {
                 fc.vars.remove(name);
                 fc.cells.remove(name);                   // ISS-2025-0460
+                fc.truncate(reg);                        // ISS-2025-0642
                 fvv.removeAttribute(CLPFD_ATTR);
             });
             // END_CHANGE: ISS-2025-0355
@@ -136,7 +152,7 @@ public final class ClpfdV2Bridge {
         if (fv == null) return true;                      // not (or no longer) FD-constrained
         if (value instanceof Variable) return onAlias(v, (Variable) value);
         if (!(value instanceof Number) || !((Number) value).isInteger()) return false;
-        if (((Number) value).bigIntegerValue().bitLength() > 63) return false;   // outside FD range
+        if (IntervalDomain.isInfinite(Constraint.clamp(((Number) value).bigIntegerValue()))) return bindBig(fv, (Number) value);   // ISS-2025-0644
         final long val = ((Number) value).longValue();
         return guardedPost(() -> ctx().store.narrow(fv, IntervalDomain.singleton(val))
                               && ctx().store.propagate());
@@ -153,11 +169,14 @@ public final class ClpfdV2Bridge {
         if (fb == null) {
             c.vars.put(to.getName(), fa);
             c.cells.put(to.getName(), to);               // ISS-2025-0460
+            final int reg = c.cellList.size();           // ISS-2025-0642
+            c.register(to, fa);
             to.putAttribute(CLPFD_ATTR, FD_MARKER);
             final String name = to.getName(); final Variable tv = to;
             recordUndo(() -> {
                 c.vars.remove(name);
                 c.cells.remove(name);                    // ISS-2025-0460
+                c.truncate(reg);                         // ISS-2025-0642
                 tv.removeAttribute(CLPFD_ATTR);
             });
             return true;
@@ -183,12 +202,47 @@ public final class ClpfdV2Bridge {
             return onAlias(self, (Variable) value);
         }
         if (!(value instanceof Number) || !((Number) value).isInteger()) return false;
-        if (((Number) value).bigIntegerValue().bitLength() > 63) return false;   // outside FD range
+        // START_CHANGE: ISS-2025-0644 - an integer beyond the representable finite range
+        if (IntervalDomain.isInfinite(Constraint.clamp(((Number) value).bigIntegerValue()))) return bindBig(fv, (Number) value);
+        // END_CHANGE: ISS-2025-0644
         final long val = ((Number) value).longValue();
         return guardedPost(() -> ctx().store.narrow(fv, IntervalDomain.singleton(val))
                               && ctx().store.propagate());
     }
     // END_CHANGE: ISS-2025-0486
+
+    // START_CHANGE: ISS-2025-0644 - binding an FD variable to a big integer. A domain that is
+    // bounded on that side rejects it (sound failure); a constraint that solves the variable
+    // exactly to another value refutes it; otherwise the value is recorded in the domain.
+    private static boolean bindBig(FdVar fv, Number value) {
+        IntervalDomain d = ctx().store.dom(fv);
+        boolean positive = value.bigIntegerValue().signum() > 0;
+        if (positive ? d.max() != IntervalDomain.SUP : d.min() != IntervalDomain.INF) return false;
+        // every constraint on it already entailed by the domains (X #> 3, X = 10^23), or solved
+        // exactly for it by the other (fixed) variables: nothing left to propagate (SWI)
+        int verdict = bigVerdict(fv, value.bigIntegerValue());
+        if (verdict == 0) return false;
+        // otherwise record the exact value (a degenerate sup..sup / inf..inf domain that remembers
+        // it) and propagate: the other constraints see an infinite bound, which is sound, and a
+        // constraint whose other variables are all fixed solves its last one exactly
+        final BigInteger v = value.bigIntegerValue();
+        return guardedPost(() -> ctx().store.assignBig(fv, v) && ctx().store.propagate());
+    }
+
+    /** 1 = every constraint on {@code fv} accepts {@code value}, 0 = one refutes it, -1 = unknown. */
+    private static int bigVerdict(FdVar fv, BigInteger value) {
+        ClpStore st = ctx().store;
+        List<Constraint> all = new ArrayList<>(fv.watchers);
+        all.addAll(fv.fixWatchers);
+        for (Constraint c : all) {
+            if (c.entailment(st) == Constraint.Entail.TRUE) continue;
+            BigInteger exact = c.solveFor(fv, st);
+            if (exact == null) return -1;
+            if (!exact.equals(value)) return 0;
+        }
+        return 1;
+    }
+    // END_CHANGE: ISS-2025-0644
 
     /** The current domain of an FD-constrained cell as a term, or null when it is not one. This is
      *  the residual goal an answer printer shows for a CLP(FD) variable (design B.12 / W7). */
@@ -274,164 +328,532 @@ public final class ClpfdV2Bridge {
      * order. This is what makes {@code C in 1..3, D #= C*2+1, C #= 1} bind {@code D} even though
      * the goal {@code #=(C, 1)} never mentions it (ISS-2025-0357).
      */
-    public static Map<Variable, Long> determinedCells() {
+    public static Map<Variable, Number> determinedCells() {
         Ctx c = ctx();
-        Map<Variable, Long> out = new java.util.LinkedHashMap<>();
-        for (Map.Entry<String, FdVar> e : c.vars.entrySet()) {
-            Variable cell = c.cells.get(e.getKey());
-            if (cell == null || cell.ref != null) continue;      // already bound
-            IntervalDomain d = c.store.dom(e.getValue());
-            if (d != null && d.isSingleton()) out.put(cell, Long.valueOf(d.value()));
+        // ISS-2025-0642: a list scan, and no allocation when nothing is determined
+        Map<Variable, Number> out = null;
+        ArrayList<Variable> cl = c.cellList;
+        ArrayList<FdVar> fl = c.fdList;
+        for (int i = 0, n = cl.size(); i < n; i++) {
+            Variable cell = cl.get(i);
+            if (cell.ref != null) continue;                     // already bound
+            IntervalDomain d = fl.get(i).dom;
+            Number value = null;
+            if (d.isSingleton()) {
+                value = Number.valueOf(d.value());
+            } else if (!d.isFinite() && !d.isEmpty()) {
+                // ISS-2025-0644: an unbounded (or degenerate inf..inf / sup..sup) domain may hide
+                // a value beyond the 64-bit range; bind it when a constraint determines it exactly
+                BigInteger big = c.store.exactValue(fl.get(i));
+                if (big != null) value = intTerm(big);
+            }
+            if (value != null) {
+                if (out == null) out = new java.util.LinkedHashMap<>();
+                out.put(cell, value);
+            }
         }
-        return out;
+        return out == null ? java.util.Collections.<Variable, Number>emptyMap() : out;
     }
+
+    // START_CHANGE: ISS-2025-0644
+    private static Number intTerm(BigInteger v) {
+        return v.bitLength() <= 63 ? Number.valueOf(v.longValue()) : new Number(v);
+    }
+    // END_CHANGE: ISS-2025-0644
     // END_CHANGE: ISS-2025-0486
+
 
     // ----------------------------------------------------------------- domain posting
 
     /** Post {@code Var in Lo..Hi}. Returns false on inconsistency. */
     public static boolean postIn(Term varTerm, long lo, long hi, Map<String, Term> bindings) {
-        Term t = varTerm.resolveBindings(bindings);
-        if (t instanceof Number) {                       // a constant must lie in the range
-            long val = ((Number) t).longValue();
-            return val >= lo && val <= hi;
+        return postDomain(varTerm.resolveBindings(bindings), IntervalDomain.interval(lo, hi));
+    }
+
+    // START_CHANGE: ISS-2025-0641 - post an arbitrary domain (unions, holes, inf/sup bounds)
+    /** Post {@code Var in Dom} for a parsed domain. Returns false on inconsistency. */
+    public static boolean postDomain(Term t, final IntervalDomain dom) {
+        if (t instanceof Number) {                       // a constant must lie in the domain
+            Number n = (Number) t;
+            if (!n.isInteger()) throw new PrologException(ISOErrorTerms.typeError("integer", t, "in/2"));
+            if (n.bigIntegerValue().bitLength() > 62) {
+                return n.bigIntegerValue().signum() > 0 ? dom.max() == IntervalDomain.SUP
+                                                        : dom.min() == IntervalDomain.INF;
+            }
+            return dom.contains(n.longValue());
         }
-        if (!(t instanceof Variable)) return false;
-        // START_CHANGE: ISS-2025-0356 - bracket the post so backtracking undoes it
+        if (!(t instanceof Variable)) throw new PrologException(ISOErrorTerms.typeError("integer", t, "in/2"));
         final Term ft = t;
         return guardedPost(() -> {
             FdVar fv = varFor((Variable) ft);
-            return ctx().store.narrow(fv, IntervalDomain.interval(lo, hi)) && ctx().store.propagate();
+            return ctx().store.narrow(fv, dom) && ctx().store.propagate();
         });
-        // END_CHANGE: ISS-2025-0356
+    }
+
+    /**
+     * Parse a CLP(FD) domain term: {@code N}, {@code Lo..Hi} (bounds integers, {@code inf} or
+     * {@code sup}) or {@code D1 \/ D2}. Unbound parts raise instantiation_error, anything else
+     * type_error(clpfd_domain, D).
+     */
+    public static IntervalDomain parseDomain(Term d, String ctxName) {
+        d = deref(d);
+        if (d instanceof Variable) throw new PrologException(ISOErrorTerms.instantiationError(ctxName));
+        if (d instanceof Number) {
+            Number n = (Number) d;
+            if (!n.isInteger()) throw new PrologException(ISOErrorTerms.typeError("clpfd_domain", d, ctxName));
+            if (n.bigIntegerValue().bitLength() > 62) {
+                throw new PrologException(ISOErrorTerms.representationError("max_integer", ctxName));
+            }
+            return IntervalDomain.singleton(n.longValue());
+        }
+        if (d instanceof CompoundTerm && ((CompoundTerm) d).getArguments().size() == 2) {
+            CompoundTerm c = (CompoundTerm) d;
+            if ("..".equals(c.getName())) {
+                long lo = bound(c.getArguments().get(0), true, d, ctxName);
+                long hi = bound(c.getArguments().get(1), false, d, ctxName);
+                return IntervalDomain.interval(lo, hi);
+            }
+            if ("\\/".equals(c.getName())) {
+                return parseDomain(c.getArguments().get(0), ctxName)
+                    .union(parseDomain(c.getArguments().get(1), ctxName));
+            }
+        }
+        throw new PrologException(ISOErrorTerms.typeError("clpfd_domain", d, ctxName));
+    }
+
+    private static long bound(Term b, boolean lower, Term whole, String ctxName) {
+        b = deref(b);
+        if (b instanceof Variable) throw new PrologException(ISOErrorTerms.instantiationError(ctxName));
+        if (b instanceof Atom) {
+            String n = ((Atom) b).getName();
+            if ("inf".equals(n)) return IntervalDomain.INF;
+            if ("sup".equals(n)) return IntervalDomain.SUP;
+        }
+        if (b instanceof Number && ((Number) b).isInteger()) {
+            BigInteger v = ((Number) b).bigIntegerValue();
+            long l = Constraint.clamp(v);
+            return l;
+        }
+        throw new PrologException(ISOErrorTerms.typeError("integer", b, ctxName));
+    }
+    // END_CHANGE: ISS-2025-0641
+
+    private static Term deref(Term t) {
+        while (t instanceof Variable && ((Variable) t).ref != null) t = ((Variable) t).ref;
+        return t;
     }
 
     // ----------------------------------------------------------------- comparison posting
 
-    /** Post a comparison {@code Left <rel> Right} where each side is a linear expression. */
+    /** Post a comparison {@code Left <rel> Right} between arithmetic expressions. */
     public static boolean postCmp(Term left, Constraint.Rel rel, Term right, Map<String, Term> bindings) {
-        // START_CHANGE: ISS-2025-0356 - bracket the post so backtracking undoes it
-        // START_CHANGE: ISS-2025-0421 - an auxiliary post that wipes a domain means the whole
-        // comparison is unsatisfiable: fail the goal (guardedPost rolls the store back).
+        final Term l = left.resolveBindings(bindings);
+        final Term r = right.resolveBindings(bindings);
         return guardedPost(() -> {
             try {
-                return doPostCmp(left, rel, right, bindings);
+                Constraint c = buildCmp(l, rel, r);
+                if (c == null) return true;                          // a ground truth
+                if (c == FALSE_CONSTRAINT) return false;
+                // ISS-2025-0645: the cycle check runs BEFORE the constraint propagates -- on a
+                // huge finite domain the propagation itself is the one-round-per-value crawl
+                if (negativeDifferenceCycle(c)) return false;
+                return ctx().store.addConstraint(c);
             } catch (Unsat e) {
                 return false;
             }
         });
-        // END_CHANGE: ISS-2025-0421
-        // END_CHANGE: ISS-2025-0356
     }
 
-    private static boolean doPostCmp(Term left, Constraint.Rel rel, Term right, Map<String, Term> bindings) {
-        // \= : compile (left - right) into a linear form so expression operands work
-        // (ISS-2025-0301), e.g. X+1 #\= 5 -> X #\= 4. Handles the 0/1-variable cases exactly and the
-        // multi-variable case via an auxiliary difference variable (ISS-2025-0358); falls back to a
-        // direct Cmp NE only when the expression is genuinely non-linear.
-        if (rel == Constraint.Rel.NE) {
-            LinExpr le = new LinExpr();
-            if (compile(left, 1, le, bindings) && compile(right, -1, le, bindings)) {
-                // START_CHANGE: ISS-2025-0358 - drop cancelled-out terms (e.g. X #\= X -> 0*X)
-                le.terms.values().removeIf(co -> co == 0);
-                // END_CHANGE: ISS-2025-0358
-                if (le.terms.isEmpty()) return le.constant != 0;          // const #\= 0
-                if (le.terms.size() == 1) {
-                    Map.Entry<FdVar, Long> e = le.terms.entrySet().iterator().next();
-                    long c = e.getValue();
-                    long rhs = -le.constant;                              // c*X #\= rhs
-                    if (rhs % c != 0) return true;                        // never equal -> always holds
-                    long val = rhs / c;
-                    FdVar cv = ctx().store.newVar("_c" + val, IntervalDomain.singleton(val));
-                    return ctx().store.addConstraint(new Constraint.Cmp(e.getKey(), Constraint.Rel.NE, cv));
-                }
-                // START_CHANGE: ISS-2025-0358 - multi-variable disequality: introduce the auxiliary
-                // difference D = left - right via a Linear EQ constraint, then post D #\= 0 (the
-                // previous operandVar fallback returned null for any compound side -> silent failure
-                // of a satisfiable constraint).
-                long[] coeffs = new long[le.terms.size() + 1];
-                FdVar[] vars = new FdVar[le.terms.size() + 1];
-                int i = 0;
-                for (Map.Entry<FdVar, Long> e : le.terms.entrySet()) { coeffs[i] = e.getValue(); vars[i] = e.getKey(); i++; }
-                FdVar d = ctx().store.newVar("_d" + (ctx().aux++),
-                    IntervalDomain.interval(Long.MIN_VALUE / 2, Long.MAX_VALUE / 2));
-                coeffs[i] = -1; vars[i] = d;                              // sum(ci*xi) - D = -k0  <=>  D = left - right
-                if (!ctx().store.addConstraint(new Constraint.Linear(coeffs, vars, Constraint.Rel.EQ, -le.constant))) return false;
-                FdVar zero = ctx().store.newVar("_c0", IntervalDomain.singleton(0));
-                return ctx().store.addConstraint(new Constraint.Cmp(d, Constraint.Rel.NE, zero));
-                // END_CHANGE: ISS-2025-0358
-            }
-            FdVar a = operandVar(left, bindings);                         // non-linear fallback
-            FdVar b = operandVar(right, bindings);
-            if (a == null || b == null) return false;
-            return ctx().store.addConstraint(new Constraint.Cmp(a, Constraint.Rel.NE, b));
-        }
+    /** Marker for a ground comparison that is false. */
+    private static final Constraint FALSE_CONSTRAINT = new Constraint.Linear(new long[0], new FdVar[0],
+        Constraint.Rel.EQ, BigInteger.ONE);
 
-        // Non-linear hook: X mod M #= R  (M a positive integer constant).  ISS-2025-0303.
-        if (rel == Constraint.Rel.EQ) {
-            Constraint mod = tryMod(left, right, bindings);
-            if (mod == null) mod = tryMod(right, left, bindings);
-            if (mod != null) return ctx().store.addConstraint(mod);
-        }
-
-        // Linear: compile (Left - Right) into  sum(ci*xi) + k0,  then  sum(ci*xi) <rel'> (-k0).
+    /**
+     * Compile {@code l rel r} into ONE constraint (auxiliary constraints for non-linear sub-terms are
+     * posted on the way). Returns null for a ground comparison that holds, FALSE_CONSTRAINT for one
+     * that does not.
+     */
+    private static Constraint buildCmp(Term l, Constraint.Rel rel, Term r) {
         LinExpr le = new LinExpr();
-        if (!compile(left, 1, le, bindings)) return false;
-        if (!compile(right, -1, le, bindings)) return false;
-
-        long[] coeffs = new long[le.terms.size()];
-        FdVar[] vars = new FdVar[le.terms.size()];
+        compile(l, 1, le);
+        compile(r, -1, le);
+        le.dropZeros();
+        BigInteger k = le.constant.negate();                           // sum(ci*xi) rel k
+        int n = le.terms.size();
+        if (n == 0) {
+            int cmp = BigInteger.ZERO.compareTo(k);
+            boolean holds;
+            switch (rel) {
+                case EQ: holds = cmp == 0; break;
+                case NE: holds = cmp != 0; break;
+                case LT: holds = cmp < 0; break;
+                case LE: holds = cmp <= 0; break;
+                case GT: holds = cmp > 0; break;
+                default: holds = cmp >= 0; break;
+            }
+            return holds ? null : FALSE_CONSTRAINT;
+        }
+        long[] coeffs = new long[n];
+        FdVar[] vars = new FdVar[n];
         int i = 0;
         for (Map.Entry<FdVar, Long> e : le.terms.entrySet()) { coeffs[i] = e.getValue(); vars[i] = e.getKey(); i++; }
-
-        long k;
-        Constraint.Rel lrel;
         switch (rel) {
-            case EQ: lrel = Constraint.Rel.EQ; k = -le.constant; break;
-            case LE: lrel = Constraint.Rel.LE; k = -le.constant; break;
-            case GE: lrel = Constraint.Rel.GE; k = -le.constant; break;
-            case LT: lrel = Constraint.Rel.LE; k = -le.constant - 1; break;   // x < y  <=>  x =< y-1
-            case GT: lrel = Constraint.Rel.GE; k = -le.constant + 1; break;
-            default: return false;
+            case EQ:
+                // X #= Y keeps holes: the domains are intersected, not just their bounds
+                if (n == 2 && k.signum() == 0 && coeffs[0] == -coeffs[1] && Math.abs(coeffs[0]) == 1) {
+                    return new Constraint.Cmp(vars[0], Constraint.Rel.EQ, vars[1]);
+                }
+                return new Constraint.Linear(coeffs, vars, Constraint.Rel.EQ, k);
+            case NE: return new Constraint.LinearNE(coeffs, vars, k);         // ISS-2025-0641
+            case LE: return new Constraint.Linear(coeffs, vars, Constraint.Rel.LE, k);
+            case LT: return new Constraint.Linear(coeffs, vars, Constraint.Rel.LE, k.subtract(BigInteger.ONE));
+            case GE: return new Constraint.Linear(coeffs, vars, Constraint.Rel.GE, k);
+            default: return new Constraint.Linear(coeffs, vars, Constraint.Rel.GE, k.add(BigInteger.ONE));
         }
-        if (vars.length == 0) {                          // constant relation, no variables
-            switch (lrel) { case EQ: return 0 == k; case LE: return 0 <= k; case GE: return 0 >= k; default: return false; }
-        }
-        return ctx().store.addConstraint(new Constraint.Linear(coeffs, vars, lrel, k));
     }
 
-    /** If {@code modSide} is {@code mod(X, Mconst)}, build {@code Z = X mod M} with Z = {@code other}. */
-    private static Constraint tryMod(Term modSide, Term other, Map<String, Term> bindings) {
-        Term t = modSide.resolveBindings(bindings);
-        if (!(t instanceof CompoundTerm)) return null;
-        CompoundTerm c = (CompoundTerm) t;
-        if (!"mod".equals(c.getName()) || c.getArguments().size() != 2) return null;
-        Term mT = c.getArguments().get(1).resolveBindings(bindings);
-        if (!(mT instanceof Number) || !((Number) mT).isInteger()) return null;
-        long m = ((Number) mT).longValue();
-        if (m <= 0) return null;
-        FdVar x = operandVar(c.getArguments().get(0), bindings);
-        FdVar z = operandVar(other, bindings);
-        if (x == null || z == null) return null;
-        return new Constraint.Mod(x, m, z);
+    // START_CHANGE: ISS-2025-0645 - X #> Y, Y #> X on unbounded (or huge) domains: bounds
+    // propagation alone either never prunes (inf..sup) or needs one round per value (a huge finite
+    // domain, 29 s and resource_error(memory) in 4.4.0). The difference constraints (x - y =< c)
+    // posted so far form a graph; a negative cycle in it means the system is unsatisfiable, and
+    // Bellman-Ford finds one in O(V*E). The check runs only when the new constraint is a difference
+    // constraint over a variable whose domain is infinite or larger than 10^6 values, where the
+    // slow convergence can happen, and gives up (no answer = no pruning, still sound) past a budget.
+    private static final long HUGE_DOMAIN = 1_000_000L;
+    private static final long CYCLE_BUDGET = 4_000_000L;
+
+    private static boolean negativeDifferenceCycle(Constraint c) {
+        List<Object[]> newEdges = new ArrayList<>(2);
+        differenceEdges(c, newEdges);
+        if (newEdges.isEmpty()) return false;
+        ClpStore st = ctx().store;
+        boolean huge = false;
+        for (Object[] e : newEdges) {
+            for (int j = 0; j < 2; j++) {
+                IntervalDomain d = st.dom((FdVar) e[j]);
+                if (d.size() > HUGE_DOMAIN) huge = true;
+            }
+        }
+        if (!huge) return false;
+        List<Object[]> edges = new ArrayList<>(newEdges);            // c is not posted yet
+        for (Constraint k : st.constraints()) differenceEdges(k, edges);
+        java.util.IdentityHashMap<FdVar, Integer> ids = new java.util.IdentityHashMap<>();
+        for (Object[] e : edges) {
+            for (int j = 0; j < 2; j++) if (!ids.containsKey(e[j])) ids.put((FdVar) e[j], ids.size());
+        }
+        int nv = ids.size();
+        int ne = edges.size();
+        int[] from = new int[ne], to = new int[ne];
+        long[] w = new long[ne];
+        for (int i = 0; i < ne; i++) {
+            from[i] = ids.get(edges.get(i)[0]);
+            to[i] = ids.get(edges.get(i)[1]);
+            w[i] = (Long) edges.get(i)[2];
+        }
+        // The system without c had no negative cycle (every earlier post was checked, or could
+        // not close one), so a new negative cycle must run through a new edge u -> v: it exists
+        // iff the shortest path v ~> u plus w(u -> v) is negative. Single-source shortest paths
+        // from v over the part of the graph reachable from v (Bellman-Ford, queue-based): a chain
+        // X1 #< X2 #< ... costs one reachability sweep per post instead of V rounds over E edges.
+        int[] headOf = new int[nv];
+        java.util.Arrays.fill(headOf, -1);
+        int[] nextEdge = new int[ne];
+        for (int i = 0; i < ne; i++) { nextEdge[i] = headOf[from[i]]; headOf[from[i]] = i; }
+        long work = 0;
+        for (int e = 0; e < newEdges.size(); e++) {
+            int u = from[e], v = to[e];
+            if (u == v) { if (w[e] < 0) return true; continue; }
+            long[] dist = new long[nv];
+            java.util.Arrays.fill(dist, Long.MAX_VALUE);
+            int[] relaxed = new int[nv];
+            boolean[] inQueue = new boolean[nv];
+            java.util.ArrayDeque<Integer> queue = new java.util.ArrayDeque<>();
+            dist[v] = 0;
+            queue.add(v);
+            inQueue[v] = true;
+            while (!queue.isEmpty()) {
+                int x = queue.poll();
+                inQueue[x] = false;
+                if (++relaxed[x] > nv) return true;                 // a negative cycle elsewhere
+                for (int k = headOf[x]; k >= 0; k = nextEdge[k]) {
+                    if (++work > CYCLE_BUDGET) return false;       // give up: no pruning, sound
+                    long nd = Constraint.add(dist[x], w[k]);
+                    int y = to[k];
+                    if (nd < dist[y]) {
+                        dist[y] = nd;
+                        if (y == u && Constraint.add(nd, w[e]) < 0) return true;
+                        if (!inQueue[y]) { inQueue[y] = true; queue.add(y); }
+                    }
+                }
+            }
+        }
+        return false;
     }
+
+    /** Edges {from, to, weight} meaning {@code to =< from + weight}. */
+    private static void differenceEdges(Constraint c, List<Object[]> out) {
+        if (c instanceof Constraint.Linear) {
+            Constraint.Linear l = (Constraint.Linear) c;
+            long[] co = l.coeffs();
+            FdVar[] vs = l.vars();
+            if (co.length != 2 || co[0] != -co[1] || Math.abs(co[0]) != 1) return;
+            if (l.constant().bitLength() > 62) return;
+            long k = l.constant().longValue();
+            FdVar pos = co[0] == 1 ? vs[0] : vs[1];                   // pos - neg  rel  k
+            FdVar neg = co[0] == 1 ? vs[1] : vs[0];
+            switch (l.rel()) {
+                case LE: out.add(new Object[]{neg, pos, k}); break;                 // pos =< neg + k
+                case GE: out.add(new Object[]{pos, neg, -k}); break;                // neg =< pos - k
+                case EQ: out.add(new Object[]{neg, pos, k}); out.add(new Object[]{pos, neg, -k}); break;
+                default: break;
+            }
+        } else if (c instanceof Constraint.Cmp) {
+            ((Constraint.Cmp) c).differenceEdges(out);
+        }
+    }
+    // END_CHANGE: ISS-2025-0645
 
     /** all_different(List). */
     public static boolean postAllDifferent(List<Term> elems, Map<String, Term> bindings) {
-        // START_CHANGE: ISS-2025-0356 - bracket the post so backtracking undoes it
-        return guardedPost(() -> {
-            List<FdVar> vs = new ArrayList<>();
-            for (Term e : elems) {
-                FdVar fv = operandVar(e, bindings);
-                if (fv == null) return false;
-                vs.add(fv);
-            }
-            return ctx().store.addConstraint(new Constraint.AllDifferent(vs));
-        });
-        // END_CHANGE: ISS-2025-0356
+        return postAll(elems, bindings, false);
     }
 
-    // ----------------------------------------------------------------- labeling
+    // START_CHANGE: ISS-2025-0651 - all_distinct/1 posts the matching-based propagator
+    /** all_distinct(List): all_different with generalised arc consistency. */
+    public static boolean postAllDistinct(List<Term> elems) {
+        return postAll(elems, java.util.Collections.<String, Term>emptyMap(), true);
+    }
+
+    private static boolean postAll(List<Term> elems, Map<String, Term> bindings, boolean strong) {
+        return guardedPost(() -> {
+            List<FdVar> vs = new ArrayList<>();
+            for (Term e : elems) vs.add(operandVar(e.resolveBindings(bindings)));
+            return ctx().store.addConstraint(strong ? new Constraint.AllDistinct(vs) : new Constraint.AllDifferent(vs));
+        });
+    }
+    // END_CHANGE: ISS-2025-0651
+
+    // START_CHANGE: ISS-2025-0647 - reification: #<==>, #==>, #<==, #\/, #\, #/\ over reifiable
+    // constraints (the six comparisons over linear/non-linear expressions, X in Dom, 0/1 integers
+    // and variables). Each sub-formula becomes a 0/1 variable; the formula posted at top level
+    // must be true.
+    /** Post a boolean CLP(FD) formula (the whole goal term, e.g. {@code B #<==> (X #= 3)}). */
+    public static boolean postBoolean(final Term formula) {
+        return guardedPost(() -> {
+            try {
+                FdVar b = reify(formula);
+                return ctx().store.assign(b, 1) && ctx().store.propagate();
+            } catch (Unsat e) {
+                return false;
+            }
+        });
+    }
+
+    private static FdVar reify(Term t) {
+        t = deref(t);
+        ClpStore st = ctx().store;
+        if (t instanceof Variable) {
+            FdVar fv = varFor((Variable) t);
+            if (!st.narrow(fv, IntervalDomain.interval(0, 1)) || !st.propagate()) throw new Unsat();
+            return fv;
+        }
+        if (t instanceof Number && ((Number) t).isInteger()
+                && (((Number) t).longValue() == 0 || ((Number) t).longValue() == 1)
+                && ((Number) t).bigIntegerValue().bitLength() <= 1) {
+            return st.newVar("_b", IntervalDomain.singleton(((Number) t).longValue()));
+        }
+        if (t instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) t;
+            String f = c.getName();
+            List<Term> a = c.getArguments();
+            if (a.size() == 1 && "#\\".equals(f)) {
+                FdVar x = reify(a.get(0));
+                FdVar z = boolVar();
+                post(new Constraint.Linear(new long[]{1, 1}, new FdVar[]{x, z}, Constraint.Rel.EQ, 1));
+                return z;
+            }
+            if (a.size() == 2) {
+                Constraint.BoolOp op = null;
+                boolean swap = false;
+                switch (f) {
+                    case "#/\\": op = Constraint.BoolOp.AND; break;
+                    case "#\\/": op = Constraint.BoolOp.OR; break;
+                    case "#\\": op = Constraint.BoolOp.XOR; break;
+                    case "#==>": op = Constraint.BoolOp.IMPL; break;
+                    case "#<==": op = Constraint.BoolOp.IMPL; swap = true; break;
+                    case "#<==>": op = Constraint.BoolOp.EQUIV; break;
+                    default: break;
+                }
+                if (op != null) {
+                    FdVar x = reify(a.get(swap ? 1 : 0));
+                    FdVar y = reify(a.get(swap ? 0 : 1));
+                    FdVar z = boolVar();
+                    post(new Constraint.Bool(op, x, y, z));
+                    return z;
+                }
+                Constraint.Rel rel = relOf(f);
+                if (rel != null) {
+                    Constraint cmp = buildCmp(a.get(0), rel, a.get(1));
+                    if (cmp == null) return st.newVar("_b", IntervalDomain.singleton(1));
+                    if (cmp == FALSE_CONSTRAINT) return st.newVar("_b", IntervalDomain.singleton(0));
+                    FdVar z = boolVar();
+                    post(new Constraint.Reified(z, cmp));
+                    return z;
+                }
+                if ("in".equals(f)) {
+                    IntervalDomain dom = parseDomain(a.get(1), "in/2");
+                    FdVar x = operandVar(a.get(0));
+                    FdVar z = boolVar();
+                    post(new Constraint.Reified(z, new Constraint.InDomain(x, dom)));
+                    return z;
+                }
+            }
+        }
+        throw new PrologException(ISOErrorTerms.domainError("clpfd_reifiable_expression", t, "clpfd"));
+    }
+
+    private static FdVar boolVar() {
+        return ctx().store.newVar("_b" + (ctx().aux++), IntervalDomain.interval(0, 1));
+    }
+
+    private static void post(Constraint c) {
+        if (!ctx().store.addConstraint(c)) throw new Unsat();
+    }
+
+    /** The comparison relation named by a CLP(FD) operator, or null. */
+    public static Constraint.Rel relOf(String op) {
+        switch (op) {
+            case "#=": return Constraint.Rel.EQ;
+            case "#\\=": return Constraint.Rel.NE;
+            case "#<": return Constraint.Rel.LT;
+            case "#>": return Constraint.Rel.GT;
+            case "#=<": return Constraint.Rel.LE;
+            case "#>=": return Constraint.Rel.GE;
+            default: return null;
+        }
+    }
+    // END_CHANGE: ISS-2025-0647
+
+    // START_CHANGE: ISS-2025-0650 - element/3, tuples_in/2, global_cardinality/2
+    /** {@code element(I, List, V)}. */
+    public static boolean postElement(final Term index, final List<Term> list, final Term value) {
+        return guardedPost(() -> {
+            FdVar[] xs = new FdVar[list.size()];
+            for (int i = 0; i < xs.length; i++) xs[i] = operandVar(list.get(i));
+            return ctx().store.addConstraint(new Constraint.Element(operandVar(index), xs, operandVar(value)));
+        });
+    }
+
+    /** {@code tuples_in(Tuples, Relation)}: one table constraint per tuple. */
+    public static boolean postTuples(final List<List<Term>> tuples, final long[][] rows) {
+        return guardedPost(() -> {
+            for (List<Term> tuple : tuples) {
+                FdVar[] xs = new FdVar[tuple.size()];
+                for (int i = 0; i < xs.length; i++) xs[i] = operandVar(tuple.get(i));
+                if (!ctx().store.addConstraint(new Constraint.Table(xs, rows))) return false;
+            }
+            return true;
+        });
+    }
+
+    /** {@code global_cardinality(Vs, [K-C, ...])}. */
+    public static boolean postGcc(final List<Term> vars, final long[] keys, final List<Term> counts) {
+        return guardedPost(() -> {
+            FdVar[] xs = new FdVar[vars.size()];
+            for (int i = 0; i < xs.length; i++) xs[i] = operandVar(vars.get(i));
+            FdVar[] cs = new FdVar[counts.size()];
+            for (int i = 0; i < cs.length; i++) cs[i] = operandVar(counts.get(i));
+            return ctx().store.addConstraint(new Constraint.Gcc(xs, keys, cs));
+        });
+    }
+    // END_CHANGE: ISS-2025-0650
+
+    // ----------------------------------------------------------------- labeling support
+
+    // START_CHANGE: ISS-2025-0642 - what the lazy v4 labeling generator needs from the store
+    /** The domain of an FD cell, or null when the cell is not an FD variable. */
+    public static IntervalDomain cellDomain(Variable v) {
+        FdVar fv = ctx().vars.get(v.getName());
+        return fv == null ? null : ctx().store.dom(fv);
+    }
+
+    /** Number of constraints on an FD cell (0 when it is not one). */
+    public static int cellDegree(Variable v) {
+        FdVar fv = ctx().vars.get(v.getName());
+        return fv == null ? 0 : ctx().store.degree(fv);
+    }
+
+    /** Intersect an FD cell's domain with {@code d} and propagate (a labeling branch). */
+    public static boolean narrowCell(Variable v, final IntervalDomain d) {
+        final FdVar fv = varFor(v);
+        return guardedPost(() -> ctx().store.narrow(fv, d) && ctx().store.propagate());
+    }
+    // END_CHANGE: ISS-2025-0642
+
+    // START_CHANGE: ISS-2025-0643 - labeling/2 min(Expr)/max(Expr): branch and bound. Each round
+    // searches (depth-first, inside the store, with the store's own trail) for the first
+    // assignment whose objective beats the incumbent, tightening the bound on the objective's
+    // auxiliary variable; the last improvement is the optimum. Everything the search posts is
+    // rolled back before returning, so the store is exactly as it was.
+    /**
+     * The optimum of {@code expr} over the labelings of {@code varTerms}, or null when there is no
+     * solution at all.
+     */
+    public static BigInteger optimum(List<Term> varTerms, Term expr, boolean minimize,
+                                     Labeler.VarSel varSel, Labeler.ValOrder valOrder) {
+        final ClpStore st = ctx().store;
+        final int dm = st.mark();
+        final int cm = st.constraintMark();
+        try {
+            FdVar obj;
+            try {
+                obj = exprVar(expr);
+                if (!st.propagate()) return null;
+            } catch (Unsat e) {
+                return null;
+            }
+            List<FdVar> fdVars = new ArrayList<>();
+            for (Term t : varTerms) {
+                Term r = deref(t);
+                if (r instanceof Variable) fdVars.add(varFor((Variable) r));
+            }
+            Long best = null;
+            while (true) {
+                int m2 = st.mark();
+                int c2 = st.constraintMark();
+                boolean ok = true;
+                if (best != null) {
+                    ok = minimize ? st.removeAbove(obj, best - 1) : st.removeBelow(obj, best + 1);
+                    ok = ok && st.propagate();
+                }
+                final Long[] found = {null};
+                final FdVar fobj = obj;
+                if (ok) {
+                    try {
+                        Labeler.label(st, fdVars, varSel, valOrder, sol -> {
+                            IntervalDomain od = st.dom(fobj);
+                            if (!od.isSingleton()) {
+                                throw new PrologException(ISOErrorTerms.instantiationError("labeling/2"));
+                            }
+                            found[0] = od.value();
+                            return false;                                 // first solution only
+                        });
+                    } catch (Labeler.TooLargeToLabel e) {
+                        throw new PrologException(ISOErrorTerms.resourceError("clpfd_label_domain_too_large", "labeling/2"));
+                    }
+                }
+                st.rollbackTo(m2, c2);
+                if (found[0] == null) break;
+                best = found[0];
+            }
+            return best == null ? null : BigInteger.valueOf(best);
+        } finally {
+            st.rollbackTo(dm, cm);
+        }
+    }
+    // END_CHANGE: ISS-2025-0643
+
+    // ----------------------------------------------------------------- labeling (registry path)
 
     /** Label the given variables; returns one binding map per solution (bound to the values). */
     public static List<Map<String, Term>> label(List<Term> varTerms, Map<String, Term> bindings) {
@@ -461,8 +883,7 @@ public final class ClpfdV2Bridge {
         List<Map<String, Term>> out = new ArrayList<>();
         try {
             // START_CHANGE: ISS-2025-0357 - snapshot the bindings while the labeled assignment is in
-            // the store, so EVERY variable whose domain is (now) a singleton comes out bound — not
-            // just the ones in the label list (functionally-determined vars, e.g. D #= C*2+1).
+            // the store, so EVERY variable whose domain is (now) a singleton comes out bound.
             Labeler.label(ctx().store, fdVars, varSel, valOrder, sol -> {       // ISS-2025-0298
                 Map<String, Term> b = new HashMap<>(bindings);
                 for (int i = 0; i < engineVars.size(); i++) {
@@ -495,22 +916,29 @@ public final class ClpfdV2Bridge {
         return domainToTerm(d);
     }
 
-    /** {@code N}, {@code Lo..Hi} or {@code A \\/ B} for a domain (ISS-2025-0460: shared with
-     *  {@link #domainTermForCell}). */
-    private static Term domainToTerm(IntervalDomain d) {
+    /** {@code N}, {@code Lo..Hi} or {@code A \\/ B} for a domain; infinite bounds print as
+     *  {@code inf}/{@code sup} (ISS-2025-0460: shared with {@link #domainTermForCell}). */
+    public static Term domainToTerm(IntervalDomain d) {
         if (d.isEmpty()) return new Atom("{}");
         long[][] rs = d.rangeArray();
         Term acc = null;
         for (long[] r : rs) {
-            Term part = (r[0] == r[1])
+            Term part = (r[0] == r[1] && !IntervalDomain.isInfinite(r[0]))
                 ? new Number(r[0])
-                : new CompoundTerm(new Atom(".."), java.util.Arrays.asList(new Number(r[0]), new Number(r[1])));
+                : new CompoundTerm(new Atom(".."), java.util.Arrays.asList(boundTerm(r[0]), boundTerm(r[1])));
             acc = (acc == null) ? part : new CompoundTerm(new Atom("\\/"), java.util.Arrays.asList(acc, part));
         }
         return acc;
     }
 
-    /** fd_size(Var, N): the number of values in the domain (capped at Long.MAX_VALUE). */
+    /** ISS-2025-0644: an infinite bound is the atom inf/sup. */
+    private static Term boundTerm(long v) {
+        if (v == IntervalDomain.INF) return new Atom("inf");
+        if (v == IntervalDomain.SUP) return new Atom("sup");
+        return new Number(v);
+    }
+
+    /** fd_size(Var, N): the number of values in the domain (Long.MAX_VALUE when infinite). */
     public static long domainSize(Term varTerm, Map<String, Term> bindings) {
         Term t = varTerm.resolveBindings(bindings);
         if (t instanceof Number) return 1;
@@ -520,126 +948,228 @@ public final class ClpfdV2Bridge {
 
     // ----------------------------------------------------------------- expression compiler
 
-    /** A linear expression:  sum(coeff_i * var_i) + constant. */
+    /** A linear expression:  sum(coeff_i * var_i) + constant (the constant is exact). */
     private static final class LinExpr {
-        final Map<FdVar, Long> terms = new HashMap<>();
-        long constant = 0;
-        void addVar(FdVar v, long c) { terms.merge(v, c, Long::sum); }
+        final Map<FdVar, Long> terms = new java.util.LinkedHashMap<>();
+        BigInteger constant = BigInteger.ZERO;
+        void addVar(FdVar v, long c) {
+            Long old = terms.get(v);
+            terms.put(v, old == null ? c : exact(() -> Math.addExact(old, c)));
+        }
+        void dropZeros() { terms.values().removeIf(co -> co == 0); }
     }
 
-    /** Compile {@code term} (scaled by {@code sign}) into {@code into}. Non-linear subterms
-     *  (products, abs, min, max, mod) are folded into auxiliary FD variables backed by their
-     *  dedicated propagators; a genuinely unsupported expression raises
-     *  {@code type_error(evaluable, F/N)} instead of silently failing (ISS-2025-0421). */
-    private static boolean compile(Term term, long sign, LinExpr into, Map<String, Term> bindings) {
-        Term t = term.resolveBindings(bindings);
+    private interface LongOp { long run(); }
+
+    /** Run an exact long operation; overflow of a COEFFICIENT is a representation error. */
+    private static long exact(LongOp op) {
+        try {
+            return op.run();
+        } catch (ArithmeticException e) {
+            throw new PrologException(ISOErrorTerms.representationError("max_integer", "clpfd"));
+        }
+    }
+
+    // START_CHANGE: ISS-2025-0644 / ISS-2025-0648 - the expression compiler. Ground sub-terms are
+    // evaluated EXACTLY (BigInteger), so 1000000000000*1000000000000 is 10^24 and not a saturated
+    // long; + - * by constants stay linear; everything else (var*var, abs, min, max, //, div, rem,
+    // mod, ^) is folded into an auxiliary variable backed by its propagator. An unsupported functor
+    // raises type_error(evaluable, F/N) (ISS-2025-0421).
+    private static void compile(Term term, long scale, LinExpr into) {
+        Term t = deref(term);
         if (t instanceof Number) {
-            requireInt((Number) t);                          // ISS-2025-0299: float -> type_error(integer)
-            into.constant += sign * ((Number) t).longValue();
-            return true;
+            requireIntNum((Number) t);
+            into.constant = into.constant.add(BigInteger.valueOf(scale).multiply(((Number) t).bigIntegerValue()));
+            return;
         }
         if (t instanceof Variable) {
-            into.addVar(varFor((Variable) t), sign);
-            return true;
+            into.addVar(varFor((Variable) t), scale);
+            return;
         }
         if (t instanceof CompoundTerm) {
             CompoundTerm c = (CompoundTerm) t;
             String f = c.getName();
             List<Term> a = c.getArguments();
-            if ("+".equals(f) && a.size() == 2) {
-                return compile(a.get(0), sign, into, bindings) && compile(a.get(1), sign, into, bindings);
+            if (isGround(t)) {
+                BigInteger v = evalGround(t);
+                if (v == null) throw new Unsat();                  // undefined, e.g. 1 // 0
+                into.constant = into.constant.add(BigInteger.valueOf(scale).multiply(v));
+                return;
             }
-            if ("-".equals(f) && a.size() == 2) {
-                return compile(a.get(0), sign, into, bindings) && compile(a.get(1), -sign, into, bindings);
+            if (a.size() == 2 && "+".equals(f)) {
+                compile(a.get(0), scale, into);
+                compile(a.get(1), scale, into);
+                return;
             }
-            if ("-".equals(f) && a.size() == 1) {
-                return compile(a.get(0), -sign, into, bindings);
+            if (a.size() == 2 && "-".equals(f)) {
+                compile(a.get(0), scale, into);
+                compile(a.get(1), exact(() -> Math.negateExact(scale)), into);
+                return;
             }
-            if ("*".equals(f) && a.size() == 2) {
-                Long cst = constOf(a.get(0), bindings);
-                Term other = a.get(1);
-                if (cst == null) { cst = constOf(a.get(1), bindings); other = a.get(0); }
-                if (cst != null) return compileScaled(other, sign * cst, into, bindings);
-                // START_CHANGE: ISS-2025-0421 - var*var products: P = A*B via interval propagation
-                // (previously "non-linear -> return false" made X*X #= 16 silently fail though
-                // satisfiable). The X*X case gets the tighter Square propagator.
-                FdVar va = exprVar(a.get(0), bindings);
-                FdVar vb = exprVar(a.get(1), bindings);
+            if (a.size() == 1 && "-".equals(f)) {
+                compile(a.get(0), exact(() -> Math.negateExact(scale)), into);
+                return;
+            }
+            if (a.size() == 1 && "+".equals(f)) {
+                compile(a.get(0), scale, into);
+                return;
+            }
+            if (a.size() == 2 && "*".equals(f)) {
+                Term x = a.get(0), y = a.get(1);
+                if (isGround(y) && !isGround(x)) { Term tmp = x; x = y; y = tmp; }
+                if (isGround(x)) {
+                    BigInteger cst = evalGround(x);
+                    if (cst == null) throw new Unsat();
+                    if (cst.bitLength() > 62) {
+                        throw new PrologException(ISOErrorTerms.representationError("max_integer", "clpfd"));
+                    }
+                    final long cl = cst.longValue();
+                    compile(y, exact(() -> Math.multiplyExact(scale, cl)), into);
+                    return;
+                }
+                FdVar va = exprVar(x);
+                FdVar vb = exprVar(y);
                 FdVar p = auxVar("_p");
-                Constraint prod = (va == vb) ? new Constraint.Square(va, p) : new Constraint.Mul(va, vb, p);
-                if (!ctx().store.addConstraint(prod)) throw new Unsat();
-                into.addVar(p, sign);
-                return true;
-                // END_CHANGE: ISS-2025-0421
+                post(va == vb ? new Constraint.Square(va, p) : new Constraint.Mul(va, vb, p));
+                into.addVar(p, scale);
+                return;
             }
-            // START_CHANGE: ISS-2025-0421 - abs/min/max/mod folded onto their existing propagators
-            if ("abs".equals(f) && a.size() == 1) {
-                FdVar vx = exprVar(a.get(0), bindings);
-                FdVar y = ctx().store.newVar("_a" + (ctx().aux++),
-                    IntervalDomain.interval(0, Long.MAX_VALUE / 2));
-                if (!ctx().store.addConstraint(new Constraint.Abs(vx, y))) throw new Unsat();
-                into.addVar(y, sign);
-                return true;
+            if (a.size() == 1 && "abs".equals(f)) {
+                FdVar vx = exprVar(a.get(0));
+                FdVar y = ctx().store.newVar("_a" + (ctx().aux++), IntervalDomain.interval(0, IntervalDomain.SUP));
+                post(new Constraint.Abs(vx, y));
+                into.addVar(y, scale);
+                return;
             }
-            if (("min".equals(f) || "max".equals(f)) && a.size() == 2) {
-                FdVar vx = exprVar(a.get(0), bindings);
-                FdVar vy = exprVar(a.get(1), bindings);
+            if (a.size() == 2 && ("min".equals(f) || "max".equals(f))) {
+                FdVar vx = exprVar(a.get(0));
+                FdVar vy = exprVar(a.get(1));
                 FdVar z = auxVar("_m");
-                Constraint mm = "min".equals(f) ? new Constraint.Min(vx, vy, z)
-                                                : new Constraint.Max(vx, vy, z);
-                if (!ctx().store.addConstraint(mm)) throw new Unsat();
-                into.addVar(z, sign);
-                return true;
+                post("min".equals(f) ? new Constraint.Min(vx, vy, z) : new Constraint.Max(vx, vy, z));
+                into.addVar(z, scale);
+                return;
             }
-            if ("mod".equals(f) && a.size() == 2) {
-                Long m = constOf(a.get(1), bindings);
-                if (m != null && m > 0) {                 // same support as tryMod, but composable
-                    FdVar vx = exprVar(a.get(0), bindings);
-                    FdVar z = ctx().store.newVar("_r" + (ctx().aux++),
-                        IntervalDomain.interval(0, m - 1));
-                    if (!ctx().store.addConstraint(new Constraint.Mod(vx, m, z))) throw new Unsat();
-                    into.addVar(z, sign);
-                    return true;
+            Constraint.Fn fn = null;
+            if (a.size() == 2) {
+                switch (f) {
+                    case "//": fn = Constraint.Fn.TDIV; break;
+                    case "div": fn = Constraint.Fn.FDIV; break;
+                    case "rem": fn = Constraint.Fn.REM; break;
+                    case "mod": fn = Constraint.Fn.MOD; break;
+                    case "^": fn = Constraint.Fn.POW; break;
+                    default: break;
                 }
             }
-            // END_CHANGE: ISS-2025-0421
+            if (fn != null) {
+                FdVar vx = exprVar(a.get(0));
+                if (fn == Constraint.Fn.MOD && isGround(a.get(1))) {
+                    BigInteger m = evalGround(a.get(1));
+                    if (m == null) throw new Unsat();
+                    if (m.signum() > 0 && m.bitLength() <= 62) {       // the stronger fixed-modulus form
+                        long ml = m.longValue();
+                        FdVar z = ctx().store.newVar("_r" + (ctx().aux++), IntervalDomain.interval(0, ml - 1));
+                        post(new Constraint.Mod(vx, ml, z));
+                        into.addVar(z, scale);
+                        return;
+                    }
+                }
+                FdVar vy = exprVar(a.get(1));
+                FdVar z = auxVar("_f");
+                post(new Constraint.ArithFn(fn, vx, vy, z));
+                into.addVar(z, scale);
+                return;
+            }
         }
-        // START_CHANGE: ISS-2025-0421 - unsupported arithmetic must raise a clear error: a
-        // constraint system answering "false" to a satisfiable query is unsound.
         throw unsupportedExpr(t);
-        // END_CHANGE: ISS-2025-0421
     }
+    // END_CHANGE: ISS-2025-0644 / ISS-2025-0648
+
+    /** True when {@code t} contains no unbound variable. */
+    public static boolean isGround(Term t) {
+        t = deref(t);
+        if (t instanceof Variable) return false;
+        if (t instanceof CompoundTerm) {
+            for (Term a : ((CompoundTerm) t).getArguments()) if (!isGround(a)) return false;
+        }
+        return true;
+    }
+
+    // START_CHANGE: ISS-2025-0644 - exact evaluation of a ground CLP(FD) expression
+    /**
+     * Evaluate a ground CLP(FD) arithmetic expression exactly. Returns null when the value is
+     * undefined (division by zero); raises type_error(integer, F) for a float and
+     * type_error(evaluable, F/N) for an unsupported functor.
+     */
+    public static BigInteger evalGround(Term term) {
+        Term t = deref(term);
+        if (t instanceof Number) {
+            requireIntNum((Number) t);
+            return ((Number) t).bigIntegerValue();
+        }
+        if (t instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) t;
+            String f = c.getName();
+            List<Term> a = c.getArguments();
+            if (a.size() == 1) {
+                if ("-".equals(f) || "+".equals(f) || "abs".equals(f)) {
+                    BigInteger x = evalGround(a.get(0));
+                    if (x == null) return null;
+                    return "-".equals(f) ? x.negate() : ("abs".equals(f) ? x.abs() : x);
+                }
+            } else if (a.size() == 2) {
+                Constraint.Fn fn = null;
+                switch (f) {
+                    case "+": case "-": case "*": case "min": case "max": break;
+                    case "//": fn = Constraint.Fn.TDIV; break;
+                    case "div": fn = Constraint.Fn.FDIV; break;
+                    case "rem": fn = Constraint.Fn.REM; break;
+                    case "mod": fn = Constraint.Fn.MOD; break;
+                    case "^": fn = Constraint.Fn.POW; break;
+                    default: throw unsupportedExpr(t);
+                }
+                BigInteger x = evalGround(a.get(0));
+                BigInteger y = evalGround(a.get(1));
+                if (x == null || y == null) return null;
+                if (fn != null) return Constraint.ArithFn.eval(fn, x, y);
+                switch (f) {
+                    case "+": return x.add(y);
+                    case "-": return x.subtract(y);
+                    case "*": return x.multiply(y);
+                    case "min": return x.min(y);
+                    default: return x.max(y);
+                }
+            }
+        }
+        throw unsupportedExpr(t);
+    }
+    // END_CHANGE: ISS-2025-0644
 
     // START_CHANGE: ISS-2025-0421 - helpers for folding non-linear subterms into auxiliary FdVars
 
     /** Marker: an auxiliary constraint post wiped a domain — the enclosing comparison must FAIL
-     *  (the constraint is unsatisfiable), not error; caught in {@link #postCmp}. */
+     *  (the constraint is unsatisfiable), not error; caught by the posting entry points. */
     private static final class Unsat extends RuntimeException {
         Unsat() { super(null, null, false, false); }
     }
 
-    /** Fresh auxiliary variable on a domain wide enough to hold any product/difference of two
-     *  default-domain variables (the propagators saturate instead of overflowing). */
+    /** Fresh auxiliary variable (inf..sup since ISS-2025-0644). */
     private static FdVar auxVar(String prefix) {
-        return ctx().store.newVar(prefix + (ctx().aux++),
-            IntervalDomain.interval(Long.MIN_VALUE / 2, Long.MAX_VALUE / 2));
+        return ctx().store.newVar(prefix + (ctx().aux++), IntervalDomain.ALL);
     }
 
-    /** Compile an arbitrary supported expression down to a single FdVar: variables and integer
-     *  constants map directly; anything else becomes an auxiliary variable D with D = expr posted
-     *  as a Linear EQ (which may itself recurse through {@link #compile} for nested operators). */
-    private static FdVar exprVar(Term t, Map<String, Term> bindings) {
-        Term r = t.resolveBindings(bindings);
+    /** Compile an arbitrary supported expression down to a single FdVar. */
+    private static FdVar exprVar(Term term) {
+        Term r = deref(term);
         if (r instanceof Variable) return varFor((Variable) r);
-        if (r instanceof Number) {
-            requireInt((Number) r);
-            long v = ((Number) r).longValue();
-            return ctx().store.newVar("_c" + v, IntervalDomain.singleton(v));
+        if (r instanceof Number || isGround(r)) {
+            BigInteger v = evalGround(r);
+            if (v == null) throw new Unsat();
+            return constVar(v);
         }
         LinExpr le = new LinExpr();
-        if (!compile(r, 1, le, bindings)) throw new Unsat();      // defensive: compile errors instead
-        le.terms.values().removeIf(co -> co == 0);
-        if (le.constant == 0 && le.terms.size() == 1) {
+        compile(r, 1, le);
+        le.dropZeros();
+        if (le.constant.signum() == 0 && le.terms.size() == 1) {
             Map.Entry<FdVar, Long> e = le.terms.entrySet().iterator().next();
             if (e.getValue() == 1) return e.getKey();             // the expression IS a variable
         }
@@ -649,10 +1179,16 @@ public final class ClpfdV2Bridge {
         for (Map.Entry<FdVar, Long> e : le.terms.entrySet()) { coeffs[i] = e.getValue(); vars[i] = e.getKey(); i++; }
         FdVar d = auxVar("_e");
         coeffs[i] = -1; vars[i] = d;                              // sum(ci*xi) - D = -k0  <=>  D = expr
-        if (!ctx().store.addConstraint(new Constraint.Linear(coeffs, vars, Constraint.Rel.EQ, -le.constant))) {
-            throw new Unsat();
-        }
+        post(new Constraint.Linear(coeffs, vars, Constraint.Rel.EQ, le.constant.negate()));
         return d;
+    }
+
+    private static FdVar constVar(BigInteger v) {
+        if (v.bitLength() > 62) {
+            throw new PrologException(ISOErrorTerms.representationError(
+                v.signum() > 0 ? "max_integer" : "min_integer", "clpfd"));
+        }
+        return ctx().store.newVar("_c" + v, IntervalDomain.singleton(v.longValue()));
     }
 
     /** type_error(evaluable, F/N) for an unsupported functor (SWI parity); type_error(integer, T)
@@ -672,40 +1208,19 @@ public final class ClpfdV2Bridge {
     }
     // END_CHANGE: ISS-2025-0421
 
-    private static boolean compileScaled(Term t, long scale, LinExpr into, Map<String, Term> bindings) {
-        Term r = t.resolveBindings(bindings);
-        if (r instanceof Number) { into.constant += scale * ((Number) r).longValue(); return true; }
-        if (r instanceof Variable) { into.addVar(varFor((Variable) r), scale); return true; }
-        return compile(r, scale, into, bindings); // nested expression
-    }
-
-    private static Long constOf(Term t, Map<String, Term> bindings) {
-        Term r = t.resolveBindings(bindings);
-        if (!(r instanceof Number)) return null;
-        // START_CHANGE: ISS-2025-0421 - 2.5*X must raise type_error(integer, 2.5), not truncate to 2*X
-        requireInt((Number) r);
-        // END_CHANGE: ISS-2025-0421
-        return ((Number) r).longValue();
-    }
-
-    /** Map a simple operand (variable or constant) to an FdVar; constants become singleton vars. */
-    private static FdVar operandVar(Term t, Map<String, Term> bindings) {
-        Term r = t.resolveBindings(bindings);
+    /** Map a simple operand (variable or integer) to an FdVar; constants become singleton vars. */
+    private static FdVar operandVar(Term t) {
+        Term r = deref(t);
         if (r instanceof Variable) return varFor((Variable) r);
         if (r instanceof Number) {
-            requireInt((Number) r);                          // ISS-2025-0299
-            long v = ((Number) r).longValue();
-            return ctx().store.newVar("_c" + v, IntervalDomain.singleton(v));
+            requireIntNum((Number) r);                           // ISS-2025-0299
+            return constVar(((Number) r).bigIntegerValue());
         }
-        return null;
+        throw new PrologException(ISOErrorTerms.typeError("integer", r, "clpfd"));
     }
 
-    /** CLP(FD) is over integers within long range: reject floats (type_error) and out-of-range
-     *  big integers (representation_error) instead of silently truncating. */
-    private static void requireInt(Number n) {
+    /** CLP(FD) is over integers: reject floats (type_error). */
+    private static void requireIntNum(Number n) {
         if (!n.isInteger()) throw new PrologException(ISOErrorTerms.typeError("integer", n, "clpfd"));
-        if (n.bigIntegerValue().bitLength() > 63) {              // ISS-2025-0299: would truncate
-            throw new PrologException(ISOErrorTerms.representationError("max_integer", "clpfd"));
-        }
     }
 }

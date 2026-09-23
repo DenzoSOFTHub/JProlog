@@ -38,7 +38,8 @@ public final class Labeler {
         /** First unassigned variable in list order. */          LEFTMOST,
         /** First-fail: smallest domain first. */                FF,
         /** Smallest lower bound first (SWI's bare {@code min}). */ MIN,
-        /** Largest upper bound first (SWI's bare {@code max}). */  MAX
+        /** Largest upper bound first (SWI's bare {@code max}). */  MAX,
+        /** First-fail, ties broken by most constraints (ISS-2025-0642). */ FFC
     }
 
     /** Value-enumeration order within a domain. */
@@ -84,6 +85,13 @@ public final class Labeler {
             boolean better;
             switch (varSel) {
                 case FF:  better = d.size() < s.dom(chosen).size(); break;
+                // START_CHANGE: ISS-2025-0642
+                case FFC: {
+                    long a = d.size(), b = s.dom(chosen).size();
+                    better = a < b || (a == b && s.degree(v) > s.degree(chosen));
+                    break;
+                }
+                // END_CHANGE: ISS-2025-0642
                 case MIN: better = d.min() < s.dom(chosen).min(); break;
                 case MAX: better = d.max() > s.dom(chosen).max(); break;
                 default:  better = false; break;      // LEFTMOST keeps the first one found

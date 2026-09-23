@@ -122,8 +122,10 @@ public class EngineV41RetirementTest {
     @Test
     public void testISS0492_OpIsUndoneOnBacktracking() {
         String uniq = "u41op_" + System.nanoTime();
+        // ISS-2025-0612 (P4.18, decision §8): op/3 is permanent now (ISO/SWI); the definition
+        // made in the failed branch stays. (Method name kept from 4.1.0.)
         prolog.solve("(op(700, xfx, " + uniq + "), fail ; true).");
-        assertEquals(0, prolog.solve("current_op(_, _, " + uniq + ").").size());
+        assertEquals(1, prolog.solve("current_op(_, _, " + uniq + ").").size());
         // and an op/3 that is NOT backtracked over stays defined
         prolog.solve("op(700, xfx, " + uniq + "2).");
         assertEquals(1, prolog.solve("current_op(P, xfx, " + uniq + "2), P == 700.").size());
@@ -177,8 +179,7 @@ public class EngineV41RetirementTest {
         // the library definition first, so the decision for append/3 is memoised
         ok("append([1], [2], L), L == [1,2]");
         // now a module with its OWN append/3 — the module stamp changes and the memo must miss
-        prolog.consult(":- module(mm41, [go/1]).\nappend(mine).\ngo(X) :- append(X).\n"
-                     + ":- module(user, []).\n");
+        prolog.consult(":- module(mm41, [go/1]).\nappend(mine).\ngo(X) :- append(X).\n");
         ok("mm41:go(X), X == mine");
         // ... and the user context still sees the library one
         ok("append([1], [2], L2), L2 == [1,2]");
@@ -285,7 +286,9 @@ public class EngineV41RetirementTest {
         ok("thread_self(S), S == main");
         ok("thread_self(S), atom(S)");
         // and the answer is still a usable target for the thread predicates
-        ok("thread_self(S), thread_send_message(S, m41), thread_get_message(M), M == m41");
+        // ISS-2025-0633: every non-worker thread is `main` and shares ONE queue across the JVM, so
+        // the receive is selective — a message another test left there cannot be taken instead.
+        ok("thread_self(S), thread_send_message(S, m41), thread_get_message(m41)");
     }
 
     /** An aliased worker answers its alias; an anonymous one answers its integer id. */

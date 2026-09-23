@@ -1,8 +1,6 @@
 package it.denzosoft.jprolog.test;
 
 import it.denzosoft.jprolog.core.engine.Prolog;
-import it.denzosoft.jprolog.core.module.ModuleManager;
-import it.denzosoft.jprolog.core.operator.OperatorTable;
 import it.denzosoft.jprolog.core.terms.Term;
 import org.junit.Before;
 import org.junit.Test;
@@ -26,14 +24,15 @@ public class ISOComplianceTest {
     
     // Module System Tests
     
+    // START_CHANGE: ISS-2025-0660 - the tautologies of this class (assertTrue(true),
+    // "empty || !empty") are replaced by assertions on the actual answers.
     @Test
     public void testModuleDeclaration() {
-        // Test module/2 directive
-        prolog.asserta(":- module(test_module, [foo/1, bar/2]).");
-        
-        // Module should be created and current
-        // In full implementation, check module manager state
-        assertTrue(true); // Placeholder for module system test
+        // module/2 in a consulted text creates the module, exports its list and imports it
+        prolog.consult(":- module(test_module, [foo/1, bar/2]).\nfoo(1).\nbar(a, b).\n");
+        assertEquals(1, prolog.solve("current_module(test_module).").size());
+        assertEquals(1, prolog.solve("foo(X), X == 1.").size());
+        assertEquals(1, prolog.solve("test_module:bar(A, B), A == a, B == b.").size());
     }
     
     @Test
@@ -141,9 +140,10 @@ public class ISOComplianceTest {
         // Define operator
         prolog.solve("op(800, xfx, dislikes).");
         
-        // Remove operator
-        List<Map<String, Term>> solutions = prolog.solve("op(0, xfx, dislikes).");
-        assertTrue(solutions.isEmpty() == false); // Should succeed
+        assertEquals(1, prolog.solve("current_op(800, xfx, dislikes).").size());
+        // Remove operator: op/3 with priority 0 succeeds and the definition is gone
+        assertEquals(1, prolog.solve("op(0, xfx, dislikes).").size());
+        assertTrue(prolog.solve("current_op(_, xfx, dislikes).").isEmpty());
     }
     
     @Test
@@ -159,27 +159,30 @@ public class ISOComplianceTest {
     
     @Test
     public void testReadTerm() {
-        // Test read_term/2 with options
-        // This would require actual input stream in full implementation
-        // For now, test the predicate exists
-        // Test that read_term built-in exists by attempting to call it
-        // This may fail but shouldn't cause compilation errors
-        assertTrue(true); // Placeholder - read_term is implemented
+        // read_term/3 with variable_names/1 from a string stream
+        List<Map<String, Term>> solutions = prolog.solve(
+            "open_string(\"foo(X, Y, X). \", S), read_term(S, T, [variable_names(V)]), close(S), "
+            + "T = foo(A, B, C), A == C, A \\== B, V == ['X' = A, 'Y' = B].");
+        assertEquals(1, solutions.size());
     }
     
     @Test
     public void testWriteTerm() {
         // Test write_term/2 with options
-        List<Map<String, Term>> solutions = prolog.solve("write_term(hello, [quoted(true)]).");
-        // Should succeed (output would go to current output)
-        assertTrue(solutions.isEmpty() == false || solutions.isEmpty());
+        List<Map<String, Term>> solutions = prolog.solve(
+            "with_output_to(atom(A), write_term('hello world', [quoted(true)])), A == '\\'hello world\\''.");
+        assertEquals(1, solutions.size());
+        solutions = prolog.solve(
+            "with_output_to(atom(A), write_term('hello world', [quoted(false)])), A == 'hello world'.");
+        assertEquals(1, solutions.size());
     }
     
     @Test
     public void testFormat() {
         // Test format/2
-        List<Map<String, Term>> solutions = prolog.solve("format('Hello ~w!', [world]).");
-        assertTrue(solutions.isEmpty() == false || solutions.isEmpty());
+        List<Map<String, Term>> solutions = prolog.solve(
+            "format(atom(A), 'Hello ~w!', [world]), A == 'Hello world!'.");
+        assertEquals(1, solutions.size());
     }
     
     // Character Type Tests
@@ -285,71 +288,49 @@ public class ISOComplianceTest {
         assertEquals("interpretation", solutions.get(0).get("X").toString());
         
         // Test character operations
-        solutions = prolog.solve("char_type('c', Type).");
-        assertFalse(solutions.isEmpty());
-        
+        assertEquals(1, prolog.solve("char_type(c, alpha), char_type(c, lower(U)), U == 'C'.").size());
+
         // Test format output
-        solutions = prolog.solve("format('Test: ~w~n', [success]).");
-        assertTrue(solutions.isEmpty() == false || solutions.isEmpty());
+        assertEquals(1, prolog.solve("format(atom(A), 'Test: ~w~n', [success]), A == 'Test: success\\n'.").size());
     }
     
     @Test
     public void testISOComplianceLevel() {
-        // Verify that we have all the major ISO predicates
+        // Every listed ISO/core predicate indicator is defined (built-in, native or library).
+        // The old probe called each NAME at arity 0 with unknown=fail and counted "no exception"
+        // as implemented, which a missing predicate satisfies too.
         String[] isoPredicates = {
-            "=", "\\\\=", "==", "\\\\==", "@<", "@=<", "@>", "@>=",
-            "is", "=:=", "=\\\\=", "<", "=<", ">", ">=",
-            "functor", "arg", "=..", "copy_term",
-            "var", "nonvar", "atom", "number", "integer", "float",
-            "atomic", "compound", "callable", "ground", "is_list", "simple",
-            "findall", "bagof", "setof", "call", "once", "ignore", "forall",
-            "asserta", "assertz", "retract", "retractall", "abolish", "current_predicate",
-            "append", "length", "member", "reverse", "sort", "msort",
-            "atom_length", "atom_concat", "sub_atom", "atom_chars", "atom_codes",
-            "string_length", "string_concat", "sub_string", "string_chars", "atom_string",
-            "write", "writeln", "nl", "read", "open", "close",
-            "current_input", "current_output", "set_input", "set_output",
-            "get_char", "put_char", "get_code", "put_code",
-            "catch", "throw", "halt",
-            "current_prolog_flag", "set_prolog_flag",
-            // New ISO predicates
-            "op", "current_op", "phrase", "read_term", "write_term", "format",
-            "char_type", "char_code", "statistics"
+            "=/2", "\\=/2", "==/2", "\\==/2", "@</2", "@=</2", "@>/2", "@>=/2", "compare/3",
+            "is/2", "=:=/2", "=\\=/2", "</2", "=</2", ">/2", ">=/2",
+            "functor/3", "arg/3", "=../2", "copy_term/2", "term_variables/2",
+            "var/1", "nonvar/1", "atom/1", "number/1", "integer/1", "float/1",
+            "atomic/1", "compound/1", "callable/1", "ground/1", "is_list/1",
+            "findall/3", "bagof/3", "setof/3", "call/1", "call/3", "once/1", "ignore/1", "forall/2",
+            "asserta/1", "assertz/1", "retract/1", "retractall/1", "abolish/1", "current_predicate/1",
+            "clause/2", "append/3", "length/2", "member/2", "reverse/2", "sort/2", "msort/2", "keysort/2",
+            "atom_length/2", "atom_concat/3", "sub_atom/5", "atom_chars/2", "atom_codes/2",
+            "char_code/2", "number_codes/2", "number_chars/2",
+            "string_length/2", "string_concat/3", "sub_string/5", "string_chars/2", "atom_string/2",
+            "write/1", "writeln/1", "writeq/1", "print/1", "write_canonical/1", "nl/0", "nl/1",
+            "read/1", "read_term/2", "read_term/3", "open/3", "open/4", "close/1", "close/2",
+            "current_input/1", "current_output/1", "set_input/1", "set_output/1", "flush_output/0",
+            "get_char/1", "put_char/1", "get_code/1", "put_code/1", "peek_char/1", "get_byte/2",
+            "put_byte/2", "stream_property/2", "set_stream_position/2", "at_end_of_stream/0",
+            "catch/3", "throw/1", "halt/0", "halt/1",
+            "current_prolog_flag/2", "set_prolog_flag/2", "op/3", "current_op/3", "char_conversion/2",
+            "phrase/2", "phrase/3", "write_term/2", "write_term/3", "format/1", "format/2", "format/3",
+            "char_type/2", "code_type/2", "statistics/2", "no_such_predicate_p7/0"
         };
-        
-        int implementedCount = 0;
-        // START_CHANGE: ISS-2025-0347 - this probe calls every predicate at arity 0, so the
-        // arity-0 indicator is an unknown procedure for most entries; the methodology relies on
-        // unknown procedures failing silently, which is exactly what the ISO 'unknown=fail' flag
-        // provides (the engine now raises existence_error under the default unknown=error).
-        prolog.solve("set_prolog_flag(unknown, fail).");
-        try {
-            for (String predicate : isoPredicates) {
-                try {
-                    // Test if predicate can be called without errors
-                    prolog.solve(predicate + ".");
-                    implementedCount++; // If no exception, predicate exists
-                } catch (Exception e) {
-                    // Predicate may not be implemented or have syntax issues
-                    // This is expected for some predicates
-                }
+        List<String> missing = new java.util.ArrayList<>();
+        for (String pi : isoPredicates) {
+            int slash = pi.lastIndexOf('/');
+            String goal = "functor(H, '" + pi.substring(0, slash).replace("\\", "\\\\").replace("'", "\\'") + "', "
+                + pi.substring(slash + 1) + "), predicate_property(H, defined).";
+            if (prolog.solve(goal).isEmpty()) {
+                missing.add(pi);
             }
-        } finally {
-            prolog.solve("set_prolog_flag(unknown, error).");
         }
-        // END_CHANGE: ISS-2025-0347
-        
-        // START_CHANGE: ISS-2025-0085 - Adjusted threshold: solve(pred + ".") calls
-        // predicates with 0 args, so predicates requiring args may throw (false negative).
-        // 80% is the realistic target for this test methodology.
-        double complianceLevel = (double) implementedCount / isoPredicates.length;
-        assertTrue("ISO compliance level should be at least 80%, got: " +
-                   (complianceLevel * 100) + "%",
-                   complianceLevel >= 0.80);
-        // END_CHANGE: ISS-2025-0085
-        
-        System.out.println("ISO Prolog compliance level: " + 
-                          String.format("%.1f%%", complianceLevel * 100) +
-                          " (" + implementedCount + "/" + isoPredicates.length + " predicates)");
+        assertEquals("exactly the sentinel is undefined", java.util.Collections.singletonList("no_such_predicate_p7/0"), missing);
     }
+    // END_CHANGE: ISS-2025-0660
 }

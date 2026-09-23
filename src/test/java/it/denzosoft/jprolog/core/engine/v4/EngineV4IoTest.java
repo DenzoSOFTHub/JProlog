@@ -100,7 +100,7 @@ public class EngineV4IoTest {
     public void testISS0496_WriteFamilyQuoting() {
         assertEquals("A b", out("write('A b')"));
         assertEquals("'A b'", out("writeq('A b')"));
-        assertEquals("A b", out("print('A b')"));
+        assertEquals("'A b'", out("print('A b')"));    // ISS-2025-0600: print/1 = portray + writeq (SWI)
         assertEquals("'A b'", out("write_canonical('A b')"));
         assertEquals("hello\n", out("writeln(hello)"));
         assertEquals("1+2*3", out("write(1+2*3)"));
@@ -139,8 +139,11 @@ public class EngineV4IoTest {
     public void testISS0496_TabAndPutCharFailureModes() {
         assertEquals("   ", out("tab(3)"));
         assertEquals("", out("tab(0)"));
-        assertTrue(prolog.solve("tab(-1).").isEmpty());
-        assertTrue(prolog.solve("tab(a).").isEmpty());
+        // ISS-2025-0604 (P4.11): tab(-1) succeeds printing nothing (SWI); tab(a) is
+        // type_error(evaluable, a/0) because the count is evaluated
+        assertEquals("", out("tab(-1)"));
+        assertEquals("error(type_error(evaluable,a/0),'tab/1')", text(errorOf("tab(a)")));
+        assertEquals("  ", out("tab(1+1)"));
         assertEquals("a", out("put_char(a)"));
         // START_CHANGE: ISS-2025-0505 - 4.3 wave D: put_char/1 and put_code/1 raise the ISO
         // errors of 8.12.3.3 instead of failing. tab/1,2 keeps its silent failure (non-ISO).
@@ -165,7 +168,7 @@ public class EngineV4IoTest {
         java.util.TreeMap<String, Term> t = new java.util.TreeMap<String, Term>(sols.get(0));
         boolean first = true;
         for (Map.Entry<String, Term> e : t.entrySet()) {
-            if (e.getKey().startsWith("_")) continue;
+            // ISS-2025-0515: no `_`-skip workaround — an anonymous variable is no longer an answer key
             if (!first) sb.append(", ");
             first = false;
             sb.append(e.getKey()).append('=').append(text(e.getValue()));
@@ -199,7 +202,8 @@ public class EngineV4IoTest {
         assertEquals("31415.9", out("format(\"~g\", [31415.9])"));
         assertEquals("1010", out("format(\"~2r\", [10])"));
         assertEquals("FF", out("format(\"~16R\", [255])"));
-        assertEquals("ff", out("format(\"~r\", [255])"));
+        // ISS-2025-0595 (P4.6): ~r without a radix is an error (SWI), it printed hex
+        assertEquals("error(format('~r requires a radix argument'),'format/2')", text(errorOf("format(\"~r\", [255])")));
         assertEquals("A", out("format(\"~c\", [65])"));
         assertEquals("AAA", out("format(\"~3c\", [65])"));
         assertEquals("xxx", out("format(\"~*c\", [3,0'x])"));
@@ -246,7 +250,8 @@ public class EngineV4IoTest {
             text(errorOf("format(\"~w ~w\", [1])")));
         assertEquals("error(format('unknown directive: ~z'),'format/2')",
             text(errorOf("format(\"~z\", [1])")));
-        assertEquals("error(type_error(integer,foo),'format/2')",
+        // ISS-2025-0595 (P4.6): an argument fault is error(format(Message), _) like the others
+        assertEquals("error(format('~d expects an integer argument, found foo'),'format/2')",
             text(errorOf("format(\"~d\", [foo])")));
     }
 

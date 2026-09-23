@@ -18,45 +18,71 @@ import java.util.Map;
 public class CompoundTerm extends Term {
 
     private Atom functor;
-    private List<Term> arguments;
-    // START_CHANGE: ISS-2025-0091 - Cache unmodifiable view to avoid wrapping on every call
+    // START_CHANGE: ISS-2025-0543 - wave P2.4: the arguments live in a plain array. The old
+    // representation was an ArrayList COPIED from the caller's list (so building one term cost the
+    // caller's list, its array, this ArrayList and ITS array) plus a lazily allocated
+    // Collections.unmodifiableList wrapper on the first getArguments(). The engine's hot paths
+    // (clause instantiation, head unification, the unifier) now build a term with ONE array via
+    // {@link #CompoundTerm(Atom, Term[])} and read it with {@link #arity()}/{@link #arg(int)},
+    // which allocate nothing. getArguments() still returns an unmodifiable RandomAccess view —
+    // backed by the array, created once per term, and reflecting setarg/3 exactly as before.
+    private Term[] args;
     private List<Term> unmodifiableArguments;
-    // END_CHANGE: ISS-2025-0091
 
     public CompoundTerm(Atom functor, List<Term> arguments) {
         this.functor = functor;
-        this.arguments = new ArrayList<>(arguments); // Make a copy
+        this.args = arguments.toArray(new Term[arguments.size()]); // Make a copy
+    }
+
+    /**
+     * Build a compound that ADOPTS {@code args}: no copy is made, so the caller must never write
+     * to the array afterwards. This is the allocation-light constructor the engine uses.
+     */
+    public CompoundTerm(Atom functor, Term[] args) {
+        this.functor = functor;
+        this.args = args;
+    }
+
+    /** Number of arguments; allocation-free. */
+    public final int arity() { return args.length; }
+
+    /** The {@code i}-th argument, 0-based; allocation-free. */
+    public final Term arg(int i) { return args[i]; }
+
+    /** An unmodifiable list view over the argument array (the array itself is never exposed). */
+    private static final class ArgView extends java.util.AbstractList<Term> implements java.util.RandomAccess {
+        private final CompoundTerm owner;
+        ArgView(CompoundTerm owner) { this.owner = owner; }
+        @Override public Term get(int index) { return owner.args[index]; }
+        @Override public int size() { return owner.args.length; }
+        @Override public Object[] toArray() { return owner.args.clone(); }
     }
 
     public Atom getFunctor() {
         return functor;
     }
 
-    // START_CHANGE: ISS-2025-0091 - Cache unmodifiable view, create once on first access
     @Override
     public List<Term> getArguments() {
-        if (unmodifiableArguments == null) {
-            unmodifiableArguments = Collections.unmodifiableList(arguments);
-        }
-        return unmodifiableArguments;
+        List<Term> v = unmodifiableArguments;
+        if (v == null) { v = new ArgView(this); unmodifiableArguments = v; }
+        return v;
     }
+    // END_CHANGE: ISS-2025-0543
 
     // START_CHANGE: R1 - setarg/3 support: destructive arg replacement
     /** Replace argument at 1-based index. Used by the {@code setarg/3} native, which records the
      *  undo action on the running machine's trail with {@code Machine.pushUndo}
      *  (ISS-2025-0492; ISS-2025-0500 made the trail's doorway machine-internal). */
     public Term setArgument(int index1based, Term newArg) {
-        if (index1based < 1 || index1based > arguments.size()) {
-            throw new IndexOutOfBoundsException("setarg: index " + index1based + " out of range 1.." + arguments.size());
+        if (index1based < 1 || index1based > args.length) {
+            throw new IndexOutOfBoundsException("setarg: index " + index1based + " out of range 1.." + args.length);
         }
-        Term old = arguments.get(index1based - 1);
-        arguments.set(index1based - 1, newArg);
-        // Invalidate cached unmodifiable view
-        unmodifiableArguments = null;
+        Term old = args[index1based - 1];
+        args[index1based - 1] = newArg;             // the list view reads through (ISS-2025-0543)
         return old;
     }
     // END_CHANGE: R1
-    // END_CHANGE: ISS-2025-0091
 
     @Override
     public String getName() {
@@ -75,7 +101,7 @@ public class CompoundTerm extends Term {
         } else if (term instanceof CompoundTerm) {
             CompoundTerm otherCompound = (CompoundTerm) term;
             if (!this.functor.getName().equals(otherCompound.functor.getName()) ||
-                this.arguments.size() != otherCompound.arguments.size()) {
+                this.args.length != otherCompound.args.length) {
                 return false;
             }
 
@@ -103,15 +129,15 @@ public class CompoundTerm extends Term {
     private static boolean unifySpine(CompoundTerm a, CompoundTerm b, Map<String, Term> substitution) {
         while (true) {
             if (!a.functor.getName().equals(b.functor.getName())
-                    || a.arguments.size() != b.arguments.size()) {
+                    || a.args.length != b.args.length) {
                 return false;
             }
-            int n = a.arguments.size();
+            int n = a.args.length;
             for (int i = 0; i < n - 1; i++) {
-                if (!a.arguments.get(i).unify(b.arguments.get(i), substitution)) return false;
+                if (!a.args[i].unify(b.args[i], substitution)) return false;
             }
             if (n == 0) return true;
-            Term la = a.arguments.get(n - 1), lb = b.arguments.get(n - 1);
+            Term la = a.args[n - 1], lb = b.args[n - 1];
             if (la.getClass() == CompoundTerm.class && lb.getClass() == CompoundTerm.class) {
                 a = (CompoundTerm) la; b = (CompoundTerm) lb;      // iterate down the spine
                 continue;
@@ -124,17 +150,35 @@ public class CompoundTerm extends Term {
     @Override
     public boolean isGround() {
         // START_CHANGE: ISS-2025-0428 - ENG-09: iterative on the last argument
+        // START_CHANGE: ISS-2025-0524 - wave P1.11: and on every other argument too (an explicit
+        // work list instead of recursion), so a clause head nested 100 000 levels deep in its
+        // first argument no longer overflows the Java stack when the Rule is built.
+        java.util.ArrayList<Term> work = null;
         Term t = this;
-        while (t instanceof CompoundTerm) {
-            CompoundTerm c = (CompoundTerm) t;
-            int n = c.arguments.size();
-            for (int i = 0; i < n - 1; i++) {
-                if (!c.arguments.get(i).isGround()) return false;
+        while (true) {
+            if (t instanceof CompoundTerm) {
+                CompoundTerm c = (CompoundTerm) t;
+                int n = c.args.length;
+                if (n > 0) {
+                    for (int i = n - 2; i >= 0; i--) {
+                        Term a = c.args[i];
+                        if (a instanceof CompoundTerm) {
+                            if (work == null) work = new java.util.ArrayList<Term>();
+                            work.add(a);
+                        } else if (!a.isGround()) {
+                            return false;
+                        }
+                    }
+                    t = c.args[n - 1];
+                    continue;
+                }
+            } else if (!t.isGround()) {
+                return false;
             }
-            if (n == 0) return true;
-            t = c.arguments.get(n - 1);
+            if (work == null || work.isEmpty()) return true;
+            t = work.remove(work.size() - 1);
         }
-        return t.isGround();
+        // END_CHANGE: ISS-2025-0524
         // END_CHANGE: ISS-2025-0428
     }
 
@@ -154,7 +198,7 @@ public class CompoundTerm extends Term {
         while (true) {
             if (!(t instanceof CompoundTerm)) { sb.append(t); break; }
             CompoundTerm c = (CompoundTerm) t;
-            int n = c.arguments.size();
+            int n = c.args.length;
             if (n == 0) { sb.append(c.functor); break; }
             // START_CHANGE: ISS-2025-0019 - ISO-compliant list formatting for './2'
             if (n == 2 && ".".equals(c.functor.getName())) { c.appendAsList(sb); break; }
@@ -163,12 +207,12 @@ public class CompoundTerm extends Term {
             sb.append(c.functor.getName()).append('(');
             for (int i = 0; i < n - 1; i++) {
                 if (i > 0) sb.append(", ");
-                appendTerm(sb, c.arguments.get(i));
+                appendTerm(sb, c.args[i]);
             }
             if (n > 1) sb.append(", ");
             // END_CHANGE: ISS-2025-0091
             pendingClose++;
-            t = c.arguments.get(n - 1);
+            t = c.args[n - 1];
         }
         for (int i = 0; i < pendingClose; i++) sb.append(')');
         // END_CHANGE: ISS-2025-0428
@@ -188,13 +232,13 @@ public class CompoundTerm extends Term {
         boolean firstElem = true;
         while (current instanceof CompoundTerm) {
             CompoundTerm compound = (CompoundTerm) current;
-            if (compound.arguments.size() != 2 || !".".equals(compound.functor.getName())) {
+            if (compound.args.length != 2 || !".".equals(compound.functor.getName())) {
                 break;                                        // not a proper list structure
             }
             if (!firstElem) sb.append(", ");
             firstElem = false;
-            appendTerm(sb, compound.arguments.get(0));
-            current = compound.arguments.get(1);
+            appendTerm(sb, compound.args[0]);
+            current = compound.args[1];
         }
         if (current instanceof Atom && "[]".equals(((Atom) current).getName())) {
             sb.append(']');                                   // proper list
@@ -214,14 +258,14 @@ public class CompoundTerm extends Term {
         CompoundTerm src = this;
         CompoundTerm root = null, parent = null;
         while (true) {
-            int n = src.arguments.size();
-            List<Term> args = new ArrayList<>(n);
-            for (int i = 0; i < n - 1; i++) args.add(src.arguments.get(i).copy());
-            if (n > 0) args.add(src.arguments.get(n - 1));            // provisional; fixed below
-            CompoundTerm dst = new CompoundTerm(src.functor, args);
+            int n = src.args.length;
+            Term[] a = new Term[n];                             // ISS-2025-0543: one array
+            for (int i = 0; i < n - 1; i++) a[i] = src.args[i].copy();
+            if (n > 0) a[n - 1] = src.args[n - 1];              // provisional; fixed below
+            CompoundTerm dst = new CompoundTerm(src.functor, a);
             if (parent == null) root = dst; else parent.replaceLast(dst);
             if (n == 0) return root;
-            Term last = src.arguments.get(n - 1);
+            Term last = src.args[n - 1];
             if (last.getClass() == CompoundTerm.class) { parent = dst; src = (CompoundTerm) last; continue; }
             dst.replaceLast(last.copy());
             return root;
@@ -232,8 +276,7 @@ public class CompoundTerm extends Term {
     // START_CHANGE: ISS-2025-0428 - ENG-09: in-place last-slot patch used while a copy is still
     // under construction (never escapes before the spine is complete).
     private void replaceLast(Term value) {
-        arguments.set(arguments.size() - 1, value);
-        unmodifiableArguments = null;
+        args[args.length - 1] = value;
     }
     // END_CHANGE: ISS-2025-0428
     
@@ -249,9 +292,9 @@ public class CompoundTerm extends Term {
         CompoundTerm cur = this;
         while (true) {
             spine.add(cur);
-            int n = cur.arguments.size();
+            int n = cur.args.length;
             if (n == 0) { viaVariable.add(Boolean.FALSE); break; }
-            Term last = cur.arguments.get(n - 1);
+            Term last = cur.args[n - 1];
             // Look THROUGH bound variables: a structure built by recursive clauses (f(f(f(...))),
             // or any list whose tail is a bound variable) links its spine by variables, so stopping
             // at the first Variable would put the recursion straight back in.
@@ -272,11 +315,11 @@ public class CompoundTerm extends Term {
         Term below = null;                          // rebuilt child, or null when it is unchanged
         for (int k = spine.size() - 1; k >= 0; k--) {
             CompoundTerm node = spine.get(k);
-            int n = node.arguments.size();
+            int n = node.args.length;
             boolean hasSpineChild = (k < spine.size() - 1);
             List<Term> out = null;                  // lazy: allocate only when something changes
             for (int i = 0; i < n; i++) {
-                Term arg = node.arguments.get(i);
+                Term arg = node.args[i];
                 Term resolved;
                 if (hasSpineChild && i == n - 1) {
                     // The child is unchanged only when the link did NOT cross a bound variable:
@@ -291,7 +334,7 @@ public class CompoundTerm extends Term {
                 }
                 if (resolved != arg && out == null) {
                     out = new ArrayList<>(n);
-                    for (int j = 0; j < i; j++) out.add(node.arguments.get(j));
+                    for (int j = 0; j < i; j++) out.add(node.args[j]);
                 }
                 if (out != null) out.add(resolved);
             }
@@ -317,14 +360,14 @@ public class CompoundTerm extends Term {
             }
             CompoundTerm ca = (CompoundTerm) a, cb = (CompoundTerm) b;
             if (!ca.functor.equals(cb.functor)) return false;
-            int n = ca.arguments.size();
-            if (n != cb.arguments.size()) return false;
+            int n = ca.args.length;
+            if (n != cb.args.length) return false;
             for (int i = 0; i < n - 1; i++) {
-                if (!ca.arguments.get(i).equals(cb.arguments.get(i))) return false;
+                if (!ca.args[i].equals(cb.args[i])) return false;
             }
             if (n == 0) return true;
-            a = ca.arguments.get(n - 1);
-            b = cb.arguments.get(n - 1);
+            a = ca.args[n - 1];
+            b = cb.args[n - 1];
         }
     }
 
@@ -338,11 +381,11 @@ public class CompoundTerm extends Term {
         while (t.getClass() == CompoundTerm.class) {
             CompoundTerm c = (CompoundTerm) t;
             h = 31 * h + c.functor.hashCode();
-            int n = c.arguments.size();
+            int n = c.args.length;
             h = 31 * h + n;
-            for (int i = 0; i < n - 1; i++) h = 31 * h + c.arguments.get(i).hashCode();
+            for (int i = 0; i < n - 1; i++) h = 31 * h + c.args[i].hashCode();
             if (n == 0) return h;
-            t = c.arguments.get(n - 1);
+            t = c.args[n - 1];
         }
         return 31 * h + t.hashCode();
     }

@@ -6,7 +6,7 @@
 
     <groupId>it.denzosoft</groupId>
     <artifactId>jprolog</artifactId>
-    <version>4.4.0</version>
+    <version>4.5.0</version>
 
     <properties>
         <maven.compiler.source>1.8</maven.compiler.source>
@@ -24,7 +24,27 @@
     </dependencies>
 
     <build>
+        <!-- START_CHANGE: ISS-2025-0628 - wave P6.4: `mvn package` builds a runnable
+             target/jprolog.jar (`java -jar target/jprolog.jar file.pl -g main`). JProlog has no
+             runtime dependency, so the plain jar is self-contained (the prelude/*.pl resources
+             included). -->
+        <finalName>jprolog</finalName>
+        <!-- END_CHANGE: ISS-2025-0628 -->
         <plugins>
+            <!-- START_CHANGE: ISS-2025-0628 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.1</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>it.denzosoft.jprolog.PrologCLI</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+            <!-- END_CHANGE: ISS-2025-0628 -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -39,7 +59,8 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.0.0</version>
                 <configuration>
-                    <mainClass>it.denzosoft.jprolog.Main</mainClass>
+                    <!-- ISS-2025-0628: was it.denzosoft.jprolog.Main, which does not exist -->
+                    <mainClass>it.denzosoft.jprolog.PrologCLI</mainClass>
                 </configuration>
                 <executions>
                     <execution>
@@ -56,8 +77,9 @@
     <!-- START_CHANGE: ISS-2025-0491 - 4.1 wave A: ONE engine, ONE CI leg. The `engine-v2`
          profile (and the `engine-v4`/`engine-legacy` ones before it) are gone with the v2
          MachineSolver: `mvn test` is the whole suite on core.engine.v4, the only engine.
-         NOTE: no surefire version is pinned on purpose. The Maven-default 2.12.4 matches
-         Test*/*Test/*TestCase only; pinning a modern surefire would additionally match *Tests and
-         silently change the test count (BuiltInTests.java holds 10 never-run @Test methods).
+         NOTE: no surefire version is pinned. The Maven-default surefire (2.17 with the Maven 3.9
+         of the dev environment, as the build log shows) matches Test*/*Test/*TestCase only, so a
+         test class named *Tests is silently skipped. (4.5.0, ISS-2025-0665: BuiltInTests.java, the
+         one such class, held 10 never-run duplicates and is deleted.)
          END_CHANGE: ISS-2025-0491 -->
 </project>

@@ -2,9 +2,7 @@ package it.denzosoft.jprolog.core.engine;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -15,56 +13,209 @@ import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
 
+// START_CHANGE: ISS-2025-0544 - wave P2.5/P2.7/P2.8: the storage of the database of record was
+// rebuilt around ONE structure per predicate.
+//
+// It used to keep every clause three times: a global `rules` ArrayList (in assert order across
+// all predicates), a per-predicate `ruleIndex` ArrayList and a per-predicate, per-first-argument
+// `firstArgIndex` ArrayList. Every write paid for all three, and two of them were quadratic:
+// `asserta` did `rules.add(0, ...)` on the GLOBAL list (O(N) per call: 100 000 asserta took
+// 5-16 s), `retract(Rule)` scanned the global list by identity and then `remove(i)`d from it
+// (~48 us per retract in a 200 000-clause base), and `retractall/1` removed clauses one at a time
+// from the front of each list (25 000 / 50 000 / 100 000 clauses: 0.17 / 0.61 / 3.5 s — quadratic).
+//
+// Now each predicate owns a {@link PredEntry}: its write counter, its dynamic flag and a
+// {@link RuleSeq} — a gap buffer with tombstones in which assertz and asserta are amortised O(1),
+// a retract of the stored Rule object is O(1) (the Rule carries a slot hint) and a bulk removal is
+// one pass plus one compaction. The global order, which only getRules() needs (listing, the CLI's
+// :save, persistence), is reconstructed from a per-rule sequence number: assertz counts up,
+// asserta counts down, which is exactly the order the old global list had. The first-argument
+// index of this class is gone: the v4 engine selects through its own index (ClauseStore) on every
+// path, including retractall/1 (ISS-2025-0545); the two public index accessors that remain
+// (getRulesWithFirstArgIndex, getClauseSnapshot with a first argument) filter the predicate's
+// clause list with the same over-approximating key rule, so they can never drop a clause
+// (the ISS-2025-0340 hazard).
+//
+// The PredEntry of a predicate is created once and never removed or replaced, so the v4
+// ClauseStore holds a direct reference to it and reads its version as a field (P2.2, ISS-2025-0541)
+// instead of building "name/arity" and probing a map on every call.
+// END_CHANGE: ISS-2025-0544
 public class KnowledgeBase {
     private static final Logger LOGGER = Logger.getLogger(KnowledgeBase.class.getName());
-    private final List<Rule> rules = new ArrayList<>();
-    // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
-    private final Map<String, List<Rule>> ruleIndex = new HashMap<>();
-    // END_CHANGE: ISS-2025-0075
-    // START_CHANGE: ISS-2025-0093 - First-argument indexing for faster clause selection
-    /** Two-level index: predicate indicator -> first-arg key -> rules */
-    private final Map<String, Map<String, List<Rule>>> firstArgIndex = new HashMap<>();
-    private static final String VAR_KEY = "_VAR";
-    // END_CHANGE: ISS-2025-0093
-    // START_CHANGE: LIM-014 - Multi-argument indexing (second argument)
-    /** Three-level index: predicate indicator -> arg1 key -> arg2 key -> rules */
-    // START_CHANGE: ISS-2025-0436 - ENG-17: the multi-argument index (LIM-014) had no caller outside
-    // this class — the legacy solver and the v2 engine both use the first-argument index — while
-    // still being built and maintained on EVERY assert/retract, costing a second nested map per
-    // clause. Removed together with its unused accessor getRulesWithMultiArgIndex.
-    // END_CHANGE: ISS-2025-0436
-    // END_CHANGE: LIM-014
 
-    // START_CHANGE: ISS-2025-0433 - ENG-13: versioned immutable clause snapshots + first-arg buckets.
-    // getRulesForPredicate used to copy the whole clause list under `synchronized` on EVERY call, so
-    // a 20 000-fact table cost a 20 000-element copy per lookup (measured 2.5 ms/call, the same
-    // whether the first or the last clause matched — the cost was pure per-call setup). Each
-    // predicate now owns a PredEntry holding a version counter (bumped on assert/retract), the
-    // immutable full-clause snapshot, and the immutable first-argument bucket snapshots. A snapshot
-    // is built once per version and reused; reads take no lock and no copy, and the logical update
-    // view comes for free because a published snapshot is never mutated.
-    private static final class PredEntry {
+    // START_CHANGE: ISS-2025-0544
+    /** Sequence numbers reproducing the old global order: assertz counts up, asserta down. */
+    private long hiSeq = 0;
+    private long loSeq = 0;
+
+    /**
+     * One predicate's clauses and bookkeeping. Created on first reference and never removed, so a
+     * reference to it is a stable handle ({@link #entry}). The clause list is guarded by the
+     * KnowledgeBase lock; {@link #version()} may be read without it.
+     */
+    public static final class PredEntry {
+        final String key;                                             // "name/arity"
         volatile long version = 0;                                    // bumped on every write
+        volatile boolean dynamic = false;                             // ISS-2025-0347
+        final RuleSeq rules = new RuleSeq();
         volatile long fullVersion = -1;
         volatile List<Rule> full = Collections.emptyList();
-        volatile long bucketVersion = -1;
-        final java.util.concurrent.ConcurrentHashMap<String, List<Rule>> buckets =
-            new java.util.concurrent.ConcurrentHashMap<>();
+
+        PredEntry(String key) { this.key = key; }
+
+        /** Write counter of this predicate; bumped by every assert/retract/abolish. */
+        public long version() { return version; }
+    }
+
+    /**
+     * A predicate's clause list: a gap buffer over {@code a[lo..hi)} in which removed clauses are
+     * tombstones ({@code null}) until the next compaction. addLast/addFirst are amortised O(1);
+     * removing the stored Rule object is O(1) through {@link Rule#kbSlot}, with an identity scan
+     * and then an {@code equals} scan as fallbacks (a freshly parsed Rule has no slot).
+     */
+    static final class RuleSeq {
+        private static final Rule[] EMPTY = new Rule[0];
+        private Rule[] a = EMPTY;
+        private int lo = 0, hi = 0;
+        private int live = 0;
+
+        int size() { return live; }
+
+        void addLast(Rule r) {
+            if (hi == a.length) regrow();
+            a[hi] = r;
+            r.kbSlot = hi;
+            hi++;
+            live++;
+        }
+
+        void addFirst(Rule r) {
+            if (lo == 0) regrow();
+            lo--;
+            a[lo] = r;
+            r.kbSlot = lo;
+            live++;
+        }
+
+        /** Rebuild into a new array with room at both ends; drops the tombstones. */
+        private void regrow() {
+            int cap = Math.max(8, live * 2 + 8);
+            Rule[] b = new Rule[cap];
+            int at = (cap - live) / 2;
+            int nlo = at;
+            for (int i = lo; i < hi; i++) {
+                Rule r = a[i];
+                if (r != null) { b[at] = r; r.kbSlot = at; at++; }
+            }
+            a = b;
+            lo = nlo;
+            hi = at;
+        }
+
+        /** Remove one occurrence of {@code r} (identity first, then equals); the removed Rule or null. */
+        Rule remove(Rule r) {
+            int s = r.kbSlot;
+            int idx = -1;
+            if (s >= lo && s < hi && a[s] == r) {
+                idx = s;
+            } else {
+                for (int i = lo; i < hi; i++) if (a[i] == r) { idx = i; break; }
+                if (idx < 0) {
+                    for (int i = lo; i < hi; i++) if (a[i] != null && a[i].equals(r)) { idx = i; break; }
+                }
+            }
+            if (idx < 0) return null;
+            Rule removed = a[idx];
+            removeAt(idx);
+            return removed;
+        }
+
+        private void removeAt(int idx) {
+            Rule removed = a[idx];
+            a[idx] = null;
+            if (removed.kbSlot == idx) removed.kbSlot = -1;
+            live--;
+            while (lo < hi && a[lo] == null) lo++;
+            while (hi > lo && a[hi - 1] == null) hi--;
+            if (live == 0) { lo = hi = a.length / 2; }
+            else if (hi - lo > 32 && live * 2 < hi - lo) regrow();
+        }
+
+        /** Remove every clause {@code test} accepts in one pass; returns the removed clauses. */
+        List<Rule> removeIf(java.util.function.Predicate<Rule> test) {
+            List<Rule> out = new ArrayList<Rule>();
+            for (int i = lo; i < hi; i++) {
+                Rule r = a[i];
+                if (r != null && test.test(r)) {
+                    a[i] = null;
+                    if (r.kbSlot == i) r.kbSlot = -1;
+                    live--;
+                    out.add(r);
+                }
+            }
+            if (!out.isEmpty()) {
+                if (live == 0) { a = EMPTY; lo = hi = 0; } else regrow();
+            }
+            return out;
+        }
+
+        /** The clauses in order, as a fresh list. */
+        List<Rule> toList() {
+            List<Rule> out = new ArrayList<Rule>(live);
+            for (int i = lo; i < hi; i++) if (a[i] != null) out.add(a[i]);
+            return out;
+        }
+
+        /** The clauses from the LAST to the first (for the scans that historically ran backwards). */
+        List<Rule> toReversedList() {
+            List<Rule> out = new ArrayList<Rule>(live);
+            for (int i = hi - 1; i >= lo; i--) if (a[i] != null) out.add(a[i]);
+            return out;
+        }
+
+        void clear() {
+            for (int i = lo; i < hi; i++) if (a[i] != null && a[i].kbSlot == i) a[i].kbSlot = -1;
+            a = EMPTY;
+            lo = hi = 0;
+            live = 0;
+        }
     }
 
     private final java.util.concurrent.ConcurrentHashMap<String, PredEntry> predEntries =
         new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** Invalidate every cached snapshot of {@code predKey} (called from the index writers). */
-    private void bumpVersion(String predKey) {
-        predEntries.computeIfAbsent(predKey, k -> new PredEntry()).version++;
+    /**
+     * The stable handle of {@code functor/arity}, created on first reference. A caller may keep it
+     * for the life of this KnowledgeBase and read {@link PredEntry#version()} without a lookup.
+     */
+    // START_CHANGE: ISS-2025-0571 - a cheap "does this predicate have clauses" by key
+    public boolean hasRules(String key) {
+        PredEntry e = predEntries.get(key);
+        return e != null && e.rules.size() > 0;
+    }
+    // END_CHANGE: ISS-2025-0571
+
+    public PredEntry entry(String functor, int arity) {
+        return entryForKey(functor + "/" + arity);
     }
 
-    /**
-     * The immutable clause list of {@code functor/arity} for the current database version — built
-     * at most once per version, never copied per call. Safe to hold across backtracking: a later
-     * assert/retract publishes a NEW snapshot and leaves this one untouched.
-     */
+    private PredEntry entryForKey(String key) {
+        PredEntry e = predEntries.get(key);
+        if (e == null) e = predEntries.computeIfAbsent(key, PredEntry::new);
+        return e;
+    }
+
+    /** The entry of a clause head, or null for a non-callable head. */
+    private PredEntry entryOfHead(Term head) {
+        if (head instanceof Atom) return entryForKey(((Atom) head).getName() + "/0");
+        if (head instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) head;
+            return entryForKey(c.getName() + "/" + c.arity());
+        }
+        return null;
+    }
+    // END_CHANGE: ISS-2025-0544
+
     // START_CHANGE: ISS-2025-0445 - engine v4 (design B.7): the v4 ClauseStore keeps a COMPILED
     // view of each predicate and must know when something wrote to this KnowledgeBase by any other
     // route (consult, a legacy built-in's assert, the IDE). The per-predicate version counter that
@@ -76,20 +227,32 @@ public class KnowledgeBase {
     }
     // END_CHANGE: ISS-2025-0445
 
+    // START_CHANGE: ISS-2025-0433 - ENG-13: versioned immutable clause snapshots. A snapshot is
+    // built once per version and reused; a published snapshot is never mutated, so it is safe to
+    // hold across backtracking.
+    /**
+     * The immutable clause list of {@code functor/arity} for the current database version — built
+     * at most once per version, never copied per call.
+     */
     public List<Rule> getClauseSnapshot(String functor, int arity) {
         PredEntry e = predEntries.get(functor + "/" + arity);
         if (e == null) return Collections.emptyList();
-        return fullSnapshot(e, functor + "/" + arity);
+        return fullSnapshot(e);
     }
 
-    private List<Rule> fullSnapshot(PredEntry e, String predKey) {
+    /** The snapshot of the predicate {@code e} is the handle of (see {@link #entry}). */
+    public List<Rule> getClauseSnapshot(PredEntry e) {
+        return fullSnapshot(e);
+    }
+
+    private List<Rule> fullSnapshot(PredEntry e) {
         long v = e.version;
         if (e.fullVersion == v) return e.full;
         synchronized (this) {
-            List<Rule> live = ruleIndex.get(predKey);
-            List<Rule> snap = (live == null || live.isEmpty())
+            v = e.version;
+            List<Rule> snap = (e.rules.size() == 0)
                 ? Collections.<Rule>emptyList()
-                : Collections.unmodifiableList(new ArrayList<>(live));
+                : Collections.unmodifiableList(e.rules.toList());
             e.full = snap;
             e.fullVersion = v;
             return snap;
@@ -98,87 +261,39 @@ public class KnowledgeBase {
 
     /**
      * The immutable clause list of {@code functor/arity} restricted, when possible, to the clauses
-     * whose head could unify with a goal whose first argument is {@code firstArg}: those in the
-     * matching first-argument bucket plus those whose head has a VARIABLE first argument, in source
-     * order. An unbound or unindexable {@code firstArg}, a single-clause predicate, or a predicate
-     * with no first-argument index degrades to the full list — never to a short one (the
-     * ISS-2025-0340 hazard).
+     * whose head could unify with a goal whose first argument is {@code firstArg}, in source order.
+     * An unbound or unindexable {@code firstArg} degrades to the full list — never to a short one
+     * (the ISS-2025-0340 hazard).
      */
     public List<Rule> getClauseSnapshot(String functor, int arity, Term firstArg) {
-        String predKey = functor + "/" + arity;
-        PredEntry e = predEntries.get(predKey);
+        PredEntry e = predEntries.get(functor + "/" + arity);
         if (e == null) return Collections.emptyList();
-        List<Rule> full = fullSnapshot(e, predKey);
-        if (full.size() < 2) return full;                     // nothing to filter
-        if (firstArg == null || firstArg instanceof Variable) return full;
-        if (!(firstArg instanceof Atom) && !(firstArg instanceof it.denzosoft.jprolog.core.terms.Number)
-                && !(firstArg instanceof CompoundTerm)) {
-            return full;                                      // e.g. a string: not an indexable key
-        }
-        long v = e.version;
-        if (e.bucketVersion != v) {
-            synchronized (this) {
-                if (e.bucketVersion != v) { e.buckets.clear(); e.bucketVersion = v; }
-            }
-        }
-        String argKey = getFirstArgKey(firstArg);
-        List<Rule> bucket = e.buckets.get(argKey);
-        if (bucket != null) return bucket;
-        synchronized (this) {
-            bucket = buildIndexedSnapshot(predKey, argKey, full);
-            // START_CHANGE: ISS-2025-0433 - the bucket cache MUST be bounded. A recursive predicate
-            // called with a different integer every time (loop(1000000), loop(999999), ...) produces
-            // a distinct key per call, so an unbounded cache grew to one entry per call and turned a
-            // deterministic recursion into a memory leak (loop(3000000) went from 5.8 s in 1 GB to
-            // an OutOfMemoryError). Past the cap the snapshot is still computed and returned, just
-            // not remembered — and the computation is cheap precisely in that case, because a
-            // predicate with thousands of distinct first arguments has tiny buckets.
-            if (e.buckets.size() < MAX_CACHED_BUCKETS) e.buckets.put(argKey, bucket);
-            // END_CHANGE: ISS-2025-0433
-            return bucket;
-        }
-    }
-
-    /** Upper bound on cached first-argument buckets per predicate (see getClauseSnapshot). */
-    private static final int MAX_CACHED_BUCKETS = 512;
-
-    private List<Rule> buildIndexedSnapshot(String predKey, String argKey, List<Rule> full) {
-        Map<String, List<Rule>> argIndex = firstArgIndex.get(predKey);
-        if (argIndex == null) return full;                    // no index -> never drop clauses
-        List<Rule> matching = argIndex.get(argKey);
-        List<Rule> vars = argIndex.get(VAR_KEY);
-        boolean noMatch = (matching == null || matching.isEmpty());
-        boolean noVars = (vars == null || vars.isEmpty());
-        if (noMatch && noVars) return Collections.emptyList();
-        if (noVars) return Collections.unmodifiableList(new ArrayList<>(matching));
-        if (noMatch) return Collections.unmodifiableList(new ArrayList<>(vars));
-        // both buckets non-empty: merge preserving source order
-        Set<Rule> eligible = Collections.newSetFromMap(new java.util.IdentityHashMap<Rule, Boolean>());
-        eligible.addAll(matching);
-        eligible.addAll(vars);
-        List<Rule> result = new ArrayList<>(eligible.size());
-        for (Rule r : full) if (eligible.contains(r)) result.add(r);
-        return Collections.unmodifiableList(result);
+        List<Rule> full = fullSnapshot(e);
+        if (full.size() < 2) return full;
+        return Collections.unmodifiableList(filterByFirstArg(full, firstArg));
     }
     // END_CHANGE: ISS-2025-0433
+
     // START_CHANGE: ISS-2025-0347 - track dynamic procedures: declared via ':- dynamic' or implied
     // by assert/retractall (ISO 8.9.1: asserting an unknown procedure makes it dynamic). The mark
     // survives retracting every clause, so a retracted-to-empty dynamic predicate FAILS instead of
     // raising existence_error under the 'unknown' flag.
-    private final Set<String> dynamicPredicates = new HashSet<>();
-
+    // ISS-2025-0544: the mark is a field of the predicate's entry (it was a synchronized HashSet of
+    // "name/arity" strings consulted on every assert).
     /** Mark {@code functor/arity} as a dynamic procedure. */
     public void markDynamic(String functor, int arity) {
-        synchronized (this) {
-            dynamicPredicates.add(functor + "/" + arity);
-        }
+        entry(functor, arity).dynamic = true;
+    }
+
+    /** Mark the predicate {@code e} is the handle of as dynamic (no lookup). */
+    public void markDynamic(PredEntry e) {
+        e.dynamic = true;
     }
 
     /** True when {@code functor/arity} was declared dynamic or created by assert/retractall. */
     public boolean isDynamic(String functor, int arity) {
-        synchronized (this) {
-            return dynamicPredicates.contains(functor + "/" + arity);
-        }
+        PredEntry e = predEntries.get(functor + "/" + arity);
+        return e != null && e.dynamic;
     }
     // END_CHANGE: ISS-2025-0347
 
@@ -189,15 +304,53 @@ public class KnowledgeBase {
      */
     // START_CHANGE: ISS-2025-0164 - Thread safety for KnowledgeBase
     public void addRule(Rule rule) {
+        Objects.requireNonNull(rule, "Rule cannot be null");
+        PredEntry e = entryOfHead(rule.getHead());
         synchronized (this) {
-            rules.add(Objects.requireNonNull(rule, "Rule cannot be null"));
-            // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
-            addToIndex(rule);
-            // END_CHANGE: ISS-2025-0075
-            LOGGER.fine("Rule added: " + rule);
+            appendRule(e, rule);
+            if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine("Rule added: " + rule);   // ISS-2025-0524: lazy, no rendering of every clause
         }
     }
     // END_CHANGE: ISS-2025-0164
+
+    // START_CHANGE: ISS-2025-0544
+    /** Append {@code rule} to {@code e} (caller holds the lock). A non-callable head is kept in a
+     *  pseudo-predicate so getRules() still returns it, as the old global list did. */
+    private void appendRule(PredEntry e, Rule rule) {
+        if (e == null) e = entryForKey("unknown/0");
+        rule.kbSeq = ++hiSeq;
+        e.rules.addLast(rule);
+        e.version++;
+    }
+
+    private void prependRule(PredEntry e, Rule rule) {
+        if (e == null) e = entryForKey("unknown/0");
+        rule.kbSeq = --loSeq;
+        e.rules.addFirst(rule);
+        e.version++;
+    }
+
+    /**
+     * assertz/asserta through a handle the caller already holds (the v4 ClauseStore): no lookup,
+     * no string building. Bumps the entry's version by exactly one.
+     */
+    public void addRule(PredEntry e, Rule rule, boolean front) {
+        Objects.requireNonNull(rule, "Rule cannot be null");
+        synchronized (this) {
+            if (front) prependRule(e, rule); else appendRule(e, rule);
+        }
+    }
+
+    /** Retract the stored {@code rule} from the predicate {@code e}; O(1) for a stored Rule. */
+    public boolean retract(PredEntry e, Rule rule) {
+        synchronized (this) {
+            Rule removed = e.rules.remove(rule);
+            if (removed == null) return false;
+            e.version++;
+            return true;
+        }
+    }
+    // END_CHANGE: ISS-2025-0544
 
     /**
      * Add multiple rules to the knowledge base.
@@ -208,35 +361,36 @@ public class KnowledgeBase {
     public void addRules(List<Rule> rulesToAdd) {
         synchronized (this) {
             if (rulesToAdd != null) {
-                rules.addAll(rulesToAdd);
-                // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
                 for (Rule rule : rulesToAdd) {
-                    addToIndex(rule);
+                    appendRule(entryOfHead(Objects.requireNonNull(rule, "Rule cannot be null").getHead()), rule);
                 }
-                // END_CHANGE: ISS-2025-0075
-                LOGGER.fine(rulesToAdd.size() + " rules added.");
+                if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine(rulesToAdd.size() + " rules added.");   // ISS-2025-0524: lazy, no rendering of every clause
             }
         }
     }
     // END_CHANGE: ISS-2025-0164
 
     /**
-     * Get all rules in the knowledge base.
+     * Get all rules in the knowledge base, in the order they were added (asserta'd clauses first).
      *
      * @return An immutable copy of the rules list
      */
-    // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
     // START_CHANGE: ISS-2025-0164 - Thread safety for KnowledgeBase
     public List<Rule> getRules() {
         synchronized (this) {
-            return Collections.unmodifiableList(new ArrayList<>(rules));
+            // ISS-2025-0544: the global order is the per-rule sequence number (see the class note).
+            List<Rule> all = new ArrayList<Rule>();
+            for (PredEntry e : predEntries.values()) {
+                if (e.rules.size() > 0) all.addAll(e.rules.toList());
+            }
+            all.sort((x, y) -> Long.compare(x.kbSeq, y.kbSeq));
+            return Collections.unmodifiableList(all);
         }
     }
     // END_CHANGE: ISS-2025-0164
 
     /**
      * Get rules matching a specific predicate functor and arity.
-     * Uses the functor/arity index for O(1) lookup instead of scanning all rules.
      *
      * @param functor The predicate functor name
      * @param arity The predicate arity
@@ -244,117 +398,50 @@ public class KnowledgeBase {
      */
     // START_CHANGE: ISS-2025-0164 - Thread safety for KnowledgeBase
     public List<Rule> getRulesForPredicate(String functor, int arity) {
-        synchronized (this) {
-            String key = functor + "/" + arity;
-            List<Rule> indexed = ruleIndex.get(key);
-            if (indexed == null) {
-                return Collections.emptyList();
-            }
-            return Collections.unmodifiableList(new ArrayList<>(indexed));
-        }
+        PredEntry e = predEntries.get(functor + "/" + arity);
+        if (e == null) return Collections.emptyList();
+        return fullSnapshot(e);                                   // ISS-2025-0544: immutable, shared
     }
     // END_CHANGE: ISS-2025-0164
-    // END_CHANGE: ISS-2025-0075
 
     // START_CHANGE: ISS-2025-0093 - First-argument indexing for faster clause selection
     /**
-     * Get rules matching a specific predicate, filtered by first argument.
-     * If the first argument of the query is ground (atom/number/ground compound),
-     * returns only rules whose head's first argument matches or is a variable.
-     * This dramatically reduces unification attempts for large predicate tables.
+     * Get rules matching a specific predicate, filtered by first argument: the clauses whose
+     * head's first argument could match {@code firstArg} (same key, or a variable), in source order.
+     * A null, unbound or unindexable {@code firstArg} returns every clause of the predicate.
      *
-     * @param functor The predicate functor name
-     * @param arity The predicate arity
-     * @param firstArg The resolved first argument of the query (null to skip filtering)
-     * @return List of matching rules
+     * <p>ISS-2025-0544: this is a filter over the predicate's clause list now (the separate
+     * first-argument index of this class is gone — the v4 engine selects through its own index on
+     * every path). Same over-approximating key rule as before, so no clause can ever be dropped.
      */
-    // START_CHANGE: ISS-2025-0164 - Thread safety for KnowledgeBase
     public List<Rule> getRulesWithFirstArgIndex(String functor, int arity, Term firstArg) {
-        synchronized (this) {
-            String predKey = functor + "/" + arity;
-            Map<String, List<Rule>> argIndex = firstArgIndex.get(predKey);
-            if (argIndex == null) {
-                // START_CHANGE: ISS-2025-0344 - an index miss must degrade to the full predicate
-                // list, never silently drop clauses that exist in ruleIndex (ISS-2025-0340 hazard)
-                return getRulesForPredicate(functor, arity);
-                // END_CHANGE: ISS-2025-0344
-            }
-
-            // If first arg is null, variable, or non-indexable, return all rules for this predicate
-            if (firstArg == null || firstArg instanceof Variable) {
-                List<Rule> all = ruleIndex.get(predKey);
-                return all != null ? Collections.unmodifiableList(new ArrayList<>(all)) : Collections.emptyList();
-            }
-
-            String argKey = getFirstArgKey(firstArg);
-            List<Rule> matchingRules = argIndex.get(argKey);
-            List<Rule> varRules = argIndex.get(VAR_KEY);
-
-            if (matchingRules == null && varRules == null) {
-                return Collections.emptyList();
-            }
-            if (matchingRules == null) {
-                return Collections.unmodifiableList(new ArrayList<>(varRules));
-            }
-            if (varRules == null) {
-                return Collections.unmodifiableList(new ArrayList<>(matchingRules));
-            }
-
-            // Merge matching + variable rules, preserving original order
-            // We need to return them in the order they appear in ruleIndex
-            List<Rule> allForPred = ruleIndex.get(predKey);
-            if (allForPred == null) return Collections.emptyList();
-
-            // Build a set of eligible rules for fast lookup
-            Set<Rule> eligible = new HashSet<>(matchingRules.size() + varRules.size());
-            eligible.addAll(matchingRules);
-            eligible.addAll(varRules);
-
-            List<Rule> result = new ArrayList<>(eligible.size());
-            for (Rule r : allForPred) {
-                if (eligible.contains(r)) {
-                    result.add(r);
-                }
-            }
-            return result;
-        }
+        return filterByFirstArg(getRulesForPredicate(functor, arity), firstArg);
     }
-    // END_CHANGE: ISS-2025-0164
+    // END_CHANGE: ISS-2025-0093
+
+    // START_CHANGE: ISS-2025-0544
+    private static List<Rule> filterByFirstArg(List<Rule> all, Term firstArg) {
+        if (firstArg == null || firstArg instanceof Variable || all.isEmpty()) return all;
+        String key = getFirstArgKey(firstArg);
+        if (VAR_KEY.equals(key)) return all;
+        List<Rule> out = new ArrayList<Rule>();
+        for (Rule r : all) {
+            Term h = getHeadFirstArg(r);
+            if (h == null) { out.add(r); continue; }
+            String k = getFirstArgKey(h);
+            if (VAR_KEY.equals(k) || key.equals(k)) out.add(r);
+        }
+        return out;
+    }
+    // END_CHANGE: ISS-2025-0544
+
+    private static final String VAR_KEY = "_VAR";
 
     /**
      * Get the indexing key for the first argument of a term.
      * Atoms use their name, Numbers use their string value,
      * CompoundTerms use functor/arity, Variables use VAR_KEY.
      */
-    // START_CHANGE: ISS-2025-0511 - the candidate set of retractall(Head): the first-argument
-    // index bucket for Head's own first argument, merged with the variable-headed clauses. Returns
-    // null when there is nothing to index on (an atom head), in which case the caller keeps the
-    // historical full scan.
-    private List<Rule> retractallCandidates(Term term) {
-        String functor;
-        int arity;
-        Term firstArg = null;
-        if (term instanceof Atom) {
-            functor = ((Atom) term).getName();
-            arity = 0;
-        } else if (term instanceof CompoundTerm) {
-            CompoundTerm c = (CompoundTerm) term;
-            functor = c.getName();
-            List<Term> as = c.getArguments();
-            arity = (as == null) ? 0 : as.size();
-            if (arity > 0) firstArg = as.get(0).resolveBindings(Collections.<String, Term>emptyMap());
-        } else {
-            return null;
-        }
-        // An arity-0 head, or a head whose first argument is unbound, selects EVERY clause of the
-        // predicate: building a candidate list and an identity set for it is pure overhead on top
-        // of the positional pass that has to happen anyway (measured: retractall(g(_,_)) over
-        // 20 000 clauses 112 ms -> 154 ms). Those two keep the historical single scan.
-        if (arity == 0 || firstArg == null || firstArg instanceof Variable) return null;
-        return getRulesWithFirstArgIndex(functor, arity, firstArg);
-    }
-    // END_CHANGE: ISS-2025-0511
-
     private static String getFirstArgKey(Term arg) {
         if (arg instanceof Variable) {
             return VAR_KEY;
@@ -390,47 +477,6 @@ public class KnowledgeBase {
         return null;
     }
 
-    private void addToFirstArgIndex(Rule rule) {
-        String predKey = getPredicateIndicator(rule.getHead());
-        Map<String, List<Rule>> argIndex = firstArgIndex.computeIfAbsent(predKey, k -> new HashMap<>());
-        Term firstArg = getHeadFirstArg(rule);
-        String argKey = (firstArg != null) ? getFirstArgKey(firstArg) : VAR_KEY;
-        argIndex.computeIfAbsent(argKey, k -> new ArrayList<>()).add(rule);
-    }
-
-    private void addToFirstArgIndexFirst(Rule rule) {
-        String predKey = getPredicateIndicator(rule.getHead());
-        Map<String, List<Rule>> argIndex = firstArgIndex.computeIfAbsent(predKey, k -> new HashMap<>());
-        Term firstArg = getHeadFirstArg(rule);
-        String argKey = (firstArg != null) ? getFirstArgKey(firstArg) : VAR_KEY;
-        argIndex.computeIfAbsent(argKey, k -> new ArrayList<>()).add(0, rule);
-    }
-
-    // ISS-2025-0436 - ENG-17: multi-argument index helpers removed (no callers).
-
-    private void removeFromFirstArgIndex(Rule rule) {
-        String predKey = getPredicateIndicator(rule.getHead());
-        Map<String, List<Rule>> argIndex = firstArgIndex.get(predKey);
-        if (argIndex != null) {
-            Term firstArg = getHeadFirstArg(rule);
-            String argKey = (firstArg != null) ? getFirstArgKey(firstArg) : VAR_KEY;
-            List<Rule> list = argIndex.get(argKey);
-            if (list != null) {
-                // START_CHANGE: ISS-2025-0344 - identity-preferring removal
-                removeOneOccurrence(list, rule);
-                // END_CHANGE: ISS-2025-0344
-                if (list.isEmpty()) {
-                    argIndex.remove(argKey);
-                }
-            }
-            if (argIndex.isEmpty()) {
-                firstArgIndex.remove(predKey);
-            }
-        }
-        // ISS-2025-0436 - ENG-17: multi-argument index removal dropped with the index itself
-    }
-    // END_CHANGE: ISS-2025-0093
-
     /**
      * Add a rule at the beginning of the knowledge base.
      *
@@ -438,12 +484,11 @@ public class KnowledgeBase {
      */
     // START_CHANGE: ISS-2025-0164 - Thread safety for KnowledgeBase
     public void asserta(Rule rule) {
+        Objects.requireNonNull(rule, "Rule cannot be null");
+        PredEntry e = entryOfHead(rule.getHead());
         synchronized (this) {
-            rules.add(0, Objects.requireNonNull(rule, "Rule cannot be null"));
-            // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
-            addToIndexFirst(rule);
-            // END_CHANGE: ISS-2025-0075
-            LOGGER.fine("Rule asserted at the beginning: " + rule);
+            prependRule(e, rule);                                  // ISS-2025-0544: O(1) amortised
+            if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine("Rule asserted at the beginning: " + rule);   // ISS-2025-0524: lazy, no rendering of every clause
         }
     }
     // END_CHANGE: ISS-2025-0164
@@ -459,37 +504,18 @@ public class KnowledgeBase {
     // re-executable retract/1 can skip a snapshot clause that was already retracted on a redo.
     public boolean retract(Rule rule) {
     // END_CHANGE: ISS-2025-0396
-        synchronized (this) {
-            // START_CHANGE: ISS-2025-0344 - remove exactly ONE clause (ISO 8.9.3) and keep the
-            // rules list and ruleIndex/firstArgIndex in sync. The old removeIf(equals) dropped
-            // EVERY duplicate clause from `rules` while removeFromIndex removed only one index
-            // entry, leaving immortal phantom clauses visible to the engine but not to listing.
-            // Prefer an identity match (the engine passes the stored Rule object); fall back to
-            // the first equals match (Prolog.retract(String) passes a freshly parsed Rule).
-            int idx = -1;
-            for (int i = 0; i < rules.size(); i++) {
-                if (rules.get(i) == rule) { idx = i; break; }
-            }
-            if (idx < 0) {
-                for (int i = 0; i < rules.size(); i++) {
-                    if (rules.get(i).equals(rule)) { idx = i; break; }
-                }
-            }
-            if (idx >= 0) {
-                Rule removed = rules.remove(idx);
-                removeFromIndex(removed);
-                LOGGER.fine("Rule retracted: " + removed);
-                // START_CHANGE: ISS-2025-0396 - signal removal to the caller
-                return true;
-                // END_CHANGE: ISS-2025-0396
-            } else {
-                LOGGER.fine("Attempted to retract rule but it was not found: " + rule);
-                // START_CHANGE: ISS-2025-0396 - signal the clause was not found
-                return false;
-                // END_CHANGE: ISS-2025-0396
-            }
-            // END_CHANGE: ISS-2025-0344
+        // START_CHANGE: ISS-2025-0344 - remove exactly ONE clause (ISO 8.9.3), preferring an
+        // identity match (the engine passes the stored Rule object) and falling back to the first
+        // equals match (Prolog.retract(String) passes a freshly parsed Rule).
+        // ISS-2025-0544: within the rule's own predicate, O(1) for the stored object.
+        PredEntry e = entryOfHead(rule.getHead());
+        if (e == null) return false;
+        boolean removed = retract(e, rule);
+        if (LOGGER.isLoggable(java.util.logging.Level.FINE)) {
+            LOGGER.fine((removed ? "Rule retracted: " : "Attempted to retract rule but it was not found: ") + rule);
         }
+        return removed;
+        // END_CHANGE: ISS-2025-0344
     }
     // END_CHANGE: ISS-2025-0164
 
@@ -500,19 +526,17 @@ public class KnowledgeBase {
      */
     // START_CHANGE: ISS-2025-0180 - Core engine bug fixes
     public void addClauseFirst(Clause clause) {
+        List<Term> bodyList = clause.getBody() != null ?
+            java.util.Arrays.asList(clause.getBody()) :
+            Collections.emptyList();
+        Rule rule = new Rule(clause.getHead(), bodyList);
+        PredEntry e = entryOfHead(rule.getHead());
         synchronized (this) {
-            List<Term> bodyList = clause.getBody() != null ?
-                java.util.Arrays.asList(clause.getBody()) :
-                Collections.emptyList();
-            Rule rule = new Rule(clause.getHead(), bodyList);
-            rules.add(0, rule);
-            // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
-            addToIndexFirst(rule);
-            // END_CHANGE: ISS-2025-0075
+            prependRule(e, rule);
             // START_CHANGE: ISS-2025-0347 - asserta implies the procedure is dynamic (ISO 8.9.1)
-            dynamicPredicates.add(getPredicateIndicator(rule.getHead()));
+            if (e != null) e.dynamic = true;
             // END_CHANGE: ISS-2025-0347
-            LOGGER.fine("Clause added at beginning: " + clause);
+            if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine("Clause added at beginning: " + clause);   // ISS-2025-0524: lazy, no rendering of every clause
         }
     }
     // END_CHANGE: ISS-2025-0180
@@ -524,22 +548,38 @@ public class KnowledgeBase {
      */
     // START_CHANGE: ISS-2025-0180 - Core engine bug fixes
     public void addClauseLast(Clause clause) {
+        List<Term> bodyList = clause.getBody() != null ?
+            java.util.Arrays.asList(clause.getBody()) :
+            Collections.emptyList();
+        Rule rule = new Rule(clause.getHead(), bodyList);
+        PredEntry e = entryOfHead(rule.getHead());
         synchronized (this) {
-            List<Term> bodyList = clause.getBody() != null ?
-                java.util.Arrays.asList(clause.getBody()) :
-                Collections.emptyList();
-            Rule rule = new Rule(clause.getHead(), bodyList);
-            rules.add(rule);
-            // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
-            addToIndex(rule);
-            // END_CHANGE: ISS-2025-0075
+            appendRule(e, rule);
             // START_CHANGE: ISS-2025-0347 - assertz implies the procedure is dynamic (ISO 8.9.1)
-            dynamicPredicates.add(getPredicateIndicator(rule.getHead()));
+            if (e != null) e.dynamic = true;
             // END_CHANGE: ISS-2025-0347
-            LOGGER.fine("Clause added at end: " + clause);
+            if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine("Clause added at end: " + clause);   // ISS-2025-0524: lazy, no rendering of every clause
         }
     }
     // END_CHANGE: ISS-2025-0180
+
+    // START_CHANGE: ISS-2025-0544 - the candidates of a legacy retract scan: the pattern's own
+    // predicate when the pattern is callable (only its clauses can unify), else every clause in
+    // the global order, exactly as the old full scan saw them.
+    private List<Rule> scanCandidates(Term headPattern) {
+        if (headPattern instanceof Atom || headPattern instanceof CompoundTerm) {
+            PredEntry e = entryOfHead(headPattern);
+            return e.rules.toList();
+        }
+        return new ArrayList<Rule>(getRules());
+    }
+
+    private void removeStored(Rule rule) {
+        PredEntry e = entryOfHead(rule.getHead());
+        if (e == null) e = entryForKey("unknown/0");
+        if (e.rules.remove(rule) != null) e.version++;
+    }
+    // END_CHANGE: ISS-2025-0544
 
     /**
      * Remove clauses that match the given term.
@@ -550,20 +590,17 @@ public class KnowledgeBase {
     // START_CHANGE: ISS-2025-0164 - Thread safety for KnowledgeBase
     public boolean retractClauses(Term term) {
         synchronized (this) {
-            boolean removed = false;
-            for (int i = rules.size() - 1; i >= 0; i--) {
-                Rule rule = rules.get(i);
+            // historical behaviour: the scan runs from the LAST clause and removes one match
+            List<Rule> cands = scanCandidates(term);
+            for (int i = cands.size() - 1; i >= 0; i--) {
+                Rule rule = cands.get(i);
                 if (unifiable(rule.getHead(), term)) {
-                    rules.remove(i);
-                    // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
-                    removeFromIndex(rule);
-                    // END_CHANGE: ISS-2025-0075
-                    removed = true;
-                    LOGGER.fine("Retracted clause: " + rule);
-                    break; // Only remove first match
+                    removeStored(rule);
+                    if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine("Retracted clause: " + rule);   // ISS-2025-0524: lazy, no rendering of every clause
+                    return true;
                 }
             }
-            return removed;
+            return false;
         }
     }
     // END_CHANGE: ISS-2025-0164
@@ -585,8 +622,7 @@ public class KnowledgeBase {
             Term[] pat = splitClausePattern(term.resolveBindings(bindings));
             Term headPattern = pat[0];
             Term bodyPattern = pat[1];
-            for (int i = 0; i < rules.size(); i++) {
-                Rule rule = rules.get(i);
+            for (Rule rule : scanCandidates(headPattern)) {
                 Term freshClause = makeClauseTerm(rule).copy();
                 Term freshHead = ((CompoundTerm) freshClause).getArguments().get(0);
                 Term freshBody = ((CompoundTerm) freshClause).getArguments().get(1);
@@ -594,9 +630,8 @@ public class KnowledgeBase {
                     new java.util.HashMap<>(bindings);
                 if (headPattern.unify(freshHead, newBindings)
                         && (bodyPattern == null || bodyPattern.unify(freshBody, newBindings))) {
-                    rules.remove(i);
-                    removeFromIndex(rule);
-                    LOGGER.fine("Retracted clause with bindings: " + rule);
+                    removeStored(rule);
+                    if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine("Retracted clause with bindings: " + rule);   // ISS-2025-0524: lazy, no rendering of every clause
                     return newBindings;
                 }
             }
@@ -622,16 +657,13 @@ public class KnowledgeBase {
         synchronized (this) {
             java.util.List<java.util.Map<String, it.denzosoft.jprolog.core.terms.Term>> results =
                 new java.util.ArrayList<>();
-            // START_CHANGE: ISS-2025-0251 - Support retract((Head :- Body)). Previously only the
-            // rule HEAD was unified against the whole query term, so the clause form (H:-B) never
-            // matched a stored rule. Now we split the query into a head pattern and an optional
-            // body pattern and unify both against a single fresh copy of the clause (head+body
-            // share renamed variables).
+            // START_CHANGE: ISS-2025-0251 - Support retract((Head :- Body)): the query is split
+            // into a head pattern and an optional body pattern, unified against a single fresh
+            // copy of the clause (head+body share renamed variables).
             Term[] pat = splitClausePattern(term.resolveBindings(bindings));
             Term headPattern = pat[0];
             Term bodyPattern = pat[1];
-            for (int i = 0; i < rules.size(); ) {
-                Rule rule = rules.get(i);
+            for (Rule rule : scanCandidates(headPattern)) {
                 Term freshClause = makeClauseTerm(rule).copy();
                 Term freshHead = ((CompoundTerm) freshClause).getArguments().get(0);
                 Term freshBody = ((CompoundTerm) freshClause).getArguments().get(1);
@@ -640,12 +672,9 @@ public class KnowledgeBase {
                 boolean matched = headPattern.unify(freshHead, newBindings)
                     && (bodyPattern == null || bodyPattern.unify(freshBody, newBindings));
                 if (matched) {
-                    rules.remove(i);
-                    removeFromIndex(rule);
-                    LOGGER.fine("Retracted clause with bindings: " + rule);
+                    removeStored(rule);
+                    if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine("Retracted clause with bindings: " + rule);   // ISS-2025-0524: lazy, no rendering of every clause
                     results.add(newBindings);
-                } else {
-                    i++;
                 }
             }
             return results;
@@ -701,55 +730,47 @@ public class KnowledgeBase {
      */
     // START_CHANGE: ISS-2025-0164 - Thread safety for KnowledgeBase
     public int retractAllClauses(Term term) {
+        // START_CHANGE: ISS-2025-0544 - wave P2.5: ONE pass over the predicate's own clauses and
+        // one compaction, instead of removing each match from the front of three lists (quadratic:
+        // 100 000 clauses took 3.5 s). A head whose arguments are distinct unbound variables
+        // matches every clause, so the per-clause unification (a HashMap each) is skipped for it.
+        // (The v4 engine's retractall/1 goes through the ClauseStore's first-argument index
+        // instead — ISS-2025-0545 — so this is the Java-API / legacy path.)
+        final PredEntry e = entryOfHead(term);
+        if (e == null) return 0;
         synchronized (this) {
             // START_CHANGE: ISS-2025-0347 - retractall creates the procedure as dynamic when it
             // does not exist (SWI semantics), so a later call fails instead of raising
             // existence_error under unknown=error.
-            dynamicPredicates.add(getPredicateIndicator(term));
+            e.dynamic = true;
             // END_CHANGE: ISS-2025-0347
-            // START_CHANGE: ISS-2025-0511 - 4.3 wave D: retractall/1 selects its candidates through
-            // the first-argument index instead of calling unifiable() on EVERY clause of the whole
-            // knowledge base. `retractall(f(K, _))` with a bound key over a 20 000-clause table was
-            // one full-database walk with 20 000 Term.unify() calls (each allocating a HashMap) per
-            // call; it is now one index lookup plus a single positional pass that only asks an
-            // identity-set membership question. An index miss still degrades to the full predicate
-            // list (getRulesWithFirstArgIndex, ISS-2025-0344) and an unbound first argument still
-            // yields every clause, so no clause can ever be dropped — the ISS-2025-0340 hazard.
-            List<Rule> candidates = retractallCandidates(term);
-            if (candidates == null) {                    // arity-0 / unindexable: historical scan
-                int scanned = 0;
-                for (int i = rules.size() - 1; i >= 0; i--) {
-                    Rule rule = rules.get(i);
-                    if (unifiable(rule.getHead(), term)) {
-                        rules.remove(i);
-                        removeFromIndex(rule);
-                        scanned++;
-                    }
-                }
-                return scanned;
-            }
-            Set<Rule> doomed = Collections.newSetFromMap(new IdentityHashMap<Rule, Boolean>());
-            for (int i = 0; i < candidates.size(); i++) {
-                Rule r = candidates.get(i);
-                if (unifiable(r.getHead(), term)) doomed.add(r);
-            }
-            if (doomed.isEmpty()) return 0;
-            int count = 0;
-            for (int i = rules.size() - 1; i >= 0; i--) {
-                Rule rule = rules.get(i);
-                if (doomed.contains(rule)) {
-                    rules.remove(i);
-                    // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
-                    removeFromIndex(rule);
-                    // END_CHANGE: ISS-2025-0075
-                    count++;
-                }
-            }
-            return count;
-            // END_CHANGE: ISS-2025-0511
+            final boolean all = isMostGeneral(term);
+            List<Rule> gone = e.rules.removeIf(r -> all || unifiable(r.getHead(), term));
+            if (!gone.isEmpty()) e.version++;
+            return gone.size();
         }
+        // END_CHANGE: ISS-2025-0544
     }
     // END_CHANGE: ISS-2025-0164
+
+    // START_CHANGE: ISS-2025-0544
+    /** An atom, or a compound whose arguments are pairwise distinct unbound variables. */
+    private static boolean isMostGeneral(Term t) {
+        if (t instanceof Atom) return true;
+        if (!(t instanceof CompoundTerm)) return false;
+        CompoundTerm c = (CompoundTerm) t;
+        Set<String> seen = null;                   // by NAME: the unifier used below is name-keyed
+        for (int i = 0; i < c.arity(); i++) {
+            Term a = c.arg(i);
+            if (!(a instanceof Variable) || ((Variable) a).getRef() != null) return false;
+            if (c.arity() > 1) {
+                if (seen == null) seen = new HashSet<String>();
+                if (!seen.add(((Variable) a).getName())) return false;
+            }
+        }
+        return true;
+    }
+    // END_CHANGE: ISS-2025-0544
 
     /**
      * Remove all clauses for the given predicate.
@@ -760,28 +781,21 @@ public class KnowledgeBase {
      */
     // START_CHANGE: ISS-2025-0164 - Thread safety for KnowledgeBase
     public int abolishPredicate(String functor, int arity) {
+        PredEntry e = predEntries.get(functor + "/" + arity);
+        if (e == null) return 0;
         synchronized (this) {
-            int count = 0;
-            for (int i = rules.size() - 1; i >= 0; i--) {
-                Rule rule = rules.get(i);
-                Term head = rule.getHead();
-
-                if (matchesPredicate(head, functor, arity)) {
-                    rules.remove(i);
-                    count++;
-                    LOGGER.fine("Abolished clause: " + rule);
-                }
+            int count = e.rules.size();
+            // START_CHANGE: ISS-2025-0610 - P4.16: abolish/1 removes the PREDICATE, not only its
+            // clauses: the dynamic declaration goes too, so a later call raises
+            // existence_error(procedure, F/A) (ISO 8.9.4, SWI) instead of failing silently.
+            boolean wasDynamic = e.dynamic;
+            e.dynamic = false;
+            if (count > 0 || wasDynamic) {
+                e.rules.clear();                                   // ISS-2025-0544
+                e.version++;   // ISS-2025-0433 - ENG-13: invalidate cached snapshots
+                if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.fine("Abolished " + count + " clauses of " + e.key);
             }
-            // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
-            if (count > 0) {
-                String key = functor + "/" + arity;
-                ruleIndex.remove(key);
-                // START_CHANGE: ISS-2025-0093 - Clear first-argument index on abolish
-                firstArgIndex.remove(key);
-                // END_CHANGE: ISS-2025-0093
-                bumpVersion(key);   // ISS-2025-0433 - ENG-13: invalidate cached snapshots
-            }
-            // END_CHANGE: ISS-2025-0075
+            // END_CHANGE: ISS-2025-0610
             return count;
         }
     }
@@ -793,11 +807,27 @@ public class KnowledgeBase {
      * @return Set of predicate indicators (functor/arity)
      */
     // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
-    public Set<String> getCurrentPredicates() {
-        // START_CHANGE: ISS-2025-0280 - synchronize like the sibling mutators; iterating the
-        // ruleIndex keySet while another thread asserts/retracts can corrupt or throw.
+    // START_CHANGE: ISS-2025-0610 - P4.16: the DEFINED predicates for current_predicate/1: the
+    // ones with clauses plus the declared dynamic ones without any (SWI).
+    public Set<String> getDefinedPredicates() {
         synchronized (this) {
-            return new HashSet<>(ruleIndex.keySet());
+            Set<String> out = new HashSet<>();
+            for (PredEntry e : predEntries.values()) {
+                if (e.rules.size() > 0 || e.dynamic) out.add(e.key);
+            }
+            return out;
+        }
+    }
+    // END_CHANGE: ISS-2025-0610
+
+    public Set<String> getCurrentPredicates() {
+        // START_CHANGE: ISS-2025-0280 - synchronize like the sibling mutators
+        synchronized (this) {
+            Set<String> out = new HashSet<>();
+            for (PredEntry e : predEntries.values()) {
+                if (e.rules.size() > 0) out.add(e.key);            // ISS-2025-0544: non-empty only
+            }
+            return out;
         }
         // END_CHANGE: ISS-2025-0280
     }
@@ -814,95 +844,10 @@ public class KnowledgeBase {
         }
     }
 
-    private boolean matchesPredicate(Term term, String functor, int arity) {
-        if (term instanceof Atom) {
-            return ((Atom) term).getName().equals(functor) && arity == 0;
-        } else if (term instanceof CompoundTerm) {
-            CompoundTerm compound = (CompoundTerm) term;
-            return compound.getFunctor().getName().equals(functor) &&
-                   compound.getArguments().size() == arity;
-        }
-        return false;
-    }
-
-    private String getPredicateIndicator(Term term) {
-        if (term instanceof Atom) {
-            return ((Atom) term).getName() + "/0";
-        } else if (term instanceof CompoundTerm) {
-            CompoundTerm compound = (CompoundTerm) term;
-            return compound.getFunctor().getName() + "/" + compound.getArguments().size();
-        }
-        return "unknown/0";
-    }
-
-    // START_CHANGE: ISS-2025-0075 - Add functor/arity indexing for O(1) rule lookup
-    /**
-     * Add a rule to the end of the index list for its predicate indicator.
-     */
-    private void addToIndex(Rule rule) {
-        String key = getPredicateIndicator(rule.getHead());
-        bumpVersion(key);                     // ISS-2025-0433 - ENG-13
-        ruleIndex.computeIfAbsent(key, k -> new ArrayList<>()).add(rule);
-        // START_CHANGE: ISS-2025-0093 - Maintain first-argument index
-        addToFirstArgIndex(rule);
-        // END_CHANGE: ISS-2025-0093
-    }
-
-    /**
-     * Add a rule to the beginning of the index list for its predicate indicator.
-     */
-    private void addToIndexFirst(Rule rule) {
-        String key = getPredicateIndicator(rule.getHead());
-        bumpVersion(key);                     // ISS-2025-0433 - ENG-13
-        ruleIndex.computeIfAbsent(key, k -> new ArrayList<>()).add(0, rule);
-        // START_CHANGE: ISS-2025-0093 - Maintain first-argument index
-        addToFirstArgIndexFirst(rule);
-        // END_CHANGE: ISS-2025-0093
-    }
-
-    /**
-     * Remove a rule from the index list for its predicate indicator.
-     */
-    private void removeFromIndex(Rule rule) {
-        String key = getPredicateIndicator(rule.getHead());
-        bumpVersion(key);                     // ISS-2025-0433 - ENG-13
-        List<Rule> indexed = ruleIndex.get(key);
-        if (indexed != null) {
-            // START_CHANGE: ISS-2025-0344 - identity-preferring removal (see removeOneOccurrence)
-            removeOneOccurrence(indexed, rule);
-            // END_CHANGE: ISS-2025-0344
-            if (indexed.isEmpty()) {
-                ruleIndex.remove(key);
-            }
-        }
-        // START_CHANGE: ISS-2025-0093 - Maintain first-argument index
-        removeFromFirstArgIndex(rule);
-        // END_CHANGE: ISS-2025-0093
-    }
-    // END_CHANGE: ISS-2025-0075
-
-    // START_CHANGE: ISS-2025-0344 - remove exactly one occurrence, preferring object identity
-    /**
-     * Remove exactly one occurrence of {@code rule} from {@code list}. The add paths store the
-     * same Rule object in {@code rules} and every index, so an identity match removes precisely
-     * the retracted clause even when duplicate clauses compare equal; the equals fallback keeps
-     * externally constructed (parsed) rules working.
-     */
-    private static boolean removeOneOccurrence(List<Rule> list, Rule rule) {
-        for (int i = 0; i < list.size(); i++) {
-            if (list.get(i) == rule) {
-                list.remove(i);
-                return true;
-            }
-        }
-        return list.remove(rule);
-    }
-    // END_CHANGE: ISS-2025-0344
-
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder("KnowledgeBase:\n");
-        for (Rule rule : rules) {
+        for (Rule rule : getRules()) {
             sb.append("  ").append(rule).append("\n");
         }
         return sb.toString();

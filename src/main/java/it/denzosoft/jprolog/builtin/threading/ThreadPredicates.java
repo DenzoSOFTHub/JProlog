@@ -1,10 +1,13 @@
 package it.denzosoft.jprolog.builtin.threading;
 
 // START_CHANGE: ISS-2025-0119 - Threading built-in predicates (thread-safe)
-import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
+import it.denzosoft.jprolog.core.engine.InferenceLimitException;
+import it.denzosoft.jprolog.core.engine.QueryCancelledException;
 import it.denzosoft.jprolog.core.engine.SolverContext;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.engine.ThreadExitException;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
@@ -14,74 +17,181 @@ import it.denzosoft.jprolog.core.terms.Variable;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Threading predicates (SWI-like thread support):
- *   thread_create/2    - thread_create(:Goal, -ThreadId)
- *   thread_create/3    - thread_create(:Goal, -ThreadId, +Options)   alias/1, detached/1
- *   thread_join/2      - thread_join(+ThreadId, -Status)             true | false | exception(E)
- *   thread_detach/1    - thread_detach(+ThreadId)
- *   thread_self/1      - thread_self(-ThreadId)
- *   thread_sleep/1     - thread_sleep(+Seconds)
- *   thread_is_alive/1  - thread_is_alive(+ThreadId)
- *   message_queue_create/1 - message_queue_create(-QueueId)
- *   thread_send_message/2  - thread_send_message(+QueueOrThread, +Term)
- *   thread_get_message/1   - thread_get_message(-Term)   from THIS thread's own queue
- *   thread_get_message/2   - thread_get_message(+QueueOrThread, -Term)  blocks up to 30s
- *   thread_peek_message/2  - thread_peek_message(+QueueOrThread, -Term) non-blocking
+ * Threads, message queues and mutexes (SWI-Prolog's library(threads) subset).
  *
- * <p>START_CHANGE: ISS-2025-0479 — engine v4 wave W8, design B.13. Until this wave
- * {@code thread_create/2} did <b>not run the goal at all</b>: it started a thread that slept 10 ms
- * and recorded {@code completed(<goal atom>)}. The goal now really runs, on a
- * <b>fresh {@code Machine} over the same {@code Engine}</b> ({@code core.engine.v4.Workers}) —
- * a shared clause store (thread-safe by generations), shared flags and operators, its own current
- * streams, its own {@code ResourceGuard} with the parent's inference budget, and a
- * {@code copy_term}'d goal so no {@code Variable} cell is shared between the two machines. On the
- * v2 and legacy engines the goal runs through {@code SolverContext.solveInWorker}'s default, i.e. the
- * shared recursive solver — the behaviour those engines have always had for
- * {@code concurrent_maplist/N} (LIM-024, closed on v4 only).
+ * <p>START_CHANGE: ISS-2025-0479 — engine v4 wave W8, design B.13: a thread's goal runs on a
+ * <b>fresh {@code Machine} over the same {@code Engine}</b> ({@code core.engine.v4.Workers}), with a
+ * {@code copy_term}'d goal, and every message is copied on the way in and on the way out, so no
+ * {@code Variable} cell is ever shared between two machines. END_CHANGE: ISS-2025-0479
  *
- * <p>Message queues carry <b>terms</b>, not atoms, and every message is copied on the way in and on
- * the way out for the same reason. Every Prolog thread owns a queue, so
- * {@code thread_send_message/2} accepts a queue id, a thread id or a thread alias.
- *
- * <p>END_CHANGE: ISS-2025-0479
- *
- * Thread safety:
- * - All shared state uses ConcurrentHashMap and AtomicInteger
- * - Thread registration happens before thread start (no race on THREADS map)
- * - thread_join has a 60-second timeout to prevent permanent deadlocks
- * - thread_get_message has a 30-second timeout to prevent permanent blocks
- * - thread_detach marks thread as detached without calling setDaemon (which is illegal on running threads)
- * - THREAD_STATUS is cleaned up on join to prevent memory leaks
- * - InterruptedException is properly propagated via Thread.currentThread().interrupt()
+ * <p>START_CHANGE: ISS-2025-0620..0634 — 4.5 wave P6.5, rewritten on SWI's semantics:
+ * <ul>
+ *   <li><b>Errors are ISO terms</b> built with {@code core.engine.v4.Errors}:
+ *       {@code existence_error(thread, Id)} for an unknown (or already reclaimed) thread,
+ *       {@code existence_error(message_queue, Q)}, {@code existence_error(mutex, M)},
+ *       {@code permission_error(create, thread, Alias)} for a duplicate alias,
+ *       {@code permission_error(join, thread, Id)} for a detached thread or oneself,
+ *       {@code permission_error(unlock, mutex, M)}, and the instantiation / type errors. They were
+ *       message atoms that {@code catch(G, error(E, _), R)} could not match.</li>
+ *   <li><b>{@code thread_detach/1}</b> on a live thread (detached or not) succeeds; on a thread that
+ *       finished but was never joined it reclaims it; on an unknown or reclaimed one it raises
+ *       {@code existence_error(thread, Id)}. The decision is taken under the thread record's lock,
+ *       so it cannot race with the thread finishing (the flaky
+ *       {@code testISS0479_ThreadCreate3Options}).</li>
+ *   <li><b>No fixed timeouts</b>: {@code thread_join/2} and {@code thread_get_message/1,2} block
+ *       until they can answer (SWI); they are interruptible, so a Stop still cancels them
+ *       ({@code QueryCancelledException}). {@code thread_get_message/3} takes {@code timeout(T)} /
+ *       {@code deadline(D)} and FAILS when it expires.</li>
+ *   <li><b>Selective receive</b>: {@code thread_get_message(Q, b(X))} takes the first message that
+ *       UNIFIES with the pattern, leaving the others queued in order, and blocks until one
+ *       arrives; {@code thread_peek_message/1,2} look the same way without removing.</li>
+ *   <li>New: {@code thread_join/1}, {@code thread_exit/1}, {@code thread_property/2},
+ *       {@code message_queue_create/2} ({@code alias/1}), {@code message_queue_destroy/1},
+ *       {@code mutex_create/1,2}, {@code mutex_destroy/1}, {@code mutex_lock/1},
+ *       {@code mutex_trylock/1}, {@code mutex_unlock/1}, {@code mutex_unlock_all/0},
+ *       {@code with_mutex/2}, and the {@code at_exit(Goal)} option of {@code thread_create/3}.</li>
+ *   <li><b>Identity</b>: every thread that is not a {@code thread_create/2,3} worker — the JVM
+ *       thread that runs the CLI, an IDE background solve, an embedder thread, a JUnit
+ *       {@code @Test(timeout)} body — is the Prolog thread {@code main} (id 1) and shares its one
+ *       message queue. The alias used to be claimed by whichever such thread touched the queues
+ *       first, which made two tests order-dependent (a live JUnit thread from an earlier class held
+ *       it). Ids of threads, queues and mutexes come from ONE counter, so a thread id can never
+ *       be mistaken for a queue id.</li>
+ * </ul>
+ * END_CHANGE: ISS-2025-0620..0634
  */
 public class ThreadPredicates implements BuiltInWithContext {
 
     public enum Mode {
         THREAD_CREATE, THREAD_JOIN, THREAD_DETACH, THREAD_SELF,
         THREAD_SLEEP, THREAD_IS_ALIVE,
-        MQ_CREATE, MQ_SEND, MQ_GET, MQ_PEEK
+        MQ_CREATE, MQ_SEND, MQ_GET, MQ_PEEK,
+        // ISS-2025-0630..0632
+        MQ_DESTROY, THREAD_PROPERTY, THREAD_EXIT,
+        MUTEX_CREATE, MUTEX_DESTROY, MUTEX_LOCK, MUTEX_TRYLOCK, MUTEX_UNLOCK, MUTEX_UNLOCK_ALL,
+        WITH_MUTEX
     }
 
     private final Mode mode;
 
-    private static final AtomicInteger THREAD_COUNTER = new AtomicInteger(0);
-    private static final AtomicInteger QUEUE_COUNTER = new AtomicInteger(0);
-    private static final ConcurrentHashMap<Integer, Thread> THREADS = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<Integer, Term> THREAD_STATUS = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<Integer, Boolean> DETACHED = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<Integer, BlockingQueue<Term>> MESSAGE_QUEUES = new ConcurrentHashMap<>();
-    // ISS-2025-0479: alias -> thread id, thread id -> its own message queue id, Java thread -> id
-    private static final ConcurrentHashMap<String, Integer> ALIASES = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<Integer, Integer> THREAD_QUEUE = new ConcurrentHashMap<>();
-    private static final ThreadLocal<Integer> SELF = new ThreadLocal<>();
-    // ISS-2025-0495: the ids of thread_create/2,3 WORKERS. A worker is never the `main` thread.
-    private static final java.util.Set<Integer> WORKER_IDS =
-        java.util.Collections.newSetFromMap(new ConcurrentHashMap<Integer, Boolean>());
+    // ------------------------------------------------------------------ the process-wide tables
 
-    private static final long JOIN_TIMEOUT_MS = 60_000;
-    private static final long MQ_GET_TIMEOUT_MS = 30_000;
+    /** One counter for thread, queue and mutex ids (1 is `main`). */
+    private static final AtomicInteger IDS = new AtomicInteger(1);
+
+    private static final ConcurrentHashMap<Integer, PThread> THREADS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, PThread> THREAD_ALIASES = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Integer, MQueue> QUEUES = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, MQueue> QUEUE_ALIASES = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Integer, PMutex> MUTEXES = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, PMutex> MUTEX_ALIASES = new ConcurrentHashMap<>();
+    private static final ThreadLocal<PThread> SELF = new ThreadLocal<>();
+
+    private static final String MAIN_ALIAS = "main";
+    /** Every non-worker thread is `main` (see the class comment). */
+    private static final PThread MAIN = new PThread(1, MAIN_ALIAS, false);
+    static {
+        THREADS.put(1, MAIN);
+        THREAD_ALIASES.put(MAIN_ALIAS, MAIN);
+    }
+
+    private static final Atom MUTEX_FUNCTOR = new Atom("$mutex");
+
+    /** A Prolog thread. Its fields that change are only written under the record's own lock. */
+    static final class PThread {
+        final int id;
+        final String alias;
+        final boolean worker;
+        final MQueue queue;
+        volatile Thread thread;
+        /** null while running; true / false / exception(E) / exited(T) afterwards. */
+        volatile Term status;
+        boolean detached;
+        /** Removed from the tables (joined, or a detached thread that finished). */
+        boolean reclaimed;
+
+        PThread(int id, String alias, boolean worker) {
+            this.id = id;
+            this.alias = alias;
+            this.worker = worker;
+            this.queue = new MQueue(id, null);
+        }
+
+        Term handle() { return alias != null ? (Term) new Atom(alias) : (Term) Number.valueOf(id); }
+    }
+
+    /** A message queue with selective receive. */
+    static final class MQueue {
+        final int id;
+        final String alias;
+        private final LinkedList<Term> items = new LinkedList<>();
+        private boolean destroyed;
+
+        MQueue(int id, String alias) { this.id = id; this.alias = alias; }
+
+        Term handle() { return alias != null ? (Term) new Atom(alias) : (Term) Number.valueOf(id); }
+
+        synchronized void put(Term msg) {
+            if (destroyed) throw Errors.existence("message_queue", handle(), "thread_send_message/2");
+            items.addLast(msg);
+            notifyAll();
+        }
+
+        /**
+         * The first queued message that unifies with {@code pattern} — removed when
+         * {@code remove} — waiting until {@code deadlineNanos} (NO_WAIT: do not wait, FOREVER: no
+         * limit). Returns null when the deadline passes.
+         */
+        synchronized Term take(Term pattern, boolean remove, long deadlineNanos, String ctx)
+                throws InterruptedException {
+            for (;;) {
+                if (destroyed) throw Errors.existence("message_queue", handle(), ctx);
+                for (Iterator<Term> it = items.iterator(); it.hasNext();) {
+                    Term msg = it.next();
+                    if (pattern.unify(msg, new HashMap<String, Term>())) {
+                        if (remove) it.remove();
+                        return msg;
+                    }
+                }
+                if (deadlineNanos == NO_WAIT) return null;
+                if (deadlineNanos == FOREVER) {
+                    wait();
+                } else {
+                    long left = deadlineNanos - System.nanoTime();
+                    if (left <= 0) return null;
+                    TimeUnit.NANOSECONDS.timedWait(this, left);
+                }
+            }
+        }
+
+        synchronized void destroy() {
+            destroyed = true;
+            items.clear();
+            notifyAll();
+        }
+
+        synchronized int size() { return items.size(); }
+    }
+
+    private static final long NO_WAIT = Long.MIN_VALUE;
+    private static final long FOREVER = Long.MAX_VALUE;
+
+    /** A recursive mutex. */
+    static final class PMutex {
+        final int id;
+        final String alias;
+        final ReentrantLock lock = new ReentrantLock();
+
+        PMutex(int id, String alias) { this.id = id; this.alias = alias; }
+
+        Term handle() {
+            return alias != null ? (Term) new Atom(alias)
+                : new CompoundTerm(MUTEX_FUNCTOR, Collections.singletonList((Term) Number.valueOf(id)));
+        }
+    }
 
     public ThreadPredicates(Mode mode) {
         this.mode = mode;
@@ -92,7 +202,6 @@ public class ThreadPredicates implements BuiltInWithContext {
         return run(null, query, bindings, solutions);
     }
 
-    // ISS-2025-0479: thread_create/2,3 needs the solver to run the goal on a worker machine.
     @Override
     public boolean executeWithContext(SolverContext solver, Term query,
                                       Map<String, Term> bindings, List<Map<String, Term>> solutions) {
@@ -101,401 +210,568 @@ public class ThreadPredicates implements BuiltInWithContext {
 
     private boolean run(SolverContext solver, Term query, Map<String, Term> bindings,
                         List<Map<String, Term>> solutions) {
+        List<Term> a = query.getArguments();
+        int n = (a == null) ? 0 : a.size();
+        Term[] args = new Term[n];
+        for (int i = 0; i < n; i++) args[i] = a.get(i).resolveBindings(bindings);
         try {
             switch (mode) {
-                case THREAD_CREATE:   return doThreadCreate(solver, query, bindings, solutions);
-                case THREAD_JOIN:     return doThreadJoin(query, bindings, solutions);
-                case THREAD_DETACH:   return doThreadDetach(query, bindings, solutions);
-                case THREAD_SELF:     return doThreadSelf(query, bindings, solutions);
-                case THREAD_SLEEP:    return doThreadSleep(query, bindings, solutions);
-                case THREAD_IS_ALIVE: return doThreadIsAlive(query, bindings, solutions);
-                case MQ_CREATE:       return doMqCreate(query, bindings, solutions);
-                case MQ_SEND:         return doMqSend(query, bindings, solutions);
-                case MQ_GET:          return doMqGet(query, bindings, solutions);
-                case MQ_PEEK:         return doMqPeek(query, bindings, solutions);
+                case THREAD_CREATE:    return threadCreate(solver, args, bindings, solutions);
+                case THREAD_JOIN:      return threadJoin(args, bindings, solutions);
+                case THREAD_DETACH:    return threadDetach(args, bindings, solutions);
+                case THREAD_SELF:      return unify(args[0], self().handle(), bindings, solutions);
+                case THREAD_SLEEP:     return threadSleep(args, bindings, solutions);
+                case THREAD_IS_ALIVE:  return threadIsAlive(args, bindings, solutions);
+                case THREAD_PROPERTY:  return threadProperty(args, bindings, solutions);
+                case THREAD_EXIT:      return threadExit(args);
+                case MQ_CREATE:        return mqCreate(args, bindings, solutions);
+                case MQ_DESTROY:       return mqDestroy(args, bindings, solutions);
+                case MQ_SEND:          return mqSend(args, bindings, solutions);
+                case MQ_GET:           return mqGet(args, bindings, solutions);
+                case MQ_PEEK:          return mqPeek(args, bindings, solutions);
+                case MUTEX_CREATE:     return mutexCreate(args, bindings, solutions);
+                case MUTEX_DESTROY:    return mutexDestroy(args, bindings, solutions);
+                case MUTEX_LOCK:       return mutexLock(args, bindings, solutions);
+                case MUTEX_TRYLOCK:    return mutexTrylock(args, bindings, solutions);
+                case MUTEX_UNLOCK:     return mutexUnlock(args, bindings, solutions);
+                case MUTEX_UNLOCK_ALL: return mutexUnlockAll(bindings, solutions);
+                case WITH_MUTEX:       return withMutex(solver, args, bindings, solutions);
                 default: return false;
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new it.denzosoft.jprolog.core.engine.QueryCancelledException();   // ISS-2025-0479
-        } catch (PrologEvaluationException e) {
-            throw e;
-        } catch (Exception e) {
-            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
-            throw new PrologEvaluationException(modeName() + ": " + e.getMessage());
+            throw new QueryCancelledException();                           // ISS-2025-0479
         }
     }
 
     // ================================================================ thread_create/2,3
 
-    private boolean doThreadCreate(final SolverContext solver, Term query, Map<String, Term> bindings,
+    private boolean threadCreate(final SolverContext solver, Term[] args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
-        List<Term> args = query.getArguments();
-        if (args == null || (args.size() != 2 && args.size() != 3)) {
-            throw new PrologEvaluationException("thread_create requires 2 or 3 arguments.");
-        }
-        final Term goal = args.get(0).resolveBindings(bindings);
-        if (goal instanceof Variable) {
-            throw new PrologEvaluationException("thread_create/2: goal is unbound.");
-        }
+        final String ctx = "thread_create/" + args.length;
+        final Term goal = callable(args[0], ctx);
         String alias = null;
         boolean detached = false;
-        if (args.size() == 3) {
-            for (Term opt : optionList(args.get(2).resolveBindings(bindings))) {
-                Term o = opt;
+        Term atExit = null;
+        if (args.length == 3) {
+            for (Term o : options(args[2], ctx)) {
                 if (!(o instanceof CompoundTerm) || ((CompoundTerm) o).getArguments().size() != 1) continue;
                 CompoundTerm ct = (CompoundTerm) o;
                 Term v = ct.getArguments().get(0);
-                if ("alias".equals(ct.getName()) && v instanceof Atom) alias = ((Atom) v).getName();
-                else if ("detached".equals(ct.getName()) && v instanceof Atom) {
-                    detached = "true".equals(((Atom) v).getName());
+                if ("alias".equals(ct.getName())) {
+                    if (v instanceof Variable) throw Errors.instantiation(ctx);
+                    if (!(v instanceof Atom)) throw Errors.type("atom", v, ctx);
+                    alias = ((Atom) v).getName();
+                } else if ("detached".equals(ct.getName())) {
+                    detached = bool(v, ctx);
+                } else if ("at_exit".equals(ct.getName())) {
+                    atExit = callable(v, ctx);
                 }
-                // any other option (at_exit/1, stack sizes, ...) is accepted and ignored
+                // any other option (stack sizes, priority, ...) is accepted and ignored, as in SWI
             }
         }
 
-        final int id = THREAD_COUNTER.incrementAndGet();
-        THREAD_STATUS.put(id, new Atom("running"));
-        int qid = QUEUE_COUNTER.incrementAndGet();
-        MESSAGE_QUEUES.put(qid, new LinkedBlockingQueue<Term>());
-        THREAD_QUEUE.put(id, qid);
-        WORKER_IDS.add(Integer.valueOf(id));                       // ISS-2025-0495
-        if (alias != null) ALIASES.put(alias, id);
-        if (detached) DETACHED.put(id, Boolean.TRUE);
+        final PThread pt = new PThread(IDS.incrementAndGet(), alias, true);
+        pt.detached = detached;
+        if (alias != null && THREAD_ALIASES.putIfAbsent(alias, pt) != null) {
+            throw Errors.permission("create", "thread", new Atom(alias), ctx);
+        }
+        THREADS.put(pt.id, pt);
 
-        final boolean fDetached = detached;
+        final Term fAtExit = atExit;
         Thread t = new Thread(new Runnable() {
             @Override public void run() {
-                SELF.set(id);
+                SELF.set(pt);
                 Term status;
                 try {
-                    // ISS-2025-0479: the goal really runs — on a fresh Machine over the same Engine
-                    // when the caller is the v4 facade, on the shared recursive solver otherwise.
-                    List<Map<String, Term>> sols = new ArrayList<>();
-                    boolean ok = (solver == null)
-                        ? false
-                        : solver.solveInWorker(goal, new HashMap<String, Term>(), sols, 1);
-                    status = new Atom((ok && !sols.isEmpty()) ? "true" : "false");
-                } catch (it.denzosoft.jprolog.core.exceptions.PrologException pe) {
-                    Term ball = pe.getErrorTerm();
-                    status = new CompoundTerm(new Atom("exception"),
-                        Collections.singletonList(ball != null ? ball : new Atom(String.valueOf(pe.getMessage()))));
-                // ISS-2025-0479: the two control exceptions are REPORTED, not swallowed — this is
-                // the worker's top level, i.e. the analogue of the embedder catching them, and the
-                // join status is the only way the parent can learn what happened. Untrusted
-                // catch/3 inside the goal still cannot see them (they are not PrologExceptions).
-                } catch (it.denzosoft.jprolog.core.engine.InferenceLimitException ile) {
-                    status = new CompoundTerm(new Atom("exception"),
-                        Collections.singletonList(new Atom("inference_limit_exceeded")));
-                } catch (it.denzosoft.jprolog.core.engine.QueryCancelledException qce) {
-                    status = new Atom("cancelled");
-                } catch (Throwable e) {
-                    status = new CompoundTerm(new Atom("exception"),
-                        Collections.singletonList(new Atom(e.getClass().getSimpleName()
-                            + (e.getMessage() == null ? "" : ": " + e.getMessage()))));
+                    status = runGoal(solver, goal);
+                    if (fAtExit != null) {
+                        try { runGoal(solver, fAtExit); } catch (RuntimeException ignored) { /* SWI ignores it */ }
+                    }
                 } finally {
+                    releaseMutexesOfThisThread();
                     SELF.remove();
                 }
-                THREAD_STATUS.put(id, status);
-                if (fDetached || DETACHED.remove(id) != null) cleanup(id);
+                finish(pt, status);
             }
-        }, "prolog-thread-" + id);
-        t.setDaemon(true); // Set daemon BEFORE start — safe and prevents JVM hanging on exit
-        THREADS.put(id, t);
+        }, "prolog-thread-" + pt.id);
+        t.setDaemon(true);
+        pt.thread = t;
         t.start();
-
-        return unify(query.getArguments().get(1), new Number(id), bindings, solutions);
+        return unify(args[1], pt.handle(), bindings, solutions);
     }
 
-    private static void cleanup(int id) {
-        THREADS.remove(id);
-        WORKER_IDS.remove(Integer.valueOf(id));                    // ISS-2025-0495
-        THREAD_STATUS.remove(id);
-        Integer q = THREAD_QUEUE.remove(id);
-        if (q != null) MESSAGE_QUEUES.remove(q);
-        for (Map.Entry<String, Integer> e : ALIASES.entrySet()) {
-            if (e.getValue().intValue() == id) ALIASES.remove(e.getKey());
+    /** Run a goal on a worker machine on THIS thread and turn the outcome into a join status. */
+    private static Term runGoal(SolverContext solver, Term goal) {
+        try {
+            List<Map<String, Term>> sols = new ArrayList<>();
+            boolean ok = (solver != null) && solver.solveInWorker(goal, new HashMap<String, Term>(), sols, 1);
+            return new Atom((ok && !sols.isEmpty()) ? "true" : "false");
+        } catch (ThreadExitException te) {                                  // ISS-2025-0632
+            return struct("exited", te.getTerm());
+        } catch (PrologException pe) {
+            Term ball = pe.getErrorTerm();
+            return struct("exception", ball != null ? detach(ball) : new Atom(String.valueOf(pe.getMessage())));
+        // ISS-2025-0479: the control exceptions are REPORTED — the worker's top level is the analogue
+        // of the embedder catching them, and the join status is how the parent learns about it.
+        } catch (InferenceLimitException ile) {
+            return struct("exception", new Atom("inference_limit_exceeded"));
+        } catch (QueryCancelledException qce) {
+            return new Atom("cancelled");
+        } catch (Throwable e) {
+            return struct("exception", new Atom(e.getClass().getSimpleName()
+                + (e.getMessage() == null ? "" : ": " + e.getMessage())));
         }
     }
 
-    private List<Term> optionList(Term t) {
-        List<Term> out = new ArrayList<>();
-        Term cur = t;
-        while (cur instanceof CompoundTerm) {
-            CompoundTerm ct = (CompoundTerm) cur;
-            if (!".".equals(ct.getFunctor().getName()) || ct.getArguments().size() != 2) break;
-            out.add(ct.getArguments().get(0));
-            cur = ct.getArguments().get(1);
+    /** The thread's goal is done: record the status; a detached thread is reclaimed at once. */
+    private static void finish(PThread pt, Term status) {
+        synchronized (pt) {
+            pt.status = status;
+            if (pt.detached) reclaim(pt);
         }
-        return out;
     }
 
-    private boolean doThreadJoin(Term query, Map<String, Term> bindings,
+    /** Remove a thread from the tables. Caller holds the record's lock. */
+    private static void reclaim(PThread pt) {
+        if (pt.reclaimed) return;
+        pt.reclaimed = true;
+        THREADS.remove(pt.id, pt);
+        if (pt.alias != null) THREAD_ALIASES.remove(pt.alias, pt);
+        pt.queue.destroy();
+    }
+
+    // ================================================================ join / detach / exit
+
+    private boolean threadJoin(Term[] args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws InterruptedException {
-        checkArity(query, 2);
-        int id = threadId(query.getArguments().get(0), bindings);
-
-        if (DETACHED.containsKey(id)) {
-            throw new PrologEvaluationException("thread_join: thread " + id + " is detached, cannot join.");
+        final String ctx = "thread_join/" + args.length;
+        PThread pt = thread(args[0], ctx);
+        synchronized (pt) {
+            // SWI: "Cannot join detached thread" / "Cannot join self" — permission errors
+            if (pt.detached || pt == self() || !pt.worker) {
+                throw Errors.permission("join", "thread", args[0], ctx);
+            }
         }
-
-        Thread t = THREADS.get(id);
-        if (t == null) throw new PrologEvaluationException("thread_join: unknown thread " + id);
-
-        // Use timeout to prevent permanent deadlocks
-        t.join(JOIN_TIMEOUT_MS);
-        if (t.isAlive()) {
-            throw new PrologEvaluationException("thread_join: timeout after " + (JOIN_TIMEOUT_MS / 1000) + "s waiting for thread " + id);
+        Thread t = pt.thread;
+        if (t != null) {
+            // ISS-2025-0639: the load lock lets the joined thread load in our place while we wait
+            it.denzosoft.jprolog.core.engine.ThreadWaits.enterJoin(t);
+            try {
+                t.join();                         // no timeout (SWI); interruptible
+            } finally {
+                it.denzosoft.jprolog.core.engine.ThreadWaits.exitJoin();
+            }
         }
-
-        Term status = THREAD_STATUS.get(id);
-        if (status == null) status = new Atom("unknown");
-        cleanup(id);
-        return unify(query.getArguments().get(1), status, bindings, solutions);
+        Term status;
+        synchronized (pt) {
+            if (pt.reclaimed) throw Errors.existence("thread", args[0], ctx);   // joined by another
+            status = pt.status;
+            reclaim(pt);
+        }
+        if (status == null) status = new Atom("false");
+        if (args.length == 1) {
+            // ISS-2025-0631: thread_join/1 succeeds on `true`, raises thread_error(Id, Status) else
+            if (status instanceof Atom && "true".equals(((Atom) status).getName())) {
+                solutions.add(new HashMap<>(bindings));
+                return true;
+            }
+            throw new PrologException(new CompoundTerm(new Atom("error"), Arrays.asList(
+                new CompoundTerm(new Atom("thread_error"), Arrays.asList(args[0], status)),
+                (Term) new Variable())));
+        }
+        return unify(args[1], status, bindings, solutions);
     }
 
-    private boolean doThreadDetach(Term query, Map<String, Term> bindings,
+    // START_CHANGE: ISS-2025-0620 - thread_detach/1 semantics (SWI) and no race with the thread's end
+    private boolean threadDetach(Term[] args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
-        checkArity(query, 1);
-        int id = threadId(query.getArguments().get(0), bindings);
-        Thread t = THREADS.get(id);
-        if (t == null) throw new PrologEvaluationException("thread_detach: unknown thread " + id);
-
-        // Mark as detached — the thread's finally block will clean up when it completes.
-        // If already completed, clean up now.
-        DETACHED.put(id, Boolean.TRUE);
-        if (!t.isAlive()) {
-            DETACHED.remove(id);
-            cleanup(id);
+        PThread pt = thread(args[0], "thread_detach/1");
+        synchronized (pt) {
+            if (pt.reclaimed) throw Errors.existence("thread", args[0], "thread_detach/1");
+            if (!pt.worker) throw Errors.permission("detach", "thread", args[0], "thread_detach/1");
+            if (pt.status != null) reclaim(pt);   // finished, never joined: reclaim it now
+            else pt.detached = true;              // live (detached or not): reclaimed when it ends
         }
+        solutions.add(new HashMap<>(bindings));
+        return true;
+    }
+    // END_CHANGE: ISS-2025-0620
 
-        solutions.add(bindings);
+    private boolean threadExit(Term[] args) {
+        PThread me = self();
+        if (!me.worker) throw Errors.permission("exit", "thread", me.handle(), "thread_exit/1");
+        throw new ThreadExitException(detach(args[0]));                     // ISS-2025-0632
+    }
+
+    private boolean threadSleep(Term[] args, Map<String, Term> bindings,
+            List<Map<String, Term>> solutions) throws InterruptedException {
+        double seconds = number(args[0], "thread_sleep/1");
+        if (seconds > 0) Thread.sleep((long) (seconds * 1000), (int) ((seconds * 1e9) % 1000000));
+        solutions.add(new HashMap<>(bindings));
         return true;
     }
 
-    private boolean doThreadSelf(Term query, Map<String, Term> bindings,
+    private boolean threadIsAlive(Term[] args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
-        checkArity(query, 1);
-        // ISS-2025-0479: a thread created by thread_create/2,3 reports ITS Prolog id; any other
-        // thread (the main one, an IDE background solve) still reports the JVM thread id.
-        // ISS-2025-0487: registering here too means the id thread_self/1 reports is always a
-        // usable thread_send_message/2 target, on the main thread as well as in a worker.
-        // START_CHANGE: ISS-2025-0495 - 4.1 wave A: SWI-style identity. A thread that HAS an alias
-        // reports the alias, not the number: the top-level thread answers `main` (the alias
-        // selfId() claims for it), and a worker created with [alias(w1)] answers `w1`. A worker
-        // with no alias still answers its integer id. Every thread predicate accepts either form
-        // (threadId/2 resolves an alias, and so does the queue lookup), so the answer of
-        // thread_self/1 remains a usable argument to thread_join/2, thread_send_message/2 and the
-        // rest. W9 deviation 8 is closed.
-        int tid = selfId();
-        String alias = aliasOf(tid);
-        Term self = (alias != null) ? (Term) new Atom(alias) : (Term) new Number((long) tid);
-        return unify(query.getArguments().get(0), self, bindings, solutions);
-        // END_CHANGE: ISS-2025-0495
-    }
-
-    private boolean doThreadSleep(Term query, Map<String, Term> bindings,
-            List<Map<String, Term>> solutions) throws InterruptedException {
-        checkArity(query, 1);
-        Term secTerm = query.getArguments().get(0).resolveBindings(bindings);
-        if (!(secTerm instanceof Number)) throw new PrologEvaluationException("thread_sleep/1: argument must be a number.");
-        double seconds = ((Number) secTerm).getValue();
-        if (seconds < 0) throw new PrologEvaluationException("thread_sleep/1: seconds must be non-negative.");
-        long millis = (long) (seconds * 1000);
-        Thread.sleep(millis);
-        solutions.add(bindings);
+        PThread pt = lookupThread(args[0], "thread_is_alive/1");
+        if (pt == null || pt.status != null || pt.reclaimed) return false;
+        solutions.add(new HashMap<>(bindings));
         return true;
     }
 
-    private boolean doThreadIsAlive(Term query, Map<String, Term> bindings,
+    // ================================================================ thread_property/2
+
+    // START_CHANGE: ISS-2025-0630 - thread_property(?Id, ?Property): id/1, alias/1, status/1, detached/1
+    private boolean threadProperty(Term[] args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
-        checkArity(query, 1);
-        int id = threadId(query.getArguments().get(0), bindings);
-        Thread t = THREADS.get(id);
-        if (t != null && t.isAlive()) { solutions.add(bindings); return true; }
-        return false;
+        List<PThread> which = new ArrayList<>();
+        if (args[0] instanceof Variable) {
+            which.addAll(new TreeMap<Integer, PThread>(THREADS).values());
+        } else {
+            which.add(thread(args[0], "thread_property/2"));
+        }
+        Term prop = args[1];
+        if (!(prop instanceof Variable) && !(prop instanceof CompoundTerm)) {
+            throw Errors.domain("thread_property", prop, "thread_property/2");
+        }
+        boolean any = false;
+        for (PThread pt : which) {
+            List<Term> props = new ArrayList<>();
+            props.add(struct("id", Number.valueOf(pt.id)));
+            if (pt.alias != null) props.add(struct("alias", new Atom(pt.alias)));
+            Term st = pt.status;
+            props.add(struct("status", st == null ? new Atom("running") : st));
+            boolean det;
+            synchronized (pt) { det = pt.detached; }
+            props.add(struct("detached", new Atom(det ? "true" : "false")));
+            for (Term p : props) {
+                Map<String, Term> nb = new HashMap<>(bindings);
+                if (args[0].unify(pt.handle(), nb) && prop.resolveBindings(nb).unify(p, nb)) {
+                    solutions.add(nb);
+                    any = true;
+                }
+            }
+        }
+        return any;
     }
+    // END_CHANGE: ISS-2025-0630
 
     // ================================================================ message queues
 
-    private boolean doMqCreate(Term query, Map<String, Term> bindings,
+    private boolean mqCreate(Term[] args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
-        checkArity(query, 1);
-        int id = QUEUE_COUNTER.incrementAndGet();
-        MESSAGE_QUEUES.put(id, new LinkedBlockingQueue<Term>());
-        return unify(query.getArguments().get(0), new Number(id), bindings, solutions);
+        String ctx = "message_queue_create/" + args.length;
+        String alias = null;
+        if (args.length == 2) {
+            for (Term o : options(args[1], ctx)) {
+                if (o instanceof CompoundTerm && "alias".equals(((CompoundTerm) o).getName())
+                        && ((CompoundTerm) o).getArguments().size() == 1) {
+                    Term v = ((CompoundTerm) o).getArguments().get(0);
+                    if (v instanceof Variable) throw Errors.instantiation(ctx);
+                    if (!(v instanceof Atom)) throw Errors.type("atom", v, ctx);
+                    alias = ((Atom) v).getName();
+                }
+            }
+        }
+        if (!(args[0] instanceof Variable)) throw Errors.uninstantiation(args[0], ctx);
+        MQueue q = new MQueue(IDS.incrementAndGet(), alias);
+        if (alias != null && (THREAD_ALIASES.containsKey(alias) || QUEUE_ALIASES.putIfAbsent(alias, q) != null)) {
+            throw Errors.permission("create", "message_queue", new Atom(alias), ctx);
+        }
+        QUEUES.put(q.id, q);
+        return unify(args[0], q.handle(), bindings, solutions);
     }
 
-    private boolean doMqSend(Term query, Map<String, Term> bindings,
+    // START_CHANGE: ISS-2025-0630 - message_queue_destroy/1
+    private boolean mqDestroy(Term[] args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
-        checkArity(query, 2);
-        BlockingQueue<Term> q = queueOf(query.getArguments().get(0), bindings, "thread_send_message");
-        // ISS-2025-0479: a message is a TERM and it is COPIED — a cell must never be shared
-        // between two machines (design B.13).
-        q.add(detach(query.getArguments().get(1).resolveBindings(bindings)));
-        solutions.add(bindings);
+        String ctx = "message_queue_destroy/1";
+        if (args[0] instanceof Variable) throw Errors.instantiation(ctx);
+        MQueue q = null;
+        if (args[0] instanceof Number && ((Number) args[0]).isInteger()) q = QUEUES.get((int) ((Number) args[0]).longValue());
+        else if (args[0] instanceof Atom) q = QUEUE_ALIASES.get(((Atom) args[0]).getName());
+        if (q == null) throw Errors.existence("message_queue", args[0], ctx);
+        QUEUES.remove(q.id, q);
+        if (q.alias != null) QUEUE_ALIASES.remove(q.alias, q);
+        q.destroy();
+        solutions.add(new HashMap<>(bindings));
+        return true;
+    }
+    // END_CHANGE: ISS-2025-0630
+
+    private boolean mqSend(Term[] args, Map<String, Term> bindings,
+            List<Map<String, Term>> solutions) {
+        MQueue q = queue(args[0], "thread_send_message/2");
+        // ISS-2025-0479: a message is a TERM and it is COPIED (design B.13)
+        q.put(detach(args[1]));
+        solutions.add(new HashMap<>(bindings));
         return true;
     }
 
-    private boolean doMqGet(Term query, Map<String, Term> bindings,
+    // START_CHANGE: ISS-2025-0629 - selective receive; no fixed timeout; thread_get_message/3
+    private boolean mqGet(Term[] args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws InterruptedException {
-        List<Term> args = query.getArguments();
-        if (args == null || (args.size() != 1 && args.size() != 2)) {
-            throw new PrologEvaluationException("thread_get_message requires 1 or 2 arguments.");
-        }
-        BlockingQueue<Term> q = (args.size() == 1)
-            ? ownQueue("thread_get_message")
-            : queueOf(args.get(0), bindings, "thread_get_message");
-
-        // Use poll with timeout instead of take() to prevent permanent blocking
-        Term msg = q.poll(MQ_GET_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-        if (msg == null) {
-            throw new PrologEvaluationException("thread_get_message: timeout after " + (MQ_GET_TIMEOUT_MS / 1000) + "s");
-        }
-        return unify(args.get(args.size() - 1), detach(msg), bindings, solutions);
-    }
-
-    private boolean doMqPeek(Term query, Map<String, Term> bindings,
-            List<Map<String, Term>> solutions) {
-        checkArity(query, 2);
-        BlockingQueue<Term> q = queueOf(query.getArguments().get(0), bindings, "thread_peek_message");
-        Term msg = q.peek();
-        if (msg == null) return false;
-        return unify(query.getArguments().get(1), detach(msg), bindings, solutions);
-    }
-
-    /** The queue named by a queue id, a thread id or a thread alias. */
-    private BlockingQueue<Term> queueOf(Term t, Map<String, Term> bindings, String who) {
-        Term r = t.resolveBindings(bindings);
-        if (r instanceof Number) {
-            int n = ((Number) r).getValue().intValue();
-            BlockingQueue<Term> q = MESSAGE_QUEUES.get(n);
-            if (q != null) return q;
-            Integer own = THREAD_QUEUE.get(n);                 // a thread id
-            if (own != null) {
-                q = MESSAGE_QUEUES.get(own);
-                if (q != null) return q;
-            }
-            throw new PrologEvaluationException(who + ": unknown queue " + n);
-        }
-        if (r instanceof Atom) {
-            String alias = ((Atom) r).getName();
-            // ISS-2025-0487: `main` names the queue of the thread that runs the top-level query.
-            // Registering it on demand means a worker can post to it before the main thread has
-            // ever called thread_get_message/1 itself.
-            if (MAIN_ALIAS.equals(alias)) ensureLiveMainAlias();   // ISS-2025-0495
-            Integer id = ALIASES.get(alias);                   // a thread alias
-            if (id != null) {
-                Integer own = THREAD_QUEUE.get(id);
-                if (own != null) {
-                    BlockingQueue<Term> q = MESSAGE_QUEUES.get(own);
-                    if (q != null) return q;
+        String ctx = "thread_get_message/" + args.length;
+        MQueue q = (args.length == 1) ? self().queue : queue(args[0], ctx);
+        Term pattern = (args.length == 1) ? args[0] : args[1];
+        long deadline = FOREVER;
+        if (args.length == 3) {
+            for (Term o : options(args[2], ctx)) {
+                if (!(o instanceof CompoundTerm) || ((CompoundTerm) o).getArguments().size() != 1) continue;
+                CompoundTerm ct = (CompoundTerm) o;
+                Term v = ct.getArguments().get(0);
+                if ("timeout".equals(ct.getName())) {
+                    double s = number(v, ctx);
+                    long d = (s <= 0) ? NO_WAIT : System.nanoTime() + (long) (s * 1e9);
+                    deadline = (deadline == FOREVER) ? d : Math.min(deadline, d);
+                } else if ("deadline".equals(ct.getName())) {
+                    double abs = number(v, ctx);
+                    double left = abs - System.currentTimeMillis() / 1000.0;
+                    long d = (left <= 0) ? NO_WAIT : System.nanoTime() + (long) (left * 1e9);
+                    deadline = (deadline == FOREVER) ? d : Math.min(deadline, d);
                 }
             }
-            throw new PrologEvaluationException(who + ": unknown queue " + alias);
         }
-        throw new PrologEvaluationException(who + ": queue must be an id or an alias.");
+        Term msg = q.take(pattern, true, deadline, ctx);
+        if (msg == null) return false;                              // timeout: fail (SWI)
+        return unify(pattern, msg, bindings, solutions);
     }
 
-    private BlockingQueue<Term> ownQueue(String who) {
-        // ISS-2025-0487: every Prolog thread owns a queue, INCLUDING the one that is not a
-        // thread_create/2,3 worker (the main thread, an IDE background solve). It is registered
-        // lazily, on first use, and the first such thread also claims the alias `main` so
-        // `thread_send_message(main, T)` from a worker reaches it — as in SWI.
-        int self = selfId();
-        Integer qid = THREAD_QUEUE.get(Integer.valueOf(self));
-        BlockingQueue<Term> q = (qid == null) ? null : MESSAGE_QUEUES.get(qid);
-        if (q == null) throw new PrologEvaluationException(who + "/1: this thread has no message queue.");
-        return q;
+    private boolean mqPeek(Term[] args, Map<String, Term> bindings,
+            List<Map<String, Term>> solutions) throws InterruptedException {
+        String ctx = "thread_peek_message/" + args.length;
+        MQueue q = (args.length == 1) ? self().queue : queue(args[0], ctx);
+        Term pattern = (args.length == 1) ? args[0] : args[1];
+        Term msg = q.take(pattern, false, NO_WAIT, ctx);
+        if (msg == null) return false;
+        return unify(pattern, detach(msg), bindings, solutions);
     }
+    // END_CHANGE: ISS-2025-0629
 
-    // START_CHANGE: ISS-2025-0487 - the main thread owns a message queue too.
-    /** The alias the first non-worker thread to use the message queues claims (SWI's `main`). */
-    private static final String MAIN_ALIAS = "main";
+    // ================================================================ mutexes
 
-    /**
-     * This thread's Prolog id, registering the thread if it has none. A worker created by
-     * {@code thread_create/2,3} always has one; any other thread — the embedder's, the CLI's, an
-     * IDE background solve — gets one (and a queue) the first time it touches the message-queue
-     * predicates or {@code thread_self/1}.
-     */
-    private static int selfId() {
-        Integer self = SELF.get();
-        if (self != null) return self.intValue();
-        int id = THREAD_COUNTER.incrementAndGet();
-        SELF.set(Integer.valueOf(id));
-        THREADS.put(Integer.valueOf(id), Thread.currentThread());
-        int qid = QUEUE_COUNTER.incrementAndGet();
-        MESSAGE_QUEUES.put(Integer.valueOf(qid), new LinkedBlockingQueue<Term>());
-        THREAD_QUEUE.put(Integer.valueOf(id), Integer.valueOf(qid));
-        ensureLiveMainAlias();                                     // ISS-2025-0495
-        return id;
-    }
-
-    // START_CHANGE: ISS-2025-0495 - `main` must name a LIVE thread. It used to be claimed once, by
-    // whichever non-worker thread touched the queues first, and kept pointing at that thread for
-    // the life of the JVM — so once that thread died, `thread_send_message(main, T)` posted to a
-    // queue nobody would ever read, and the next non-worker thread silently got a queue of its own
-    // (a JUnit @Test(timeout=) body, an IDE background solve and a one-shot embedder thread all
-    // die like that). A non-worker thread now takes the alias over when the previous owner is gone.
-    /** Point {@code main} at this thread unless a LIVE thread already owns it (workers never do). */
-    private static void ensureLiveMainAlias() {
-        Integer owner = ALIASES.get(MAIN_ALIAS);
-        Thread ownerThread = (owner == null) ? null : THREADS.get(owner);
-        if (owner != null && ownerThread != null && ownerThread.isAlive()) return;
-        Integer self = SELF.get();
-        if (self == null) { selfId(); return; }                    // registers, and calls back here
-        if (WORKER_IDS.contains(self)) return;                     // a worker is never `main`
-        ALIASES.put(MAIN_ALIAS, self);
-    }
-    // END_CHANGE: ISS-2025-0495
-    // END_CHANGE: ISS-2025-0487
-
-    // START_CHANGE: ISS-2025-0495 - the alias of a thread, for thread_self/1 (SWI reports it).
-    /** The alias registered for Prolog thread {@code id}, or null. */
-    private static String aliasOf(int id) {
-        for (Map.Entry<String, Integer> e : ALIASES.entrySet()) {
-            if (e.getValue() != null && e.getValue().intValue() == id) return e.getKey();
+    // START_CHANGE: ISS-2025-0631 - mutex_create/1,2, mutex_destroy/1, mutex_lock/1,
+    // mutex_trylock/1, mutex_unlock/1, mutex_unlock_all/0, with_mutex/2 (SWI: recursive mutexes;
+    // an atom names a mutex that is created on first use by mutex_lock/1 and with_mutex/2).
+    private boolean mutexCreate(Term[] args, Map<String, Term> bindings,
+            List<Map<String, Term>> solutions) {
+        String ctx = "mutex_create/" + args.length;
+        String alias = null;
+        if (args[0] instanceof Atom) alias = ((Atom) args[0]).getName();
+        else if (!(args[0] instanceof Variable)) throw Errors.uninstantiation(args[0], ctx);
+        if (args.length == 2) {
+            for (Term o : options(args[1], ctx)) {
+                if (o instanceof CompoundTerm && "alias".equals(((CompoundTerm) o).getName())
+                        && ((CompoundTerm) o).getArguments().size() == 1) {
+                    Term v = ((CompoundTerm) o).getArguments().get(0);
+                    if (v instanceof Variable) throw Errors.instantiation(ctx);
+                    if (!(v instanceof Atom)) throw Errors.type("atom", v, ctx);
+                    alias = ((Atom) v).getName();
+                }
+            }
         }
-        return null;
+        PMutex mx = new PMutex(IDS.incrementAndGet(), alias);
+        if (alias != null && MUTEX_ALIASES.putIfAbsent(alias, mx) != null) {
+            throw Errors.permission("create", "mutex", new Atom(alias), ctx);
+        }
+        MUTEXES.put(mx.id, mx);
+        return unify(args[0], mx.handle(), bindings, solutions);
     }
-    // END_CHANGE: ISS-2025-0495
+
+    private boolean mutexDestroy(Term[] args, Map<String, Term> bindings,
+            List<Map<String, Term>> solutions) {
+        PMutex mx = mutex(args[0], false, "mutex_destroy/1");
+        MUTEXES.remove(mx.id, mx);
+        if (mx.alias != null) MUTEX_ALIASES.remove(mx.alias, mx);
+        solutions.add(new HashMap<>(bindings));
+        return true;
+    }
+
+    private boolean mutexLock(Term[] args, Map<String, Term> bindings,
+            List<Map<String, Term>> solutions) throws InterruptedException {
+        mutex(args[0], true, "mutex_lock/1").lock.lockInterruptibly();
+        solutions.add(new HashMap<>(bindings));
+        return true;
+    }
+
+    private boolean mutexTrylock(Term[] args, Map<String, Term> bindings,
+            List<Map<String, Term>> solutions) {
+        if (!mutex(args[0], true, "mutex_trylock/1").lock.tryLock()) return false;
+        solutions.add(new HashMap<>(bindings));
+        return true;
+    }
+
+    private boolean mutexUnlock(Term[] args, Map<String, Term> bindings,
+            List<Map<String, Term>> solutions) {
+        PMutex mx = mutex(args[0], false, "mutex_unlock/1");
+        if (!mx.lock.isHeldByCurrentThread()) {
+            throw Errors.permission("unlock", "mutex", args[0], "mutex_unlock/1");
+        }
+        mx.lock.unlock();
+        solutions.add(new HashMap<>(bindings));
+        return true;
+    }
+
+    private boolean mutexUnlockAll(Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        releaseMutexesOfThisThread();
+        solutions.add(new HashMap<>(bindings));
+        return true;
+    }
+
+    private static void releaseMutexesOfThisThread() {
+        for (PMutex mx : MUTEXES.values()) {
+            while (mx.lock.isHeldByCurrentThread()) mx.lock.unlock();
+        }
+    }
+
+    /** with_mutex(+Mutex, :Goal): once(Goal) holding Mutex; released however Goal ends. */
+    private boolean withMutex(SolverContext solver, Term[] args, Map<String, Term> bindings,
+            List<Map<String, Term>> solutions) throws InterruptedException {
+        String ctx = "with_mutex/2";
+        Term goal = callable(args[1], ctx);
+        PMutex mx = mutex(args[0], true, ctx);
+        if (solver == null) throw Errors.existence("procedure", Errors.pi("with_mutex", 2), ctx);
+        mx.lock.lockInterruptibly();
+        try {
+            List<Map<String, Term>> sols = new ArrayList<>();
+            Term once = new CompoundTerm(new Atom("once"), Collections.singletonList(goal));
+            solver.solveMeta(once, new HashMap<String, Term>(bindings), sols);
+            if (sols.isEmpty()) return false;
+            solutions.add(sols.get(0));
+            return true;
+        } finally {
+            mx.lock.unlock();
+        }
+    }
+    // END_CHANGE: ISS-2025-0631
+
+    // ================================================================ lookups and helpers
+
+    /** This thread's Prolog thread: a worker's own record, or `main` for every other thread. */
+    private static PThread self() {
+        PThread pt = SELF.get();
+        return (pt != null) ? pt : MAIN;
+    }
+
+    private static PThread lookupThread(Term t, String ctx) {
+        if (t instanceof Variable) throw Errors.instantiation(ctx);
+        if (t instanceof Number && ((Number) t).isInteger()) return THREADS.get((int) ((Number) t).longValue());
+        if (t instanceof Atom) return THREAD_ALIASES.get(((Atom) t).getName());
+        throw Errors.type("thread", t, ctx);
+    }
+
+    /** The thread named by an id or an alias; existence_error(thread, T) when there is none. */
+    private static PThread thread(Term t, String ctx) {
+        PThread pt = lookupThread(t, ctx);
+        if (pt == null) throw Errors.existence("thread", t, ctx);
+        return pt;
+    }
+
+    /** The queue named by a queue id / alias or by a thread id / alias. */
+    private static MQueue queue(Term t, String ctx) {
+        if (t instanceof Variable) throw Errors.instantiation(ctx);
+        if (t instanceof Number && ((Number) t).isInteger()) {
+            int n = (int) ((Number) t).longValue();
+            MQueue q = QUEUES.get(n);
+            if (q != null) return q;
+            PThread pt = THREADS.get(n);
+            if (pt != null) return pt.queue;
+        } else if (t instanceof Atom) {
+            String name = ((Atom) t).getName();
+            MQueue q = QUEUE_ALIASES.get(name);
+            if (q != null) return q;
+            PThread pt = THREAD_ALIASES.get(name);
+            if (pt != null) return pt.queue;
+        } else {
+            throw Errors.type("message_queue", t, ctx);
+        }
+        throw Errors.existence("message_queue", t, ctx);
+    }
+
+    private static PMutex mutex(Term t, boolean createAtom, String ctx) {
+        if (t instanceof Variable) throw Errors.instantiation(ctx);
+        PMutex mx = null;
+        if (t instanceof Atom) {
+            String name = ((Atom) t).getName();
+            mx = MUTEX_ALIASES.get(name);
+            if (mx == null && createAtom) {
+                PMutex fresh = new PMutex(IDS.incrementAndGet(), name);
+                mx = MUTEX_ALIASES.putIfAbsent(name, fresh);
+                if (mx == null) { mx = fresh; MUTEXES.put(fresh.id, fresh); }
+            }
+        } else if (t instanceof CompoundTerm && MUTEX_FUNCTOR.getName().equals(((CompoundTerm) t).getName())
+                && ((CompoundTerm) t).getArguments().size() == 1
+                && ((CompoundTerm) t).getArguments().get(0) instanceof Number) {
+            mx = MUTEXES.get((int) ((Number) ((CompoundTerm) t).getArguments().get(0)).longValue());
+        } else {
+            throw Errors.type("mutex", t, ctx);
+        }
+        if (mx == null) throw Errors.existence("mutex", t, ctx);
+        return mx;
+    }
+
+    private static Term callable(Term g, String ctx) {
+        if (g instanceof Variable) throw Errors.instantiation(ctx);
+        if (!(g instanceof Atom) && !(g instanceof CompoundTerm)) throw Errors.type("callable", g, ctx);
+        return g;
+    }
+
+    private static boolean bool(Term v, String ctx) {
+        if (v instanceof Variable) throw Errors.instantiation(ctx);
+        if (v instanceof Atom) {
+            String s = ((Atom) v).getName();
+            if ("true".equals(s)) return true;
+            if ("false".equals(s)) return false;
+        }
+        throw Errors.type("bool", v, ctx);
+    }
+
+    private static double number(Term v, String ctx) {
+        if (v instanceof Variable) throw Errors.instantiation(ctx);
+        if (!(v instanceof Number)) throw Errors.type("number", v, ctx);
+        return ((Number) v).doubleValue();
+    }
+
+    /** A proper option list; instantiation / type errors otherwise. */
+    private static List<Term> options(Term t, String ctx) {
+        List<Term> out = new ArrayList<>();
+        Term cur = t;
+        while (cur instanceof CompoundTerm && ".".equals(((CompoundTerm) cur).getName())
+                && ((CompoundTerm) cur).getArguments().size() == 2) {
+            Term o = ((CompoundTerm) cur).getArguments().get(0);
+            if (o instanceof Variable) throw Errors.instantiation(ctx);
+            out.add(o);
+            cur = ((CompoundTerm) cur).getArguments().get(1);
+        }
+        if (cur instanceof Variable) throw Errors.instantiation(ctx);
+        if (!(cur instanceof Atom) || !"[]".equals(((Atom) cur).getName())) throw Errors.type("list", t, ctx);
+        return out;
+    }
+
+    private static Term struct(String name, Term arg) {
+        return new CompoundTerm(new Atom(name), Collections.singletonList(arg));
+    }
 
     /**
      * A copy that shares no {@code Variable} cell with the sender (ISS-2025-0479). On the v4 engine
      * a bound cell IS the binding, so a message put on a queue would otherwise be un-bound by the
      * sender's backtracking while the receiver reads it.
      */
-    private static Term detach(Term t) {
+    static Term detach(Term t) {
         return it.denzosoft.jprolog.core.engine.v4.Unify.copy(
             it.denzosoft.jprolog.core.engine.v4.Unify.resolve(t, null),
             new IdentityHashMap<Variable, Variable>(), null);
     }
 
-    /** The thread named by an id or an alias. */
-    private int threadId(Term t, Map<String, Term> bindings) {
-        Term r = t.resolveBindings(bindings);
-        if (r instanceof Number) return ((Number) r).getValue().intValue();
-        if (r instanceof Atom) {
-            Integer id = ALIASES.get(((Atom) r).getName());
-            if (id != null) return id.intValue();
-            throw new PrologEvaluationException(modeName() + ": unknown thread alias " + ((Atom) r).getName());
-        }
-        throw new PrologEvaluationException(modeName() + ": argument must be a thread id or alias.");
-    }
-
-    private void checkArity(Term query, int expected) {
-        if (query.getArguments().size() != expected)
-            throw new PrologEvaluationException(modeName() + " requires " + expected + " arguments.");
-    }
-
-    private boolean unify(Term target, Term value, Map<String, Term> bindings,
+    private static boolean unify(Term target, Term value, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         Map<String, Term> nb = new HashMap<>(bindings);
         if (target.resolveBindings(bindings).unify(value, nb)) { solutions.add(nb); return true; }
         return false;
     }
 
-    private String modeName() { return mode.name().toLowerCase(); }
+    /** Test hook: the number of threads the tables still hold (main included). */
+    static int threadTableSize() { return THREADS.size(); }
 }
 // END_CHANGE: ISS-2025-0119

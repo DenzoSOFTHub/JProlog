@@ -156,7 +156,8 @@ public class ArithmeticEvaluator {
         UNARY_FUNCTIONS.put("cbrt", Math::cbrt);
         // END_CHANGE: ISS-2025-0227
 
-        // START_CHANGE: ISS-2025-0225 - integer/1 truncating evaluable functor (ISO §9.1.6.5)
+        // START_CHANGE: ISS-2025-0225 - integer/1 evaluable functor (legacy helper only; not an ISO
+        // evaluable — the engine's core.arith.v2 rounds it as SWI does, ISS-2025-0590/0669)
         UNARY_FUNCTIONS.put("integer", x -> x < 0 ? Math.ceil(x) : Math.floor(x));
         // END_CHANGE: ISS-2025-0225
 

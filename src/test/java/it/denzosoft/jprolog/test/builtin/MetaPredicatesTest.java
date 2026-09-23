@@ -28,8 +28,9 @@ public class MetaPredicatesTest {
         String program = "test_fact. test_call :- call(test_fact).";
         prolog.consult(program);
         
-        List<Map<String, Term>> solutions = prolog.solve("test_call");
-        assertFalse("call/1 should execute the goal", solutions.isEmpty());
+        // ISS-2025-0663: exact answer counts ("not empty" held for any number of answers)
+        assertEquals("call/1 should execute the goal", 1, prolog.solve("test_call").size());
+        assertEquals(0, prolog.solve("call(fail)").size());
     }
     
     @Test
@@ -56,6 +57,7 @@ public class MetaPredicatesTest {
         
         List<Map<String, Term>> solutions = prolog.solve("test_call(G)");
         assertFalse("Should execute variable goal", solutions.isEmpty());
+        assertEquals(1, solutions.size());
         assertEquals("fact_a", solutions.get(0).get("G").toString());
     }
     
@@ -73,7 +75,7 @@ public class MetaPredicatesTest {
         List<Map<String, Term>> solutions = prolog.solve("test_call2(R)");
         assertFalse("call/3 should work", solutions.isEmpty());
         String result = solutions.get(0).get("R").toString();
-        assertTrue("call/3 result should be 3", result.equals("3.0") || result.equals("3"));
+        assertEquals("call/3 result is the integer 3", 1, prolog.solve("test_call2(R), R == 3").size());
 
         // Test call/1: call(my_add(1, 2, 3)) -> my_add(1, 2, 3)
         solutions = prolog.solve("test_call1");
@@ -88,12 +90,15 @@ public class MetaPredicatesTest {
             "multi(1).\n" +
             "multi(2).\n" +
             "multi(3).\n" +
-            "test_once :- once(multi(1)).";
+            "test_once(X) :- once(multi(X)).";
         prolog.consult(program);
         
-        List<Map<String, Term>> solutions = prolog.solve("test_once");
-        assertFalse("once/1 should succeed", solutions.isEmpty());
+        // ISS-2025-0663: the goal must be NONDETERMINISTIC for the test to mean anything
+        // (once(multi(1)) has one answer with or without once/1)
+        assertEquals("multi/1 alone has three answers", 3, prolog.solve("multi(X)").size());
+        List<Map<String, Term>> solutions = prolog.solve("test_once(X)");
         assertEquals("once/1 should return only one solution", 1, solutions.size());
+        assertEquals("the first one", 1, prolog.solve("test_once(X), X == 1").size());
     }
     
     @Test
@@ -112,8 +117,8 @@ public class MetaPredicatesTest {
         String program = "test_ignore_success :- ignore(true).";
         prolog.consult(program);
         
-        List<Map<String, Term>> solutions = prolog.solve("test_ignore_success");
-        assertFalse("ignore(true) should succeed", solutions.isEmpty());
+        assertEquals("ignore(true) should succeed once", 1, prolog.solve("test_ignore_success").size());
+        assertEquals("ignore/1 keeps the goal's bindings", 1, prolog.solve("ignore(X = 1), X == 1").size());
     }
     
     @Test
@@ -122,19 +127,20 @@ public class MetaPredicatesTest {
         String program = "test_ignore_fail :- ignore(fail).";
         prolog.consult(program);
         
-        List<Map<String, Term>> solutions = prolog.solve("test_ignore_fail");
-        assertFalse("ignore(fail) should succeed", solutions.isEmpty());
+        assertEquals("ignore(fail) should succeed once", 1, prolog.solve("test_ignore_fail").size());
     }
     
     @Test
     public void testIgnoreWithSideEffects() {
         // Test that ignore/1 executes goal for side effects - simplified
         String program = 
-            "test_ignore :- ignore(true).";
+            ":- dynamic(seen/1).\n" +
+            "test_ignore :- ignore((member(X, [a, b]), assertz(seen(X)), X == b)).";
         prolog.consult(program);
         
-        List<Map<String, Term>> solutions = prolog.solve("test_ignore");
-        assertFalse("Should succeed with ignore", solutions.isEmpty());
+        // ISS-2025-0663: the side effects happen, and ignore/1 commits to the first success
+        assertEquals("Should succeed once with ignore", 1, prolog.solve("test_ignore").size());
+        assertEquals(1, prolog.solve("findall(X, seen(X), L), L == [a, b]").size());
     }
     
     @Test
@@ -148,8 +154,7 @@ public class MetaPredicatesTest {
             "test_forall :- forall(number_fact(X), positive(X)).";
         prolog.consult(program);
         
-        List<Map<String, Term>> solutions = prolog.solve("test_forall");
-        assertFalse("forall should succeed when all satisfy condition", solutions.isEmpty());
+        assertEquals("forall should succeed once when all satisfy condition", 1, prolog.solve("test_forall").size());
     }
     
     @Test
@@ -173,8 +178,7 @@ public class MetaPredicatesTest {
         String program = "test_forall_empty :- forall(fail, write(never)).";
         prolog.consult(program);
         
-        List<Map<String, Term>> solutions = prolog.solve("test_forall_empty");
-        assertFalse("forall with no solutions should succeed", solutions.isEmpty());
+        assertEquals("forall with no solutions should succeed", 1, prolog.solve("test_forall_empty").size());
     }
     
     @Test
@@ -186,7 +190,7 @@ public class MetaPredicatesTest {
             "test_nested :- call(call(goal(G))), call(G).";
         prolog.consult(program);
         
-        List<Map<String, Term>> solutions = prolog.solve("test_nested");
-        assertFalse("Nested calls should work", solutions.isEmpty());
+        assertEquals("Nested calls should work", 1, prolog.solve("test_nested").size());
+        assertEquals(1, prolog.solve("call(call(goal(G))), G == test").size());
     }
 }

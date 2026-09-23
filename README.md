@@ -2,9 +2,35 @@
 
 **A Full-Featured Prolog System with Engine, IDE, CLI, and Comprehensive Built-ins**
 
-[![Version](https://img.shields.io/badge/version-4.1.0-blue.svg)](https://github.com/DenzoSOFTHub/JProlog/releases/tag/v4.1.0) [![Java](https://img.shields.io/badge/java-1.8%2B-orange.svg)]() [![ISO](https://img.shields.io/badge/ISO%2013211--1-100%25%20core-green.svg)]()
+[![Version](https://img.shields.io/badge/version-4.5.0-blue.svg)](https://github.com/DenzoSOFTHub/JProlog/releases/tag/v4.5.0) [![Java](https://img.shields.io/badge/java-1.8%2B-orange.svg)]() [![ISO](https://img.shields.io/badge/ISO%2013211--1-100%25%20core-green.svg)]()
 
-**Current version**: `4.1.0` — see [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/DenzoSOFTHub/JProlog/releases).
+**Current version**: `4.5.0` — see [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/DenzoSOFTHub/JProlog/releases).
+
+### 🆕 New in 4.5.0: **production readiness**
+
+Seven waves driven by a 1 300-probe audit of 4.4.0 (ISO 13211-1 first, SWI-Prolog 9 where ISO is
+silent). Every deliberate difference from ISO/SWI is listed in
+[`docs/references/ref-deviations.md`](docs/references/ref-deviations.md); upgrade notes are in the
+[CHANGELOG](CHANGELOG.md).
+
+- **A runnable jar and a real command line**: `mvn package` builds `target/jprolog.jar`;
+  `java -jar target/jprolog.jar prog.pl -g main -t halt`, with `--safe`, `--budget N`,
+  `--max-solutions N`, `--demo`, exit codes from `halt/1`, and answers **streamed** one at a time
+  (`between(1, inf, X).` no longer exhausts memory).
+- **Faster**: nrev/loop −59..71 %, O(1) `asserta/assertz/retract`, linear `retractall/1`,
+  O(n log n) `bagof/setof`, `.jpc` format 0x04.
+- **Loading and I/O**: `consult/1`, `[F]`, `ensure_loaded/1`, `load_files/1,2`, `include/1`,
+  `make/0`, string streams, `read_term/2,3` on the v2 reader, `term_expansion/2`, SWI `listing/1`
+  layout and float printing.
+- **CLP(FD)**: domains with holes, lazy labeling with the SWI options and branch and bound,
+  `ins/2`, `sum/3`, `scalar_product/4`, reification, `element/3`, `tuples_in/2`,
+  `global_cardinality/2`, domain-consistent `all_distinct/1`, big integers.
+- **Hardening**: safe mode covers the native table, file sinks and `halt/0,1`
+  (`SafeModeOptions.allowFileRead(dir)`, `allowHalt()`); one inference budget per query shared
+  with its threads; SWI threads (mutexes, selective receive, `thread_property/2`); ISO error terms
+  from the thread and concurrent families.
+- **Semantics**: answers are copies; `bagof/setof`, `between/3`, `aggregate_all/3`, cleanup,
+  catch/cut interactions fixed; `op/3` permanent; many argument faults now raise ISO errors.
 
 ### 🆕 New in 4.1.0: **one engine**
 
@@ -143,7 +169,15 @@ A professional IDE specifically designed for Prolog development:
 
 ### 3. 📟 Command Line Interface (`PrologCLI.java`)
 
-An interactive Prolog console for quick testing and scripting:
+An interactive Prolog console for quick testing and scripting (runnable as `java -jar
+target/jprolog.jar` since 4.5.0):
+- **Command line**: `jprolog [options] [file.pl ...]` — consults the files, then `-g Goal` runs a
+  goal once, `-t Goal` replaces the interactive toplevel; `--safe` (sandbox), `--budget N`
+  (inference budget per query), `--max-solutions N`, `--demo` (the demo facts `father/2`,
+  `likes/2`, … — no longer loaded by default), `--batch`, `--interactive`, `-q`, `-h`.
+  Exit status: `halt(N)` → N; a failing or raising `-g` goal → 1; a bad option → 2.
+- **Streamed answers**: one answer is computed at a time (`;`/Enter interactively); with a piped
+  stdin every answer is printed as it is found, separated by ` ;` and ended by `.` or `false.`
 - **Interactive query execution**: Direct Prolog query input with immediate results
 - **File consultation**: Load Prolog files with proper DCG transformation
 - **Multiple solutions handling**: Backtracking through solutions with `;` operator
@@ -209,7 +243,8 @@ Comprehensive library of standard Prolog predicates organized by category:
 
 1. **Build the project**:
    ```bash
-   mvn clean compile
+   mvn clean compile          # classes only
+   mvn package -DskipTests    # also target/jprolog.jar (runnable)
    ```
 
 2. **Launch options**:
@@ -223,7 +258,10 @@ Comprehensive library of standard Prolog predicates organized by category:
 
    **📟 CLI (Quick testing and scripting)**:
    ```bash
-   java -cp target/classes it.denzosoft.jprolog.PrologCLI
+   java -jar target/jprolog.jar                       # interactive toplevel
+   java -jar target/jprolog.jar facts.pl -g "grandparent(tom, X), write(X), nl" -t halt
+   echo "member(X, [a,b])." | java -jar target/jprolog.jar -q
+   java -cp target/classes it.denzosoft.jprolog.PrologCLI   # without the jar
    ```
 
    **☕ Java API (Programmatic access)**:
@@ -261,7 +299,7 @@ grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
 
 **Test with CLI**:
 ```bash
-$ java -cp target/classes it.denzosoft.jprolog.PrologCLI
+$ java -jar target/jprolog.jar
 ?- consult('facts.pl').
 ?- parent(bob, X).
 X = ann.
@@ -321,11 +359,12 @@ JProlog provides comprehensive documentation for all aspects of the system:
 
 ## 📊 **Quality Metrics & Compliance**
 
-### 🎯 **Current Status (Version 4.1.0)**
-- **Unit Tests**: 1196 tests, 0 failures, 0 errors — one engine, one CI leg (`mvn test`). 4.0.0 ran 1214 across two legs; 39 of those tests exercised the v2 machine that 4.1.0 deletes, and 21 new ones cover the retirement.
+### 🎯 **Current Status (Version 4.5.0)**
+- **Unit Tests**: 1452 tests, 0 failures, 0 errors — one engine, one CI leg (`mvn test`), including the growth tests of `test/performance/PerformanceRegressionTest` and real programs (92 queens, zebra, SEND+MORE) in `FamousPrologProgramsTest`.
+- **Deliberate deviations** from ISO/SWI: one list, [`docs/references/ref-deviations.md`](docs/references/ref-deviations.md).
 - **Core Test Success Rate**: 100% (20/20 example programs pass)
 - **ISO Prolog Compliance**: 100% ISO 13211-1 core predicate coverage (111/111); ~50 ISO/correctness fixes in v3.0.0 plus 80 audit-confirmed conformance defects fixed across v3.5.0/v3.6.0
-- **Built-in Predicate Coverage**: 416 registered predicates including I/O, CLP(FD), FFI, crypto, networking — 63 native to the v4 engine, ~40 more handled inline by the machine, the rest on the built-in bridge
+- **Built-in Predicate Coverage**: 430 registered predicate names including I/O, CLP(FD), FFI, crypto, networking — 204 indicators native to the v4 engine, ~45 more handled inline by the machine or by prelude library clauses, about 240 (mostly the extended libraries) on the built-in bridge
 - **Resolution Engine**: clean-room **v4** core (`core.engine.v4`, default since 4.0.0, **the only engine since 4.1.0**) — mutable variable cells + trail, compiled clause skeletons, first-argument indexing, iterative cycle-safe walkers, linear tabling with completion, native coroutining, per-engine modules/streams/operators
 - **Parser**: Clean-room single-pass v2 parser (`core.parser.v2`, default) with unified operator table and dynamic `op/3` support; legacy parser via `-Djprolog.parser=legacy`
 - **Binary Format**: `.jpc` compiled format with string interning for fast loading
@@ -333,7 +372,7 @@ JProlog provides comprehensive documentation for all aspects of the system:
 - **Module Support**: Module framework with module-qualified calls (`Module:Goal`) wired into execution
 
 ### 🧪 **Testing Framework**
-- **1196 Unit Tests**: JUnit test suite covering all engine components (incl. `EngineHardeningTest` and the eleven `EngineV4*Test` wave suites)
+- **1452 Unit Tests**: JUnit test suite covering all engine components (incl. `EngineHardeningTest`, the `EngineV4*Test` wave suites and the seven `EngineV45*Test` / `ClpfdV45Test` / `PrologCliToplevelTest` classes of 4.5.0)
 - **130 Total Prolog Programs**: Comprehensive test suite in `examples/` directory
 - **74 Systematic Test Programs**: `test_*.pl` programs covering all language features
 - **20 DCG Test Programs**: Complete DCG testing from `test_dcg_01` to `test_dcg_20`
@@ -355,6 +394,12 @@ JProlog provides comprehensive documentation for all aspects of the system:
 ## ⚠️ **Current Limitations**
 
 The following features are not yet implemented or are partially supported compared to full ISO 13211-1 Prolog systems (e.g., SWI-Prolog).
+
+The current list is [`docs/tracking/track-limitations.md`](docs/tracking/track-limitations.md)
+(4.5.0 adds LIM-040..046: cyclic terms cannot be stored, CLP(FD) residue, the call-site caching
+scope, built-in/loader/hardening residue — `thread_signal/2` is missing — and tabled negation
+without the well-founded semantics). Deliberate differences, as opposed to limitations, are in
+[`docs/references/ref-deviations.md`](docs/references/ref-deviations.md).
 
 ### Resolved in v3.0.0
 
@@ -449,7 +494,7 @@ JProlog/
 
 ### Comprehensive Testing Suite
 ```bash
-# JUnit tests (989 tests)
+# JUnit tests (1452 tests)
 mvn test
 
 # Run all 20 example programs (comprehensive testing)

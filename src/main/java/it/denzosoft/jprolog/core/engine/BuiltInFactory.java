@@ -106,12 +106,18 @@ public class BuiltInFactory {
         registerFactory("compare", it.denzosoft.jprolog.builtin.term.Compare::new);
         registerFactory("term_variables", it.denzosoft.jprolog.builtin.term.TermVariables::new);
         registerFactory("subsumes_term", it.denzosoft.jprolog.builtin.term.SubsumesTerm::new);
-        registerFactory("term_to_atom", it.denzosoft.jprolog.builtin.term.TermToAtom::new);
+        // START_CHANGE: ISS-2025-0670 - term_to_atom/2, atom_to_term/3, read/1,2, read_term/2,3,
+        // between/3 and dcg_translate_rule/2 are native or inline in core.engine.v4 at every
+        // registered arity; their legacy classes (TermToAtom, AtomToTerm, Read, ReadTerm, Between,
+        // DCGUtils.DCGTranslateRule) were unreachable and are deleted. The registry keeps a
+        // placeholder under each name so the registry-side answers stay as they were (built-in
+        // name listings, safe-mode snapshots, predicate_property). END_CHANGE: ISS-2025-0670
+        registerFactory("term_to_atom", () -> new it.denzosoft.jprolog.builtin.control.ControlConstruct("term_to_atom/2"));
         // START_CHANGE: R1 - setarg/3
         registerFactory("setarg", it.denzosoft.jprolog.builtin.term.SetArg::new);
         // END_CHANGE: R1
         // START_CHANGE: ISS-2025-0238 - atom_to_term/3
-        registerFactory("atom_to_term", it.denzosoft.jprolog.builtin.term.AtomToTerm::new);
+        registerFactory("atom_to_term", () -> new it.denzosoft.jprolog.builtin.control.ControlConstruct("atom_to_term/3"));   // ISS-2025-0670
         // END_CHANGE: ISS-2025-0238
         registerFactory("numbervars", it.denzosoft.jprolog.builtin.term.NumberVars::new);
         registerFactory("number_vars", it.denzosoft.jprolog.builtin.term.NumberVars::new);
@@ -128,7 +134,7 @@ public class BuiltInFactory {
         registerFactory(">=", () -> new ArithmeticComparison(ArithmeticComparison.ComparisonType.GREATER_EQUAL));
         
         // Advanced arithmetic (ISO Prolog)
-        registerFactory("between", it.denzosoft.jprolog.builtin.arithmetic.Between::new);
+        registerFactory("between", () -> new it.denzosoft.jprolog.builtin.control.ControlConstruct("between/3"));   // ISS-2025-0670
         registerFactory("succ", it.denzosoft.jprolog.builtin.arithmetic.Succ::new);
         registerFactory("plus", it.denzosoft.jprolog.builtin.arithmetic.Plus::new);
         
@@ -205,7 +211,7 @@ public class BuiltInFactory {
         // END_CHANGE: ISS-2025-0475
         // END_CHANGE: ISS-2025-0378
         registerFactory("nl", Nl::new);
-        registerFactory("read", Read::new);
+        registerFactory("read", () -> new it.denzosoft.jprolog.builtin.control.ControlConstruct("read/1,2"));   // ISS-2025-0670
         registerFactory("tab", it.denzosoft.jprolog.builtin.io.Tab::new);
         registerFactory("with_output_to", () -> new it.denzosoft.jprolog.builtin.io.WithOutputTo(null));
         
@@ -363,7 +369,7 @@ public class BuiltInFactory {
         // END_CHANGE: ISS-2025-0048
         
         // Advanced I/O predicates (ISO Prolog)
-        registerFactory("read_term", () -> new ReadTerm(null)); // the context is passed at call time
+        registerFactory("read_term", () -> new it.denzosoft.jprolog.builtin.control.ControlConstruct("read_term/2,3"));   // ISS-2025-0670
         registerFactory("write_term", () -> new WriteTerm(null)); // the context is passed at call time
         registerFactory("format", () -> new Format(null)); // the context is passed at call time
         // START_CHANGE: LIM-007 - Stream Repositioning predicates
@@ -391,7 +397,7 @@ public class BuiltInFactory {
         registerFactory("enhanced_phrase", it.denzosoft.jprolog.builtin.dcg.EnhancedPhrase::new);
         registerFactory("phrase_with_options", it.denzosoft.jprolog.builtin.dcg.PhraseWithOptions::new);
         registerFactory("call_dcg", it.denzosoft.jprolog.builtin.dcg.DCGUtils.CallDCG::new);
-        registerFactory("dcg_translate_rule", it.denzosoft.jprolog.builtin.dcg.DCGUtils.DCGTranslateRule::new);
+        registerFactory("dcg_translate_rule", () -> new it.denzosoft.jprolog.builtin.control.ControlConstruct("dcg_translate_rule/2"));   // ISS-2025-0670
         registerFactory("dcg_body", it.denzosoft.jprolog.builtin.dcg.DCGUtils.DCGBody::new);
         
         // Additional system predicates
@@ -499,9 +505,26 @@ public class BuiltInFactory {
         registerFactory("day_of_week", () -> new DateTimePredicates(DateTimePredicates.Mode.DAY_OF_WEEK));
         registerFactory("date_parts", () -> new DateTimePredicates(DateTimePredicates.Mode.DATE_PARTS));
         registerFactory("time_parts", () -> new DateTimePredicates(DateTimePredicates.Mode.TIME_PARTS));
+        // START_CHANGE: ISS-2025-0609 - SWI's stamp_date_time/3 and date_time_stamp/2
+        registerFactory("stamp_date_time", () -> new DateTimePredicates(DateTimePredicates.Mode.STAMP_DATE_TIME));
+        registerFactory("date_time_stamp", () -> new DateTimePredicates(DateTimePredicates.Mode.DATE_TIME_STAMP));
+        // END_CHANGE: ISS-2025-0609
         // END_CHANGE: ISS-2025-0114
 
         // START_CHANGE: ISS-2025-0115 - File system built-in predicates
+        // START_CHANGE: ISS-2025-0574 - 4.5 wave P3.1: loading files (safe-mode denied package)
+        registerFactory("consult", () -> new LoadFiles(LoadFiles.Mode.CONSULT));
+        registerFactory("ensure_loaded", () -> new LoadFiles(LoadFiles.Mode.ENSURE_LOADED));
+        registerFactory("load_files", () -> new LoadFiles(LoadFiles.Mode.LOAD_FILES));
+        registerFactory(".", () -> new LoadFiles(LoadFiles.Mode.LIST));
+        registerFactory("make", () -> new LoadFiles(LoadFiles.Mode.MAKE));
+        // END_CHANGE: ISS-2025-0574
+        // START_CHANGE: ISS-2025-0576
+        registerFactory("source_file", () -> new it.denzosoft.jprolog.builtin.system.SourceFiles(
+            it.denzosoft.jprolog.builtin.system.SourceFiles.Mode.SOURCE_FILE));
+        registerFactory("prolog_load_context", () -> new it.denzosoft.jprolog.builtin.system.SourceFiles(
+            it.denzosoft.jprolog.builtin.system.SourceFiles.Mode.LOAD_CONTEXT));
+        // END_CHANGE: ISS-2025-0576
         registerFactory("file_exists", () -> new FileSystemPredicates(FileSystemPredicates.Mode.FILE_EXISTS));
         registerFactory("directory_exists", () -> new FileSystemPredicates(FileSystemPredicates.Mode.DIR_EXISTS));
         registerFactory("make_directory", () -> new FileSystemPredicates(FileSystemPredicates.Mode.MAKE_DIR));
@@ -562,6 +585,19 @@ public class BuiltInFactory {
         registerFactory("thread_send_message", () -> new ThreadPredicates(ThreadPredicates.Mode.MQ_SEND));
         registerFactory("thread_get_message", () -> new ThreadPredicates(ThreadPredicates.Mode.MQ_GET));
         registerFactory("thread_peek_message", () -> new ThreadPredicates(ThreadPredicates.Mode.MQ_PEEK));
+        // START_CHANGE: ISS-2025-0630..0632 - wave P6.5: the rest of SWI's thread / queue / mutex API
+        registerFactory("thread_property", () -> new ThreadPredicates(ThreadPredicates.Mode.THREAD_PROPERTY));
+        registerFactory("thread_exit", () -> new ThreadPredicates(ThreadPredicates.Mode.THREAD_EXIT));
+        registerFactory("message_queue_destroy", () -> new ThreadPredicates(ThreadPredicates.Mode.MQ_DESTROY));
+        registerFactory("mutex_create", () -> new ThreadPredicates(ThreadPredicates.Mode.MUTEX_CREATE));
+        registerFactory("mutex_destroy", () -> new ThreadPredicates(ThreadPredicates.Mode.MUTEX_DESTROY));
+        registerFactory("mutex_lock", () -> new ThreadPredicates(ThreadPredicates.Mode.MUTEX_LOCK));
+        registerFactory("mutex_trylock", () -> new ThreadPredicates(ThreadPredicates.Mode.MUTEX_TRYLOCK));
+        registerFactory("mutex_unlock", () -> new ThreadPredicates(ThreadPredicates.Mode.MUTEX_UNLOCK));
+        registerFactory("mutex_unlock_all", () -> new ThreadPredicates(ThreadPredicates.Mode.MUTEX_UNLOCK_ALL));
+        registerFactory("with_mutex", () -> new ThreadPredicates(ThreadPredicates.Mode.WITH_MUTEX));
+        registerFactory("concurrent_forall", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.CONCURRENT_FORALL));
+        // END_CHANGE: ISS-2025-0630..0632
         // END_CHANGE: ISS-2025-0119
 
         // START_CHANGE: ISS-2025-0139 - SWI-Prolog compatible concurrent execution predicates

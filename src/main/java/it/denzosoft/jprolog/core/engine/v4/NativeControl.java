@@ -32,10 +32,11 @@ import java.util.List;
  *       handling, free-variable grouping by <b>variant</b> witness (ISS-2025-0411) and, for
  *       {@code setof/3}, group enumeration in the standard order of the witnesses
  *       (ISS-2025-0412). Groups are handed out lazily through a {@link Generator}.</li>
- *   <li>{@code aggregate_all/3} — {@code count} / {@code sum} / {@code max} / {@code min} /
- *       {@code bag} / {@code set} over {@link Machine#findAll}, keeping the ISS-2025-0413
- *       (max/min fail on no solution) and ISS-2025-0414 (exact BigInteger sums,
- *       {@code type_error(number, T)}) rules.</li>
+ *   <li>{@code aggregate_all/3} — the SWI forms {@code count}, {@code count(T)}, {@code sum(E)},
+ *       {@code max(E)}, {@code min(E)}, {@code max(E,W)}, {@code min(E,W)}, {@code bag(T)},
+ *       {@code set(T)}, accumulated over {@link Machine#forEachSolution} (ISS-2025-0522), keeping
+ *       the ISS-2025-0413 (max/min fail on no solution) and ISS-2025-0414 (exact BigInteger sums)
+ *       rules.</li>
  *   <li>{@code with_output_to/2} — captures the goal's output through the thread-local
  *       {@code StreamManager} override (and {@code System.out} for the built-ins that still write
  *       there), running the goal once on this machine.</li>
@@ -150,6 +151,7 @@ final class NativeControl {
             if (!(goal instanceof Atom) && !(goal instanceof CompoundTerm)) {
                 throw Errors.type("callable", goal, ind);
             }
+            m.checkBody(goal, sorted ? "setof" : "bagof", 3);             // ISS-2025-0518
 
             // Free (witness) variables: vars(Goal) minus vars(Template) minus the ^-quantified ones.
             IdentityHashMap<Variable, Boolean> excluded = new IdentityHashMap<Variable, Boolean>();
@@ -176,59 +178,81 @@ final class NativeControl {
             List<Term> pairs = m.findAll(pairTemplate, goal);
             if (pairs.isEmpty()) return Outcome.FAILURE;
 
-            final List<List<Term>> groupWitnesses = new ArrayList<List<Term>>();
-            final List<List<Term>> groupItems = new ArrayList<List<Term>>();
-            for (int i = 0; i < pairs.size(); i++) {
+            // START_CHANGE: ISS-2025-0520 - wave P1.7: grouping in O(n log n). Each solution's
+            // witness was compared against every group found so far with a two-way subsumes test —
+            // O(W^2) in the number of distinct witnesses (10 000 took 3.7 s, 40 000 over 7 min).
+            // Now every witness gets a VARIANT KEY (itself when ground, otherwise a copy whose
+            // variables are numbered in order of first occurrence, so two witnesses have identical
+            // keys exactly when they are variants), the solutions are stable-sorted by key, and each
+            // run of equal keys is one group. The group ORDER is unchanged: bagof/3 hands groups
+            // out in order of their first solution, setof/3 in the standard order of the witness.
+            final int np = pairs.size();
+            final Term[] ws = new Term[np];
+            final Term[] items = new Term[np];
+            final Term[] keys = new Term[np];
+            for (int i = 0; i < np; i++) {
                 CompoundTerm pair = (CompoundTerm) Unify.deref(pairs.get(i));
-                Term w = pair.getArguments().get(0);
-                Term item = pair.getArguments().get(1);
-                int gi = -1;
-                for (int j = 0; j < groupWitnesses.size(); j++) {
-                    if (isVariant(groupWitnesses.get(j).get(0), w, m)) { gi = j; break; }
-                }
-                if (gi < 0) {
-                    List<Term> ws = new ArrayList<Term>();
-                    ws.add(w);
-                    groupWitnesses.add(ws);
-                    groupItems.add(new ArrayList<Term>());
-                    gi = groupWitnesses.size() - 1;
-                } else {
-                    groupWitnesses.get(gi).add(w);
-                }
-                groupItems.get(gi).add(item);
+                ws[i] = pair.getArguments().get(0);
+                items[i] = pair.getArguments().get(1);
+                keys[i] = variantKey(ws[i], m);
             }
-
-            final int ngroups = groupWitnesses.size();
-            final Integer[] order = new Integer[ngroups];
-            for (int i = 0; i < ngroups; i++) order[i] = Integer.valueOf(i);
-            if (sorted) {
-                final ResourceGuard g = m.guard();
-                Arrays.sort(order, new java.util.Comparator<Integer>() {
-                    @Override public int compare(Integer x, Integer y) {
-                        return Unify.compareTerms(groupWitnesses.get(x.intValue()).get(0),
-                                                  groupWitnesses.get(y.intValue()).get(0), g);
-                    }
-                });
-                for (int i = 0; i < ngroups; i++) {
-                    groupItems.set(i, sortDedup(groupItems.get(i), m.guard()));
+            pairs = null;
+            final ResourceGuard guard = m.guard();
+            Integer[] byKey = new Integer[np];
+            for (int i = 0; i < np; i++) byKey[i] = Integer.valueOf(i);
+            Arrays.sort(byKey, new java.util.Comparator<Integer>() {        // stable (TimSort)
+                @Override public int compare(Integer x, Integer y) {
+                    return Unify.compareTerms(keys[x.intValue()], keys[y.intValue()], guard);
+                }
+            });
+            final List<int[]> groups = new ArrayList<int[]>();
+            int runStart = 0;
+            for (int i = 1; i <= np; i++) {
+                if (i == np || Unify.compareTerms(keys[byKey[i].intValue()], keys[byKey[runStart].intValue()], guard) != 0) {
+                    int[] members = new int[i - runStart];
+                    for (int j = runStart; j < i; j++) members[j - runStart] = byKey[j].intValue();
+                    groups.add(members);                    // members are in solution order
+                    runStart = i;
                 }
             }
+            final int ngroups = groups.size();
+            final int[][] order = groups.toArray(new int[ngroups][]);
+            Arrays.sort(order, sorted
+                ? new java.util.Comparator<int[]>() {
+                      @Override public int compare(int[] x, int[] y) {
+                          return Unify.compareTerms(ws[x[0]], ws[y[0]], guard);
+                      }
+                  }
+                : new java.util.Comparator<int[]>() {
+                      @Override public int compare(int[] x, int[] y) { return Integer.compare(x[0], y[0]); }
+                  });
+            // END_CHANGE: ISS-2025-0520
 
             final int[] cursor = {0};
             Generator gen = new Generator() {
                 @Override
                 public boolean next(Machine mm) {
                     while (cursor[0] < ngroups) {
-                        int gi = order[cursor[0]++].intValue();
+                        int[] members = order[cursor[0]++];
                         Bindings b = mm.bindings();
                         int mark = b.mark();
                         b.forceTrail++;
                         boolean ok;
                         try {
                             ok = true;
-                            List<Term> ws = groupWitnesses.get(gi);
-                            for (int k = 0; k < ws.size() && ok; k++) ok = mm.unify(witness, ws.get(k));
-                            if (ok) ok = mm.unify(bagArg, Machine.makeList(groupItems.get(gi)));
+                            for (int k = 0; k < members.length && ok; k++) ok = mm.unify(witness, ws[members[k]]);
+                            if (ok) {
+                                List<Term> bag = new ArrayList<Term>(members.length);
+                                for (int k = 0; k < members.length; k++) bag.add(items[members[k]]);
+                                // START_CHANGE: ISS-2025-0519 - wave P1.6: setof/3 sorts the
+                                // group AFTER its witnesses were unified (ISO 8.10.3.4), when the
+                                // items are instantiated: `setof(X, member(X, [Y, Y]), L)` is
+                                // [Y], not the [Y, Y] that sorting the two distinct copies gave.
+                                // Lazily, too: a group that is never enumerated is never sorted.
+                                if (sorted) bag = sortDedup(bag, mm.guard());
+                                // END_CHANGE: ISS-2025-0519
+                                ok = mm.unify(bagArg, Machine.makeList(bag));
+                            }
                             // ISS-2025-0448 ordering: undo INSIDE the extent, close it afterwards.
                             if (!ok) b.undo(mark);
                         } finally {
@@ -246,10 +270,32 @@ final class NativeControl {
         }
     }
 
-    /** {@code A} and {@code B} are variants: each subsumes the other. */
-    private static boolean isVariant(Term a, Term b, Machine m) {
-        return Unify.subsumes(a, b, m.bindings()) && Unify.subsumes(b, a, m.bindings());
+    // START_CHANGE: ISS-2025-0520
+    private static final Atom VKEY = new Atom("$bagof_var");
+
+    /**
+     * The variant key of a witness: the witness itself when it is ground; otherwise a copy in which
+     * the i-th distinct variable (depth-first, left to right) is {@code '$bagof_var'(i)}. Two
+     * witnesses are variants exactly when their keys are identical ({@code ==}).
+     */
+    private static Term variantKey(Term w, Machine m) {
+        List<Variable> vs = new ArrayList<Variable>();
+        Unify.termVariables(w, vs, m.guard());
+        if (vs.isEmpty()) return w;
+        Bindings b = m.bindings();
+        int mark = b.mark();
+        b.forceTrail++;
+        try {
+            for (int i = 0; i < vs.size(); i++) {
+                b.bind(vs.get(i), new CompoundTerm(VKEY, Collections.singletonList((Term) Number.valueOf(i))));
+            }
+            return Unify.resolve(w, m.guard());
+        } finally {
+            b.undo(mark);                  // ISS-2025-0448: undo inside the extent, then close it
+            b.forceTrail--;
+        }
     }
+    // END_CHANGE: ISS-2025-0520
 
     static List<Term> sortDedup(List<Term> in, final ResourceGuard g) {
         List<Term> out = new ArrayList<Term>(in);
@@ -265,95 +311,124 @@ final class NativeControl {
 
     // ------------------------------------------------------------------ aggregate_all/3
 
+    // START_CHANGE: ISS-2025-0522 - wave P1.9: aggregate_all/3 as SWI-Prolog's library(aggregate)
+    // defines it. count, count(T), sum(E), max(E), min(E), max(E, W), min(E, W), bag(T), set(T):
+    // E is EVALUATED (sum(X*2), max(X+1)); max/min(E, W) answer max(Value, Witness); count, sum,
+    // max and min accumulate while the goal runs (O(1) memory — no solution list is built); an
+    // empty max/min fails and an empty sum is 0; an unbound spec is an instantiation_error and
+    // anything else a domain_error(aggregate_spec, Spec). Before: max(X, W) collected a LIST, an
+    // expression raised type_error(number, X*2), an unknown spec silently became bag/1, and the
+    // non-standard max(X-W) pair form compared on X (it now evaluates X-W, as SWI does).
     private static final class AggregateAllB implements Builtin {
         @Override
-        public Outcome call(Machine m, Term[] args) {
+        public Outcome call(final Machine m, Term[] args) {
             Term spec = m.deref(args[0]);
             Term goal = m.deref(args[1]);
+            if (spec instanceof Variable) throw Errors.instantiation("aggregate_all/3");
             if (goal instanceof Variable) throw Errors.instantiation("aggregate_all/3");
             if (!(goal instanceof Atom) && !(goal instanceof CompoundTerm)) {
                 throw Errors.type("callable", goal, "aggregate_all/3");
             }
-            Term result;
-            if (spec instanceof Atom && "count".equals(((Atom) spec).getName())) {
-                result = Number.valueOf(m.findAll(TRUE, goal).size());
-            } else if (spec instanceof CompoundTerm && ((CompoundTerm) spec).getArguments().size() == 1) {
-                CompoundTerm cs = (CompoundTerm) spec;
-                String f = cs.getName();
-                Term inner = cs.getArguments().get(0);
-                if ("count".equals(f)) {
-                    result = Number.valueOf(m.findAll(inner, goal).size());
-                } else if ("sum".equals(f)) {
-                    result = sum(m.findAll(inner, goal));
-                } else if ("max".equals(f) || "min".equals(f)) {
-                    result = extremum(m.findAll(inner, goal), "max".equals(f), m.guard());
-                    if (result == null) return Outcome.FAILURE;          // ISS-2025-0413
-                } else if ("bag".equals(f)) {
-                    result = Machine.makeList(m.findAll(inner, goal));
-                } else if ("set".equals(f)) {
-                    result = Machine.makeList(sortDedup(m.findAll(inner, goal), m.guard()));
-                } else {
-                    result = Machine.makeList(m.findAll(spec, goal));
-                }
+            String f;
+            int n;
+            List<Term> sa;
+            if (spec instanceof Atom) { f = ((Atom) spec).getName(); n = 0; sa = Collections.<Term>emptyList(); }
+            else if (spec instanceof CompoundTerm) {
+                f = ((CompoundTerm) spec).getName();
+                sa = ((CompoundTerm) spec).getArguments();
+                n = sa.size();
             } else {
-                result = Machine.makeList(m.findAll(spec, goal));
+                throw Errors.domain("aggregate_spec", m.resolve(spec), "aggregate_all/3");
+            }
+            boolean known = (n == 0 && "count".equals(f))
+                || (n == 1 && ("count".equals(f) || "sum".equals(f) || "max".equals(f) || "min".equals(f)
+                               || "bag".equals(f) || "set".equals(f)))
+                || (n == 2 && ("max".equals(f) || "min".equals(f)));
+            if (!known) throw Errors.domain("aggregate_spec", m.resolve(spec), "aggregate_all/3");
+            m.checkBody(goal, "aggregate_all", 3);                         // ISS-2025-0518
+
+            Term result;
+            if ("count".equals(f)) {
+                final long[] c = {0};
+                m.forEachSolution(goal, new Machine.SolutionVisitor() {
+                    @Override public boolean visit() { c[0]++; return true; }
+                });
+                result = Number.valueOf(c[0]);
+            } else if ("sum".equals(f)) {
+                final Term expr = sa.get(0);
+                final SumAcc acc = new SumAcc();
+                m.forEachSolution(goal, new Machine.SolutionVisitor() {
+                    @Override public boolean visit() { acc.add(m.evalNum(expr)); return true; }
+                });
+                result = acc.result();
+            } else if ("max".equals(f) || "min".equals(f)) {
+                final boolean wantMax = "max".equals(f);
+                final Term expr = sa.get(0);
+                final Term wit = (n == 2) ? sa.get(1) : null;
+                final Number[] best = {null};
+                final Term[] bestW = {null};
+                m.forEachSolution(goal, new Machine.SolutionVisitor() {
+                    @Override public boolean visit() {
+                        Number v = m.evalNum(expr);
+                        if (best[0] == null || (wantMax ? numCompare(v, best[0]) > 0 : numCompare(v, best[0]) < 0)) {
+                            best[0] = v;
+                            if (wit != null) bestW[0] = m.copy(wit);   // the bindings are undone later
+                        }
+                        return true;
+                    }
+                });
+                if (best[0] == null) return Outcome.FAILURE;                // ISS-2025-0413
+                result = (wit == null) ? best[0]
+                    : new CompoundTerm(new Atom(f), Arrays.asList((Term) best[0], bestW[0]));
+            } else if ("bag".equals(f)) {
+                result = Machine.makeList(m.findAll(sa.get(0), goal));
+            } else {                                                        // set
+                result = Machine.makeList(sortDedup(m.findAll(sa.get(0), goal), m.guard()));
             }
             return m.unify(args[2], result) ? Outcome.SUCCESS : Outcome.FAILURE;
         }
     }
 
-    /** ISS-2025-0414: exact integer sums, float contagion, type_error(number, T) on anything else. */
-    private static Term sum(List<Term> items) {
-        java.math.BigInteger intSum = java.math.BigInteger.ZERO;
-        double floatSum = 0.0;
-        boolean sawFloat = false;
-        for (int i = 0; i < items.size(); i++) {
-            Term t = Unify.deref(items.get(i));
-            if (!(t instanceof Number)) throw Errors.type("number", t, "aggregate_all/3");
-            Number n = (Number) t;
-            if (n.isInteger() && !sawFloat) {
-                intSum = intSum.add(n.bigIntegerValue());
+    /** ISS-2025-0414: exact integer sums (long, then BigInteger), float contagion. */
+    private static final class SumAcc {
+        private long l;
+        private java.math.BigInteger big;
+        private double d;
+        private boolean isFloat;
+
+        void add(Number n) {
+            if (isFloat || !n.isInteger()) {
+                if (!isFloat) { isFloat = true; d = (big != null) ? big.doubleValue() : (double) l; }
+                d += n.doubleValue();
+            } else if (big == null && n.fitsInLong()) {
+                long x = n.longValue();
+                long r = l + x;
+                if (((l ^ r) & (x ^ r)) < 0) {                              // overflow
+                    big = java.math.BigInteger.valueOf(l).add(java.math.BigInteger.valueOf(x));
+                } else {
+                    l = r;
+                }
             } else {
-                if (!sawFloat) { sawFloat = true; floatSum = intSum.doubleValue(); }
-                floatSum += n.doubleValue();
+                if (big == null) big = java.math.BigInteger.valueOf(l);
+                big = big.add(n.bigIntegerValue());
             }
         }
-        return sawFloat ? new Number(floatSum, false) : new Number(intSum);
-    }
 
-    /**
-     * ISS-2025-0413: null (i.e. aggregate_all/3 fails) when there is no solution;
-     * {@code type_error(number, T)} on a non-numeric element. As an extension the
-     * {@code Value-Witness} pair form is compared on its numeric left-hand side, so
-     * {@code aggregate_all(max(X-W), ..., Max)} answers with the winning pair.
-     */
-    private static Term extremum(List<Term> items, boolean wantMax, ResourceGuard g) {
-        Term best = null;
-        Number bestKey = null;
-        for (int i = 0; i < items.size(); i++) {
-            Term t = Unify.deref(items.get(i));
-            Number key = keyOf(t);
-            if (best == null) { best = t; bestKey = key; continue; }
-            int c = numCompare(key, bestKey);
-            if (wantMax ? c > 0 : c < 0) { best = t; bestKey = key; }
+        Term result() {
+            if (isFloat) return new Number(d, false);
+            if (big == null) return Number.valueOf(l);
+            return (big.bitLength() <= 63) ? Number.valueOf(big.longValue()) : new Number(big);
         }
-        return best;
-    }
-
-    private static Number keyOf(Term t) {
-        if (t instanceof Number) return (Number) t;
-        if (t instanceof CompoundTerm && "-".equals(((CompoundTerm) t).getName())
-                && ((CompoundTerm) t).getArguments().size() == 2) {
-            Term left = Unify.deref(((CompoundTerm) t).getArguments().get(0));
-            if (left instanceof Number) return (Number) left;
-        }
-        throw Errors.type("number", t, "aggregate_all/3");
     }
 
     private static int numCompare(Number x, Number y) {
-        if (x.isInteger() && y.isInteger()) return x.bigIntegerValue().compareTo(y.bigIntegerValue());
+        if (x.isInteger() && y.isInteger()) {
+            if (x.fitsInLong() && y.fitsInLong()) return Long.compare(x.longValue(), y.longValue());
+            return x.bigIntegerValue().compareTo(y.bigIntegerValue());
+        }
         return Double.compare(x.doubleValue(), y.doubleValue());
     }
+    // END_CHANGE: ISS-2025-0522
 
     // ------------------------------------------------------------------ with_output_to/2
 
@@ -404,13 +479,9 @@ final class NativeControl {
             } else if ("string".equals(kind)) {
                 value = new PrologString(text);
             } else if ("codes".equals(kind)) {
-                List<Term> cs = new ArrayList<Term>(text.length());
-                for (int i = 0; i < text.length(); i++) cs.add(Number.valueOf(text.charAt(i)));
-                value = Machine.makeList(cs);
+                value = NativeIo.textToList(text, true);            // ISS-2025-0606: code points
             } else if ("chars".equals(kind)) {
-                List<Term> cs = new ArrayList<Term>(text.length());
-                for (int i = 0; i < text.length(); i++) cs.add(new Atom(String.valueOf(text.charAt(i))));
-                value = Machine.makeList(cs);
+                value = NativeIo.textToList(text, false);           // ISS-2025-0606: code points
             } else {
                 throw Errors.domain("output_sink", target, "with_output_to/2");
             }

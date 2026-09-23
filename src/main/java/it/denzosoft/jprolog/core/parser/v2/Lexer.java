@@ -22,6 +22,7 @@ public final class Lexer {
 
     public enum Kind {
         ATOM, VAR, NUMBER, STRING,
+        BACKQUOTE,   // ISS-2025-0579: `text` (SWI flag back_quotes, default codes)
         LPAREN, RPAREN, LBRACKET, RBRACKET, LBRACE, RBRACE,
         COMMA, BAR, END, EOF
     }
@@ -171,7 +172,7 @@ public final class Lexer {
         // ---- back-quoted (treat like a string) ----
         if (c == '`') {
             String content = readQuoted('`');
-            return tok2(Kind.STRING, content, layout, false, start, startLine);
+            return tok2(Kind.BACKQUOTE, content, layout, false, start, startLine);   // ISS-2025-0579
         }
 
         // ---- symbolic (graphic) atoms ----
@@ -237,6 +238,15 @@ public final class Lexer {
             while (!eof() && Character.isDigit(peek())) sb.append(advance());
         }
 
+        // START_CHANGE: ISS-2025-0564 - SWI special floats: 1.0Inf, 1.5NaN (what writeq prints)
+        if (isFloat && sb.indexOf("e") < 0 && sb.indexOf("E") < 0
+                && (src.startsWith("Inf", pos) || src.startsWith("NaN", pos))
+                && !isIdentChar(peek(3))) {
+            boolean inf = src.startsWith("Inf", pos);
+            advance(); advance(); advance();
+            return numTok(new Number(inf ? Double.POSITIVE_INFINITY : Double.NaN, false), layout, start, startLine);
+        }
+        // END_CHANGE: ISS-2025-0564
         if (isFloat) {
             double d = Double.parseDouble(sb.toString());
             if (Double.isInfinite(d)) throw new LexException("floating point literal overflow", line, pos);
@@ -341,11 +351,31 @@ public final class Lexer {
             case '\'': return '\'';
             case '"': return '"';
             case '`': return '`';
+            // START_CHANGE: ISS-2025-0560 - SWI escapes e, s, u (4 hex digits), U (8 hex digits); unknown escape is a syntax error
+            case 'e': return 27;
+            case 's': return ' ';
+            case 'u': return fixedHex(4);
+            case 'U': return fixedHex(8);
             default:
-                // Unknown escape: keep the character literally (lenient).
-                return e;
+                // ISO 6.4.2.1: anything else (\z included) is not an escape sequence.
+                throw new LexException("undefined_char_escape(" + e + ")", line, pos);
+            // END_CHANGE: ISS-2025-0560
         }
     }
+
+    // START_CHANGE: ISS-2025-0560 - backslash-u (4 digits) / backslash-U (8 digits): a valid code point
+    private int fixedHex(int n) {
+        long val = 0;
+        for (int i = 0; i < n; i++) {
+            if (eof() || Character.digit(peek(), 16) < 0) {
+                throw new LexException("Illegal \\u or \\U character escape", line, pos);
+            }
+            val = val * 16 + Character.digit(advance(), 16);
+        }
+        if (val > Character.MAX_CODE_POINT) throw new LexException("\\U character escape out of range", line, pos);
+        return (int) val;
+    }
+    // END_CHANGE: ISS-2025-0560
 
     /** Lexing error (unchecked so it composes with the parser's exception flow). */
     public static final class LexException extends RuntimeException {

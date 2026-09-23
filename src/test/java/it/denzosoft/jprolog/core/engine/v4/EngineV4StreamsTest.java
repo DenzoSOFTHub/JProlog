@@ -3,6 +3,7 @@ package it.denzosoft.jprolog.core.engine.v4;
 import it.denzosoft.jprolog.builtin.io.StreamManager;
 import it.denzosoft.jprolog.core.engine.Prolog;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.terms.Variable;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -219,7 +220,12 @@ public class EngineV4StreamsTest {
         Map<String, Term> s = one("open('" + p + "', read, S), "
             + "read_term(S, T, [variable_names(V), singletons(Sg), term_position(P0)]), "
             + "read_term(S, T2, [term_position(P1)]), close(S)");
-        assertEquals("foo(X, Y, X)", s.get("T").toString());
+        // ISS-2025-0566 (P3.4): a read term's variables are fresh cells; the names are in V
+        Term t = s.get("T");
+        assertEquals("foo", t.getName());
+        assertTrue(t.getArguments().get(0) instanceof Variable);
+        assertTrue(t.getArguments().get(0) == t.getArguments().get(2));
+        assertTrue(t.getArguments().get(0) != t.getArguments().get(1));
         assertEquals("bar(1)", s.get("T2").toString());
         assertTrue("variable_names lists the named variables: " + s.get("V"),
             s.get("V").toString().contains("X") && s.get("V").toString().contains("Y"));
@@ -271,7 +277,7 @@ public class EngineV4StreamsTest {
         assertTrue("engine B counted nothing", other.getEngineState().profile().snapshot().isEmpty());
     }
 
-    @Test
+    @Test(timeout = 60000)
     public void testISS0472_TwoThreadsHaveTheirOwnCurrentOutput() throws Exception {
         final File a = File.createTempFile("v4outA", ".txt");
         final File b = File.createTempFile("v4outB", ".txt");
@@ -281,25 +287,40 @@ public class EngineV4StreamsTest {
         Runnable r1 = new Runnable() {
             public void run() {
                 try {
-                    prolog.solve("open('" + a.getAbsolutePath().replace("\\", "/") + "', write, S), "
-                        + "set_output(S), write(from_thread_one), flush_output, close(S)");
+                    // ISS-2025-0635: rendezvous AFTER set_output, so both threads have redirected
+                    // their current output at the same time before either writes
+                    if (prolog.solve("open('" + a.getAbsolutePath().replace("\\", "/") + "', write, S), "
+                        + "set_output(S), thread_send_message(p66two, ready), "
+                        + "thread_get_message(p66one, ready, [timeout(20)]), "
+                        + "write(from_thread_one), flush_output, close(S)").isEmpty()) {
+                        throw new AssertionError("thread one: rendezvous timed out");
+                    }
                 } catch (Throwable t) { failure.compareAndSet(null, t); }
             }
         };
         Runnable r2 = new Runnable() {
             public void run() {
                 try {
-                    prolog.solve("open('" + b.getAbsolutePath().replace("\\", "/") + "', write, S), "
-                        + "set_output(S), write(from_thread_two), flush_output, close(S)");
+                    if (prolog.solve("open('" + b.getAbsolutePath().replace("\\", "/") + "', write, S), "
+                        + "set_output(S), thread_send_message(p66one, ready), "
+                        + "thread_get_message(p66two, ready, [timeout(20)]), "
+                        + "write(from_thread_two), flush_output, close(S)").isEmpty()) {
+                        throw new AssertionError("thread two: rendezvous timed out");
+                    }
                 } catch (Throwable t) { failure.compareAndSet(null, t); }
             }
         };
+        // START_CHANGE: ISS-2025-0635 - wave P6.6: the two threads really OVERLAP now. The test used
+        // to join t1 before starting t2, so it never had two current outputs alive at once.
+        prolog.solve("message_queue_create(_, [alias(p66one)]), message_queue_create(_, [alias(p66two)])");
         Thread t1 = new Thread(r1);
         Thread t2 = new Thread(r2);
         t1.start();
-        t1.join();
         t2.start();
-        t2.join();
+        t1.join(30000);
+        t2.join(30000);
+        prolog.solve("message_queue_destroy(p66one), message_queue_destroy(p66two)");
+        // END_CHANGE: ISS-2025-0635
         if (failure.get() != null) throw new AssertionError("threads must not throw", failure.get());
         assertEquals("from_thread_one", read(a));
         assertEquals("from_thread_two", read(b));
@@ -347,12 +368,14 @@ public class EngineV4StreamsTest {
     @Test
     public void testISS0473_DeeplyNestedInputRaisesParserNesting() {
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 5000; i++) sb.append('(');
+        // ISS-2025-0561 (P3.8): nesting is bounded by a real, generous limit (200 000) now, read
+        // on a deep-stack helper; 5 000 levels read fine, so the test goes past the limit
+        for (int i = 0; i < 250000; i++) sb.append('(');
         sb.append('a');
-        for (int i = 0; i < 5000; i++) sb.append(')');
+        for (int i = 0; i < 250000; i++) sb.append(')');
         List<Map<String, Term>> r = prolog.solve(
             "catch(term_to_atom(_T, '" + sb + "'), error(E, _), true)");
-        assertFalse("term_to_atom/2 on 5 000 nested parentheses must not fail silently", r.isEmpty());
+        assertFalse("term_to_atom/2 on 250 000 nested parentheses must not fail silently", r.isEmpty());
         assertNotNull("it must raise an error", r.get(0).get("E"));
         assertEquals("resource_error(parser_nesting)", r.get(0).get("E").toString());
     }

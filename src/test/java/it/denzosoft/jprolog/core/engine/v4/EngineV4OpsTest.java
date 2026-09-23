@@ -80,9 +80,10 @@ public class EngineV4OpsTest {
 
     @Test
     public void testOpInAFailedBranchIsUndone() {
+        // ISS-2025-0612 (P4.18, decision §8): op/3 is PERMANENT (ISO 8.14.3 / SWI); a definition
+        // made in a branch that later fails is kept. (Method name kept from 4.3.0.)
         assertFalse(prolog.solve("(op(700, xfx, zzop), fail ; true).").isEmpty());
-        assertTrue("op/3 under a choice point must be undone on backtracking",
-            prolog.solve("current_op(_, xfx, zzop).").isEmpty());
+        assertEquals("700", one(prolog.solve("current_op(P, xfx, zzop)."), "P"));
         // and a successful op/3 stays
         prolog.solve("op(700, xfx, zzop).");
         assertEquals("700", one(prolog.solve("current_op(P, xfx, zzop)."), "P"));
@@ -91,14 +92,17 @@ public class EngineV4OpsTest {
     @Test
     public void testOpRemovalIsUndoneToo() {
         prolog.solve("op(700, xfx, keepme).");
+        // ISS-2025-0612: the removal is permanent too
         assertFalse(prolog.solve("(op(0, xfx, keepme), fail ; true).").isEmpty());
-        assertEquals("700", one(prolog.solve("current_op(P, xfx, keepme)."), "P"));
+        assertTrue(prolog.solve("current_op(_, xfx, keepme).").isEmpty());
     }
 
     @Test
     public void testCharConversionInAFailedBranchIsUndone() {
+        // ISS-2025-0612: char_conversion/2 is permanent as well
         assertFalse(prolog.solve("(char_conversion(a, b), fail ; true).").isEmpty());
-        assertEquals("a", one(prolog.solve("current_char_conversion(a, X)."), "X"));
+        assertEquals("b", one(prolog.solve("current_char_conversion(a, X)."), "X"));
+        prolog.solve("char_conversion(a, a).");
         // a committed one survives
         prolog.solve("char_conversion(a, b).");
         assertEquals("b", one(prolog.solve("current_char_conversion(a, X)."), "X"));

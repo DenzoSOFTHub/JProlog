@@ -2,15 +2,16 @@ package it.denzosoft.jprolog.builtin.threading;
 
 // START_CHANGE: ISS-2025-0139 - SWI-Prolog compatible concurrent execution predicates
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
+import it.denzosoft.jprolog.core.engine.ControlFlow;
+import it.denzosoft.jprolog.core.engine.QueryCancelledException;
 import it.denzosoft.jprolog.core.engine.SolverContext;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
+import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.*;
 import it.denzosoft.jprolog.core.terms.Number;
 
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * SWI-Prolog compatible concurrent execution predicates:
@@ -19,30 +20,26 @@ import java.util.concurrent.atomic.AtomicReference;
  *   concurrent_maplist/2   - concurrent_maplist(:Goal, +List)
  *   concurrent_maplist/3   - concurrent_maplist(:Goal, +List, -ResultList)
  *   concurrent_maplist/4   - concurrent_maplist(:Goal, +L1, +L2, -ResultList)
+ *   concurrent_forall/2,3  - concurrent_forall(:Cond, :Action [, +Options])   (ISS-2025-0634)
  *   first_solution/3       - first_solution(-X, :Goals, +Options)
  *   concurrent_and/2       - concurrent_and(+Goals, +Options)
  *   concurrent_or/2        - concurrent_or(+Goals, -FirstSolution)
  *
- * All predicates use Java's ExecutorService for real thread-level parallelism.
+ * START_CHANGE: ISS-2025-0480 - engine v4 wave W8, design B.13: every worker goal goes through
+ * {@code SolverContext.solveInWorker}, which runs it on a FRESH Machine over the SAME Engine
+ * (core.engine.v4.Workers) with a copy_term'd goal. Interrupting the parent (IDE Stop, embedder
+ * cancel) cancels the workers. END_CHANGE: ISS-2025-0480
  *
- * START_CHANGE: ISS-2025-0480 - engine v4 wave W8, design B.13: every worker goal now goes through
- * {@code SolverContext.solveInWorker}, which on v4 runs it on a FRESH Machine over the SAME Engine
- * (core.engine.v4.Workers): shared clause store (thread-safe by birth/death generations), shared
- * flags and operators, per-thread current streams, one ResourceGuard per worker carrying the
- * parent's inference budget, and a copy_term'd goal so no Variable cell is shared between machines.
- * That closes LIM-024 on v4 and removes the last path from a v4 query into
- * SolverContext.solveInternal. On the v2 and legacy engines solveInWorker keeps its default — the
- * shared recursive solver — i.e. exactly the behaviour those engines had before.
- * Interrupting the parent (IDE Stop, embedder cancel) cancels the workers: the parent's blocking
- * get() throws InterruptedException, every future is cancelled (which interrupts its worker, whose
- * own guard then raises QueryCancelledException) and the parent re-raises QueryCancelledException.
- * END_CHANGE: ISS-2025-0480
- *
- * Thread safety:
- * - Each thread gets its own copy of bindings (HashMap copy)
- * - SolverContext.solve() is reentrant for read-only KB access
- * - Results are collected via thread-safe ConcurrentLinkedQueue or Future
- * - ExecutorService uses a cached thread pool (threads recycled)
+ * START_CHANGE: ISS-2025-0622 - 4.5 wave P6.2: what a worker raises reaches the caller UNCHANGED.
+ * Every predicate used to wrap a worker's failure into a message atom
+ * ({@code 'first_solution: ...InferenceLimitException...'}), so the inference budget became an
+ * ordinary catchable ball and {@code catch(concurrent_and([throw(foo)],[]), foo, true)} did not
+ * catch. Now {@link #await} unwraps the {@code ExecutionException}: an engine-control exception
+ * (budget, Stop, debugger Stop, thread_exit) is re-raised as itself, a Prolog ball is re-raised as
+ * a copy (no cell of the worker's machine crosses over), and the siblings are cancelled. There is
+ * no fixed timeout any more — {@code concurrent_maplist} used to give up after 60 s with
+ * {@code 'concurrent_maplist_2: null'}; the wait is interruptible, so a Stop still cancels it. The
+ * argument errors are ISO terms. END_CHANGE: ISS-2025-0622
  */
 public class ConcurrentPredicates implements BuiltInWithContext {
 
@@ -53,7 +50,8 @@ public class ConcurrentPredicates implements BuiltInWithContext {
         CONCURRENT_MAPLIST_4,  // concurrent_maplist/4
         FIRST_SOLUTION,        // first_solution/3
         CONCURRENT_AND,        // concurrent_and/2
-        CONCURRENT_OR          // concurrent_or/2
+        CONCURRENT_OR,         // concurrent_or/2
+        CONCURRENT_FORALL      // concurrent_forall/2,3 (ISS-2025-0634)
     }
 
     private final OperationType opType;
@@ -64,8 +62,6 @@ public class ConcurrentPredicates implements BuiltInWithContext {
         t.setDaemon(true);
         return t;
     });
-
-    private static final long DEFAULT_TIMEOUT_MS = 60_000;
 
     public ConcurrentPredicates(OperationType opType) {
         this.opType = opType;
@@ -80,327 +76,152 @@ public class ConcurrentPredicates implements BuiltInWithContext {
     public boolean executeWithContext(SolverContext solver, Term query,
                                       Map<String, Term> bindings,
                                       List<Map<String, Term>> solutions) {
-        try {
-            // START_CHANGE: ISS-2025-0480 - wave W8: concurrent_maplist/2,3,4 are ONE registry
-            // entry (the registry is keyed by name), so the arity of the actual goal decides which
-            // form runs. Before this, `concurrent_maplist3`/`concurrent_maplist4` were registered
-            // under those literal (uncallable) names and concurrent_maplist/3,4 threw an arity error.
-            OperationType op = opType;
-            if (op == OperationType.CONCURRENT_MAPLIST_2 || op == OperationType.CONCURRENT_MAPLIST_3
-                    || op == OperationType.CONCURRENT_MAPLIST_4) {
-                int n = (query.getArguments() == null) ? 0 : query.getArguments().size();
-                if (n == 3) op = OperationType.CONCURRENT_MAPLIST_3;
-                else if (n == 4) op = OperationType.CONCURRENT_MAPLIST_4;
-                else op = OperationType.CONCURRENT_MAPLIST_2;
-            }
-            // END_CHANGE: ISS-2025-0480
-            switch (op) {
-                case CONCURRENT:           return doConcurrent(solver, query, bindings, solutions);
-                case CONCURRENT_MAPLIST_2: return doConcurrentMaplist2(solver, query, bindings, solutions);
-                case CONCURRENT_MAPLIST_3: return doConcurrentMaplist3(solver, query, bindings, solutions);
-                case CONCURRENT_MAPLIST_4: return doConcurrentMaplist4(solver, query, bindings, solutions);
-                case FIRST_SOLUTION:       return doFirstSolution(solver, query, bindings, solutions);
-                case CONCURRENT_AND:       return doConcurrentAnd(solver, query, bindings, solutions);
-                case CONCURRENT_OR:        return doConcurrentOr(solver, query, bindings, solutions);
-                default: return false;
-            }
-        } catch (PrologEvaluationException e) {
-            throw e;
-        } catch (Exception e) {
-            it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
-            throw new PrologEvaluationException(opType.name().toLowerCase() + ": " + e.getMessage());
+        // ISS-2025-0480: concurrent_maplist/2,3,4 are ONE registry entry; the goal's arity decides.
+        OperationType op = opType;
+        int n = (query.getArguments() == null) ? 0 : query.getArguments().size();
+        if (op == OperationType.CONCURRENT_MAPLIST_2 || op == OperationType.CONCURRENT_MAPLIST_3
+                || op == OperationType.CONCURRENT_MAPLIST_4) {
+            if (n == 3) op = OperationType.CONCURRENT_MAPLIST_3;
+            else if (n == 4) op = OperationType.CONCURRENT_MAPLIST_4;
+            else op = OperationType.CONCURRENT_MAPLIST_2;
+        }
+        Term[] args = new Term[n];
+        for (int i = 0; i < n; i++) args[i] = query.getArguments().get(i).resolveBindings(bindings);
+        switch (op) {
+            case CONCURRENT:           return doConcurrent(solver, args, bindings, solutions);
+            case CONCURRENT_MAPLIST_2: return doConcurrentMaplist2(solver, args, bindings, solutions);
+            case CONCURRENT_MAPLIST_3: return doConcurrentMaplistN(solver, args, 1, bindings, solutions);
+            case CONCURRENT_MAPLIST_4: return doConcurrentMaplistN(solver, args, 2, bindings, solutions);
+            case FIRST_SOLUTION:       return doFirstSolution(solver, args, bindings, solutions);
+            case CONCURRENT_AND:       return doConcurrentAnd(solver, args, bindings, solutions);
+            case CONCURRENT_OR:        return doConcurrentOr(solver, args, bindings, solutions);
+            case CONCURRENT_FORALL:    return doConcurrentForall(solver, args, bindings, solutions);
+            default: return false;
         }
     }
 
     // =========================================================================
-    // concurrent(+N, +Goals, +Options)
-    // Execute a list of goals using at most N worker threads.
-    // All goals must succeed for concurrent/3 to succeed.
+    // concurrent(+N, +Goals, +Options): at most N workers; all goals must succeed; the bindings
+    // the goals made are unified back (SWI).
     // =========================================================================
-    private boolean doConcurrent(SolverContext solver, Term query,
-                                  Map<String, Term> bindings,
-                                  List<Map<String, Term>> solutions) throws Exception {
-        checkArity(query, 3, "concurrent/3");
-        Term nTerm = query.getArguments().get(0).resolveBindings(bindings);
-        Term goalsTerm = query.getArguments().get(1).resolveBindings(bindings);
+    private boolean doConcurrent(SolverContext solver, Term[] args, Map<String, Term> bindings,
+                                 List<Map<String, Term>> solutions) {
+        final String ctx = "concurrent/3";
+        int numThreads = positiveInt(args[0], ctx);
+        List<Term> goals = list(args[1], ctx);
+        for (Term g : goals) callable(g, ctx);
+        if (goals.isEmpty()) { solutions.add(new HashMap<>(bindings)); return true; }
 
-        int numThreads = toInt(nTerm, "concurrent/3: first argument must be a positive integer");
-        if (numThreads < 1) throw new PrologEvaluationException("concurrent/3: thread count must be >= 1");
-
-        List<Term> goals = termToList(goalsTerm, "concurrent/3: second argument must be a list of goals");
-        if (goals.isEmpty()) {
-            solutions.add(new HashMap<>(bindings));
-            return true;
-        }
-
-        ExecutorService localPool = Executors.newFixedThreadPool(numThreads, r -> {
+        ExecutorService localPool = Executors.newFixedThreadPool(Math.min(numThreads, goals.size()), r -> {
             Thread t = new Thread(r, "jprolog-concurrent-worker");
             t.setDaemon(true);
             return t;
         });
-
         try {
-            List<Future<Boolean>> futures = new ArrayList<>();
-            for (Term goal : goals) {
-                final Term g = goal;
-                final Map<String, Term> bindingsCopy = new HashMap<>(bindings);
-                futures.add(localPool.submit(() -> {
-                    List<Map<String, Term>> temp = new ArrayList<>();
-                    return solver.solveInWorker(g, bindingsCopy, temp, 1);
-                }));
+            List<Future<Map<String, Term>>> futures = new ArrayList<>();
+            for (Term g : goals) futures.add(localPool.submit(firstAnswer(solver, g)));
+            List<Map<String, Term>> answers = new ArrayList<>();
+            for (Future<Map<String, Term>> f : futures) {
+                Map<String, Term> a = await(f, futures);
+                if (a == null) { cancelAll(futures); return false; }
+                answers.add(a);
             }
-
-            // All goals must succeed
-            try {
-                for (Future<Boolean> f : futures) {
-                    if (!f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                        cancelAll(futures);                 // ISS-2025-0480
-                        return false;
-                    }
-                }
-            } catch (InterruptedException ie) {
-                throw parentCancelled(futures);             // ISS-2025-0480
-            }
-
-            solutions.add(new HashMap<>(bindings));
-            return true;
+            return unifyBack(goals, answers, bindings, solutions);
         } finally {
             localPool.shutdownNow();
         }
     }
 
     // =========================================================================
-    // concurrent_maplist(:Goal, +List)
-    // Like maplist/2 but executes Goal on each element in parallel.
-    // Succeeds if Goal succeeds for all elements.
+    // concurrent_maplist(:Goal, +List): call(Goal, E) for every E in parallel; bindings kept.
     // =========================================================================
-    private boolean doConcurrentMaplist2(SolverContext solver, Term query,
-                                          Map<String, Term> bindings,
-                                          List<Map<String, Term>> solutions) throws Exception {
-        checkArity(query, 2, "concurrent_maplist/2");
-        Term goalTerm = query.getArguments().get(0).resolveBindings(bindings);
-        Term listTerm = query.getArguments().get(1).resolveBindings(bindings);
-
-        List<Term> elements = termToList(listTerm, "concurrent_maplist/2: second argument must be a list");
-        if (elements.isEmpty()) {
-            solutions.add(new HashMap<>(bindings));
-            return true;
-        }
-
-        List<Future<Boolean>> futures = new ArrayList<>();
-        for (Term elem : elements) {
-            Term callGoal = buildCallGoal(goalTerm, elem);
-            Map<String, Term> bc = new HashMap<>(bindings);
-            futures.add(POOL.submit(() -> {
-                List<Map<String, Term>> temp = new ArrayList<>();
-                return solver.solveInWorker(callGoal, bc, temp, 1);
-            }));
-        }
-
-        try {
-            for (Future<Boolean> f : futures) {
-                if (!f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                    cancelAll(futures);                     // ISS-2025-0480
-                    return false;
-                }
-            }
-        } catch (InterruptedException ie) {
-            throw parentCancelled(futures);                 // ISS-2025-0480
-        }
-
-        solutions.add(new HashMap<>(bindings));
-        return true;
-    }
-
-    // =========================================================================
-    // concurrent_maplist(:Goal, +List, -ResultList)
-    // Like maplist/3 but executes Goal on each element in parallel.
-    // Goal is called as call(Goal, Elem, Result) for each element.
-    // =========================================================================
-    private boolean doConcurrentMaplist3(SolverContext solver, Term query,
-                                          Map<String, Term> bindings,
-                                          List<Map<String, Term>> solutions) throws Exception {
-        checkArity(query, 3, "concurrent_maplist/3");
-        Term goalTerm = query.getArguments().get(0).resolveBindings(bindings);
-        Term listTerm = query.getArguments().get(1).resolveBindings(bindings);
-        Term resultVar = query.getArguments().get(2);
-
-        List<Term> elements = termToList(listTerm, "concurrent_maplist/3: second argument must be a list");
-        if (elements.isEmpty()) {
-            Map<String, Term> nb = new HashMap<>(bindings);
-            Term emptyList = new Atom("[]");
-            if (resultVar.resolveBindings(bindings).unify(emptyList, nb)) {
-                solutions.add(nb);
-                return true;
-            }
-            return false;
-        }
-
-        // Each task: call(Goal, Elem, Result) -> extract Result
-        List<Future<Term>> futures = new ArrayList<>();
-        for (Term elem : elements) {
-            Variable resultHolder = new Variable("_ConcRes" + System.nanoTime() + Thread.currentThread().getId());
-            Term callGoal = buildCallGoal(goalTerm, elem, resultHolder);
-            Map<String, Term> bc = new HashMap<>(bindings);
-            final String resVarName = resultHolder.getName();
-            futures.add(POOL.submit(() -> {
-                List<Map<String, Term>> temp = new ArrayList<>();
-                boolean ok = solver.solveInWorker(callGoal, bc, temp, 1);
-                if (ok && !temp.isEmpty()) {
-                    Term res = temp.get(0).get(resVarName);
-                    return res != null ? res.resolveBindings(temp.get(0)) : null;
-                }
-                return null;
-            }));
-        }
-
-        // Collect results in order
-        List<Term> resultTerms = new ArrayList<>();
-        try {
-            for (Future<Term> f : futures) {
-                Term res = f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-                if (res == null) { cancelAll(futures); return false; }   // ISS-2025-0480
-                resultTerms.add(res);
-            }
-        } catch (InterruptedException ie) {
-            throw parentCancelled(futures);                 // ISS-2025-0480
-        }
-
-        // Build result list and unify
-        Term resultList = buildPrologList(resultTerms);
-        Map<String, Term> nb = new HashMap<>(bindings);
-        if (resultVar.resolveBindings(bindings).unify(resultList, nb)) {
-            solutions.add(nb);
-            return true;
-        }
-        return false;
-    }
-
-    // =========================================================================
-    // concurrent_maplist(:Goal, +L1, +L2, -ResultList)
-    // Parallel maplist with two input lists.
-    // =========================================================================
-    private boolean doConcurrentMaplist4(SolverContext solver, Term query,
-                                          Map<String, Term> bindings,
-                                          List<Map<String, Term>> solutions) throws Exception {
-        checkArity(query, 4, "concurrent_maplist/4");
-        Term goalTerm = query.getArguments().get(0).resolveBindings(bindings);
-        Term list1Term = query.getArguments().get(1).resolveBindings(bindings);
-        Term list2Term = query.getArguments().get(2).resolveBindings(bindings);
-        Term resultVar = query.getArguments().get(3);
-
-        List<Term> list1 = termToList(list1Term, "concurrent_maplist/4: second argument must be a list");
-        List<Term> list2 = termToList(list2Term, "concurrent_maplist/4: third argument must be a list");
-
-        if (list1.size() != list2.size()) {
-            throw new PrologEvaluationException("concurrent_maplist/4: input lists must have the same length");
-        }
-
-        if (list1.isEmpty()) {
-            Map<String, Term> nb = new HashMap<>(bindings);
-            if (resultVar.resolveBindings(bindings).unify(new Atom("[]"), nb)) {
-                solutions.add(nb);
-                return true;
-            }
-            return false;
-        }
-
-        List<Future<Term>> futures = new ArrayList<>();
-        for (int i = 0; i < list1.size(); i++) {
-            Variable resultHolder = new Variable("_ConcRes4_" + System.nanoTime() + "_" + i);
-            Term callGoal = buildCallGoal(goalTerm, list1.get(i), list2.get(i), resultHolder);
-            Map<String, Term> bc = new HashMap<>(bindings);
-            final String resVarName = resultHolder.getName();
-            futures.add(POOL.submit(() -> {
-                List<Map<String, Term>> temp = new ArrayList<>();
-                boolean ok = solver.solveInWorker(callGoal, bc, temp, 1);
-                if (ok && !temp.isEmpty()) {
-                    Term res = temp.get(0).get(resVarName);
-                    return res != null ? res.resolveBindings(temp.get(0)) : null;
-                }
-                return null;
-            }));
-        }
-
-        List<Term> resultTerms = new ArrayList<>();
-        try {
-            for (Future<Term> f : futures) {
-                Term res = f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-                if (res == null) { cancelAll(futures); return false; }   // ISS-2025-0480
-                resultTerms.add(res);
-            }
-        } catch (InterruptedException ie) {
-            throw parentCancelled(futures);                 // ISS-2025-0480
-        }
-
-        Term resultList = buildPrologList(resultTerms);
-        Map<String, Term> nb = new HashMap<>(bindings);
-        if (resultVar.resolveBindings(bindings).unify(resultList, nb)) {
-            solutions.add(nb);
-            return true;
-        }
-        return false;
-    }
-
-    // =========================================================================
-    // first_solution(-X, :Goals, +Options)
-    // Run Goals in parallel; return the binding of X from whichever goal
-    // succeeds first. Cancel remaining goals.
-    // SWI-Prolog compatible: Goals is a list of goal terms.
-    // =========================================================================
-    private boolean doFirstSolution(SolverContext solver, Term query,
-                                     Map<String, Term> bindings,
-                                     List<Map<String, Term>> solutions) throws Exception {
-        checkArity(query, 3, "first_solution/3");
-        Term templateVar = query.getArguments().get(0);
-        Term goalsTerm = query.getArguments().get(1).resolveBindings(bindings);
-
-        List<Term> goals = termToList(goalsTerm, "first_solution/3: second argument must be a list of goals");
-        if (goals.isEmpty()) return false;
-
-        // Use CompletionService to get the first completed result
-        CompletionService<Map<String, Term>> cs = new ExecutorCompletionService<>(POOL);
-        AtomicBoolean found = new AtomicBoolean(false);
+    private boolean doConcurrentMaplist2(SolverContext solver, Term[] args, Map<String, Term> bindings,
+                                         List<Map<String, Term>> solutions) {
+        final String ctx = "concurrent_maplist/2";
+        Term goal = callable(args[0], ctx);
+        List<Term> elements = list(args[1], ctx);
+        if (elements.isEmpty()) { solutions.add(new HashMap<>(bindings)); return true; }
+        List<Term> calls = new ArrayList<>();
+        for (Term e : elements) calls.add(addArgs(goal, e));
         List<Future<Map<String, Term>>> futures = new ArrayList<>();
-
-        for (Term goal : goals) {
-            final Term g = goal;
-            Map<String, Term> bc = new HashMap<>(bindings);
-            futures.add(cs.submit(() -> {
-                if (found.get()) return null;
-                List<Map<String, Term>> temp = new ArrayList<>();
-                boolean ok = solver.solveInWorker(g, bc, temp, 1);
-                if (ok && !temp.isEmpty() && !found.get()) {
-                    return temp.get(0);
-                }
-                return null;
-            }));
+        for (Term c : calls) futures.add(POOL.submit(firstAnswer(solver, c)));
+        List<Map<String, Term>> answers = new ArrayList<>();
+        for (Future<Map<String, Term>> f : futures) {
+            Map<String, Term> a = await(f, futures);
+            if (a == null) { cancelAll(futures); return false; }
+            answers.add(a);
         }
+        return unifyBack(calls, answers, bindings, solutions);
+    }
 
+    // =========================================================================
+    // concurrent_maplist(:Goal, +L1, ?L2)          (inputs = 1)
+    // concurrent_maplist(:Goal, +L1, +L2, ?L3)     (inputs = 2)
+    // call(Goal, E1 [, E2], R) per position in parallel; the results form the last list.
+    // =========================================================================
+    private boolean doConcurrentMaplistN(SolverContext solver, Term[] args, int inputs,
+                                         Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        final String ctx = "concurrent_maplist/" + (inputs + 2);
+        Term goal = callable(args[0], ctx);
+        List<Term> l1 = list(args[1], ctx);
+        List<Term> l2 = (inputs == 2) ? list(args[2], ctx) : null;
+        if (l2 != null && l2.size() != l1.size()) return false;
+        Term resultArg = args[inputs + 1];
+
+        List<Variable> holders = new ArrayList<>();
+        List<Term> calls = new ArrayList<>();
+        for (int i = 0; i < l1.size(); i++) {
+            Variable r = new Variable();
+            holders.add(r);
+            calls.add(inputs == 2 ? addArgs(goal, l1.get(i), l2.get(i), r) : addArgs(goal, l1.get(i), r));
+        }
+        List<Future<Map<String, Term>>> futures = new ArrayList<>();
+        for (Term c : calls) futures.add(POOL.submit(firstAnswer(solver, c)));
+        List<Term> results = new ArrayList<>();
+        List<Map<String, Term>> answers = new ArrayList<>();
+        for (int i = 0; i < futures.size(); i++) {
+            Map<String, Term> a = await(futures.get(i), futures);
+            if (a == null) { cancelAll(futures); return false; }
+            answers.add(a);
+            results.add(holders.get(i).resolveBindings(a));
+        }
+        Map<String, Term> nb = new HashMap<>(bindings);
+        for (int i = 0; i < calls.size(); i++) {
+            Term inst = calls.get(i).resolveBindings(answers.get(i));
+            if (!calls.get(i).resolveBindings(nb).unify(inst, nb)) return false;
+        }
+        if (!resultArg.resolveBindings(nb).unify(buildPrologList(results), nb)) return false;
+        solutions.add(resolved(nb));
+        return true;
+    }
+
+    // =========================================================================
+    // first_solution(-X, :Goals, +Options): the first goal to SUCCEED gives X; the rest are
+    // cancelled. A goal that raises before any success propagates its exception.
+    // =========================================================================
+    private boolean doFirstSolution(SolverContext solver, Term[] args, Map<String, Term> bindings,
+                                    List<Map<String, Term>> solutions) {
+        final String ctx = "first_solution/3";
+        final Term template = args[0];
+        List<Term> goals = list(args[1], ctx);
+        for (Term g : goals) callable(g, ctx);
+        if (goals.isEmpty()) return false;
+
+        CompletionService<Map<String, Term>> cs = new ExecutorCompletionService<>(POOL);
+        List<Future<Map<String, Term>>> futures = new ArrayList<>();
+        for (Term g : goals) futures.add(cs.submit(firstAnswer(solver, g)));
         try {
-            // Wait for the first successful result
             for (int i = 0; i < futures.size(); i++) {
-                Future<Map<String, Term>> completed;
+                Future<Map<String, Term>> done;
                 try {
-                    completed = cs.poll(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                    done = cs.take();
                 } catch (InterruptedException ie) {
-                    found.set(true);
-                    throw parentCancelled(futures);         // ISS-2025-0480
+                    throw parentCancelled(futures);
                 }
-                if (completed == null) break;
-                Map<String, Term> result = completed.get();
+                Map<String, Term> result = await(done, futures);
                 if (result != null) {
-                    found.set(true);
-                    // Resolve template variable from the successful solution
-                    Term resolvedTemplate = templateVar.resolveBindings(result);
                     Map<String, Term> nb = new HashMap<>(bindings);
-                    if (templateVar.resolveBindings(bindings).unify(resolvedTemplate, nb)) {
-                        // Merge relevant bindings
-                        for (Map.Entry<String, Term> e : result.entrySet()) {
-                            if (!nb.containsKey(e.getKey())) {
-                                nb.put(e.getKey(), e.getValue());
-                            }
-                        }
+                    if (template.unify(template.resolveBindings(result), nb)) {
                         solutions.add(nb);
                         return true;
                     }
@@ -408,122 +229,158 @@ public class ConcurrentPredicates implements BuiltInWithContext {
             }
             return false;
         } finally {
-            // Cancel remaining tasks
-            found.set(true);
-            for (Future<?> f : futures) {
-                f.cancel(true);
-            }
+            cancelAll(futures);
         }
     }
 
     // =========================================================================
-    // concurrent_and(+Goals, +Options)
-    // Run all goals in parallel. Succeed only if ALL goals succeed.
-    // Like concurrent/3 but uses the global thread pool.
+    // concurrent_and(+Goals, +Options): all goals in parallel, succeed iff all succeed.
     // =========================================================================
-    private boolean doConcurrentAnd(SolverContext solver, Term query,
-                                     Map<String, Term> bindings,
-                                     List<Map<String, Term>> solutions) throws Exception {
-        checkArity(query, 2, "concurrent_and/2");
-        Term goalsTerm = query.getArguments().get(0).resolveBindings(bindings);
-
-        List<Term> goals = termToList(goalsTerm, "concurrent_and/2: first argument must be a list of goals");
-        if (goals.isEmpty()) {
-            solutions.add(new HashMap<>(bindings));
-            return true;
+    private boolean doConcurrentAnd(SolverContext solver, Term[] args, Map<String, Term> bindings,
+                                    List<Map<String, Term>> solutions) {
+        final String ctx = "concurrent_and/2";
+        List<Term> goals = list(args[0], ctx);
+        for (Term g : goals) callable(g, ctx);
+        if (goals.isEmpty()) { solutions.add(new HashMap<>(bindings)); return true; }
+        List<Future<Map<String, Term>>> futures = new ArrayList<>();
+        for (Term g : goals) futures.add(POOL.submit(firstAnswer(solver, g)));
+        for (Future<Map<String, Term>> f : futures) {
+            if (await(f, futures) == null) { cancelAll(futures); return false; }
         }
-
-        List<Future<Boolean>> futures = new ArrayList<>();
-        for (Term goal : goals) {
-            Map<String, Term> bc = new HashMap<>(bindings);
-            futures.add(POOL.submit(() -> {
-                List<Map<String, Term>> temp = new ArrayList<>();
-                return solver.solveInWorker(goal, bc, temp, 1);
-            }));
-        }
-
-        try {
-            for (Future<Boolean> f : futures) {
-                if (!f.get(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                    cancelAll(futures);                     // ISS-2025-0480
-                    return false;
-                }
-            }
-        } catch (InterruptedException ie) {
-            throw parentCancelled(futures);                 // ISS-2025-0480
-        }
-
         solutions.add(new HashMap<>(bindings));
         return true;
     }
 
     // =========================================================================
-    // concurrent_or(+Goals, -FirstSolution)
-    // Run goals in parallel; succeed with the first goal that succeeds.
-    // Unifies FirstSolution with the index (1-based) of the winning goal.
+    // concurrent_or(+Goals, -Index): the 1-based index of the first goal that succeeds.
     // =========================================================================
-    private boolean doConcurrentOr(SolverContext solver, Term query,
-                                    Map<String, Term> bindings,
-                                    List<Map<String, Term>> solutions) throws Exception {
-        checkArity(query, 2, "concurrent_or/2");
-        Term goalsTerm = query.getArguments().get(0).resolveBindings(bindings);
-        Term resultVar = query.getArguments().get(1);
-
-        List<Term> goals = termToList(goalsTerm, "concurrent_or/2: first argument must be a list of goals");
+    private boolean doConcurrentOr(SolverContext solver, Term[] args, Map<String, Term> bindings,
+                                   List<Map<String, Term>> solutions) {
+        final String ctx = "concurrent_or/2";
+        List<Term> goals = list(args[0], ctx);
+        for (Term g : goals) callable(g, ctx);
         if (goals.isEmpty()) return false;
-
-        CompletionService<Integer> cs = new ExecutorCompletionService<>(POOL);
-        AtomicBoolean found = new AtomicBoolean(false);
-        List<Future<Integer>> futures = new ArrayList<>();
-
+        CompletionService<Map<String, Term>> cs = new ExecutorCompletionService<>(POOL);
+        List<Future<Map<String, Term>>> futures = new ArrayList<>();
+        final Map<Future<Map<String, Term>>, Integer> index = new HashMap<>();
         for (int i = 0; i < goals.size(); i++) {
-            final Term g = goals.get(i);
-            final int index = i + 1;
-            Map<String, Term> bc = new HashMap<>(bindings);
-            futures.add(cs.submit(() -> {
-                if (found.get()) return -1;
-                List<Map<String, Term>> temp = new ArrayList<>();
-                boolean ok = solver.solveInWorker(g, bc, temp, 1);
-                return (ok && !found.get()) ? index : -1;
-            }));
+            Future<Map<String, Term>> f = cs.submit(firstAnswer(solver, goals.get(i)));
+            futures.add(f);
+            index.put(f, i + 1);
         }
-
         try {
             for (int i = 0; i < futures.size(); i++) {
-                Future<Integer> completed;
+                Future<Map<String, Term>> done;
                 try {
-                    completed = cs.poll(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                    done = cs.take();
                 } catch (InterruptedException ie) {
-                    found.set(true);
-                    throw parentCancelled(futures);         // ISS-2025-0480
+                    throw parentCancelled(futures);
                 }
-                if (completed == null) break;
-                int idx = completed.get();
-                if (idx > 0) {
-                    found.set(true);
+                if (await(done, futures) != null) {
                     Map<String, Term> nb = new HashMap<>(bindings);
-                    if (resultVar.resolveBindings(bindings).unify(new Number(idx), nb)) {
+                    if (args[1].unify(Number.valueOf(index.get(done)), nb)) {
                         solutions.add(nb);
                         return true;
                     }
+                    return false;
                 }
             }
             return false;
         } finally {
-            found.set(true);
-            for (Future<?> f : futures) {
-                f.cancel(true);
-            }
+            cancelAll(futures);
         }
     }
+
+    // START_CHANGE: ISS-2025-0634 - concurrent_forall(:Cond, :Action [, +Options]) (SWI): every
+    // solution of Cond (enumerated here) runs Action on a pool of threads(N) workers (default: the
+    // number of processors). Succeeds iff Action succeeds for every solution; the first failure or
+    // exception cancels the rest. Like forall/2 it binds nothing.
+    private boolean doConcurrentForall(SolverContext solver, Term[] args, Map<String, Term> bindings,
+                                       List<Map<String, Term>> solutions) {
+        final String ctx = "concurrent_forall/" + args.length;
+        Term cond = callable(args[0], ctx);
+        Term action = callable(args[1], ctx);
+        int threads = Runtime.getRuntime().availableProcessors();
+        if (args.length == 3) {
+            for (Term o : list(args[2], ctx)) {
+                if (o instanceof CompoundTerm && "threads".equals(((CompoundTerm) o).getName())
+                        && ((CompoundTerm) o).getArguments().size() == 1) {
+                    threads = positiveInt(((CompoundTerm) o).getArguments().get(0), ctx);
+                }
+            }
+        }
+        List<Map<String, Term>> conds = new ArrayList<>();
+        solver.solveMeta(cond, new HashMap<String, Term>(bindings), conds);
+        if (conds.isEmpty()) { solutions.add(new HashMap<>(bindings)); return true; }
+        ExecutorService localPool = Executors.newFixedThreadPool(Math.min(threads, conds.size()), r -> {
+            Thread t = new Thread(r, "jprolog-concurrent-forall");
+            t.setDaemon(true);
+            return t;
+        });
+        try {
+            List<Future<Map<String, Term>>> futures = new ArrayList<>();
+            for (Map<String, Term> c : conds) {
+                futures.add(localPool.submit(firstAnswer(solver, action.resolveBindings(c))));
+            }
+            for (Future<Map<String, Term>> f : futures) {
+                if (await(f, futures) == null) { cancelAll(futures); return false; }
+            }
+            solutions.add(new HashMap<>(bindings));
+            return true;
+        } finally {
+            localPool.shutdownNow();
+        }
+    }
+    // END_CHANGE: ISS-2025-0634
 
     // =========================================================================
     // Utility methods
     // =========================================================================
 
-    // START_CHANGE: ISS-2025-0480 - cancelling the parent must cancel the workers. Future.cancel(true)
-    // interrupts the worker thread; its own ResourceGuard then raises QueryCancelledException, which
-    // is a plain RuntimeException (the trust model) and cannot be swallowed by untrusted catch/3.
+    /** A task that runs {@code goal} on a worker machine: its first answer, or null on failure. */
+    private static Callable<Map<String, Term>> firstAnswer(final SolverContext solver, final Term goal) {
+        return () -> {
+            List<Map<String, Term>> temp = new ArrayList<>();
+            boolean ok = solver.solveInWorker(goal, new HashMap<String, Term>(), temp, 1);
+            return (ok && !temp.isEmpty()) ? temp.get(0) : null;
+        };
+    }
+
+    // START_CHANGE: ISS-2025-0622 - the one place a worker's outcome is collected.
+    /**
+     * Wait (without a time limit, interruptibly) for {@code f}. A worker's exception is re-raised
+     * as itself when it is an engine-control exception, as a copied ball when it is a Prolog
+     * exception; either way the sibling futures are cancelled first.
+     */
+    private static <T> T await(Future<T> f, List<? extends Future<?>> all) {
+        try {
+            return f.get();
+        } catch (InterruptedException ie) {
+            throw parentCancelled(all);
+        } catch (CancellationException ce) {
+            return null;
+        } catch (ExecutionException ee) {
+            cancelAll(all);
+            throw rethrow(ee.getCause() != null ? ee.getCause() : ee);
+        }
+    }
+
+    private static RuntimeException rethrow(Throwable cause) {
+        ControlFlow.rethrowIfControl(cause);
+        if (cause instanceof PrologException) {
+            PrologException pe = (PrologException) cause;
+            Term ball = pe.getErrorTerm();
+            if (ball == null) return pe;                               // halt/1 and friends
+            return new PrologException(ThreadPredicates.detach(ball));
+        }
+        if (cause instanceof Error) throw (Error) cause;
+        return Errors.system(cause.getClass().getSimpleName()
+            + (cause.getMessage() == null ? "" : ": " + cause.getMessage()), "concurrent");
+    }
+    // END_CHANGE: ISS-2025-0622
+
+    // ISS-2025-0480 - cancelling the parent must cancel the workers. Future.cancel(true) interrupts
+    // the worker thread; its own ResourceGuard then raises QueryCancelledException.
     private static void cancelAll(List<? extends Future<?>> futures) {
         for (Future<?> f : futures) f.cancel(true);
     }
@@ -531,88 +388,69 @@ public class ConcurrentPredicates implements BuiltInWithContext {
     private static RuntimeException parentCancelled(List<? extends Future<?>> futures) {
         cancelAll(futures);
         Thread.currentThread().interrupt();
-        return new it.denzosoft.jprolog.core.engine.QueryCancelledException();
+        return new QueryCancelledException();
     }
-    // END_CHANGE: ISS-2025-0480
 
-    private void checkArity(Term query, int expected, String name) {
-        if (query.getArguments() == null || query.getArguments().size() != expected) {
-            throw new PrologEvaluationException(name + " requires " + expected + " arguments");
+    /** Unify each goal with its instantiated copy from the worker's answer (SWI keeps them). */
+    private static boolean unifyBack(List<Term> goals, List<Map<String, Term>> answers,
+                                     Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        Map<String, Term> nb = new HashMap<>(bindings);
+        for (int i = 0; i < goals.size(); i++) {
+            Term inst = goals.get(i).resolveBindings(answers.get(i));
+            if (!goals.get(i).resolveBindings(nb).unify(inst, nb)) return false;
         }
+        solutions.add(resolved(nb));
+        return true;
     }
 
-    private int toInt(Term term, String errMsg) {
-        if (!(term instanceof Number)) throw new PrologEvaluationException(errMsg);
-        return ((Number) term).getValue().intValue();
+    /** The map with every value resolved through it (the workers' fresh variables are chained). */
+    private static Map<String, Term> resolved(Map<String, Term> nb) {
+        Map<String, Term> out = new HashMap<>();
+        for (Map.Entry<String, Term> e : nb.entrySet()) out.put(e.getKey(), e.getValue().resolveBindings(nb));
+        return out;
     }
 
-    /** Convert a Prolog list term to a Java List<Term>. */
-    private List<Term> termToList(Term listTerm, String errMsg) {
+    private static int positiveInt(Term t, String ctx) {
+        if (t instanceof Variable) throw Errors.instantiation(ctx);
+        if (!(t instanceof Number) || !((Number) t).isInteger()) throw Errors.type("integer", t, ctx);
+        long v = ((Number) t).longValue();
+        if (v < 1) throw Errors.domain("positive_integer", t, ctx);
+        return (int) Math.min(v, 1024);
+    }
+
+    private static Term callable(Term g, String ctx) {
+        if (g instanceof Variable) throw Errors.instantiation(ctx);
+        if (!(g instanceof Atom) && !(g instanceof CompoundTerm)) throw Errors.type("callable", g, ctx);
+        return g;
+    }
+
+    /** A proper list; instantiation_error on a partial list, type_error(list, L) otherwise. */
+    private static List<Term> list(Term listTerm, String ctx) {
         List<Term> result = new ArrayList<>();
-        Term current = listTerm;
-        while (current instanceof CompoundTerm) {
-            CompoundTerm ct = (CompoundTerm) current;
-            if (".".equals(ct.getFunctor().getName()) && ct.getArguments().size() == 2) {
-                result.add(ct.getArguments().get(0));
-                current = ct.getArguments().get(1);
-            } else {
-                throw new PrologEvaluationException(errMsg);
-            }
+        Term cur = listTerm;
+        while (cur instanceof CompoundTerm && ".".equals(((CompoundTerm) cur).getName())
+                && ((CompoundTerm) cur).getArguments().size() == 2) {
+            result.add(((CompoundTerm) cur).getArguments().get(0));
+            cur = ((CompoundTerm) cur).getArguments().get(1);
         }
-        if (!(current instanceof Atom) || !"[]".equals(((Atom) current).getName())) {
-            if (!result.isEmpty()) {
-                throw new PrologEvaluationException(errMsg);
-            }
-            // Single term, not a list — treat as single-element list? No, error.
-            throw new PrologEvaluationException(errMsg);
+        if (cur instanceof Variable) throw Errors.instantiation(ctx);
+        if (!(cur instanceof Atom) || !"[]".equals(((Atom) cur).getName())) {
+            throw Errors.type("list", listTerm, ctx);
         }
         return result;
     }
 
-    /** Build call(Goal, Arg1) as a compound term. */
-    private Term buildCallGoal(Term goal, Term arg1) {
-        if (goal instanceof Atom) {
-            return new CompoundTerm((Atom) goal, Arrays.asList(arg1));
-        } else if (goal instanceof CompoundTerm) {
-            CompoundTerm ct = (CompoundTerm) goal;
-            List<Term> args = new ArrayList<>(ct.getArguments());
-            args.add(arg1);
-            return new CompoundTerm(ct.getFunctor(), args);
-        }
-        throw new PrologEvaluationException("Goal must be callable");
-    }
-
-    /** Build call(Goal, Arg1, Arg2) as a compound term. */
-    private Term buildCallGoal(Term goal, Term arg1, Term arg2) {
-        if (goal instanceof Atom) {
-            return new CompoundTerm((Atom) goal, Arrays.asList(arg1, arg2));
-        } else if (goal instanceof CompoundTerm) {
-            CompoundTerm ct = (CompoundTerm) goal;
-            List<Term> args = new ArrayList<>(ct.getArguments());
-            args.add(arg1);
-            args.add(arg2);
-            return new CompoundTerm(ct.getFunctor(), args);
-        }
-        throw new PrologEvaluationException("Goal must be callable");
-    }
-
-    /** Build call(Goal, Arg1, Arg2, Arg3) as a compound term. */
-    private Term buildCallGoal(Term goal, Term arg1, Term arg2, Term arg3) {
-        if (goal instanceof Atom) {
-            return new CompoundTerm((Atom) goal, Arrays.asList(arg1, arg2, arg3));
-        } else if (goal instanceof CompoundTerm) {
-            CompoundTerm ct = (CompoundTerm) goal;
-            List<Term> args = new ArrayList<>(ct.getArguments());
-            args.add(arg1);
-            args.add(arg2);
-            args.add(arg3);
-            return new CompoundTerm(ct.getFunctor(), args);
-        }
-        throw new PrologEvaluationException("Goal must be callable");
+    /** Goal with extra arguments appended (call/N). */
+    private static Term addArgs(Term goal, Term... extra) {
+        if (goal instanceof Atom) return new CompoundTerm((Atom) goal, Arrays.asList(extra));
+        CompoundTerm ct = (CompoundTerm) goal;
+        List<Term> args = new ArrayList<>(ct.getArguments());
+        args.addAll(Arrays.asList(extra));
+        return new CompoundTerm(ct.getFunctor(), args);
     }
 
     /** Build a Prolog list from a Java list of terms. */
-    private Term buildPrologList(List<Term> terms) {
+    private static Term buildPrologList(List<Term> terms) {
         Term list = new Atom("[]");
         for (int i = terms.size() - 1; i >= 0; i--) {
             list = new CompoundTerm(new Atom("."), Arrays.asList(terms.get(i), list));

@@ -59,6 +59,8 @@ public final class Machine {
     // ------------------------------------------------------------------ context
 
     private final Engine engine;
+    /** ISS-2025-0661: the table sequence number the innermost negation started at; -1 = none. */
+    private long negTableFloor = -1;
     private final Bindings B;
     private final ResourceGuard guard;
     private DebugController debugController;
@@ -80,6 +82,48 @@ public final class Machine {
         g.module = ctxModule;
         return g;
     }
+
+    // START_CHANGE: ISS-2025-0540 - a goal over a clause frame (fr == null: a live term).
+    private Goal mgf(Term t, Term[] fr, int barrier, Goal next) {
+        Goal g = (fr == null) ? new Goal(t, barrier, next) : new Goal(t, fr, barrier, next);
+        g.module = ctxModule;
+        return g;
+    }
+
+    private static Goal mgf(Term t, Term[] fr, int barrier, Goal next, String mod) {
+        Goal g = (fr == null) ? new Goal(t, barrier, next) : new Goal(t, fr, barrier, next);
+        g.module = mod;
+        return g;
+    }
+
+    /**
+     * Expand a skeleton control construct exactly as {@link #stepN} expands the live one, but
+     * with its arguments left as skeletons over {@code g.frame}. A `;` whose left argument is a
+     * variable is not expanded here (the caller checks): stepN looks at what it is BOUND to.
+     */
+    private void stepControlSkel(Clause.Skel s, Goal g) {
+        Term[] fr = g.frame;
+        String f = s.getName();
+        Term a0 = s.arg(0), a1 = s.arg(1);
+        if (",".equals(f)) {
+            goalStack = mgf(a0, fr, g.cutBarrier, mgf(a1, fr, g.cutBarrier, goalStack));
+        } else if (";".equals(f)) {
+            if (a0 instanceof CompoundTerm && ((CompoundTerm) a0).arity() == 2
+                    && "->".equals(((CompoundTerm) a0).getName())) {
+                ite(((CompoundTerm) a0).arg(0), ((CompoundTerm) a0).arg(1), a1, g.cutBarrier, fr);
+            } else if (a0 instanceof CompoundTerm && ((CompoundTerm) a0).arity() == 2
+                    && "*->".equals(((CompoundTerm) a0).getName())) {
+                softCut(((CompoundTerm) a0).arg(0), ((CompoundTerm) a0).arg(1), a1, g.cutBarrier, fr);
+            } else {
+                disjunction(a0, a1, g.cutBarrier, fr);
+            }
+        } else if ("->".equals(f)) {
+            ite(a0, a1, ATOM_FAIL, g.cutBarrier, fr);
+        } else {
+            softCut(a0, a1, ATOM_FAIL, g.cutBarrier, fr);
+        }
+    }
+    // END_CHANGE: ISS-2025-0540
 
     /** A goal that runs in an explicit module ({@code null} == {@code user}). */
     private static Goal mg(Term t, int barrier, Goal next, String mod) {
@@ -212,6 +256,8 @@ public final class Machine {
         Term catcher, recovery; boolean active = true;
         /** ISS-2025-0466: the context module the recovery goal runs in. */
         String module;
+        /** ISS-2025-0528: the four-port depth at which catch/3 was called. */
+        int catchDepth;
         // CLEANUP
         Term cleanup; boolean cleanupDone;
         // START_CHANGE: ISS-2025-0463 - TABLING: the generator/consumer frame of a tabled call.
@@ -251,6 +297,22 @@ public final class Machine {
 
     /** Test hook: live choice points. */
     public int choicePointCount() { return cps.size(); }
+
+    // START_CHANGE: ISS-2025-0627 - wave P6.4: the CLI streams answers and, like SWI's toplevel,
+    // prints `.` instead of prompting for more when the answer is the last one.
+    /**
+     * Could backtracking still produce another answer? True when a clause or generator choice
+     * point is left; catch and cleanup frames alone are not alternatives. Meaningful inside a
+     * solution sink.
+     */
+    public boolean hasAlternatives() {
+        for (int i = cps.size() - 1; i >= 0; i--) {
+            int k = cps.get(i).kind;
+            if (k == CP.CLAUSES || k == CP.GEN) return true;
+        }
+        return false;
+    }
+    // END_CHANGE: ISS-2025-0627
     /** Test hook: live trail entries. */
     public int trailSize() { return B.size(); }
 
@@ -348,8 +410,18 @@ public final class Machine {
 
         LinkedHashMap<String, Variable> queryVars = new LinkedHashMap<String, Variable>();
         Term q = normalise(query, queryVars);
-        final List<String> names = new ArrayList<String>(queryVars.keySet());
-        final List<Variable> cells = new ArrayList<Variable>(queryVars.values());
+        final List<String> names = new ArrayList<String>(queryVars.size());
+        final List<Variable> cells = new ArrayList<Variable>(queryVars.size());
+        // START_CHANGE: ISS-2025-0515 - wave P1.2: an anonymous `_` is not an answer variable.
+        // Each `_` is its own cell with a generated `_G<n>` name, so it used to reach the answer
+        // map as `{_G7=1}`. A NAMED variable that merely starts with `_` (`_Foo`) stays: SWI hides
+        // those only when it prints the toplevel answer, and an embedder may well ask for them.
+        for (Map.Entry<String, Variable> e : queryVars.entrySet()) {
+            if (e.getValue().isAnonymous()) continue;
+            names.add(e.getKey());
+            cells.add(e.getValue());
+        }
+        // END_CHANGE: ISS-2025-0515
         ctxModule = modKey(engine.modules4().currentModule());      // ISS-2025-0466
         goalStack = mg(q, 0, null);
         // START_CHANGE: ISS-2025-0479 - a WORKER machine must not touch engine-wide, query-boundary
@@ -366,11 +438,24 @@ public final class Machine {
         // nested machine hands the role back.
         Machine prevUndoTarget = Undo.enter(this);
         try {
+            // START_CHANGE: ISS-2025-0518 - the query is converted to a body like any call/1 goal
+            checkBody(q, "call", 1);
+            // END_CHANGE: ISS-2025-0518
             drive(new Driver() {
-                @Override public boolean onSolution() { return sink.onSolution(snapshot(names, cells)); }
+                // ISS-2025-0514: a top-level answer is a COPY (see answer())
+                @Override public boolean onSolution() { return sink.onSolution(answer(names, cells)); }
             }, 0);
         } finally {
+            // START_CHANGE: ISS-2025-0523 - wave P1.10: a query that is ABANDONED — the sink said
+            // stop, the inference budget or a Stop/interrupt aborted it — still owes the cleanup of
+            // every setup_call_cleanup/3 frame it left open. They used to be dropped with the
+            // machine, so `setup_call_cleanup(open(F,write,S), loop, close(S))` leaked the stream
+            // when the budget hit. Cut them away now; the cleanups' own exceptions are swallowed so
+            // the exception that is propagating (if any) is the one the caller sees.
+            if (!cps.isEmpty()) cutQuietly(0);
+            // END_CHANGE: ISS-2025-0523
             if (top) {                                             // ISS-2025-0479
+                engine.addInferences(guard.getSteps());           // ISS-2025-0608
                 if (engine.context() != null) engine.context().setResourceGuard(prevGuard);
                 engine.store().compact();      // query boundary: no call can hold an old generation
                 // ISS-2025-0463: no table may stay EVALUATING across queries. A query that unwound
@@ -446,6 +531,24 @@ public final class Machine {
         return m;
     }
 
+    // START_CHANGE: ISS-2025-0514 - wave P1.1: a top-level answer is a COPY, not a resolve.
+    // Unify.resolve keeps every unbound cell live, and the machine goes on binding those cells
+    // after the answer has been handed out: `X = f(Y) ; Y = 1` delivered X = f(1) as its FIRST
+    // answer (the untrailed Y = 1 of the last alternative wrote through it), and `(true ; X = 1)`
+    // showed X = 1 twice. The copy uses ONE variable map per answer, so sharing inside the answer
+    // is preserved; each fresh cell keeps the original's name, so an answer prints exactly as
+    // before. Attributed cells stay live (see Unify.CopyAnswer) so Prolog.residualGoals still
+    // sees their constraints. Nested sub-queries (runSubQuery) keep the non-copying snapshot: a
+    // legacy built-in maps their answers back onto its caller's cells.
+    private Map<String, Term> answer(List<String> names, List<Variable> cells) {
+        Map<String, Term> m = new HashMap<String, Term>();
+        if (names.isEmpty()) return m;
+        IdentityHashMap<Variable, Variable> vm = new IdentityHashMap<Variable, Variable>();
+        for (int i = 0; i < names.size(); i++) m.put(names.get(i), Unify.copyAnswer(cells.get(i), vm, guard));
+        return m;
+    }
+    // END_CHANGE: ISS-2025-0514
+
     private interface Driver { boolean onSolution(); }
 
     // ------------------------------------------------------------------ drive loop
@@ -456,6 +559,7 @@ public final class Machine {
     private static final Atom DOT = new Atom(".");
     private static final Atom NIL = new Atom("[]");
     private static final Atom COMMA = new Atom(",");
+    private static final Atom ATOM_CALL = new Atom("call");               // ISS-2025-0516
 
     /**
      * Run until exhausted. {@code floor} is the choice-point height this run must not backtrack
@@ -482,8 +586,54 @@ public final class Machine {
                 goalStack = g.next;
                 if (g.action != null) { g.action.run(); continue; }
                 ctxModule = g.module;                         // ISS-2025-0466
-                Term t = (g.frame != null) ? Clause.instantiate(g.term, g.frame) : g.term;
+                Term raw = g.term;
+                // START_CHANGE: ISS-2025-0540 - wave P2.1: a body goal whose call site already
+                // resolved to a plain user predicate goes straight to its clauses — no control
+                // construct tests, no native/registry/tabling probes, no "name/arity" lookups.
+                if (raw instanceof Clause.Skel && g.frame != null) {
+                    // START_CHANGE: ISS-2025-0540 - `,`/`;`/`->`/`*->` in a clause body are
+                    // expanded over the frame: their branches are pushed as skeleton goals and
+                    // instantiated only when reached (an untaken branch is never built), so the
+                    // goals inside an if-then-else get call sites too.
+                    Clause.Skel sk = (Clause.Skel) raw;
+                    if (sk.lazyControl && !(sk.arg(0) instanceof VarRef && ";".equals(sk.getName()))) {
+                        stepControlSkel(sk, g);
+                        continue;
+                    }
+                    // END_CHANGE: ISS-2025-0540
+                    Object so = ((Clause.Skel) raw).site;
+                    if (so instanceof CallSite) {
+                        CallSite site = (CallSite) so;
+                        if (site.engine == engine && site.stamp == engine.dispatchStamp()
+                                && (site.module == null ? g.module == null : site.module.equals(g.module))) {
+                            siteHits++;
+                            Term t = Clause.instantiate(raw, g.frame);
+                            boolean ok = (site.module == null) ? callSite(site.pred, t) : callModuleSite(site, t);
+                            if (!ok && !backtrack(floor)) return;
+                            continue;
+                        }
+                    }
+                }
+                // END_CHANGE: ISS-2025-0540
+                Term t = (g.frame != null) ? Clause.instantiate(raw, g.frame) : raw;
                 t = Unify.deref(t);
+                // START_CHANGE: ISS-2025-0517 - wave P1.4: a goal written as a VARIABLE is call(G)
+                // (ISO 7.6.2), so it is opaque to cut: `G = !, (X = 1 ; X = 2), G` must keep the
+                // disjunction's second answer, and `G = (!, fail), (G ; X = alt)` must reach
+                // `X = alt`. It used to run with the enclosing clause's barrier, i.e. as if the
+                // `!` had been written in the clause. The test is on the goal's SKELETON (a VarRef
+                // in a clause body, a Variable in a query or a control construct's argument), so a
+                // literal `!` is unaffected; only a variable bound to `!` or to a control construct
+                // (the only goals that read the barrier) is re-pushed, with a fresh one.
+                if ((raw instanceof VarRef || raw instanceof Variable)
+                        && ((t instanceof CompoundTerm && isControlConstruct((CompoundTerm) t))
+                            || (t instanceof Atom && "!".equals(((Atom) t).getName())))) {
+                    checkBody(t, "call", 1);                  // ISS-2025-0518: call(G) checks G
+                    Goal ng = new Goal(t, cps.size(), g.next);
+                    ng.module = g.module;
+                    g = ng;
+                }
+                // END_CHANGE: ISS-2025-0517
 
                 if (t instanceof Atom) {
                     if (!step0((Atom) t, g, floor)) return;
@@ -541,6 +691,11 @@ public final class Machine {
     /** One drive step for a compound goal. Returns false to stop the run. */
     private boolean stepN(CompoundTerm c, Goal g, int floor) {
         String f = c.getName();
+        // START_CHANGE: ISS-2025-0542 - wave P2.3: a name this method never special-cases (every
+        // user predicate and most natives) skips the ~40 string comparisons below with ONE hash
+        // probe (a String caches its hash) and goes straight to the native/registry/user tail.
+        if (!SITE_EXCLUDED.contains(f)) return stepPlain(c, g, floor, f, c.arity());
+        // END_CHANGE: ISS-2025-0542
         List<Term> a = c.getArguments();
         int n = a.size();
 
@@ -603,6 +758,31 @@ public final class Machine {
             // END_CHANGE: ISS-2025-0469
         }
         if (n == 1 && ("\\+".equals(f) || "not".equals(f))) {
+            checkBody(a.get(0), f, 1);                          // ISS-2025-0518
+            // START_CHANGE: ISS-2025-0661 - decision §8: negation over an INCOMPLETE table of the
+            // same SCC (`p :- \+ p` tabled) has no answer without the well-founded semantics,
+            // which is not implemented (LIM-046). While this machine runs a tabled evaluation the
+            // negation is run as an opaque sub-run with the table sequence number as its floor, and
+            // a consumer inside it that reads a table created BEFORE the negation started (an
+            // incomplete ancestor) raises permission_error instead of answering inconsistently.
+            // Outside a tabled evaluation nothing changes (the inline if-then-else below).
+            final Tabling tb = engine.tabling();
+            if (tb.evaluating() && tb.ownedByCurrentThread()) {
+                Term neg = a.get(0);
+                if (g.module != null) neg = new CompoundTerm(new Atom(":"), new Term[] {new Atom(g.module), neg});
+                long savedFloor = negTableFloor;
+                negTableFloor = tb.lastSeq();
+                final boolean[] found = {false};
+                try {
+                    forEachSolution(neg, new SolutionVisitor() {
+                        @Override public boolean visit() { found[0] = true; return false; }
+                    });
+                } finally {
+                    negTableFloor = savedFloor;
+                }
+                return found[0] ? backtrack(floor) : true;
+            }
+            // END_CHANGE: ISS-2025-0661
             ite(a.get(0), ATOM_FAIL, ATOM_TRUE, g.cutBarrier);
             return true;
         }
@@ -620,6 +800,7 @@ public final class Machine {
                 goal = (n == 1) ? a.get(0) : addArgs(callee, extra);
             }
             // END_CHANGE: ISS-2025-0455
+            checkBody(goal, "call", n);                         // ISS-2025-0518
             goalStack = mg(goal, cps.size(), goalStack);
             return true;
         }
@@ -643,6 +824,7 @@ public final class Machine {
         if (n == 3 && "findall".equals(f)) {
             it.denzosoft.jprolog.core.utils.CollectionUtils
                 .checkInstancesArgument(Unify.resolve(a.get(2), guard), "findall/3");
+            checkBody(a.get(1), "findall", 3);                  // ISS-2025-0518
             Term list = makeList(findAll(a.get(0), a.get(1)));
             if (!Unify.unify(a.get(2), list, B)) return backtrack(floor);
             return true;
@@ -654,6 +836,7 @@ public final class Machine {
             frame.cont = goalStack;
             frame.cutBarrier = g.cutBarrier;
             frame.module = ctxModule;                          // ISS-2025-0466
+            frame.catchDepth = portDepth;                      // ISS-2025-0528
             pushCP(frame);
             goalStack = mg(a.get(0), cps.size(), new Goal(new Runnable() {
                 @Override public void run() {
@@ -661,6 +844,8 @@ public final class Machine {
                     B.pushUndo(new Runnable() { @Override public void run() { frame.active = true; } });
                 }
             }, goalStack));
+            // ISS-2025-0518: Goal is call(Goal) — checked INSIDE the catch scope, which is armed
+            checkBody(a.get(0), "call", 1);
             return true;
         }
         if (n == 1 && "throw".equals(f)) {
@@ -687,16 +872,20 @@ public final class Machine {
         // iteTraced / betweenNative instead of by the legacy bridge, so the tracer no longer
         // changes how the program runs.
         if (n == 1 && "once".equals(f)) {
+            checkBody(a.get(0), f, 1);                          // ISS-2025-0518
             if (debugTraceActive()) iteTraced(c, a.get(0), ATOM_TRUE, ATOM_FAIL, g.cutBarrier);
             else ite(a.get(0), ATOM_TRUE, ATOM_FAIL, g.cutBarrier);
             return true;
         }
         if (n == 1 && "ignore".equals(f)) {
+            checkBody(a.get(0), f, 1);                          // ISS-2025-0518
             if (debugTraceActive()) iteTraced(c, a.get(0), ATOM_TRUE, ATOM_TRUE, g.cutBarrier);
             else ite(a.get(0), ATOM_TRUE, ATOM_TRUE, g.cutBarrier);
             return true;
         }
         if (n == 2 && "forall".equals(f)) {
+            checkBody(a.get(0), f, 2);                          // ISS-2025-0518
+            checkBody(a.get(1), f, 2);
             Term negAction = new CompoundTerm(new Atom("\\+"), java.util.Collections.singletonList(a.get(1)));
             Term conj = new CompoundTerm(COMMA, Arrays.asList(a.get(0), negAction));
             if (debugTraceActive()) iteTraced(c, conj, ATOM_FAIL, ATOM_TRUE, g.cutBarrier);
@@ -729,9 +918,16 @@ public final class Machine {
             if (r == 0) { portFail(c, d); return backtrack(floor); }
         }
         // END_CHANGE: ISS-2025-0481
+        return stepPlain(c, g, floor, f, n);
+    }
+
+    /** The tail of {@link #stepN}: a native, a registry built-in, or a user predicate. */
+    private boolean stepPlain(CompoundTerm c, Goal g, int floor, String f, int n) {   // ISS-2025-0542
         Builtin nat = engine.natives().lookup(f, n);
         if (nat != null) {                                    // v4 natives run even while debugging:
-            Integer r = callNative(nat, c, f, n, a.toArray(new Term[n]));   // they emit their own ports
+            Term[] args = new Term[n];                        // they emit their own ports
+            for (int i = 0; i < n; i++) args[i] = c.arg(i);
+            Integer r = callNative(nat, c, f, n, args);
             if (r.intValue() == 1) return true;
             return backtrack(floor);
         }
@@ -749,6 +945,7 @@ public final class Machine {
         // same one LegacyBuiltinAdapter.run would do as its first statement.
         if (engine.registry() != null && engine.registry().isBuiltIn(f, n)) {
             if (engine.modules4().overridesBuiltin(ctxModule, f, n)) {
+                installCallSite(g, f, n, true);                   // ISS-2025-0540
                 if (!callUser(c, c)) return backtrack(floor);
                 return true;
             }
@@ -759,9 +956,100 @@ public final class Machine {
         // END_CHANGE: ISS-2025-0493
         // END_CHANGE: ISS-2025-0466
         // END_CHANGE: ISS-2025-0454
+        installCallSite(g, f, n, false);                       // ISS-2025-0540
         if (!callUser(c, c)) return backtrack(floor);
         return true;
     }
+
+    // START_CHANGE: ISS-2025-0540 - wave P2.1 (design: per-call predicate resolution cost ~30 %
+    // of nrev/loop/deriv in the 4.4.0 profile). A compound body goal of a compiled clause is a
+    // Clause.Skel, and the first time it reaches this point — the plain-user-predicate exit of
+    // stepN — its skeleton remembers the resolved ClauseStore.Predicate. The answer "f/n is a
+    // user predicate" depends only on f/n (not on the goal's arguments: every data-dependent
+    // branch of stepN is excluded by name below) and on three tables — the natives, the legacy
+    // registry, the table declarations — whose modification counters make up
+    // Engine.dispatchStamp(); a Predicate object is never replaced, and whether it has clauses is
+    // asked on every call. Only the `user` context is cached (a goal running in a module resolves
+    // through the module first), and the cache is keyed by engine, since a prelude clause may be
+    // shared. A stale or missing site just takes this slow path again.
+    /** The resolved call site of a body goal (immutable; replaced as a whole). */
+    static final class CallSite {
+        final Engine engine;
+        final long stamp;
+        /** The `user` predicate (module == null). */
+        final ClauseStore.Predicate pred;
+        /** The context module the site was resolved in, or null for `user`. */
+        final String module;
+        /** A module site: that module's OWN clauses for the indicator, and its meta spec. */
+        final Modules.Pred modPred;
+        final int[] meta;
+        CallSite(Engine engine, long stamp, ClauseStore.Predicate pred) {
+            this(engine, stamp, pred, null, null, null);
+        }
+        CallSite(Engine engine, long stamp, ClauseStore.Predicate pred, String module,
+                 Modules.Pred modPred, int[] meta) {
+            this.engine = engine;
+            this.stamp = stamp;
+            this.pred = pred;
+            this.module = module;
+            this.modPred = modPred;
+            this.meta = meta;
+        }
+    }
+
+    /** Names stepN (or the inline table) handles itself, possibly depending on the arguments. */
+    private static final java.util.Set<String> SITE_EXCLUDED = new java.util.HashSet<String>(Arrays.asList(
+        ",", ";", "->", "*->", "=", "^", ":", Modules.MCTX, "\\+", "not", "call", ">>", "\\", "/",
+        "findall", "catch", "throw", "assertz", "assert", "asserta", "retract", "setup_call_cleanup",
+        "call_cleanup", "once", "ignore", "forall", "between", "length",
+        "is", "<", ">", "=<", ">=", "=:=", "=\\=", "==", "\\==", "@<", "@>", "@=<", "@>=", "\\=",
+        "var", "nonvar", "atom", "atomic", "number", "integer", "float", "compound", "callable"));
+
+    /** Number of goals that took the call-site fast path (test hook). */
+    long siteHits;
+
+    /** @param overriding the goal names a registry built-in that the context overrides with
+     *  clauses (maplist/3 inside library(apply)); that answer is covered by the same stamp. */
+    private void installCallSite(Goal g, String f, int n, boolean overriding) {
+        if (!(g.term instanceof Clause.Skel) || g.frame == null) return;
+        if (SITE_EXCLUDED.contains(f)) return;
+        long stamp = engine.dispatchStamp();                 // read BEFORE the probes it covers
+        if (engine.natives().lookup(f, n) != null) return;
+        if (!overriding && engine.registry() != null && engine.registry().isBuiltIn(f, n)) return;
+        if (engine.tables() != null && engine.tables().isTabled(f, n)) return;
+        if (g.module == null && ctxModule == null) {
+            ((Clause.Skel) g.term).site = new CallSite(engine, stamp, engine.store().lookup(f, n));
+            return;
+        }
+        // A body goal of a MODULE clause (library(apply)'s maplist recursion, ...): cached only
+        // when the context module itself defines the indicator — the first step of
+        // selectClauses. Imports, `user` and autoload keep the per-call resolution.
+        if (ctxModule == null || !ctxModule.equals(g.module)) return;
+        Modules ms = engine.modules4();
+        Modules.Pred mp = ms.localPred(ctxModule, f, n);
+        if (mp == null) return;
+        ((Clause.Skel) g.term).site = new CallSite(engine, stamp, null, ctxModule, mp,
+            ms.metaSpec(ctxModule, f, n));
+    }
+
+    /** callUser for a cached MODULE site: the context module's own clauses for the indicator. */
+    private boolean callModuleSite(CallSite site, Term t) {
+        Clause[] cs = site.modPred.select(Clause.argKey1(t));
+        if (cs.length == 0) return callUser(t, t);            // selectClauses moves on: imports...
+        selModule = site.module;
+        Term u = (site.meta == null) ? t : Modules.qualifyMetaArgs(t, site.meta, contextModule());
+        return activate(u, t, cs, 0, cs.length, site.module, t);
+    }
+
+    /** callUser for a cached site: context `user`, not tabled, not a built-in. */
+    private boolean callSite(ClauseStore.Predicate p, Term t) {
+        p.sync(engine.kb());
+        if (p.size() == 0) return callUser(t, t);            // imports, autoload, unknown procedure
+        p.view(Clause.argKey1(t), view);
+        selModule = null;
+        return activate(t, t, view.a, view.from, view.to, null, t);
+    }
+    // END_CHANGE: ISS-2025-0540
 
     /** Run a native v4 built-in with the four ports. Returns 1 = succeeded, 0 = failed. */
     private Integer callNative(Builtin nat, Term goal, String f, int n, Term[] args) {
@@ -854,15 +1142,65 @@ public final class Machine {
     /** Cut back to {@code height} without running through {@link #cut}'s cleanup collection twice. */
     private void cutTo(int height) { cut(height); }
 
+    // START_CHANGE: ISS-2025-0523 - wave P1.10: the teardown cut of an ABANDONED run.
+    /**
+     * Pop every choice point above {@code floor} running the pending cleanups, for a run that is
+     * being abandoned: the top-level query when the sink stopped it or an exception is leaving it,
+     * and a nested drive (findall/3, once/1, a sub-query) that a control exception — the inference
+     * budget, a Stop interrupt, the debugger's Stop — is unwinding through.
+     *
+     * <p>Unlike {@link #cut} it never lets a cleanup's exception out: something else is already
+     * propagating (or the caller asked to stop), and that is what the caller must see. A cleanup
+     * therefore runs with the debugger detached (a pending debugger Stop would abort it at its first
+     * port) and with the thread's interrupt flag cleared and then restored (a cancellation would
+     * abort it at its first poll); the budget grants it a small allowance of its own (see
+     * {@code ResourceGuard}). A {@code PrologException} ball cannot leave frames behind — the
+     * unwinding in {@link #handleBall} already ran their cleanups at pop time — so this only ever
+     * sees the frames a control exception or an early stop left.
+     */
+    private void cutQuietly(int floor) {
+        DebugController savedDc = debugController;
+        boolean interrupted = Thread.interrupted();
+        debugController = null;
+        try {
+            while (cps.size() > floor) {
+                CP top = popCP();
+                try {
+                    if (top.tframe != null) top.tframe.discard();
+                    if (top.kind == CP.CLEANUP && !top.cleanupDone) {
+                        top.cleanupDone = true;
+                        runOnce(top.cleanup);
+                    } else if (top.kind == CP.GEN && top.gen instanceof GeneratorGen) {
+                        ((GeneratorGen) top.gen).generator.cut();
+                    }
+                } catch (RuntimeException e) {
+                    // deliberately swallowed: a cleanup cannot replace the exception (or the stop)
+                    // that is abandoning this run
+                } catch (StackOverflowError e) {
+                    // idem
+                }
+            }
+            B.clearIfUnreachable(cps.isEmpty());
+        } finally {
+            debugController = savedDc;
+            if (interrupted) Thread.currentThread().interrupt();
+        }
+    }
+    // END_CHANGE: ISS-2025-0523
+
     private void disjunction(final Term left, final Term right, final int cutBarrier) {
+        disjunction(left, right, cutBarrier, null);
+    }
+
+    private void disjunction(final Term left, final Term right, final int cutBarrier, final Term[] fr) {
         final Goal cont = goalStack;
         final String mod = ctxModule;                          // ISS-2025-0466
         CP cp = new CP(CP.GEN, B.mark());
         final int[] which = {0};
         cp.gen = new Gen() {
             @Override public Goal next(CP self) {
-                if (which[0] == 0) { which[0] = 1; return mg(left, cutBarrier, cont, mod); }
-                if (which[0] == 1) { which[0] = 2; self.genExhausted = true; return mg(right, cutBarrier, cont, mod); }
+                if (which[0] == 0) { which[0] = 1; return mgf(left, fr, cutBarrier, cont, mod); }
+                if (which[0] == 1) { which[0] = 2; self.genExhausted = true; return mgf(right, fr, cutBarrier, cont, mod); }
                 return EXHAUSTED;
             }
         };
@@ -873,10 +1211,14 @@ public final class Machine {
     /** {@code (Cond -> Then ; Else)}: commit to Cond's first solution. A user {@code !} inside Cond
      *  is local (its barrier is ABOVE this choice point). */
     private void ite(final Term cond, final Term then, final Term els, final int cutBarrier) {
+        ite(cond, then, els, cutBarrier, null);
+    }
+
+    private void ite(final Term cond, final Term then, final Term els, final int cutBarrier, final Term[] fr) {
         final Goal cont = goalStack;
         final int barrier = cps.size();
-        final Goal alt1 = mg(cond, barrier + 1, mg(CUT, barrier, mg(then, cutBarrier, cont)));
-        final Goal alt2 = mg(els, cutBarrier, cont);
+        final Goal alt1 = mgf(cond, fr, barrier + 1, mg(CUT, barrier, mgf(then, fr, cutBarrier, cont)));
+        final Goal alt2 = mgf(els, fr, cutBarrier, cont);
         CP cp = new CP(CP.GEN, B.mark());
         final int[] which = {0};
         cp.gen = new Gen() {
@@ -910,8 +1252,12 @@ public final class Machine {
         pushCP(portFrame);
 
         final Goal cont = goalStack;
+        final CP pf = portFrame;
         final Goal exitMark = new Goal(new Runnable() {
-            @Override public void run() { portExit(goal, d); }
+            @Override public void run() {
+                portExit(goal, d);
+                popIfDeterministicTop(pf);                      // ISS-2025-0668
+            }
         }, cont);
         final int barrier = cps.size();                        // above portFrame: a commit keeps it
         final Goal alt1 = mg(cond, barrier + 1, mg(CUT, barrier, mg(then, cutBarrier, exitMark)));
@@ -937,18 +1283,22 @@ public final class Machine {
 
     /** {@code (Cond *-> Then ; Else)}: Then for EVERY solution of Cond, Else only if there is none. */
     private void softCut(final Term cond, final Term then, final Term els, final int cutBarrier) {
+        softCut(cond, then, els, cutBarrier, null);
+    }
+
+    private void softCut(final Term cond, final Term then, final Term els, final int cutBarrier, final Term[] fr) {
         final Goal cont = goalStack;
         final boolean[] found = {false};
         final String mod = ctxModule;                          // ISS-2025-0466
-        final Goal alt1 = mg(cond, cps.size() + 1, new Goal(new Runnable() {
+        final Goal alt1 = mgf(cond, fr, cps.size() + 1, new Goal(new Runnable() {
             @Override public void run() { found[0] = true; }
-        }, mg(then, cutBarrier, cont)));
+        }, mgf(then, fr, cutBarrier, cont)));
         CP cp = new CP(CP.GEN, B.mark());
         final int[] which = {0};
         cp.gen = new Gen() {
             @Override public Goal next(CP self) {
                 if (which[0] == 0) { which[0] = 1; return alt1; }
-                if (which[0] == 1) { which[0] = 2; self.genExhausted = true; return found[0] ? FAILED : mg(els, cutBarrier, cont, mod); }
+                if (which[0] == 1) { which[0] = 2; self.genExhausted = true; return found[0] ? FAILED : mgf(els, fr, cutBarrier, cont, mod); }
                 return EXHAUSTED;
             }
         };
@@ -1040,8 +1390,62 @@ public final class Machine {
         if (!(d instanceof Atom) && !(d instanceof CompoundTerm)) {
             throw Errors.type("callable", resolve(d), ctx);
         }
+        checkBodyCtx(d, ctx);                                   // ISS-2025-0518
     }
     // END_CHANGE: ISS-2025-0509
+
+    // START_CHANGE: ISS-2025-0518 - wave P1.5: ISO 7.6.2 converts a term to a body BEFORE it runs,
+    // and a number (or string) anywhere in its control spine — the `,`/`;`/`->`/`*->`/`\+`
+    // structure — makes the conversion fail with type_error(callable, Goal) for the WHOLE goal.
+    // The machine used to discover the bad leaf only when it reached it, so
+    // `call((write(a), nl, 1))` printed `a` first and `call((fail, 1))` simply failed. SWI raises in
+    // both cases. Variables in the spine are fine (each is call(V) and is checked when reached).
+    // The check is a spine walk only when the goal's principal functor IS a control construct, so
+    // an ordinary `call(foo(X))` pays one functor comparison.
+    /** Check the control spine of {@code goal}; context {@code name/arity} of the construct. */
+    void checkBody(Term goal, String name, int arity) {
+        checkBodyCtx(Unify.deref(goal), name + "/" + arity);
+    }
+
+    private void checkBodyCtx(Term d, String ctx) {
+        if (!(d instanceof CompoundTerm) || !isControlConstruct((CompoundTerm) d)) return;
+        // a goal that IS \+ G is a call of \+/1, which checks G itself with G as the culprit
+        // (SWI: catch(\+ (fail ; 1), E, true) gives type_error(callable, (fail ; 1)))
+        if (((CompoundTerm) d).getArguments().size() == 1) return;
+        if (!bodyConvertible((CompoundTerm) d)) throw Errors.type("callable", resolve(d), ctx);
+    }
+
+    private static boolean isControlConstruct(CompoundTerm c) {
+        int n = c.getArguments().size();
+        String f = c.getName();
+        if (n == 2) return ",".equals(f) || ";".equals(f) || "->".equals(f) || "*->".equals(f);
+        return n == 1 && "\\+".equals(f);
+    }
+
+    /** False when a non-callable non-variable occurs in the control spine. Iterative and
+     *  cycle-safe (a cyclic spine is walked once per node). */
+    private boolean bodyConvertible(CompoundTerm root) {
+        ArrayList<Term> work = new ArrayList<Term>();
+        work.add(root);
+        IdentityHashMap<Term, Boolean> seen = null;
+        int n = 0;
+        while (!work.isEmpty()) {
+            Term t = Unify.deref(work.remove(work.size() - 1));
+            if ((++n & 0xFFF) == 0) guard.step();
+            if (t instanceof Variable || t instanceof Atom) continue;
+            if (!(t instanceof CompoundTerm)) return false;           // number, string, ...
+            CompoundTerm c = (CompoundTerm) t;
+            if (!isControlConstruct(c)) continue;
+            if (n > 1024) {
+                if (seen == null) seen = new IdentityHashMap<Term, Boolean>();
+                if (seen.put(c, Boolean.TRUE) != null) continue;
+            }
+            List<Term> as = c.getArguments();
+            for (int i = as.size() - 1; i >= 0; i--) work.add(as.get(i));
+        }
+        return true;
+    }
+    // END_CHANGE: ISS-2025-0518
 
     /** Run a cleanup goal as {@code once(Cleanup)}; a failure is ignored, an exception propagates. */
     private void runCleanup(Term cleanup) {
@@ -1060,12 +1464,14 @@ public final class Machine {
         int floor = cps.size();
         goalStack = mg(goal, floor, null);
         final boolean[] found = {false};
+        boolean normal = false;                                // ISS-2025-0523
         try {
             drive(new Driver() {
                 @Override public boolean onSolution() { found[0] = true; return false; }
             }, floor);
+            normal = true;
         } finally {
-            cutTo(floor);
+            if (normal) cutTo(floor); else cutQuietly(floor);  // ISS-2025-0523
             goalStack = saved;
             ctxModule = savedMod;
         }
@@ -1090,6 +1496,7 @@ public final class Machine {
         final boolean[] any = {false};
         goalStack = mg(g, floor, null);
         B.forceTrail++;
+        boolean normal = false;                                // ISS-2025-0523
         try {
             drive(new Driver() {
                 @Override public boolean onSolution() {
@@ -1097,12 +1504,13 @@ public final class Machine {
                     return sink.onSolution(snapshot(names, cells));
                 }
             }, floor);
+            normal = true;
         } finally {
             // START_CHANGE: ISS-2025-0448 - the undo MUST happen while the forced-trail extent is
             // still open. cutTo() ends in Bindings.clearIfUnreachable(), which drops the whole
             // trail when forceTrail == 0 and no choice point is left — so decrementing first threw
             // away exactly the entries this undo needs, and the sub-query's bindings survived it.
-            cutTo(floor);
+            if (normal) cutTo(floor); else cutQuietly(floor);  // ISS-2025-0523
             B.undo(m);
             B.forceTrail--;
             // END_CHANGE: ISS-2025-0448
@@ -1134,42 +1542,70 @@ public final class Machine {
             throw Errors.type("integer", resolve(v), "between/3");
         }
         // END_CHANGE: ISS-2025-0509
-        if (!(v instanceof Variable)) return -1;
-        if (!(lo instanceof Number) || !((Number) lo).isInteger() || !((Number) lo).fitsInLong()) return -1;
-        long low = ((Number) lo).longValue();
-        long high;
-        if (hi instanceof Atom) {
-            String hn = ((Atom) hi).getName();
-            if (!"inf".equals(hn) && !"infinite".equals(hn)) return -1;
-            high = Long.MAX_VALUE;
-        } else if (hi instanceof Number && ((Number) hi).isInteger() && ((Number) hi).fitsInLong()) {
-            high = ((Number) hi).longValue();
-        } else {
-            return -1;
-        }
-        // START_CHANGE: ISS-2025-0481 - committed to the native generator: from here the four
-        // ports are the machine's, so between/3 no longer has to be routed through the bridge while
-        // tracing (limit L-13). Same shape as lengthEnumerate below.
+        // START_CHANGE: ISS-2025-0521 - wave P1.8: every mode is native, lazy and exact.
+        // The generator used to test `next > last` AFTER incrementing, so with last ==
+        // Long.MAX_VALUE the counter wrapped to Long.MIN_VALUE and never stopped
+        // (`between(9223372036854775806, 9223372036854775807, X)` enumerated forever, and
+        // `between(9223372036854775807, inf, X)` wrapped negative); and a bound outside the long
+        // range, or a bound third argument, fell through to the EAGER legacy Between, which
+        // materialised the whole range (an OOM after 17 s). Now: a long counter that stops exactly
+        // at its last value, continuing into BigInteger only when the upper bound lies beyond
+        // Long.MAX_VALUE (or is inf); BigInteger bounds counted lazily; a bound third argument is
+        // a plain range test.
+        final boolean inf = (hi instanceof Atom);                 // `inf` / `infinite` (checked above)
+        final Number loN = (Number) lo;
+        final java.math.BigInteger bhi = inf ? null : ((Number) hi).bigIntegerValue();
         final boolean traced = debugTraceActive();
         final int depth = traced ? enterPort() : -1;
         if (traced) portCall(goal, depth);
-        if (low > high) { if (traced) portFail(goal, depth); return 0; }
+        if (!(v instanceof Variable)) {                           // between(L, H, +X): a range test
+            java.math.BigInteger x = ((Number) v).bigIntegerValue();
+            boolean in = x.compareTo(loN.bigIntegerValue()) >= 0 && (inf || x.compareTo(bhi) <= 0);
+            if (traced) { if (in) portExit(goal, depth); else portFail(goal, depth); }
+            return in ? 1 : 0;
+        }
+        if (!inf && loN.bigIntegerValue().compareTo(bhi) > 0) { if (traced) portFail(goal, depth); return 0; }
+        // END_CHANGE: ISS-2025-0521
+        // START_CHANGE: ISS-2025-0481 - committed to the native generator: from here the four
+        // ports are the machine's, so between/3 no longer has to be routed through the bridge while
+        // tracing (limit L-13). Same shape as lengthEnumerate below.
         final Term value = v;
         final Goal cont = goalStack;
         final Goal after = traced ? new Goal(new Runnable() {
             @Override public void run() { portExit(goal, depth); }
         }, cont) : cont;
-        final long last = high;
-        final long[] next = {low};
+        // START_CHANGE: ISS-2025-0521
+        final boolean hiFits = !inf && ((Number) hi).fitsInLong();
+        final long lastLong = hiFits ? ((Number) hi).longValue() : Long.MAX_VALUE;
+        final boolean pastLong = !hiFits;                         // the range goes beyond Long.MAX_VALUE
+        final long[] cur = {loN.fitsInLong() ? loN.longValue() : 0L};
+        final java.math.BigInteger[] big = {loN.fitsInLong() ? null : loN.bigIntegerValue()};
+        final boolean[] done = {false};
         CP cp = new CP(CP.GEN, B.mark());
         cp.gen = new Gen() {
             @Override public Goal next(CP self) {
-                if (next[0] > last) return EXHAUSTED;
-                long i = next[0]++;
-                if (next[0] > last) self.genExhausted = true;
-                return Unify.unify(value, Number.valueOf(i), B) ? after : FAILED;
+                if (done[0]) return EXHAUSTED;
+                Term n;
+                if (big[0] == null) {                             // long mode
+                    long i = cur[0];
+                    if (i == lastLong) {
+                        if (pastLong) big[0] = java.math.BigInteger.valueOf(i).add(java.math.BigInteger.ONE);
+                        else { done[0] = true; self.genExhausted = true; }
+                    } else {
+                        cur[0] = i + 1;
+                    }
+                    n = Number.valueOf(i);
+                } else {                                          // BigInteger mode
+                    java.math.BigInteger i = big[0];
+                    java.math.BigInteger nx = i.add(java.math.BigInteger.ONE);
+                    if (bhi != null && nx.compareTo(bhi) > 0) { done[0] = true; self.genExhausted = true; }
+                    big[0] = nx;
+                    n = (i.bitLength() <= 63) ? Number.valueOf(i.longValue()) : new Number(i);
+                }
+                return Unify.unify(value, n, B) ? after : FAILED;
             }
         };
+        // END_CHANGE: ISS-2025-0521
         if (traced) { cp.traceGoal = goal; cp.traceDepth = depth; cp.traceDebug = debugPortsActive(); }
         pushCP(cp);
         if (advance(cp)) return 1;
@@ -1208,6 +1644,7 @@ public final class Machine {
         cp.gen = new Gen() {
             @Override public Goal next(CP self) {
                 int k = extra[0]++;
+                guard.charge(k);          // ISS-2025-0624: this solution builds a k-element list
                 Term list = NIL;
                 for (int i = k - 1; i >= 0; i--) {
                     list = new CompoundTerm(DOT, Arrays.asList((Term) new Variable(), list));
@@ -1251,7 +1688,8 @@ public final class Machine {
             if ("is".equals(f)) return Unify.unify(a.get(0), evalNum(a.get(1)), B) ? 1 : 0;
             if ("<".equals(f) || ">".equals(f) || "=<".equals(f) || ">=".equals(f)
                     || "=:=".equals(f) || "=\\=".equals(f)) {
-                return numRel(f, evalNum(a.get(0)), evalNum(a.get(1))) ? 1 : 0;
+                // ISS-2025-0594 - P4.5: errors name the comparison (f/2), not is/2
+                return numRel(f, evalCmp(a.get(0), f), evalCmp(a.get(1), f)) ? 1 : 0;
             }
             if ("==".equals(f)) return Unify.equalTerms(a.get(0), a.get(1), guard) ? 1 : 0;
             if ("\\==".equals(f)) return Unify.equalTerms(a.get(0), a.get(1), guard) ? 0 : 1;
@@ -1293,6 +1731,19 @@ public final class Machine {
         return it.denzosoft.jprolog.core.arith.v2.ArithEvaluator.evalDeref(t, derefFn);
     }
 
+    // START_CHANGE: ISS-2025-0594 - P4.5: evaluation in the context of the calling predicate
+    /** Evaluate for a built-in whose errors must name {@code context} (e.g. "sum_list/2"). */
+    Number evalNum(Term t, String context) {
+        return it.denzosoft.jprolog.core.arith.v2.ArithEvaluator.evalDeref(t, derefFn, context);
+    }
+
+    /** Evaluate one side of the comparison {@code op}/2; the context string is built only when
+     *  an error is raised. */
+    private Number evalCmp(Term t, String op) {
+        return it.denzosoft.jprolog.core.arith.v2.ArithEvaluator.evalCompare(t, derefFn, op);
+    }
+    // END_CHANGE: ISS-2025-0594
+
     private boolean numRel(String op, Number a, Number b) {
         if (a.isInteger() && b.isInteger()) {
             if (a.fitsInLong() && b.fitsInLong()) {
@@ -1324,35 +1775,57 @@ public final class Machine {
     // ------------------------------------------------------------------ findall / catch
 
     List<Term> findAll(final Term template, Term goal) {
+        final List<Term> results = new ArrayList<Term>();
+        forEachSolution(goal, new SolutionVisitor() {
+            @Override public boolean visit() {
+                results.add(Unify.copy(template, new IdentityHashMap<Variable, Variable>(), guard));
+                return true;
+            }
+        });
+        return results;
+    }
+
+    // START_CHANGE: ISS-2025-0522 - wave P1.9: the drive behind findAll, with a per-solution
+    // callback instead of a result list, so aggregate_all(count/sum/max/min) accumulates in O(1)
+    // memory instead of materialising every solution first.
+    /** Called once per solution of {@link #forEachSolution}, while its bindings are live. */
+    interface SolutionVisitor {
+        /** @return false to stop enumerating */
+        boolean visit();
+    }
+
+    /**
+     * Enumerate the solutions of {@code goal} on this machine as an OPAQUE sub-run: the visitor
+     * sees each solution's bindings, and none of them survive the call.
+     */
+    void forEachSolution(Term goal, final SolutionVisitor visitor) {
         Goal savedGoals = goalStack;
         String savedMod = ctxModule;                           // ISS-2025-0466
         int floor = cps.size();
         int m = B.mark();
-        final List<Term> results = new ArrayList<Term>();
         goalStack = mg(goal, floor, null);
         B.forceTrail++;
+        boolean normal = false;                                // ISS-2025-0523
         try {
             drive(new Driver() {
-                @Override public boolean onSolution() {
-                    results.add(Unify.copy(template, new IdentityHashMap<Variable, Variable>(), guard));
-                    return true;
-                }
+                @Override public boolean onSolution() { return visitor.visit(); }
             }, floor);
+            normal = true;
         } finally {
             // START_CHANGE: ISS-2025-0448 - findall/3 is OPAQUE: none of Goal's bindings may
             // survive it. Undo BEFORE closing the forced-trail extent — cutTo() ends in
             // Bindings.clearIfUnreachable(), which wipes the trail once forceTrail is back to 0 and
             // no choice point is left, so the old order left the template variable bound to the
             // LAST solution (`findall(X, member(X,[1,2]), L), X == 2` succeeded).
-            cutTo(floor);
+            if (normal) cutTo(floor); else cutQuietly(floor);  // ISS-2025-0523
             B.undo(m);
             B.forceTrail--;
             // END_CHANGE: ISS-2025-0448
             goalStack = savedGoals;
             ctxModule = savedMod;
         }
-        return results;
     }
+    // END_CHANGE: ISS-2025-0522
 
     /**
      * Route a thrown ball to the nearest armed catch frame at or above {@code floor}.
@@ -1405,7 +1878,20 @@ public final class Machine {
                 B.forceTrail--;
             }
             if (matched) {
-                goalStack = mg(top.recovery, top.cutBarrier, top.cont, top.module);
+                // START_CHANGE: ISS-2025-0528 - wave P1.15: the goals the ball unwound get an
+                // Exception port, and the depth returns to the catch/3 call's own level — the
+                // recovery used to be traced one level too deep, inside the goal that threw.
+                unwindPorts(top.catchDepth);
+                // END_CHANGE: ISS-2025-0528
+                // START_CHANGE: ISS-2025-0516 - wave P1.3: Recovery runs as call(Recovery)
+                // (ISO 7.8.9), so a `!` in it is LOCAL. It used to get the catch/3 goal's own
+                // barrier, i.e. it cut the clause that called catch/3: `r(X) :- catch(throw(x),
+                // x, (X = 1, !)). r(2).` lost its second clause. Going through call/1 also gives
+                // the recovery the body check of ISS-2025-0518 inside the drive loop, where an
+                // error it raises is routed like any other.
+                goalStack = mg(new CompoundTerm(ATOM_CALL, java.util.Collections.singletonList(top.recovery)),
+                               cps.size(), top.cont, top.module);
+                // END_CHANGE: ISS-2025-0516
                 return true;
             }
         }
@@ -1482,7 +1968,7 @@ public final class Machine {
         }
         Clause[] clauses = selectClauses(lookup, g0, flat);
         return activate(withMetaContext(g0, unifyGoal, selModule), unifyGoal,
-                        clauses, selLimit, selModule, lookup);
+                        clauses, selFrom, selLimit, selModule, lookup);      // ISS-2025-0546: a window
     }
 
     // START_CHANGE: ISS-2025-0469 - meta_predicate/1 (design B.10). When a predicate declared
@@ -1514,7 +2000,7 @@ public final class Machine {
         Term g0 = Unify.deref(unifyGoal);
         if (engine.tables() != null && isTabled(g0)) return callTabled(unifyGoal, unifyGoal, g0);
         String dm = modKey(defMod);
-        return activate(withMetaContext(g0, unifyGoal, dm), traceGoal, cs, cs.length, dm, null);
+        return activate(withMetaContext(g0, unifyGoal, dm), traceGoal, cs, 0, cs.length, dm, null);
     }
 
     /**
@@ -1524,8 +2010,8 @@ public final class Machine {
      *
      * @param lookupForUnknown non-null to apply the {@code unknown} flag when there is no procedure
      */
-    private boolean activate(Term unifyGoal, Term traceGoal, Clause[] clauses, final int limit,
-                             final String defMod, Term lookupForUnknown) {
+    private boolean activate(Term unifyGoal, Term traceGoal, Clause[] clauses, final int from,
+                             final int limit, final String defMod, Term lookupForUnknown) {
         Term g0 = Unify.deref(unifyGoal);
         if (it.denzosoft.jprolog.core.engine.Profiler.isEnabled()) {
             if (g0 instanceof Atom) it.denzosoft.jprolog.core.engine.Profiler.recordCall(((Atom) g0).getName(), 0);
@@ -1536,10 +2022,11 @@ public final class Machine {
         final boolean debugging = debugPortsActive();
         final int tdepth = (tracing || debugging) ? enterPort() : 0;   // ISS-2025-0482
         final Term g = traceGoal;
+        if (tracing || debugging) noteOpen(g, tdepth);                 // ISS-2025-0528
         if (tracing) tracePort("Call", g, tdepth);
         if (debugging) debugPort(DebugEvent.Port.CALL, g, tdepth);
 
-        if (clauses == null || limit == 0) {
+        if (clauses == null || limit <= from) {
             if (clauses == null && lookupForUnknown != null) raiseUnknownIfRequired(lookupForUnknown);
             if (tracing || debugging) portDepth = tdepth;          // ISS-2025-0482
             if (tracing) tracePort("Fail", g, tdepth);
@@ -1553,7 +2040,7 @@ public final class Machine {
         cp.goal = unifyGoal;
         cp.clauses = clauses;
         cp.limit = limit;
-        cp.idx = 0;
+        cp.idx = from;                                                // ISS-2025-0546
         cp.generation = engine.store().generation();
         cp.cont = cont;
         cp.barrier = barrier;
@@ -1563,8 +2050,19 @@ public final class Machine {
                     Clause cl = self.clauses[self.idx++];
                     if (!cl.isAlive(self.generation)) continue;          // logical update view
                     if (self.idx >= self.limit) self.genExhausted = true;
+                    // START_CHANGE: ISS-2025-0668 - while tracing, look ahead: when no remaining
+                    // live clause can match the goal (a cheap per-argument key clash, checked
+                    // BEFORE this clause binds anything), this alternative is the last one and the
+                    // frame is deterministic — it must not print a Redo/Fail later. SWI gets the
+                    // same effect from its argument indexing (maplist(G, [], []) has no Fail).
+                    if ((ftrace || fdebug) && !self.genExhausted && !anyMayMatch(self)) {
+                        self.genExhausted = true;
+                        self.idx = self.limit;
+                    }
+                    // END_CHANGE: ISS-2025-0668
                     Term[] frame = (cl.nvars == 0) ? LegacyBuiltinAdapter.NO_FRAME : new Term[cl.nvars];
                     if (!cl.unifyHead(self.goal, frame, B)) return FAILED;
+                    cl.fillBodySlots(frame);                             // ISS-2025-0551
                     Goal after = self.cont;
                     if (ftrace || fdebug) {
                         after = new Goal(new Runnable() {
@@ -1572,6 +2070,7 @@ public final class Machine {
                                 portDepth = tdepth;             // ISS-2025-0482
                                 if (ftrace) tracePort("Exit", g, tdepth);
                                 if (fdebug) debugPort(DebugEvent.Port.EXIT, g, tdepth);
+                                popIfDeterministicTop(self);    // ISS-2025-0668
                             }
                         }, self.cont);
                     }
@@ -1599,8 +2098,8 @@ public final class Machine {
     /**
      * {@code Module:Goal} (design B.10). The innermost qualification wins, so {@code a:b:goal} runs
      * in {@code b}; {@code system:G} is a built-in dispatch; {@code user:G} and an unknown module
-     * are ordinary resolution in that context; and a known module answers only with what it makes
-     * visible from outside — the export enforcement of ISS-2025-0314.
+     * are ordinary resolution in that context; and a known module runs its own definition,
+     * exported or not (ISS-2025-0611 reversed the export enforcement of ISS-2025-0314).
      */
     private boolean qualifiedCall(CompoundTerm qc) {
         Term mt = Unify.deref(qc.getArguments().get(0));
@@ -1629,6 +2128,11 @@ public final class Machine {
             return true;
         }
         if (Modules.USER.equals(mod) || !ms.isModule(mod)) {
+            // START_CHANGE: ISS-2025-0611 - P4.17: assertz(m3:k(1)) stores a flat m3:k(1) clause
+            // (clause/2 finds it); a call m3:k(X) must find it too instead of raising
+            // existence_error(procedure, k/1) in the (nonexistent) module's context.
+            if (!Modules.USER.equals(mod) && flatQualified(qc)) return true;
+            // END_CHANGE: ISS-2025-0611
             goalStack = mg(inner, cps.size(), goalStack, modKey(mod));
             return true;
         }
@@ -1636,9 +2140,11 @@ public final class Machine {
             (inner instanceof CompoundTerm && n > 0)
                 ? Clause.argKey(Unify.deref(((CompoundTerm) inner).getArguments().get(0))) : null);
         if (own != null && own.length > 0) {
-            // The module DEFINES it, so export visibility decides (ISS-2025-0314).
-            if (ms.exports(mod, name, n)) return callInModule(inner, qc, own, mod);
-            return flatQualified(qc);
+            // START_CHANGE: ISS-2025-0611 - P4.17 (decision §8): the module DEFINES it, so it runs
+            // there whether or not it is exported — export only governs IMPORT (SWI). The
+            // ISS-2025-0314 export check on qualified calls is reversed.
+            return callInModule(inner, qc, own, mod);
+            // END_CHANGE: ISS-2025-0611
         }
         // The module does not define it: ordinary resolution IN its context —
         // M's imports -> user -> autoload -> system. That is what makes `lists:length/2`
@@ -1688,6 +2194,11 @@ public final class Machine {
      */
     /** Number of usable entries in the array {@link #selectClauses} last returned. */
     private int selLimit;
+    // START_CHANGE: ISS-2025-0546 - the selection is a WINDOW [selFrom, selLimit) over a clause
+    // store gap buffer (no copy); filled through one reused View.
+    private int selFrom;
+    private final ClauseStore.View view = new ClauseStore.View();
+    // END_CHANGE: ISS-2025-0546
     /** The module the bodies of those clauses run in ({@code null} == {@code user}). */
     private String selModule;
 
@@ -1702,11 +2213,13 @@ public final class Machine {
             ar = c.getArguments().size();
             if (ar > 0) key = Clause.argKey(Unify.deref(c.getArguments().get(0)));
         } else {
+            selFrom = 0;
             selLimit = 0;
             selModule = null;
             return null;
         }
         selModule = null;
+        selFrom = 0;
         Modules ms = flat ? null : engine.modules4();
 
         // 1./2. the context module and its imports (skipped entirely for the `user` context,
@@ -1720,12 +2233,12 @@ public final class Machine {
 
         // 3. `user` — the flat clause store, with the first-argument index
         ClauseStore.Predicate p = engine.store().lookup(f, ar);
-        int n = p.size();
-        if (n > 0) {
-            if (key == null) { selLimit = n; return p.rawArray(); }  // no copy: see rawArray's contract
-            Clause[] sel = p.select(key);
-            selLimit = sel.length;
-            return sel;
+        if (p.size() > 0) {
+            // ISS-2025-0546: a window over the store's gap buffer, never a copy (see View)
+            p.view(key, view);
+            selFrom = view.from;
+            selLimit = view.to;
+            return view.a;
         }
 
         if (ms != null) {
@@ -1809,6 +2322,7 @@ public final class Machine {
         final boolean tracing = it.denzosoft.jprolog.builtin.debug.Trace.isTracingEnabled();
         final boolean debugging = debugPortsActive();
         final int tdepth = (tracing || debugging) ? enterPort() : 0;   // ISS-2025-0482
+        if (tracing || debugging) noteOpen(unifyGoal, tdepth);         // ISS-2025-0528
         if (tracing) tracePort("Call", unifyGoal, tdepth);
         if (debugging) debugPort(DebugEvent.Port.CALL, unifyGoal, tdepth);
 
@@ -1820,6 +2334,11 @@ public final class Machine {
         } else if (table.status == Tabling.COMPLETE) {
             produce = false;
         } else {
+            // START_CHANGE: ISS-2025-0661 - an incomplete table older than the innermost negation
+            if (negTableFloor >= 0 && table.seq <= negTableFloor) {
+                throw Errors.permission("negate", "incomplete_table", resolve(unifyGoal), "\\+/1");
+            }
+            // END_CHANGE: ISS-2025-0661
             tb.noteIncompleteRead(table);
             produce = !table.producing && table.producedRound < tb.round();
         }
@@ -1843,9 +2362,14 @@ public final class Machine {
                 return false;
             }
             limit = selLimit;
+            if (selFrom != 0) {                                   // ISS-2025-0546: 0-based copy
+                clauses = Arrays.copyOfRange(clauses, selFrom, selLimit);
+                limit = clauses.length;
+            }
             if (table == null) {
                 table = tb.create(key, Tabling.indicatorOf(g0),
                     Unify.copy(g0, new IdentityHashMap<Variable, Variable>(), guard));
+                table.modes = engine.tables().getModes(table.indicator);   // ISS-2025-0572
             }
         }
 
@@ -1875,6 +2399,7 @@ public final class Machine {
     Goal buildClauseBody(Clause cl, Term goal, int barrier, Goal after, String defMod) {
         Term[] frame = (cl.nvars == 0) ? LegacyBuiltinAdapter.NO_FRAME : new Term[cl.nvars];
         if (!cl.unifyHead(goal, frame, B)) return null;
+        cl.fillBodySlots(frame);                                        // ISS-2025-0551
         Goal g = after;
         Term[] body = cl.body;
         for (int i = body.length - 1; i >= 0; i--) {
@@ -1985,7 +2510,13 @@ public final class Machine {
     private void assertClause(Term clause, boolean front) {
         Term checkedHead = checkClauseArgument(clause, front ? "asserta/1" : "assertz/1", true);
         checkModifiable(checkedHead, front ? "asserta/1" : "assertz/1");
-        Term c = Unify.copy(clause, new IdentityHashMap<Variable, Variable>(), guard);
+        // START_CHANGE: ISS-2025-0527 - wave P1.14: a cyclic clause cannot be stored. The copy
+        // cuts a cycle by keeping the ORIGINAL cells at the cut, so `X = f(X), assertz(cyc(X))`
+        // stored f(X) with X's binding still on the trail — undone on backtracking, the stored
+        // clause became cyc(f(_)) and matched cyc(f(f(f(a)))). SWI refuses cyclic clauses too.
+        Term c = Unify.copyAcyclic(clause, new IdentityHashMap<Variable, Variable>(), guard);
+        if (c == null) throw Errors.representation("cyclic_term", front ? "asserta/1" : "assertz/1");
+        // END_CHANGE: ISS-2025-0527
         engine.store().assertRule(toRule(c), front);
         invalidateTables(checkedHead);                          // ISS-2025-0464
     }
@@ -2029,22 +2560,29 @@ public final class Machine {
         // every clause was O(N^2): 20 000 clauses took 22.7 s. An unbound or unindexable first
         // argument still yields a null key, and select(null) is the full list — an index miss can
         // never drop a clause (the ISS-2025-0340 hazard).
-        final Clause[] candidates = p.select(Clause.argKey1(h));
+        // START_CHANGE: ISS-2025-0546 - wave P2.6: a WINDOW over the store's gap buffer. The
+        // unbound-key case used to be Predicate.all(), an exact copy of the whole predicate
+        // re-made after every write — so `retract(p(_))` in a loop copied the remaining clauses
+        // on every iteration (1e5: 6-13 s). The window also starts past the dead prefix.
+        p.view(Clause.argKey1(h), view);
+        final Clause[] candidates = view.a;
+        final int limit = view.to;
+        // END_CHANGE: ISS-2025-0546
         // END_CHANGE: ISS-2025-0502
-        if (candidates.length == 0) return false;
+        if (view.from >= limit) return false;
         final long gen = engine.store().generation();
         final Term qc = queryClause;
         final String fName = f;
         final int fArity = ar;
         final Goal cont = goalStack;
         CP cp = new CP(CP.GEN, B.mark());
-        final int[] i = {0};
+        final int[] i = {view.from};
         cp.gen = new Gen() {
             @Override public Goal next(CP self) {
-                while (i[0] < candidates.length) {
+                while (i[0] < limit) {
                     Clause cl = candidates[i[0]++];
                     if (!cl.isAlive(gen)) continue;
-                    if (i[0] >= candidates.length) self.genExhausted = true;
+                    if (i[0] >= limit) self.genExhausted = true;
                     if (!Unify.unify(cl.toTerm(), qc, B)) return FAILED;
                     if (!engine.store().retractClause(p, cl)) return FAILED;
                     engine.tabling().invalidate(fName, fArity);            // ISS-2025-0464
@@ -2058,6 +2596,67 @@ public final class Machine {
         popCP();
         return false;
     }
+
+    // START_CHANGE: ISS-2025-0545 - wave P2.5: retractall/1 runs through the clause store, like
+    // retract/1 and clause/2 (the three share one selection: Predicate.view over the first-argument
+    // index). It used to go to KnowledgeBase.retractAllClauses, which removed each match from the
+    // front of three lists (quadratic: 100 000 clauses 3.5 s), and whose version bumps then made
+    // the store re-sync the whole predicate on the next call. Now each match is retracted through
+    // ClauseStore.retractClause — O(1) in both stores, a death generation (so a running call keeps
+    // its logical update view) and no re-sync. A head whose arguments are distinct unbound
+    // variables matches every clause and skips the per-clause unification; otherwise each
+    // candidate's head is test-unified on a PRIVATE trail with no attribute handler, so the test
+    // binds nothing and wakes no frozen goal.
+    /** retractall(Head) for a dereferenced, callable, modifiable Head. */
+    void retractAllClauses(Term head) {
+        String f;
+        int ar;
+        if (head instanceof Atom) { f = ((Atom) head).getName(); ar = 0; }
+        else { f = ((CompoundTerm) head).getName(); ar = ((CompoundTerm) head).arity(); }
+        ClauseStore store = engine.store();
+        ClauseStore.Predicate p = store.lookup(f, ar);
+        engine.kb().markDynamic(p.kbEntry);             // ISS-2025-0347: creates it as dynamic
+        ClauseStore.View w = new ClauseStore.View();
+        p.view(Clause.argKey1(head), w);
+        if (w.size() == 0) return;
+        long gen = store.generation();
+        boolean every = isMostGeneralHead(head);
+        ArrayList<Clause> doomed = new ArrayList<Clause>();
+        Bindings tb = every ? null : new Bindings(guard);
+        for (int i = w.from; i < w.to; i++) {
+            Clause cl = w.a[i];
+            if (!cl.isAlive(gen)) continue;
+            if (every) { doomed.add(cl); continue; }
+            tb.forceTrail++;
+            boolean u;
+            try {
+                Term[] frame = (cl.nvars == 0) ? LegacyBuiltinAdapter.NO_FRAME : new Term[cl.nvars];
+                u = cl.unifyHead(head, frame, tb);
+            } finally {
+                tb.undo(0);                                // invariant 1: undo, THEN close
+                tb.forceTrail--;
+            }
+            if (u) doomed.add(cl);
+            guard.step();
+        }
+        for (int i = 0; i < doomed.size(); i++) store.retractClause(p, doomed.get(i));
+        if (!doomed.isEmpty()) engine.tabling().invalidate(f, ar);      // ISS-2025-0464
+    }
+
+    /** An atom, or a compound whose arguments are pairwise distinct unbound variables. */
+    private static boolean isMostGeneralHead(Term head) {
+        if (!(head instanceof CompoundTerm)) return true;
+        CompoundTerm c = (CompoundTerm) head;
+        int n = c.arity();
+        for (int i = 0; i < n; i++) {
+            Term a = Unify.deref(c.arg(i));
+            if (!(a instanceof Variable)) return false;
+            for (int j = 0; j < i; j++) if (Unify.deref(c.arg(j)) == a) return false;
+            if (n > 8 && i >= 8) return false;            // keep the distinctness test O(1)
+        }
+        return true;
+    }
+    // END_CHANGE: ISS-2025-0545
 
     private Rule toRule(Term c) {
         if (c instanceof CompoundTerm && ":-".equals(((CompoundTerm) c).getName())
@@ -2098,8 +2697,16 @@ public final class Machine {
                 // alternative and is exhausted is DETERMINISTIC and owes no Redo/Fail — SWI drops
                 // such a frame too (last-call optimisation), and dropping it is what keeps trace
                 // memory O(1). A frame with real alternatives still owes Redo/Fail, so it stays.
-                if (cp.genExhausted && (cp.traceGoal == null || cp.altsTaken == 1)
+                // START_CHANGE: ISS-2025-0668 - a traced CLAUSES frame is no longer dropped here:
+                // it stays until its Exit port (popIfDeterministicTop), so that a failure INSIDE
+                // its body still reaches it and prints its Fail port (`q :- p, X > 2` printed
+                // `Fail: (1) p(X)` and never `Fail: (0) q(X)`). It is still dropped at the Exit
+                // when nothing above it is left, so a deterministic exit owes no phantom Fail and
+                // the frames kept are exactly the OPEN calls.
+                if (cp.genExhausted
+                        && (cp.traceGoal == null || (cp.altsTaken == 1 && cp.kind != CP.CLAUSES))
                         && !cps.isEmpty() && cps.get(cps.size() - 1) == cp) {
+                // END_CHANGE: ISS-2025-0668
                     popCP();
                     B.clearIfUnreachable(cps.isEmpty());
                 }
@@ -2121,6 +2728,7 @@ public final class Machine {
             if (advance(cp)) {
                 if (cp.traceGoal != null) {
                     portDepth = cp.traceDepth + 1;                 // ISS-2025-0482: the frame re-opens
+                    noteOpen(cp.traceGoal, cp.traceDepth);         // ISS-2025-0528
                     tracePort("Redo", cp.traceGoal, cp.traceDepth);
                     if (cp.traceDebug) debugPort(DebugEvent.Port.REDO, cp.traceGoal, cp.traceDepth);
                 }
@@ -2176,25 +2784,129 @@ public final class Machine {
     /** The depth a new Call port reports; moves one level deeper. */
     int enterPort() { return portDepth++; }
 
+    // START_CHANGE: ISS-2025-0668 - trace ports of deterministic frames (see advance()).
+    /** At an Exit port: drop {@code cp} when it is exhausted and nothing was left above it. */
+    private void popIfDeterministicTop(CP cp) {
+        if ((cp.genExhausted || cp.gen == EXHAUSTED_GEN) && !cps.isEmpty() && cps.get(cps.size() - 1) == cp) {
+            popCP();
+            B.clearIfUnreachable(cps.isEmpty());
+        }
+    }
+
+    /** True when some live clause after {@code cp.idx} could still match {@code cp.goal}. */
+    private static boolean anyMayMatch(CP cp) {
+        Term g = Unify.deref(cp.goal);
+        if (!(g instanceof CompoundTerm)) return cp.idx < cp.limit;
+        CompoundTerm gc = (CompoundTerm) g;
+        int n = gc.arity();
+        Object[] keys = new Object[n];
+        for (int i = 0; i < n; i++) keys[i] = Clause.argKey(Unify.deref(gc.arg(i)));
+        for (int j = cp.idx; j < cp.limit; j++) {
+            Clause cl = cp.clauses[j];
+            if (!cl.isAlive(cp.generation)) continue;
+            if (!(cl.head instanceof CompoundTerm)) return true;
+            CompoundTerm h = (CompoundTerm) cl.head;
+            if (h.arity() != n) return true;
+            boolean clash = false;
+            for (int i = 0; i < n && !clash; i++) {
+                if (keys[i] == null) continue;
+                Object hk = Clause.argKey(h.arg(i));
+                clash = hk != null && !hk.equals(keys[i]);
+            }
+            if (!clash) return true;
+        }
+        return false;
+    }
+
+    /** The goal as a port shows it: an engine-internal {@code '$mctx'(M, G)} meta-argument
+     *  prints as {@code G} (in {@code user}) or {@code M:G}, not as the wrapper. */
+    private static Term portView(Term goal) {
+        Term d = Unify.deref(goal);
+        if (!(d instanceof CompoundTerm)) return goal;
+        CompoundTerm c = (CompoundTerm) d;
+        Term[] args = null;
+        for (int i = 0; i < c.arity(); i++) {
+            Term a = Unify.deref(c.arg(i));
+            if (a instanceof CompoundTerm && ((CompoundTerm) a).arity() == 2
+                    && Modules.MCTX.equals(((CompoundTerm) a).getName())) {
+                if (args == null) {
+                    args = new Term[c.arity()];
+                    for (int k = 0; k < args.length; k++) args[k] = c.arg(k);
+                }
+                CompoundTerm w = (CompoundTerm) a;
+                Term m = Unify.deref(w.arg(0));
+                args[i] = (m instanceof Atom && Modules.USER.equals(((Atom) m).getName()))
+                    ? w.arg(1) : new CompoundTerm(new Atom(":"), new Term[] {m, w.arg(1)});
+            }
+        }
+        return args == null ? goal : new CompoundTerm(c.getFunctor(), args);
+    }
+    // END_CHANGE: ISS-2025-0668
+
     /** The current four-port nesting level (the depth the next Call would report). */
     int portDepth() { return portDepth; }
 
-    void portCall(Term g, int d) { portDepth = d + 1; tracePort("Call", g, d); debugPort(DebugEvent.Port.CALL, g, d); }
+    void portCall(Term g, int d) { portDepth = d + 1; noteOpen(g, d); tracePort("Call", g, d); debugPort(DebugEvent.Port.CALL, g, d); }
     void portExit(Term g, int d) { portDepth = d; tracePort("Exit", g, d); debugPort(DebugEvent.Port.EXIT, g, d); }
     void portFail(Term g, int d) { portDepth = d; tracePort("Fail", g, d); debugPort(DebugEvent.Port.FAIL, g, d); }
     // END_CHANGE: ISS-2025-0482
 
+    // START_CHANGE: ISS-2025-0528 - wave P1.15: the goal open at each port depth. Every port
+    // ASSIGNS the depth (ISS-2025-0482), so the entries below `portDepth` are exactly the calls
+    // that are still open; that is what an unwinding ball reports an Exception port for. Written
+    // only on a traced/debugged Call or Redo, so an untraced run never touches it.
+    private Term[] openGoals;
+
+    private void noteOpen(Term g, int d) {
+        if (d < 0) return;
+        if (openGoals == null) openGoals = new Term[Math.max(16, d + 1)];
+        else if (d >= openGoals.length) openGoals = Arrays.copyOf(openGoals, Math.max(d + 1, openGoals.length << 1));
+        openGoals[d] = g;
+    }
+
+    /**
+     * A ball was caught by a catch/3 called at depth {@code catchDepth}: report an Exception port
+     * for every call it unwound (innermost first) — the tracer prints {@code Exception:}, the
+     * debugger gets {@link DebugController#handleException}, which pops its call stack like a Fail —
+     * and put the depth back to the catch/3 call's level, where the recovery runs.
+     */
+    private void unwindPorts(int catchDepth) {
+        if (portDepth > catchDepth && openGoals != null) {
+            boolean tracing = it.denzosoft.jprolog.builtin.debug.Trace.isTracingEnabled();
+            DebugController dc = debugPortsTarget();
+            if (tracing || dc != null) {
+                for (int d = Math.min(portDepth, openGoals.length) - 1; d >= catchDepth; d--) {
+                    Term g = openGoals[d];
+                    if (g == null) continue;
+                    if (tracing) tracePort("Exception", g, d);
+                    if (dc != null) {
+                        try { dc.handleException(snapshotFor(dc, g), d, new HashMap<String, Term>()); }
+                        catch (RuntimeException e) { ControlFlow.rethrowIfControl(e); }
+                    }
+                }
+            }
+        }
+        portDepth = catchDepth;
+    }
+    // END_CHANGE: ISS-2025-0528
+
     private void debugPort(DebugEvent.Port port, Term goal, int depth) {
         DebugController dc = debugPortsTarget();               // ISS-2025-0494
         if (dc == null) return;
-        Term g = goal;
-        // ISS-2025-0481: only snapshot when somebody will read the term later (see needsGoalSnapshot)
-        if (dc.needsGoalSnapshot()) {
-            try { g = Unify.resolve(goal, guard); }
-            catch (RuntimeException e) { ControlFlow.rethrowIfControl(e); g = goal; }
-        }
-        dc.notifyPort(port, g, new HashMap<String, Term>(), depth);
+        dc.notifyPort(port, snapshotFor(dc, portView(goal)), new HashMap<String, Term>(), depth);   // ISS-2025-0668
     }
+
+    // START_CHANGE: ISS-2025-0529 - wave P1.16: the goal is resolved into a snapshot only when the
+    // controller can use it — a rendering listener, a stepping mode, or a breakpoint on THIS goal's
+    // indicator. "Some breakpoint exists" used to be enough, so one unrelated breakpoint made every
+    // port copy its goal: a recursion over a 40 000-element list resolved the list 80 000 times.
+    private Term snapshotFor(DebugController dc, Term goal) {
+        // ISS-2025-0481: only snapshot when somebody will read the term later (see needsGoalSnapshot)
+        if (!dc.needsGoalSnapshot(Unify.deref(goal))) return goal;
+        try { return Unify.resolve(goal, guard); }
+        catch (RuntimeException e) { ControlFlow.rethrowIfControl(e); return goal; }
+    }
+    // END_CHANGE: ISS-2025-0529
 
     // START_CHANGE: ISS-2025-0482 - the indentation is CAPPED. The depth is a real call depth now,
     // and a deterministic tail recursion reaches it: `loop(1000000)` under trace would otherwise
@@ -2213,7 +2925,7 @@ public final class Machine {
             // cycle-safe, so Unify.resolve here only built a throw-away copy of the whole term —
             // the single most expensive thing a trace port did.
             String g = it.denzosoft.jprolog.core.util.TermFormatter
-                .format(goal, false, false, false, 1200);
+                .format(portView(goal), false, false, false, 1200);      // ISS-2025-0668
             it.denzosoft.jprolog.builtin.io.StreamManager.out().println(sb + port + ": (" + depth + ") " + g);
         } catch (RuntimeException ignored) {
             ControlFlow.rethrowIfControl(ignored);

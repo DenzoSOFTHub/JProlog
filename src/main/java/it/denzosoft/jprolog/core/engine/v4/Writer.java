@@ -133,7 +133,12 @@ public final class Writer {
     /** A term still to be written, with its context priority and nesting depth. */
     private static final class W {
         final Term t; final int prec; final int depth;
-        W(Term t, int prec, int depth) { this.t = t; this.prec = prec; this.depth = depth; }
+        /** ISS-2025-0562: an operand of an operator (an operator atom there is bracketed). */
+        final boolean operand;
+        W(Term t, int prec, int depth) { this(t, prec, depth, false); }
+        W(Term t, int prec, int depth, boolean operand) {
+            this.t = t; this.prec = prec; this.depth = depth; this.operand = operand;
+        }
     }
 
     /** Drop {@code t} from the current path once its subtree is finished. */
@@ -175,13 +180,24 @@ public final class Writer {
         }
 
         if (t instanceof Variable) { sb.append(variableName((Variable) t, o)); return; }
-        if (t instanceof Number) { sb.append(t.toString()); return; }
+        if (t instanceof Number) { sb.append(numberText((Number) t, o.quoted)); return; }   // ISS-2025-0564
         if (t instanceof PrologString) {
             String s = ((PrologString) t).getStringValue();
             sb.append(o.quoted ? "\"" + escapeString(s) + "\"" : s);
             return;
         }
-        if (t instanceof Atom) { sb.append(atomText(((Atom) t).getName(), o.quoted)); return; }
+        if (t instanceof Atom) {
+            // START_CHANGE: ISS-2025-0562 - an operator atom as an operand is bracketed: -(-,-)
+            // is (-)-(-), 1-(-) is 1-(-) (ISO 6.3.4.2: such an operand has priority 1201).
+            String name = ((Atom) t).getName();
+            if (w.operand && !o.ignoreOps && isOperatorAtom(name, ops)) {
+                sb.append('(').append(atomText(name, o.quoted)).append(')');
+                return;
+            }
+            // END_CHANGE: ISS-2025-0562
+            sb.append(atomText(name, o.quoted));
+            return;
+        }
         if (!(t instanceof CompoundTerm)) { sb.append(t.toString()); return; }
 
         CompoundTerm c = (CompoundTerm) t;
@@ -234,7 +250,7 @@ public final class Writer {
                 if (paren) sb.append('(');
                 stack.push(new Pop(c));
                 if (paren) stack.push(")");
-                stack.push(new W(args.get(1), op.getRightPrecedence(), w.depth + 1));
+                stack.push(new W(args.get(1), op.getRightPrecedence(), w.depth + 1, true));
                 if (",".equals(name)) {
                     stack.push(o.spacingNextArgument ? ", " : ",");
                 } else {
@@ -242,19 +258,34 @@ public final class Writer {
                     stack.push(new Sep(atomText(name, o.quoted), right, op.getRightPrecedence(),
                         isAlphaOp(name), false, true));
                 }
-                stack.push(new W(args.get(0), op.getLeftPrecedence(), w.depth + 1));
+                stack.push(new W(args.get(0), op.getLeftPrecedence(), w.depth + 1, true));
                 return;
             }
         }
         if (!o.ignoreOps && args.size() == 1) {
             Operator pre = ops.getPrefixOperator(name);
+            // START_CHANGE: ISS-2025-0562 - +/-(Operand) whose operand starts with a number: write
+            // the canonical form, or the output re-reads as a negative literal: -(1) is -(1)
+            // (not - 1), -(2^2) is -(2^2) (not -2^2, which reads as (-2)^2). SWI does the same.
+            if (pre != null && ("-".equals(name) || "+".equals(name))) {
+                Term inner0 = Unify.deref(args.get(0));
+                if (inner0 instanceof Number || Character.isDigit(firstChar(inner0, pre.getRightPrecedence(), o))) {
+                    onPath.put(c, Boolean.TRUE);
+                    sb.append(atomText(name, o.quoted)).append('(');
+                    stack.push(new Pop(c));
+                    stack.push(")");
+                    stack.push(new W(args.get(0), 999, w.depth + 1));
+                    return;
+                }
+            }
+            // END_CHANGE: ISS-2025-0562
             if (pre != null) {
                 onPath.put(c, Boolean.TRUE);
                 boolean paren = pre.getPrecedence() > w.prec;
                 if (paren) sb.append('(');
                 stack.push(new Pop(c));
                 if (paren) stack.push(")");
-                stack.push(new W(args.get(0), pre.getRightPrecedence(), w.depth + 1));
+                stack.push(new W(args.get(0), pre.getRightPrecedence(), w.depth + 1, true));
                 Term inner = Unify.deref(args.get(0));
                 stack.push(new Sep(atomText(name, o.quoted), inner, pre.getRightPrecedence(),
                     isAlphaOp(name), inner instanceof Number, false));
@@ -268,14 +299,15 @@ public final class Writer {
                 stack.push(new Pop(c));
                 if (paren) stack.push(")");
                 stack.push(new Sep(atomText(name, o.quoted), null, 0, isAlphaOp(name), false, true));
-                stack.push(new W(args.get(0), post.getLeftPrecedence(), w.depth + 1));
+                stack.push(new W(args.get(0), post.getLeftPrecedence(), w.depth + 1, true));
                 return;
             }
         }
 
         // functional notation f(A1, ..., An)
         onPath.put(c, Boolean.TRUE);
-        sb.append(atomText(name, o.quoted));
+        // ISS-2025-0562: '[]'(a,b) and '{}'(a,b) must stay quoted to re-read as compounds
+        sb.append(o.quoted && ("[]".equals(name) || "{}".equals(name)) ? quoteAtom(name) : atomText(name, o.quoted));
         sb.append('(');
         stack.push(new Pop(c));
         stack.push(")");
@@ -336,6 +368,10 @@ public final class Writer {
         char first = firstChar(s.right, s.rightPrec, o);
         boolean needSpace = (!s.token.isEmpty() && isSymbolic(s.token.charAt(s.token.length() - 1)))
             && ((first != 0 && isSymbolic(first)) || s.rightIsNumber);
+        // ISS-2025-0562: a PREFIX operator directly followed by '(' would re-read as the functional
+        // notation op(...) (- (a,b) is -/1, -(a,b) is -/2), and a solo/punctuation-named prefix
+        // operator needs the same guard.
+        if (!needSpace && !s.hasLeft && first == '(') needSpace = true;
         if (needSpace) sb.append(' ');
     }
 
@@ -352,11 +388,13 @@ public final class Writer {
                 return n.isEmpty() ? 0 : n.charAt(0);
             }
             if (t instanceof Number) {
-                String n = t.toString();
+                String n = numberText((Number) t, o.quoted);   // ISS-2025-0564
                 return n.isEmpty() ? 0 : n.charAt(0);
             }
             if (t instanceof PrologString) return '"';
             if (t instanceof Atom) {
+                // ISS-2025-0562: every atom reached here is an operand; operator atoms are bracketed
+                if (!o.ignoreOps && isOperatorAtom(((Atom) t).getName(), ops)) return '(';
                 String n = atomText(((Atom) t).getName(), o.quoted);
                 return n.isEmpty() ? 0 : n.charAt(0);
             }
@@ -388,6 +426,7 @@ public final class Writer {
                 if (args.size() == 1) {
                     Operator pre = ops.getPrefixOperator(c.getName());
                     if (pre != null) {
+                        if ("-".equals(c.getName()) || "+".equals(c.getName())) return c.getName().charAt(0);
                         if (pre.getPrecedence() > prec) return '(';
                         String n = atomText(c.getName(), o.quoted);
                         return n.isEmpty() ? 0 : n.charAt(0);
@@ -473,9 +512,17 @@ public final class Writer {
      * and a terminating full stop.
      */
     public static String portrayClause(Term clause, Options base) {
+        // START_CHANGE: ISS-2025-0570 - 4.5 wave P3.7: SWI portray_clause/1 layout, re-readable:
+        // quoted, operators, `A, B` argument spacing, variables A, B, ... and `_` for a singleton,
+        // one body goal per line, and if-then-else / disjunction / negation-free control blocks as
+        //     (   Cond
+        //     ->  Then
+        //     ;   Else
+        //     )
         Options o = new Options();
         o.quoted = true;
         o.numbervars = true;
+        o.spacingNextArgument = true;
         o.ops = (base == null) ? null : base.ops;
         Term t = numberTheVariables(clause);
         StringBuilder sb = new StringBuilder();
@@ -484,21 +531,95 @@ public final class Writer {
         if (t instanceof CompoundTerm && ":-".equals(t.getName())
                 && t.getArguments() != null && t.getArguments().size() == 2) {
             head = t.getArguments().get(0);
-            body = t.getArguments().get(1);
+            body = Unify.deref(t.getArguments().get(1));
+            if (body instanceof Atom && "true".equals(((Atom) body).getName())) body = null;
+        } else if (t instanceof CompoundTerm && ":-".equals(t.getName())
+                && t.getArguments() != null && t.getArguments().size() == 1) {
+            sb.append(":- ");                                   // a directive
+            write(sb, t.getArguments().get(0), o, 1199);
+            sb.append(".\n");
+            return sb.toString();
         }
         write(sb, head, o, 1199);
         if (body != null) {
             sb.append(" :-");
-            List<Term> goals = conjuncts(body);
-            for (int i = 0; i < goals.size(); i++) {
-                sb.append("\n    ");
-                write(sb, goals.get(i), o, 999);
-                if (i < goals.size() - 1) sb.append(',');
-            }
+            portrayBody(sb, body, 1, o, 0);
         }
         sb.append(".\n");
         return sb.toString();
     }
+
+    private static void indent(StringBuilder sb, int level) {
+        sb.append('\n');
+        for (int i = 0; i < level; i++) sb.append("    ");
+    }
+
+    /** A conjunction, one goal per line at {@code level}, the first goal on a new line. */
+    private static void portrayBody(StringBuilder sb, Term body, int level, Options o, int depth) {
+        List<Term> goals = conjuncts(body);
+        for (int i = 0; i < goals.size(); i++) {
+            indent(sb, level);
+            portrayGoal(sb, goals.get(i), level, o, depth);
+            if (i < goals.size() - 1) sb.append(',');
+        }
+    }
+
+    private static boolean isControl(Term g) {
+        if (!(g instanceof CompoundTerm) || g.getArguments() == null || g.getArguments().size() != 2) return false;
+        String n = g.getName();
+        return ";".equals(n) || "->".equals(n) || "*->".equals(n);
+    }
+
+    /** One body goal at the current column; control constructs become an indented block. */
+    private static void portrayGoal(StringBuilder sb, Term g, int level, Options o, int depth) {
+        g = Unify.deref(g);
+        if (!isControl(g) || depth > 64) {
+            write(sb, g, o, 999);
+            return;
+        }
+        // the alternatives of a right-nested ';' chain, each possibly Cond -> Then
+        List<Term> alts = new ArrayList<Term>();
+        Term cur = g;
+        while (cur instanceof CompoundTerm && ";".equals(cur.getName())
+                && cur.getArguments() != null && cur.getArguments().size() == 2) {
+            alts.add(cur.getArguments().get(0));
+            cur = Unify.deref(cur.getArguments().get(1));
+        }
+        alts.add(cur);
+        sb.append("(   ");
+        for (int i = 0; i < alts.size(); i++) {
+            Term a = Unify.deref(alts.get(i));
+            if (i > 0) {
+                indent(sb, level);
+                sb.append(";   ");
+            }
+            if (a instanceof CompoundTerm && ("->".equals(a.getName()) || "*->".equals(a.getName()))
+                    && a.getArguments() != null && a.getArguments().size() == 2) {
+                portrayInline(sb, a.getArguments().get(0), level, o, depth);
+                indent(sb, level);
+                sb.append("->".equals(a.getName()) ? "->  " : "*-> ");
+                portrayInline(sb, a.getArguments().get(1), level, o, depth);
+            } else {
+                portrayInline(sb, a, level, o, depth);
+            }
+        }
+        indent(sb, level);
+        sb.append(')');
+    }
+
+    /** A conjunction inside a block: the first goal at the cursor, the rest aligned under it. */
+    private static void portrayInline(StringBuilder sb, Term body, int level, Options o, int depth) {
+        List<Term> goals = conjuncts(body);
+        for (int i = 0; i < goals.size(); i++) {
+            if (i > 0) {
+                sb.append(',');
+                indent(sb, level);
+                sb.append("    ");
+            }
+            portrayGoal(sb, goals.get(i), level + 1, o, depth + 1);
+        }
+    }
+    // END_CHANGE: ISS-2025-0570
 
     private static List<Term> conjuncts(Term body) {
         List<Term> out = new ArrayList<Term>();
@@ -513,36 +634,79 @@ public final class Writer {
     }
 
     /** Replace each distinct free variable by {@code '$VAR'(N)} so it prints as A, B, C, ... */
+    // START_CHANGE: ISS-2025-0570 - iterative (the writer must never recurse on term depth), and
+    // SWI's naming: variables in order of first occurrence, a singleton prints as `_`.
     private static Term numberTheVariables(Term t) {
-        IdentityHashMap<Variable, Term> seen = new IdentityHashMap<Variable, Term>();
-        return numberIn(t, seen, 0);
+        final IdentityHashMap<Variable, int[]> count = new IdentityHashMap<Variable, int[]>();
+        ArrayDeque<Term> work = new ArrayDeque<Term>();
+        List<Variable> order = new ArrayList<Variable>();
+        work.push(t);
+        long budget = 50_000_000L;                       // a rational tree must not hang listing
+        while (!work.isEmpty()) {
+            if (--budget < 0) return t;
+            Term x = Unify.deref(work.pop());
+            if (x instanceof Variable) {
+                int[] n = count.get(x);
+                if (n == null) { count.put((Variable) x, new int[] {1}); order.add((Variable) x); }
+                else n[0]++;
+            } else if (x instanceof CompoundTerm) {
+                List<Term> as = ((CompoundTerm) x).getArguments();
+                for (int i = as.size() - 1; i >= 0; i--) work.push(as.get(i));
+            }
+        }
+        final IdentityHashMap<Variable, Term> names = new IdentityHashMap<Variable, Term>();
+        long k = 0;
+        for (Variable v : order) {
+            names.put(v, count.get(v)[0] == 1
+                ? new CompoundTerm(new Atom("$VAR"), Arrays.<Term>asList(new Atom("_")))
+                : new CompoundTerm(new Atom("$VAR"), Arrays.<Term>asList(new Number(k++))));
+        }
+        return substitute(t, names);
     }
 
-    private static Term numberIn(Term t, IdentityHashMap<Variable, Term> seen, int depth) {
-        t = Unify.deref(t);
-        if (depth > 10000) return t;
-        if (t instanceof Variable) {
-            Term v = seen.get(t);
-            if (v == null) {
-                v = new CompoundTerm(new Atom("$VAR"),
-                    Arrays.<Term>asList(new Number((long) seen.size())));
-                seen.put((Variable) t, v);
+    /** Rebuild {@code t} with each variable replaced from {@code map}; iterative, shares ground parts. */
+    private static Term substitute(Term t, IdentityHashMap<Variable, Term> map) {
+        final class Frame {
+            final CompoundTerm c; final Term[] out; int i; boolean changed;
+            Frame(CompoundTerm c) { this.c = c; this.out = new Term[c.getArguments().size()]; }
+        }
+        Term root = Unify.deref(t);
+        if (root instanceof Variable) return map.containsKey(root) ? map.get(root) : root;
+        if (!(root instanceof CompoundTerm) || ((CompoundTerm) root).getArguments().isEmpty()) return root;
+        ArrayDeque<Frame> stack = new ArrayDeque<Frame>();
+        stack.push(new Frame((CompoundTerm) root));
+        Term result = null;
+        while (!stack.isEmpty()) {
+            Frame f = stack.peek();
+            List<Term> as = f.c.getArguments();
+            if (f.i < as.size()) {
+                Term a = as.get(f.i);
+                Term d = Unify.deref(a);
+                if (d instanceof Variable) {
+                    Term r = map.get(d);
+                    f.out[f.i] = r != null ? r : d;
+                    f.changed |= (f.out[f.i] != a);
+                    f.i++;
+                } else if (d instanceof CompoundTerm && !((CompoundTerm) d).getArguments().isEmpty()) {
+                    stack.push(new Frame((CompoundTerm) d));
+                } else {
+                    f.out[f.i] = d;
+                    f.changed |= (d != a);
+                    f.i++;
+                }
+                continue;
             }
-            return v;
+            stack.pop();
+            Term built = f.changed ? new CompoundTerm(new Atom(f.c.getName()), Arrays.asList(f.out)) : f.c;
+            Frame parent = stack.peek();
+            if (parent == null) { result = built; break; }
+            parent.out[parent.i] = built;
+            parent.changed |= (built != parent.c.getArguments().get(parent.i));
+            parent.i++;
         }
-        if (!(t instanceof CompoundTerm)) return t;
-        CompoundTerm c = (CompoundTerm) t;
-        List<Term> args = c.getArguments();
-        if (args == null || args.isEmpty()) return t;
-        List<Term> out = new ArrayList<Term>(args.size());
-        boolean changed = false;
-        for (int i = 0; i < args.size(); i++) {
-            Term a = numberIn(args.get(i), seen, depth + 1);
-            changed |= (a != args.get(i));
-            out.add(a);
-        }
-        return changed ? new CompoundTerm(new Atom(c.getName()), out) : t;
+        return result;
     }
+    // END_CHANGE: ISS-2025-0570
 
     /**
      * {@code print_message(+Kind, +Message)} in its minimal, always-available form: an ISO
@@ -630,6 +794,27 @@ public final class Writer {
         return needsQuoting(name) ? quoteAtom(name) : name;
     }
 
+    // START_CHANGE: ISS-2025-0562
+    /** True when {@code name} is currently a prefix, infix or postfix operator. */
+    private static boolean isOperatorAtom(String name, OperatorTable ops) {
+        if ("[]".equals(name) || "{}".equals(name)) return false;
+        return ops.getPrefixOperator(name) != null || ops.getInfixOperator(name) != null
+            || ops.getPostfixOperator(name) != null;
+    }
+    // END_CHANGE: ISS-2025-0562
+
+    // START_CHANGE: ISS-2025-0564 - special floats: writeq/print give the SWI syntax the reader
+    // accepts (1.0Inf, -1.0Inf, 1.5NaN); write/1 keeps inf, -inf, nan.
+    public static String numberText(Number n, boolean quoted) {
+        if (quoted && !n.isInteger()) {
+            double d = n.doubleValue();
+            if (Double.isNaN(d)) return "1.5NaN";
+            if (Double.isInfinite(d)) return d > 0 ? "1.0Inf" : "-1.0Inf";
+        }
+        return n.toString();
+    }
+    // END_CHANGE: ISS-2025-0564
+
     /** Alphabetic operators ({@code is}, {@code mod}, {@code rem}, ...) are always spaced. */
     private static boolean isAlphaOp(String name) {
         if (name.isEmpty()) return false;
@@ -643,7 +828,7 @@ public final class Writer {
         if ("[]".equals(name) || "{}".equals(name) || ";".equals(name) || "!".equals(name)) return false;
         if (",".equals(name) || ".".equals(name) || "|".equals(name)) return true;
         char c = name.charAt(0);
-        if (Character.isLowerCase(c) || c == '_') {
+        if (Character.isLowerCase(c)) {   // ISS-2025-0562: '_x' is a variable when unquoted
             for (int i = 1; i < name.length(); i++) {
                 char ch = name.charAt(i);
                 if (!Character.isLetterOrDigit(ch) && ch != '_') return true;
@@ -673,6 +858,9 @@ public final class Writer {
             else if (c == '\b') sb.append("\\b");
             else if (c == 7) sb.append("\\a");
             else if (c == 0) sb.append("\\0\\");
+            else if (c == 27) sb.append("\\e");                  // ISS-2025-0673: SWI writes '\e'
+            // ISS-2025-0562: other control characters (DEL included) as octal escapes, as SWI
+            else if (c < 0x20 || c == 0x7F) sb.append('\\').append(Integer.toOctalString(c)).append('\\');
             else sb.append(c);
         }
         sb.append('\'');
@@ -688,6 +876,8 @@ public final class Writer {
             else if (c == '\n') sb.append("\\n");
             else if (c == '\r') sb.append("\\r");
             else if (c == '\t') sb.append("\\t");
+            else if (c == 27) sb.append("\\e");                  // ISS-2025-0673
+            else if (c < 0x20 || c == 0x7F) sb.append('\\').append(Integer.toOctalString(c)).append('\\');   // ISS-2025-0562
             else sb.append(c);
         }
         return sb.toString();

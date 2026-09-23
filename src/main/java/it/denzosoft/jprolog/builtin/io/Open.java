@@ -57,6 +57,15 @@ public class Open implements BuiltIn {
             throw new PrologException(ISOErrorTerms.typeError("atom", modeTerm, ctx0));
         }
         // END_CHANGE: ISS-2025-0505
+        // START_CHANGE: ISS-2025-0605 - P4.12: ISO 8.11.5.3 (f): a bound Stream argument is
+        // uninstantiation_error(Stream); open(F, read, s) used to fail silently.
+        Term streamNow = streamTerm.resolveBindings(bindings);
+        if (!(streamNow instanceof it.denzosoft.jprolog.core.terms.Variable)) {
+            throw new PrologException(ISOErrorTerms.error(
+                new it.denzosoft.jprolog.core.terms.CompoundTerm(new Atom("uninstantiation_error"),
+                    java.util.Collections.singletonList(streamNow)), new Atom(ctx0)));
+        }
+        // END_CHANGE: ISS-2025-0605
 
         String filename = ((Atom) fileTerm).getName();
         String mode = ((Atom) modeTerm).getName();

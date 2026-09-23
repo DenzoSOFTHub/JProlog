@@ -17,21 +17,14 @@ public class TableDirective implements BuiltInWithContext {
     @Override
     public boolean executeWithContext(SolverContext solver, Term query,
             Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        // START_CHANGE: ISS-2025-0572 - every table/1 form, through the one spec parser
         if (query.getArguments() != null && query.getArguments().size() == 1) {
-            Term arg = query.getArguments().get(0).resolveBindings(bindings);
-            if (arg instanceof CompoundTerm && "/".equals(arg.getName())
-                && arg.getArguments().size() == 2) {
-                Term functorTerm = arg.getArguments().get(0);
-                Term arityTerm = arg.getArguments().get(1);
-                if (functorTerm instanceof Atom && arityTerm instanceof it.denzosoft.jprolog.core.terms.Number) {
-                    String functor = ((Atom) functorTerm).getName();
-                    int arity = (int) Math.round(((it.denzosoft.jprolog.core.terms.Number) arityTerm).getValue());
-                    solver.getPrologContext().getTableStore().declareTable(functor, arity);
-                    solutions.add(new HashMap<>(bindings));
-                    return true;
-                }
-            }
+            solver.getPrologContext().getTableStore().declareSpec(
+                query.getArguments().get(0).resolveBindings(bindings), "table/1");
+            solutions.add(new HashMap<>(bindings));
+            return true;
         }
+        // END_CHANGE: ISS-2025-0572
         return false;
     }
 

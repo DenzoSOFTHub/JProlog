@@ -142,13 +142,18 @@ Added by the later waves (the table above is the W1/W2 snapshot): `NativeControl
 6. **The query term is normalised** (`Machine.normalise`) so all occurrences of a variable name
    share one cell. Without it, identity variables would make `X = 1, X = 2` succeed. Any new entry
    point that hands a term to the machine must normalise it (`runSubQuery` already does).
-7. **`ClauseStore.Predicate.rawArray()` is valid only up to the `size()` captured with it.**
-   `assertz` appends in place; every operation that would disturb the first `size` entries
-   (`asserta`, compaction, a re-sync) installs a *new* array instead. That pair is the logical
-   update view, at zero copying cost. **Compaction is safe at any time** for exactly that reason —
-   it installs a new array and never touches a clause's `birth`/`death`, so an existing capture is
-   unaffected (ISS-2025-0449; the earlier "query boundary only" rule was over-conservative and made
-   retract/assert loops quadratic).
+7. **A clause selection is a `ClauseStore.View` window `a[from..to)`, and nothing ever writes
+   inside a window once it has been handed out** (4.5 wave P2, ISS-2025-0546; it replaced the
+   `rawArray()`/`size()` pair). Each list (the predicate, each first-argument bucket, the
+   variable-headed clauses) is a gap buffer (`ClauseStore.Seq`): `assertz` writes the slot just
+   past `end`, `asserta` the slot just before `start`, and a window is always inside
+   `[start, end)` when it is taken; when there is no room a NEW array is installed. `from` skips
+   a prefix of clauses dead for every call that can still start. That is the logical update view
+   at zero copying cost. **Compaction is safe at any time** — it installs new arrays and never
+   touches a clause's `birth`/`death`, so an existing capture is unaffected (ISS-2025-0449). A
+   bucket merged with variable-headed clauses is merged by clause ORDINAL (`Clause.ord`) and
+   cached until one of the two lists gets a new clause (ISS-2025-0547). New selection sites call
+   `p.view(Clause.argKey1(goal), view)` and iterate `view.from .. view.to`.
 8. **`KnowledgeBase` stays the database of record.** v4 writes to both stores in the same step and
    records the KB's per-predicate version so its own writes trigger no rebuild; a write by any other
    route bumps that version and the store re-syncs that predicate on its next lookup. Never let the
@@ -161,6 +166,30 @@ Added by the later waves (the table above is the W1/W2 snapshot): `NativeControl
     kind representing a traced goal must carry them. The v2 and v4 trace outputs are currently
     byte-identical — that is a useful regression oracle, keep it.
 11. **Output discipline**: everything the machine prints goes through `StreamManager.out()`.
+12. **A clause's body-only variables are created at ACTIVATION** (`Clause.fillBodySlots`,
+    ISS-2025-0551, 4.5 wave P2). A cell's age decides whether binding it is trailed, and a cell
+    created lazily after a body goal left a choice point was "young": its binding was not trailed
+    and the frame kept it on backtracking (`p(Y) :- q(Z), X is Z+1, Y = X.` lost its second
+    answer, 4.4.0 included). Never create a frame cell lazily again.
+13. **Call sites** (ISS-2025-0540, 4.5 wave P2): a compound body goal is a `Clause.Skel` caching a
+    `Machine.CallSite` (a `user` predicate, or its context module's own clauses). Its validity is
+    `Engine.dispatchStamp()` — the modification counters of `BuiltinTable`, `BuiltInRegistry`,
+    `TableStore` and the ModuleManager stamp. **Anything new that changes how a name/arity is
+    dispatched must bump one of those counters**, or cached sites keep the old route. A name
+    that `stepN` special-cases (control constructs, inline built-ins, anything whose handling
+    depends on the arguments) must be in `Machine.SITE_EXCLUDED`, which also drives stepN's
+    fast skip. `,`/`;`/`->`/`*->` in a clause body are expanded over the frame
+    (`Machine.stepControlSkel`) instead of being instantiated.
+14. **A mode-directed table's answer list has holes** (ISS-2025-0572, 4.5 wave P3.3). When a
+    better answer supersedes one (`min`/`max`/`last`), its slot in `Tabling.Table.answers` is set to
+    `null` and the better answer is APPENDED, so a consumer iterating by position still sees the
+    improvement and the SCC runs another round. Anything that walks `answers` must skip `null`.
+15. **A term read at run time has fresh, unnamed variable cells** (ISS-2025-0566, 4.5 wave P3.4):
+    `read/1`, `read_term/2,3`, `term_to_atom/2`, `atom_to_term/3` & co. give every variable a
+    `new Variable()`; the source names travel only in `variable_names/1`. Named cells from two reads
+    would be merged by the assert path, which numbers skeleton variables by NAME (invariant 5).
+    Consult keeps named variables (one clause = one scope).
+
 
 ---
 

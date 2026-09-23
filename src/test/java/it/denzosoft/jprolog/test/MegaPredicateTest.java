@@ -223,19 +223,15 @@ public class MegaPredicateTest {
 
     @Test
     public void testUniv() {
-        // =../2 decomposition
-        List<Map<String, Term>> s = prolog.solve("f(a,b) =.. X.");
-        assertFalse(s.isEmpty());
-
-        // =../2 construction
-        s = prolog.solve("X =.. [g, 1, 2].");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("f(a,b) =.. X, X == [f, a, b].").size());
+        assertEquals(1, prolog.solve("X =.. [g, 1, 2], X == g(1, 2).").size());
     }
 
     @Test
     public void testCopyTerm() {
-        List<Map<String, Term>> s = prolog.solve("copy_term(f(X,Y), Copy), var(X).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("copy_term(f(X,Y), Copy), var(X), Copy = f(A, B), var(A), var(B), A \\== X, A \\== B.").size());
     }
 
     @Test
@@ -255,9 +251,9 @@ public class MegaPredicateTest {
 
     @Test
     public void testSubsumesTerm() {
-        // f(X) subsumes f(a) because X can be instantiated to a
-        List<Map<String, Term>> s = prolog.solve("subsumes_term(f(X), f(a)).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("subsumes_term(f(X), f(a)), var(X).").size());
+        assertEquals(1, prolog.solve("\\+ subsumes_term(f(a), f(X)).").size());
     }
 
     // ===================================================================
@@ -478,8 +474,8 @@ public class MegaPredicateTest {
 
     @Test
     public void testKeysort() {
-        List<Map<String, Term>> s = prolog.solve("keysort([b-2, a-1, c-3], X).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("keysort([b-2, a-1, c-3, a-0], X), X == [a-1, a-0, b-2, c-3].").size());
     }
 
     // ===================================================================
@@ -496,10 +492,9 @@ public class MegaPredicateTest {
 
     @Test
     public void testRepeat() {
-        // repeat/0 should generate at least 2 solutions
         prolog.consult("test_repeat(X) :- repeat, X = done, !.");
-        List<Map<String, Term>> s = prolog.solve("test_repeat(X).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("test_repeat(X), X == done.").size());
     }
 
     @Test
@@ -545,8 +540,10 @@ public class MegaPredicateTest {
         prolog.consult("color(blue).");
         prolog.consult("shape(circle).");
 
+        // ISS-2025-0663: exactly three answers, in order
         List<Map<String, Term>> s = prolog.solve("(color(X) ; shape(X)).");
-        assertTrue(s.size() >= 3);
+        assertEquals(3, s.size());
+        assertEquals(1, prolog.solve("findall(X, (color(X) ; shape(X)), L), L == [red, blue, circle].").size());
     }
 
     // ===================================================================
@@ -608,8 +605,9 @@ public class MegaPredicateTest {
 
     @Test
     public void testAtomChars() {
-        List<Map<String, Term>> s = prolog.solve("atom_chars(hello, X).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("atom_chars(hello, X), X == [h, e, l, l, o].").size());
+        assertEquals(1, prolog.solve("atom_chars(X, [h, i]), X == hi.").size());
     }
 
     @Test
@@ -623,14 +621,15 @@ public class MegaPredicateTest {
 
     @Test
     public void testNumberChars() {
-        List<Map<String, Term>> s = prolog.solve("number_chars(42, X).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("number_chars(42, X), X == ['4', '2'].").size());
+        assertEquals(1, prolog.solve("number_chars(X, ['4', '2']), X == 42.").size());
     }
 
     @Test
     public void testNumberCodes() {
-        List<Map<String, Term>> s = prolog.solve("number_codes(42, X).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("number_codes(42, X), X == [52, 50].").size());
     }
 
     @Test
@@ -652,14 +651,15 @@ public class MegaPredicateTest {
 
     @Test
     public void testStringConcat() {
-        List<Map<String, Term>> s = prolog.solve("string_concat(\"hello\", \" world\", X).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("string_concat(\"hello\", \" world\", X), X == \"hello world\".").size());
     }
 
     @Test
     public void testAtomString() {
-        List<Map<String, Term>> s = prolog.solve("atom_string(hello, X).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("atom_string(hello, X), X == \"hello\".").size());
+        assertEquals(1, prolog.solve("atom_string(X, \"hi\"), X == hi.").size());
     }
 
     // ===================================================================
@@ -694,9 +694,8 @@ public class MegaPredicateTest {
         prolog.consult("age(peter, 7).");
         prolog.consult("age(ann, 11).");
         prolog.consult("age(pat, 8).");
-
-        List<Map<String, Term>> s = prolog.solve("bagof(X, age(X, _), Xs).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("bagof(X, A^age(X, A), Xs), Xs == [peter, ann, pat].").size());
     }
 
     @Test
@@ -704,9 +703,9 @@ public class MegaPredicateTest {
         prolog.consult("score(alice, 90).");
         prolog.consult("score(bob, 85).");
         prolog.consult("score(alice, 95).");
-
-        List<Map<String, Term>> s = prolog.solve("setof(X, Y^score(X, Y), Xs).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("setof(X, Y^score(X, Y), Xs), Xs == [alice, bob].").size());
+        assertEquals(1, prolog.solve("setof(X-Y, score(X, Y), L), L == [alice-90, alice-95, bob-85].").size());
     }
 
     // ===================================================================
@@ -715,12 +714,10 @@ public class MegaPredicateTest {
 
     @Test
     public void testCatchThrow() {
-        List<Map<String, Term>> s = prolog.solve("catch(throw(my_error), my_error, true).");
-        assertFalse(s.isEmpty());
-
-        // catch without exception
-        s = prolog.solve("catch(true, _, fail).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("catch(throw(my_error), E, true), E == my_error.").size());
+        assertEquals(1, prolog.solve("catch(true, _, fail).").size());
+        assertEquals(0, prolog.solve("catch(fail, _, true).").size());
     }
 
     @Test
@@ -756,12 +753,9 @@ public class MegaPredicateTest {
 
     @Test
     public void testIgnore() {
-        // ignore/1 always succeeds
-        List<Map<String, Term>> s = prolog.solve("ignore(fail).");
-        assertFalse(s.isEmpty());
-
-        s = prolog.solve("ignore(true).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("ignore(fail).").size());
+        assertEquals(1, prolog.solve("ignore(X = 1), X == 1.").size());
     }
 
     @Test
@@ -769,9 +763,9 @@ public class MegaPredicateTest {
         prolog.consult("even(2).");
         prolog.consult("even(4).");
         prolog.consult("even(6).");
-
-        List<Map<String, Term>> s = prolog.solve("forall(even(X), number(X)).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("forall(even(X), number(X)).").size());
+        assertEquals(0, prolog.solve("forall(even(X), X < 5).").size());
     }
 
     // ===================================================================
@@ -876,8 +870,11 @@ public class MegaPredicateTest {
         prolog.consult("hanoi(1, From, To, _) :- true.");
         prolog.consult("hanoi(N, From, To, Via) :- N > 1, N1 is N - 1, hanoi(N1, From, Via, To), hanoi(N1, Via, To, From).");
 
-        List<Map<String, Term>> s = prolog.solve("hanoi(4, left, right, center).");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: count the moves (2^4 - 1 = 15) instead of "some solution"
+        prolog.consult("hmoves(1, F, T, _, [F-T]).");
+        prolog.consult("hmoves(N, F, T, V, Ms) :- N > 1, N1 is N - 1, hmoves(N1, F, V, T, A), hmoves(N1, V, T, F, B), append(A, [F-T|B], Ms).");
+        assertEquals(1, prolog.solve("hanoi(4, left, right, center).").size());
+        assertEquals(1, prolog.solve("hmoves(4, l, r, c, Ms), length(Ms, 15), Ms = [l-c, l-r, c-r|_], last(Ms, c-r).").size());
     }
 
     @Test
@@ -1070,8 +1067,8 @@ public class MegaPredicateTest {
 
     @Test
     public void testStringParsing() {
-        List<Map<String, Term>> s = prolog.solve("X = \"hello\".");
-        assertFalse(s.isEmpty());
+        // ISS-2025-0663: the answer is asserted (it only checked "some solution")
+        assertEquals(1, prolog.solve("X = \"hello\", string(X), string_length(X, 5).").size());
     }
 
     // ===================================================================

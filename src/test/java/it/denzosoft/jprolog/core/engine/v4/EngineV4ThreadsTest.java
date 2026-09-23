@@ -87,7 +87,14 @@ public class EngineV4ThreadsTest {
     @Test(timeout = 30000)
     public void testISS0479_ThreadCreate3Options() {
         ok("thread_create(work(5), _, [alias(w1)]), thread_join(w1, true), res(10)");
-        ok("thread_create(true, D, [detached(true)]), thread_detach(D)");
+        // START_CHANGE: ISS-2025-0620 - deterministic: the detached thread is still ALIVE (it waits
+        // for a message) when it is detached again, which SWI allows. The old form
+        // `thread_create(true, D, [detached(true)]), thread_detach(D)` raced the thread's end: a
+        // finished detached thread is reclaimed, so under load thread_detach(D) met an unknown
+        // thread (now existence_error(thread, D), pinned in EngineV45HardeningTest).
+        ok("thread_create(thread_get_message(go), D, [detached(true)]), thread_detach(D), "
+         + "thread_send_message(D, go)");
+        // END_CHANGE: ISS-2025-0620
     }
 
     /** A worker reports its own Prolog thread id, not the creator's. */
@@ -177,12 +184,7 @@ public class EngineV4ThreadsTest {
      */
     @Test(timeout = 60000)
     public void testISS0480_NoBuiltinReachesTheRecursiveSolver() {
-        try {
-            Class.forName("it.denzosoft.jprolog.core.engine.QuerySolver");
-            fail("the recursive QuerySolver must be deleted (wave W9, ISS-2025-0484)");
-        } catch (ClassNotFoundException expected) {
-            // the only correct outcome
-        }
+        // ISS-2025-0665: the "QuerySolver is deleted" check lives once, in EngineV4RetirementTest
         ok("thread_create(work(3), Id), thread_join(Id, true), res(6)");
         ok("concurrent_maplist(dbl, [1,2,3], L), L == [2,4,6]");
         ok("concurrent_maplist(work, [9])");
@@ -250,17 +252,22 @@ public class EngineV4ThreadsTest {
         final Prolog p = new Prolog();
         p.consult("spin(N) :- N > 0, N1 is N - 1, spin(N1).\nspin(0).\n");
         final AtomicReference<Throwable> caught = new AtomicReference<Throwable>();
+        // ISS-2025-0664: latch-synchronised instead of sleep(600)
+        final it.denzosoft.jprolog.test.support.QueryStartLatch latch =
+            new it.denzosoft.jprolog.test.support.QueryStartLatch();
         Thread solver = new Thread(new Runnable() {
             @Override public void run() {
                 try {
-                    p.solve("concurrent_maplist(spin, [200000000, 200000000]).");
+                    latch.solve(p, it.denzosoft.jprolog.test.support.QueryStartLatch.ANNOUNCE
+                        + "concurrent_maplist(spin, [200000000, 200000000]).");
                 } catch (Throwable e) {
                     caught.set(e);
                 }
             }
         });
         solver.start();
-        Thread.sleep(600);
+        latch.await(20);
+        Thread.sleep(100);            // let the workers start (the latch opens before they do)
         solver.interrupt();
         solver.join(30000);
         assertFalse("the parent thread must have stopped", solver.isAlive());
