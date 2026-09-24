@@ -1,7 +1,8 @@
 package it.denzosoft.jprolog.builtin.dcg;
 
+import it.denzosoft.jprolog.core.engine.v4.Errors;
+import it.denzosoft.jprolog.builtin.LibArgs;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.*;
 import it.denzosoft.jprolog.util.TermUtils;
 
@@ -26,7 +27,7 @@ public class EnhancedPhrase implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() < 2 || query.getArguments().size() > 3) {
-            throw new PrologEvaluationException("phrase expects 2 or 3 arguments: phrase(+DCGBody, ?List) or phrase(+DCGBody, ?List, ?Rest)");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0695
         }
         
         Term dcgBody = query.getArguments().get(0).resolveBindings(bindings);
@@ -42,7 +43,7 @@ public class EnhancedPhrase implements BuiltIn {
             }
         } catch (Exception e) {
             it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
-            throw new PrologEvaluationException("phrase error: " + e.getMessage());
+            throw Errors.host(e, "execute", "dcg", null, "enhanced_phrase", LibArgs.arity(query));   // ISS-2025-0695
         }
     }
     
@@ -61,11 +62,11 @@ public class EnhancedPhrase implements BuiltIn {
     private boolean phrase3(Term dcgBody, Term inputList, Term restList, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         // Type validation per ISO specification
         if (!isValidListArgument(inputList)) {
-            throw new PrologEvaluationException("phrase/3: List argument must be unbound, empty list, or list cons cell");
+            throw Errors.type("list", inputList, "enhanced_phrase", 3, "the list must be unbound or a list");   // ISS-2025-0695
         }
         
         if (!isValidListArgument(restList)) {
-            throw new PrologEvaluationException("phrase/3: Rest argument must be unbound, empty list, or list cons cell");
+            throw Errors.type("list", restList, "enhanced_phrase", 3, "the rest must be unbound or a list");   // ISS-2025-0695
         }
         
         // Transform DCG body into expanded Prolog goal
@@ -172,7 +173,7 @@ public class EnhancedPhrase implements BuiltIn {
             return expandDCGTerminals(dcgBody, inputList, restList);
         }
         
-        throw new PrologEvaluationException("Invalid DCG body: " + dcgBody);
+        throw LibArgs.notA("callable", dcgBody, "enhanced_phrase", 3, "the DCG body");   // ISS-2025-0695
     }
     
     /**

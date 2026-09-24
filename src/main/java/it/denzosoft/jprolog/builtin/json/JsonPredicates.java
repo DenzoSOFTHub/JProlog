@@ -2,11 +2,13 @@ package it.denzosoft.jprolog.builtin.json;
 
 // START_CHANGE: ISS-2025-0113 - JSON built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
+import it.denzosoft.jprolog.builtin.LibArgs;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.utils.CollectionUtils;
 
 import java.util.*;
@@ -56,7 +58,7 @@ public class JsonPredicates implements BuiltIn {
     private boolean doParse(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
-        if (args.size() != 2) throw err("json_parse/2 requires 2 arguments.");
+        if (args.size() != 2) throw LibArgs.unknownArity(query);   // ISS-2025-0688
         String json = resolveAtom(args.get(0), bindings);
         Term result = parseJson(json.trim(), new int[]{0});
         return unify(args.get(1), result, bindings, solutions);
@@ -66,8 +68,8 @@ public class JsonPredicates implements BuiltIn {
     private boolean doSerialize(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
-        if (args.size() != 2) throw err("json_serialize/2 requires 2 arguments.");
-        Term term = args.get(0).resolveBindings(bindings);
+        if (args.size() != 2) throw LibArgs.unknownArity(query);   // ISS-2025-0688
+        Term term = LibArgs.bound(query, 0, bindings, "json_serialize", "the term");   // ISS-2025-0688
         String json = serializeTerm(term);
         return unify(args.get(1), new Atom(json), bindings, solutions);
     }
@@ -76,9 +78,17 @@ public class JsonPredicates implements BuiltIn {
     private boolean doGet(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
-        if (args.size() != 3) throw err("json_get/3 requires 3 arguments.");
+        if (args.size() != 3) throw LibArgs.unknownArity(query);   // ISS-2025-0688
         Term jsonTerm = args.get(0).resolveBindings(bindings);
         Term pathTerm = args.get(1).resolveBindings(bindings);
+        // START_CHANGE: ISS-2025-0797 - 4.6 wave Q7: an unbound document or path raises (it failed)
+        if (jsonTerm instanceof it.denzosoft.jprolog.core.terms.Variable) {
+            throw LibArgs.notA("json", jsonTerm, "json_get", 3, "the JSON term");
+        }
+        if (pathTerm instanceof it.denzosoft.jprolog.core.terms.Variable) {
+            throw LibArgs.notA("atom", pathTerm, "json_get", 3, "the path");
+        }
+        // END_CHANGE: ISS-2025-0797
 
         Term value = navigatePath(jsonTerm, pathTerm);
         if (value == null) return false;
@@ -89,13 +99,12 @@ public class JsonPredicates implements BuiltIn {
     private boolean doSet(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
-        if (args.size() != 4) throw err("json_set/4 requires 4 arguments.");
+        if (args.size() != 4) throw LibArgs.unknownArity(query);   // ISS-2025-0688
         Term jsonTerm = args.get(0).resolveBindings(bindings);
         Term keyTerm = args.get(1).resolveBindings(bindings);
         Term valueTerm = args.get(2).resolveBindings(bindings);
 
-        if (!(keyTerm instanceof Atom)) throw err("json_set/4: Key must be an atom.");
-        String key = ((Atom) keyTerm).getName();
+        String key = LibArgs.atom(query, 1, bindings, "json_set", "the key");   // ISS-2025-0688
 
         if (jsonTerm instanceof CompoundTerm && "json".equals(((CompoundTerm) jsonTerm).getName())) {
             List<Term> pairs = termToList(((CompoundTerm) jsonTerm).getArguments().get(0));
@@ -121,14 +130,14 @@ public class JsonPredicates implements BuiltIn {
                 Collections.singletonList(CollectionUtils.createListTerm(newPairs)));
             return unify(args.get(3), newJson, bindings, solutions);
         }
-        throw err("json_set/4: First argument must be a json(...) term.");
+        throw notJson(jsonTerm, "json_set", 4);                        // ISS-2025-0688
     }
 
     // ---- KEYS ----
     private boolean doKeys(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
-        if (args.size() != 2) throw err("json_keys/2 requires 2 arguments.");
+        if (args.size() != 2) throw LibArgs.unknownArity(query);   // ISS-2025-0688
         Term jsonTerm = args.get(0).resolveBindings(bindings);
 
         if (jsonTerm instanceof CompoundTerm && "json".equals(((CompoundTerm) jsonTerm).getName())) {
@@ -141,14 +150,14 @@ public class JsonPredicates implements BuiltIn {
             }
             return unify(args.get(1), CollectionUtils.createListTerm(keys), bindings, solutions);
         }
-        throw err("json_keys/2: Argument must be a json(...) term.");
+        throw notJson(jsonTerm, "json_keys", 2);                       // ISS-2025-0688
     }
 
     // ---- MEMBER ----
     private boolean doMember(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
-        if (args.size() != 3) throw err("json_member/3 requires 3 arguments.");
+        if (args.size() != 3) throw LibArgs.unknownArity(query);   // ISS-2025-0688
         Term jsonTerm = args.get(0).resolveBindings(bindings);
 
         if (jsonTerm instanceof CompoundTerm && "json".equals(((CompoundTerm) jsonTerm).getName())) {
@@ -168,7 +177,7 @@ public class JsonPredicates implements BuiltIn {
             }
             return anyMatch;
         }
-        throw err("json_member/3: First argument must be a json(...) term.");
+        throw notJson(jsonTerm, "json_member", 3);                     // ISS-2025-0688
     }
 
     // ---- JSON Parser ----
@@ -423,15 +432,24 @@ public class JsonPredicates implements BuiltIn {
         return false;
     }
 
+    // START_CHANGE: ISS-2025-0688 - wave Q1.1: ISO error terms (LIM-038)
     private String resolveAtom(Term term, Map<String, Term> bindings) {
-        Term resolved = term.resolveBindings(bindings);
-        if (!(resolved instanceof Atom)) throw err(modeName() + ": argument must be an atom.");
-        return ((Atom) resolved).getName();
+        return LibArgs.text(term.resolveBindings(bindings), modeName(), LibArgs.nameArity(modeName()), "the JSON text");
     }
 
-    private PrologEvaluationException err(String msg) {
-        return new PrologEvaluationException(msg);
+    /** A malformed JSON text: {@code error(syntax_error(json), context(json_parse/2, Msg))}. */
+    private it.denzosoft.jprolog.core.exceptions.PrologException err(String msg) {
+        String m = msg.startsWith("json_parse: ") ? msg.substring("json_parse: ".length()) : msg;
+        return Errors.syntax("json", "json_parse", 2, m);
     }
+
+    private static it.denzosoft.jprolog.core.exceptions.PrologException notJson(Term t, String name, int arity) {
+        if (t instanceof it.denzosoft.jprolog.core.terms.Variable) {
+            return Errors.instantiation(name, arity, "the JSON object must be bound");
+        }
+        return Errors.type("json", t, name, arity, "a json(Pairs) term expected");
+    }
+    // END_CHANGE: ISS-2025-0688
 
     private String modeName() {
         switch (mode) {

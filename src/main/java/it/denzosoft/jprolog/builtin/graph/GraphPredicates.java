@@ -1,8 +1,9 @@
 // START_CHANGE: ISS-2025-0127 - Graph algorithms package
 package it.denzosoft.jprolog.builtin.graph;
 
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
@@ -115,16 +116,25 @@ public class GraphPredicates implements BuiltIn {
                 break;
             }
         }
+        // START_CHANGE: ISS-2025-0797 - 4.6 wave Q7: the graph must be a proper list of edges. An
+        // unbound graph (or tail) and a non-list were read as the EMPTY graph, so graph_vertices(G, V)
+        // succeeded with V = [] and graph_path(G, a, b, P) failed silently (invariant 65).
+        if (current instanceof it.denzosoft.jprolog.core.terms.Variable) throw Errors.instantiation("graph");
+        if (!(current instanceof Atom) || !"[]".equals(((Atom) current).getName())) {
+            throw Errors.type("list", resolved, "graph");
+        }
+        // END_CHANGE: ISS-2025-0797
         return edges;
     }
 
     private Edge parseEdge(Term edgeTerm) {
         if (!(edgeTerm instanceof CompoundTerm)) {
-            throw new PrologEvaluationException("Expected edge/2 or edge/3 term, got: " + edgeTerm);
+            if (edgeTerm instanceof it.denzosoft.jprolog.core.terms.Variable) throw Errors.instantiation("graph");   // ISS-2025-0697
+            throw Errors.type("edge", edgeTerm, "graph");                    // ISS-2025-0697
         }
         CompoundTerm ct = (CompoundTerm) edgeTerm;
         if (!ct.getName().equals("edge")) {
-            throw new PrologEvaluationException("Expected edge functor, got: " + ct.getName());
+            throw Errors.type("edge", edgeTerm, "graph");                    // ISS-2025-0697
         }
         int arity = ct.getArguments().size();
         if (arity == 2) {
@@ -137,7 +147,7 @@ public class GraphPredicates implements BuiltIn {
             double weight = termToWeight(ct.getArguments().get(2));
             return new Edge(from, to, weight);
         } else {
-            throw new PrologEvaluationException("edge term must have arity 2 or 3, got: " + arity);
+            throw Errors.type("edge", edgeTerm, "graph");                    // ISS-2025-0697
         }
     }
 
@@ -158,7 +168,8 @@ public class GraphPredicates implements BuiltIn {
         if (t instanceof Number) {
             return ((Number) t).getValue();
         }
-        throw new PrologEvaluationException("Edge weight must be a number, got: " + t);
+        if (t instanceof it.denzosoft.jprolog.core.terms.Variable) throw Errors.instantiation("graph");   // ISS-2025-0697
+        throw Errors.type("number", t, "graph");                             // ISS-2025-0697
     }
 
     private Map<String, List<Edge>> buildAdjacencyList(List<Edge> edges) {
@@ -229,7 +240,7 @@ public class GraphPredicates implements BuiltIn {
      */
     private boolean executeGraphPath(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 4) {
-            throw new PrologEvaluationException("graph_path/4 requires exactly 4 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         Term graphTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term startTerm = query.getArguments().get(1).resolveBindings(bindings);
@@ -279,7 +290,7 @@ public class GraphPredicates implements BuiltIn {
      */
     private boolean executeShortestPath(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 4) {
-            throw new PrologEvaluationException("shortest_path/4 requires exactly 4 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         Term graphTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term startTerm = query.getArguments().get(1).resolveBindings(bindings);
@@ -381,7 +392,7 @@ public class GraphPredicates implements BuiltIn {
      */
     private boolean executeGraphConnected(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException("graph_connected/2 requires exactly 2 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         Term graphTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term startTerm = query.getArguments().get(1).resolveBindings(bindings);
@@ -422,7 +433,7 @@ public class GraphPredicates implements BuiltIn {
      */
     private boolean executeGraphVertices(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException("graph_vertices/2 requires exactly 2 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         Term graphTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term verticesTerm = query.getArguments().get(1);
@@ -445,7 +456,7 @@ public class GraphPredicates implements BuiltIn {
      */
     private boolean executeGraphEdges(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException("graph_edges/2 requires exactly 2 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         Term graphTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term edgesTerm = query.getArguments().get(1);
@@ -466,7 +477,7 @@ public class GraphPredicates implements BuiltIn {
      */
     private boolean executeGraphNeighbors(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 3) {
-            throw new PrologEvaluationException("graph_neighbors/3 requires exactly 3 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         Term graphTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term nodeTerm = query.getArguments().get(1).resolveBindings(bindings);
@@ -497,7 +508,7 @@ public class GraphPredicates implements BuiltIn {
      */
     private boolean executeTopologicalSort(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException("topological_sort/2 requires exactly 2 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         Term graphTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term sortedTerm = query.getArguments().get(1);
@@ -557,7 +568,7 @@ public class GraphPredicates implements BuiltIn {
      */
     private boolean executeGraphComponents(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException("graph_components/2 requires exactly 2 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         Term graphTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term componentsTerm = query.getArguments().get(1);
@@ -618,7 +629,7 @@ public class GraphPredicates implements BuiltIn {
      */
     private boolean executeMinimumSpanningTree(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException("minimum_spanning_tree/2 requires exactly 2 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         Term graphTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term mstTerm = query.getArguments().get(1);
@@ -685,7 +696,7 @@ public class GraphPredicates implements BuiltIn {
      */
     private boolean executeGraphDegree(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 3) {
-            throw new PrologEvaluationException("graph_degree/3 requires exactly 3 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         Term graphTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term nodeTerm = query.getArguments().get(1).resolveBindings(bindings);
@@ -714,7 +725,7 @@ public class GraphPredicates implements BuiltIn {
      */
     private boolean executeGraphHasCycle(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 1) {
-            throw new PrologEvaluationException("graph_has_cycle/1 requires exactly 1 argument.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         Term graphTerm = query.getArguments().get(0).resolveBindings(bindings);
 
@@ -764,7 +775,7 @@ public class GraphPredicates implements BuiltIn {
      */
     private boolean executeGraphReachable(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 3) {
-            throw new PrologEvaluationException("graph_reachable/3 requires exactly 3 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         Term graphTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term startTerm = query.getArguments().get(1).resolveBindings(bindings);
@@ -794,7 +805,7 @@ public class GraphPredicates implements BuiltIn {
      */
     private boolean executeGraphScc(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException("graph_scc/2 requires exactly 2 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         Term graphTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term sccsTerm = query.getArguments().get(1);

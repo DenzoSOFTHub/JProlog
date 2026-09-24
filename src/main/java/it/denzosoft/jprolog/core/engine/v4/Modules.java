@@ -61,17 +61,33 @@ public final class Modules {
     /** {@code :} — a module-sensitive term (qualified, but not called). */
     static final int META_COLON = 100;
 
-    /** One module. */
+    /**
+     * One module.
+     *
+     * <p>START_CHANGE: ISS-2025-0747 - 4.6 wave Q4 (extra): a module is read by every thread of
+     * the engine while a library is parsed on first use or the mirror is rebuilt on another one.
+     * Its collections are therefore never mutated once published: a load or a re-sync builds new
+     * ones and swaps them in through these volatile fields, and {@code loaded} is written LAST
+     * (it used to be set first, so a second thread autoloading at the same moment saw a "loaded"
+     * module with no clauses and raised existence_error). END_CHANGE: ISS-2025-0747
+     */
     static final class Mod {
         final String name;
         /** Classpath resource for a library module; null for a user-defined one. */
         final String resource;
-        boolean loaded;
+        volatile boolean loaded;
         boolean explicitExports;
-        final Set<String> exports = new LinkedHashSet<String>();
-        final List<String> imports = new ArrayList<String>();
-        final Map<String, Pred> clauses = new HashMap<String, Pred>();
-        final Map<String, int[]> meta = new HashMap<String, int[]>();
+        volatile Set<String> exports = new LinkedHashSet<String>();
+        volatile List<String> imports = new ArrayList<String>();
+        volatile Map<String, Pred> clauses = new HashMap<String, Pred>();
+        volatile Map<String, int[]> meta = new HashMap<String, int[]>();
+        /** Import restrictions per imported module (ISS-2025-0735); absent = everything. */
+        volatile Map<String, Module.ImportSpec> specs = new HashMap<String, Module.ImportSpec>();
+        // START_CHANGE: ISS-2025-0784 - what the mirror of a user module was built from
+        Module src;
+        long srcVersion = -1;
+        int rulesSeen;
+        // END_CHANGE: ISS-2025-0784
 
         Mod(String name, String resource) { this.name = name; this.resource = resource; }
 
@@ -97,53 +113,81 @@ public final class Modules {
     /** One indicator's clauses inside a module, with a first-argument index. */
     static final class Pred {
         final Clause[] all;
-        private final Map<Object, Clause[]> byKey;
-        private final Clause[] varHeaded;
+        // START_CHANGE: ISS-2025-0784 - built on the first indexed selection, not with the
+        // predicate: a module that grows clause by clause (the incremental mirror) gets a new Pred
+        // per change, and most of them are never selected by key. The merge of a bucket with the
+        // variable-headed clauses is by position, O(|bucket| + |var-headed|) — it rescanned the
+        // whole predicate per bucket (O(buckets * clauses)).
+        private volatile Index index;
+
+        private static final class Index {
+            final Map<Object, Clause[]> byKey;
+            final Clause[] varHeaded;
+            Index(Map<Object, Clause[]> byKey, Clause[] varHeaded) { this.byKey = byKey; this.varHeaded = varHeaded; }
+        }
 
         Pred(Clause[] all) {
             this.all = all;
-            Map<Object, List<Clause>> groups = new java.util.LinkedHashMap<Object, List<Clause>>();
-            List<Clause> vars = new ArrayList<Clause>();
+        }
+
+        private Index index() {
+            Index ix = index;
+            if (ix != null) return ix;
+            Map<Object, int[]> groups = new java.util.LinkedHashMap<Object, int[]>();   // key -> {count, pos...}
+            int[] vpos = new int[4];
+            int nv = 0;
             for (int i = 0; i < all.length; i++) {
                 Object k = all[i].firstArgKey;
-                if (k == null) vars.add(all[i]);
-                else {
-                    List<Clause> g = groups.get(k);
-                    if (g == null) { g = new ArrayList<Clause>(); groups.put(k, g); }
-                    g.add(all[i]);
+                if (k == null) {
+                    if (nv == vpos.length) vpos = Arrays.copyOf(vpos, nv * 2);
+                    vpos[nv++] = i;
+                } else {
+                    int[] g = groups.get(k);
+                    if (g == null) { g = new int[4]; groups.put(k, g); }
+                    if (g[0] + 1 == g.length) { g = Arrays.copyOf(g, g.length * 2); groups.put(k, g); }
+                    g[++g[0]] = i;
                 }
             }
-            this.varHeaded = vars.toArray(new Clause[vars.size()]);
+            Clause[] varHeaded = new Clause[nv];
+            for (int i = 0; i < nv; i++) varHeaded[i] = all[vpos[i]];
+            Map<Object, Clause[]> m;
             if (groups.isEmpty()) {
-                this.byKey = java.util.Collections.emptyMap();
+                m = java.util.Collections.emptyMap();
             } else {
-                Map<Object, Clause[]> m = new HashMap<Object, Clause[]>();
-                for (Map.Entry<Object, List<Clause>> e : groups.entrySet()) {
-                    // merge the bucket with the variable-headed clauses, in source order
-                    java.util.IdentityHashMap<Clause, Boolean> ok = new java.util.IdentityHashMap<Clause, Boolean>();
-                    for (int i = 0; i < e.getValue().size(); i++) ok.put(e.getValue().get(i), Boolean.TRUE);
-                    for (int i = 0; i < varHeaded.length; i++) ok.put(varHeaded[i], Boolean.TRUE);
-                    List<Clause> merged = new ArrayList<Clause>(ok.size());
-                    for (int i = 0; i < all.length; i++) if (ok.containsKey(all[i])) merged.add(all[i]);
-                    m.put(e.getKey(), merged.toArray(new Clause[merged.size()]));
+                m = new HashMap<Object, Clause[]>();
+                for (Map.Entry<Object, int[]> e : groups.entrySet()) {
+                    int[] g = e.getValue();
+                    int nb = g[0];
+                    Clause[] merged = new Clause[nb + nv];
+                    int a = 1, b = 0, k = 0;
+                    while (a <= nb || b < nv) {                  // both position lists ascend
+                        if (b >= nv || (a <= nb && g[a] < vpos[b])) merged[k++] = all[g[a++]];
+                        else merged[k++] = all[vpos[b++]];
+                    }
+                    m.put(e.getKey(), merged);
                 }
-                this.byKey = m;
             }
+            ix = new Index(m, varHeaded);
+            index = ix;
+            return ix;
         }
 
         /** The clauses whose head could match a goal with first-argument key {@code k}. */
         Clause[] select(Object k) {
-            if (k == null || byKey.isEmpty()) return all;
-            Clause[] s = byKey.get(k);
-            return (s != null) ? s : varHeaded;      // no head has that key: only the variable ones
+            if (k == null) return all;
+            Index ix = index();
+            if (ix.byKey.isEmpty()) return all;
+            Clause[] s = ix.byKey.get(k);
+            return (s != null) ? s : ix.varHeaded;      // no head has that key: only the variable ones
         }
+        // END_CHANGE: ISS-2025-0784
     }
     // END_CHANGE: ISS-2025-0468
 
     private final Engine engine;
     private final ModuleManager legacy;
-    private final Map<String, Mod> mods = new HashMap<String, Mod>();
-    private long mirrorStamp = -1;
+    private final Map<String, Mod> mods = new java.util.concurrent.ConcurrentHashMap<String, Mod>();   // ISS-2025-0747
+    private volatile long mirrorStamp = -1;
 
     Modules(Engine engine, ModuleManager legacy) {
         this.engine = engine;
@@ -168,16 +212,26 @@ public final class Modules {
         if (legacy == null) return;
         long s = legacy.getStamp();
         if (s == mirrorStamp) return;
-        mirrorStamp = s;
+        // ISS-2025-0739: loads may run on several threads now — one rebuild at a time, and the
+        // stamp is published only once the mirror is complete
+        synchronized (this) {
+            s = legacy.getStamp();
+            if (s == mirrorStamp) return;
+            syncLocked();
+            mirrorStamp = s;
+        }
+    }
+
+    private void syncLocked() {
         for (Map.Entry<String, Module> e : legacy.getAllModules().entrySet()) {
             String name = e.getKey();
             if (USER.equals(name) || SYSTEM.equals(name)) {
                 // `user` is the flat store; we still take its import list and meta declarations.
                 Mod um = mods.get(USER);
-                um.imports.clear();
-                um.imports.addAll(new TreeSet<String>(e.getValue().getImportedModules().keySet()));
-                um.meta.clear();
-                copyMeta(e.getValue(), um);
+                // ISS-2025-0747: new collections, swapped in (never mutated in place)
+                um.imports = new ArrayList<String>(new TreeSet<String>(e.getValue().getImportedModules().keySet()));
+                um.specs = new HashMap<String, Module.ImportSpec>(e.getValue().getImportSpecs());   // ISS-2025-0735
+                um.meta = copyMeta(e.getValue());
                 continue;
             }
             Mod m = mods.get(name);
@@ -186,15 +240,32 @@ public final class Modules {
                 else continue;                      // a user module may not shadow a library one
             }
             Module lm = e.getValue();
-            m.exports.clear();
-            for (it.denzosoft.jprolog.core.module.PredicateSignature sig : lm.getExportedPredicates()) {
-                m.exports.add(sig.getFunctor() + "/" + sig.getArity());
+            // START_CHANGE: ISS-2025-0784 - 4.6 wave Q6 (extra 4): unchanged -> nothing to do;
+            // only rules appended -> compile just those and replace just their predicates.
+            long ver = lm.getStructVersion();
+            if (m.src == lm && m.srcVersion == ver) {
+                int count = lm.getLocalRuleCount();
+                if (count == m.rulesSeen) continue;
+                if (count > m.rulesSeen) {
+                    appendRules(m, lm, lm.getLocalRulesFrom(m.rulesSeen));
+                    continue;
+                }
             }
-            m.imports.clear();
-            m.imports.addAll(new TreeSet<String>(lm.getImportedModules().keySet()));
-            m.clauses.clear();
+            // END_CHANGE: ISS-2025-0784
+            // ISS-2025-0747: build everything aside, then swap it in
+            Set<String> exps = new LinkedHashSet<String>();
+            for (it.denzosoft.jprolog.core.module.PredicateSignature sig : lm.getExportedPredicates()) {
+                exps.add(sig.getFunctor() + "/" + sig.getArity());
+            }
+            m.exports = exps;
+            m.imports = new ArrayList<String>(new TreeSet<String>(lm.getImportedModules().keySet()));
+            m.specs = new HashMap<String, Module.ImportSpec>(lm.getImportSpecs());      // ISS-2025-0735
+            // ISS-2025-0784: a concurrent map, so the incremental path can replace one predicate
+            // at a time (each Pred is immutable; a reader sees the old one or the new one)
+            Map<String, Pred> cls = new java.util.concurrent.ConcurrentHashMap<String, Pred>();
             Map<String, List<Clause>> staging = new java.util.LinkedHashMap<String, List<Clause>>();
-            for (Rule r : lm.getLocalRules()) {
+            List<Rule> rules = lm.getLocalRules();                                     // ISS-2025-0784
+            for (Rule r : rules) {
                 Term h = r.getHead();
                 String f;
                 int ar;
@@ -210,17 +281,76 @@ public final class Modules {
                 c.birth = 0;
                 c.death = Long.MAX_VALUE;
                 acc.add(c);
+                mirrorCompiles++;                                                       // ISS-2025-0784
             }
             for (Map.Entry<String, List<Clause>> se : staging.entrySet()) {
-                m.clauses.put(se.getKey(), new Pred(se.getValue().toArray(new Clause[se.getValue().size()])));
+                cls.put(se.getKey(), new Pred(se.getValue().toArray(new Clause[se.getValue().size()])));
             }
-            m.meta.clear();
-            copyMeta(lm, m);
+            m.clauses = cls;
+            m.meta = copyMeta(lm);
+            m.explicitExports = lm.hasExplicitExportList();                             // ISS-2025-0784
+            m.src = lm;                                                                  // ISS-2025-0784
+            m.srcVersion = ver;
+            m.rulesSeen = rules.size();
             m.loaded = true;
         }
     }
 
-    private static void copyMeta(Module lm, Mod m) {
+    // START_CHANGE: ISS-2025-0784
+    /** Mirror rules appended to a module since the last sync: only their predicates change. */
+    /** Clauses the mirror has compiled (test hook). */
+    long mirrorCompiles;
+
+    private void appendRules(Mod m, Module lm, List<Rule> added) {
+        mirrorCompiles += added.size();
+        Map<String, List<Clause>> staging = new java.util.LinkedHashMap<String, List<Clause>>();
+        Set<String> newExports = null;
+        for (Rule r : added) {
+            Term h = r.getHead();
+            String f;
+            int ar;
+            if (h instanceof Atom) { f = ((Atom) h).getName(); ar = 0; }
+            else if (h instanceof CompoundTerm) {
+                f = ((CompoundTerm) h).getName();
+                ar = ((CompoundTerm) h).getArguments().size();
+            } else continue;
+            String key = f + "/" + ar;
+            List<Clause> acc = staging.get(key);
+            if (acc == null) { acc = new ArrayList<Clause>(); staging.put(key, acc); }
+            Clause c = ClauseStore.compiled(r);
+            c.birth = 0;
+            c.death = Long.MAX_VALUE;
+            acc.add(c);
+            // a module without an export list exports what it defines (Module.addRule)
+            if (!m.explicitExports && !m.exports.contains(key)) {
+                if (newExports == null) newExports = new LinkedHashSet<String>(m.exports);
+                newExports.add(key);
+            }
+        }
+        Map<String, Pred> cls = m.clauses;
+        if (!(cls instanceof java.util.concurrent.ConcurrentHashMap)) {
+            cls = new java.util.concurrent.ConcurrentHashMap<String, Pred>(cls);
+        }
+        for (Map.Entry<String, List<Clause>> se : staging.entrySet()) {
+            Pred old = cls.get(se.getKey());
+            List<Clause> add = se.getValue();
+            Clause[] all;
+            if (old == null) {
+                all = add.toArray(new Clause[add.size()]);
+            } else {
+                all = Arrays.copyOf(old.all, old.all.length + add.size());
+                for (int i = 0; i < add.size(); i++) all[old.all.length + i] = add.get(i);
+            }
+            cls.put(se.getKey(), new Pred(all));
+        }
+        m.clauses = cls;
+        if (newExports != null) m.exports = newExports;
+        m.rulesSeen += added.size();
+    }
+    // END_CHANGE: ISS-2025-0784
+
+    private static Map<String, int[]> copyMeta(Module lm) {
+        Map<String, int[]> out = new HashMap<String, int[]>();
         for (Map.Entry<it.denzosoft.jprolog.core.module.PredicateSignature, List<String>> me
                 : lm.getMetaPredicateDeclarations().entrySet()) {
             int[] spec = new int[me.getKey().getArity()];
@@ -228,8 +358,9 @@ public final class Modules {
             for (int i = 0; i < spec.length; i++) {
                 spec[i] = (i < raw.size()) ? parseMetaSpecAtom(raw.get(i)) : META_PLAIN;
             }
-            m.meta.put(me.getKey().getFunctor() + "/" + me.getKey().getArity(), spec);
+            out.put(me.getKey().getFunctor() + "/" + me.getKey().getArity(), spec);
         }
+        return out;
     }
 
     /** One {@code meta_predicate} argument specifier, as the textual form the manager records. */
@@ -264,7 +395,7 @@ public final class Modules {
 
     Mod mod(String name) {
         sync();
-        return mods.get(name);
+        return (name == null) ? null : mods.get(name);                      // ISS-2025-0747
     }
 
     /** Does module {@code m} export {@code f/n}? A module with no explicit export list (the plain
@@ -291,6 +422,27 @@ public final class Modules {
         return (p == null || p.all.length == 0) ? null : p;
     }
 
+    // START_CHANGE: ISS-2025-0732 - the indicators ("name/arity") module m defines itself; a
+    // library module is loaded only when {@code loadLibrary} (it was named explicitly).
+    public java.util.List<String> localKeys(String m, boolean loadLibrary) {
+        Mod mm = mod(m);
+        java.util.List<String> out = new java.util.ArrayList<String>();
+        if (mm == null || USER.equals(m) || SYSTEM.equals(m)) return out;
+        if (mm.isLibrary() && !mm.loaded) {
+            if (!loadLibrary) return out;
+            load(mm);
+        }
+        for (Map.Entry<String, Pred> e : mm.clauses.entrySet()) {
+            if (e.getValue().all.length > 0) out.add(e.getKey());
+        }
+        java.util.Collections.sort(out);
+        return out;
+    }
+    // END_CHANGE: ISS-2025-0732
+
+    /** Does module {@code m} (loaded, not user/system) define {@code f/n} itself? */
+    public boolean definesLocally(String m, String f, int n) { return localPred(m, f, n) != null; }   // ISS-2025-0731
+
     /** Changes whenever the mirrored module structure may have (the ModuleManager's stamp). */
     long stamp() { return (legacy == null) ? 0 : legacy.getStamp(); }
     // END_CHANGE: ISS-2025-0540
@@ -309,7 +461,11 @@ public final class Modules {
             load(mm);
         }
         Pred p = mm.clauses.get(key);
-        return (p == null) ? null : p.select(argKey);
+        // START_CHANGE: ISS-2025-0770 - null means "the module does not define it"; a defined
+        // predicate whose first-argument index selects no clause answers an EMPTY array (the call
+        // fails), never null (which made m:p([]) against p([_|_]) an existence error).
+        return (p == null || p.all.length == 0) ? null : p.select(argKey);
+        // END_CHANGE: ISS-2025-0770
     }
 
     /** Resolve {@code f/n} through {@code m}'s imports, in import order, honouring exports. */
@@ -319,10 +475,27 @@ public final class Modules {
         Mod mm = mod(m);
         if (mm == null || mm.imports.isEmpty()) return null;
         String key = f + "/" + n;
+        // START_CHANGE: ISS-2025-0735 - import lists: aliases first, then only/except filters
+        if (!mm.specs.isEmpty()) {
+            for (Map.Entry<String, Module.ImportSpec> se : mm.specs.entrySet()) {
+                String orig = se.getValue().aliases.get(key);
+                if (orig == null) continue;
+                Mod sm = mods.get(se.getKey());
+                if (sm == null) continue;
+                if (sm.isLibrary()) load(sm);
+                Pred p = sm.clauses.get(orig + "/" + n);
+                if (p != null && p.all.length > 0) return new Hit(p.select(argKey), se.getKey());
+            }
+        }
+        // END_CHANGE: ISS-2025-0735
         for (int i = 0; i < mm.imports.size(); i++) {
             String src = mm.imports.get(i);
             Mod sm = mods.get(src);
             if (sm == null || !sm.exports.contains(key)) continue;
+            // START_CHANGE: ISS-2025-0735
+            Module.ImportSpec spec = mm.specs.isEmpty() ? null : mm.specs.get(src);
+            if (spec != null && ((spec.only != null && !spec.only.contains(key)) || spec.except.contains(key))) continue;
+            // END_CHANGE: ISS-2025-0735
             if (sm.isLibrary()) load(sm);
             Pred p = sm.clauses.get(key);
             if (p != null && p.all.length > 0) return new Hit(p.select(argKey), src);
@@ -472,21 +645,35 @@ public final class Modules {
     /** Install a library module's clauses (idempotent, and never fatal). */
     private void load(Mod m) {
         if (m.loaded) return;
-        m.loaded = true;                                  // even a failure is "tried once"
-        Prelude.Parsed p = Prelude.parse(m.resource);
-        if (p == null) return;
-        for (Map.Entry<String, List<Rule>> e : p.byIndicator.entrySet()) {
-            List<Rule> rs = e.getValue();
-            Clause[] cs = new Clause[rs.size()];
-            for (int i = 0; i < cs.length; i++) {
-                Clause c = Clause.compile(rs.get(i));
-                c.birth = 0;
-                c.death = Long.MAX_VALUE;
-                cs[i] = c;
+        // START_CHANGE: ISS-2025-0747 - one parse per module, published whole: the clauses and
+        // meta declarations first, `loaded` last (a failure is still "tried once").
+        synchronized (m) {
+            if (m.loaded) return;
+            try {
+                Prelude.Parsed p = Prelude.parse(m.resource);
+                if (p == null) return;
+                Map<String, Pred> cls = new HashMap<String, Pred>(m.clauses);
+                for (Map.Entry<String, List<Rule>> e : p.byIndicator.entrySet()) {
+                    List<Rule> rs = e.getValue();
+                    Clause[] cs = new Clause[rs.size()];
+                    for (int i = 0; i < cs.length; i++) {
+                        Clause c = Clause.compile(rs.get(i));
+                        c.birth = 0;
+                        c.death = Long.MAX_VALUE;
+                        cs[i] = c;
+                    }
+                    if ("apply".equals(m.name)) NativeApply.tag(e.getKey(), cs);   // ISS-2025-0780
+                    cls.put(e.getKey(), new Pred(cs));
+                }
+                Map<String, int[]> mt = new HashMap<String, int[]>(m.meta);
+                mt.putAll(p.meta);
+                m.clauses = cls;
+                m.meta = mt;
+            } finally {
+                m.loaded = true;
             }
-            m.clauses.put(e.getKey(), new Pred(cs));
         }
-        m.meta.putAll(p.meta);
+        // END_CHANGE: ISS-2025-0747
     }
 
     /** Test hook: how many library modules have actually been parsed. */

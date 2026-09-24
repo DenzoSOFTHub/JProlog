@@ -109,6 +109,37 @@ final class Bindings {
     // terms) needs to know WHICH cells a probe unification bound. Valid only inside the
     // forceTrail extent that took {@code m}, where every binding is trailed unconditionally.
     /** The cells bound since {@code m}, oldest first. Undo actions in the range are skipped. */
+    // START_CHANGE: ISS-2025-0787 - 4.6 wave Q6 (extra 8): TRAIL TIDYING. A binding is trailed
+    // when its variable is older than the choice point on top at that moment. When that choice
+    // point is later popped deterministically, the entries it caused for variables NEWER than the
+    // new top choice point can never be needed (no remaining choice point restores them), yet they
+    // stayed until the next backtrack below them — and every entry keeps its variable and the term
+    // bound to it alive. Under the debugger or trace/0 a deterministic frame is kept until its Exit
+    // port, so nearly every binding was trailed, and a 20 000-level deterministic recursion (whose
+    // own frames only exit at the end) accumulated ~60 KB of dead terms per level: resource_error
+    // (memory) at -Xmx512m. Undo actions are always kept. Never while an extent that undoes to its
+    // own mark is open (forceTrail > 0): it may need every entry.
+    /** Drop the entries at or above {@code from} that no choice point can need any more. */
+    void tidy(int from) {
+        if (forceTrail > 0 || from >= top) return;
+        long keep = barrierSerial;
+        int w = from;
+        for (int i = from; i < top; i++) {
+            Object e = trail[i];
+            if (e instanceof Variable && ((Variable) e).serial > keep) continue;
+            trail[w++] = e;
+        }
+        if (w < top) {
+            java.util.Arrays.fill(trail, w, top, null);
+            tidied += top - w;
+            top = w;
+        }
+    }
+
+    /** Entries dropped by {@link #tidy} (test hook). */
+    long tidied;
+    // END_CHANGE: ISS-2025-0787
+
     java.util.List<Variable> boundSince(int m) {
         java.util.ArrayList<Variable> out = new java.util.ArrayList<Variable>();
         if (m < 0) m = 0;

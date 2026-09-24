@@ -243,7 +243,8 @@ public final class Writer {
         }
 
         if (!o.ignoreOps && args.size() == 2) {
-            Operator op = ops.getInfixOperator(name);
+            // ISS-2025-0734: '|'(A,B) is written canonically, as SWI does ('|'(a,b))
+            Operator op = "|".equals(name) ? null : ops.getInfixOperator(name);
             if (op != null) {
                 onPath.put(c, Boolean.TRUE);
                 boolean paren = op.getPrecedence() > w.prec;
@@ -415,7 +416,7 @@ public final class Writer {
                 if (".".equals(c.getName()) && args.size() == 2) return '[';
                 if ("{}".equals(c.getName()) && args.size() == 1) return '{';
                 if (args.size() == 2) {
-                    Operator op = ops.getInfixOperator(c.getName());
+                    Operator op = "|".equals(c.getName()) ? null : ops.getInfixOperator(c.getName());   // ISS-2025-0734
                     if (op != null) {
                         if (op.getPrecedence() > prec) return '(';
                         prec = op.getLeftPrecedence();

@@ -305,19 +305,22 @@ public class EngineV45ConformanceTest {
 
     @Test
     public void testISS0607_PrintMessageFormatsMessages() {
-        assertEquals("% hello world\n", output("print_message(informational, format('hello ~w', [world]))"));
-        assertEquals("% Unknown message: foo\n", output("print_message(informational, foo)"));
+        // ISS-2025-0713 (4.6 Q2.5): every kind goes to user_error (SWI), so current_output sees none
+        assertEquals("", output("print_message(informational, format('hello ~w', [world]))"));
         assertEquals("", output("print_message(silent, format('x', []))"));
         java.io.ByteArrayOutputStream err = new java.io.ByteArrayOutputStream();
         java.io.PrintStream prev = System.err;
         System.setErr(new java.io.PrintStream(err, true));
         try {
+            prolog.solve("print_message(informational, format('hello ~w', [world])).");
+            prolog.solve("print_message(informational, foo).");
             prolog.solve("print_message(warning, format('careful ~d', [3])).");
             prolog.solve("print_message(error, error(type_error(integer, a), context(foo/1, _))).");
         } finally {
             System.setErr(prev);
         }
         String text = err.toString();
+        assertTrue(text, text.startsWith("% hello world\n% Unknown message: foo\n"));   // ISS-2025-0713
         assertTrue(text, text.contains("Warning: careful 3\n"));
         assertTrue(text, text.contains("ERROR: foo/1: Type error: `integer' expected, found `a'"));
     }

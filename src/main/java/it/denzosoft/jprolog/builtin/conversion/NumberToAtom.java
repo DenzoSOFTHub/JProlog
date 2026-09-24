@@ -21,6 +21,14 @@ public class NumberToAtom implements BuiltIn {
         Term arg1 = query.getArguments().get(0).resolveBindings(bindings);
         Term arg2 = query.getArguments().get(1).resolveBindings(bindings);
 
+        // START_CHANGE: ISS-2025-0797 - 4.6 wave Q7: both sides unbound raises (SWI atom_to_number/2)
+        if (arg1 instanceof it.denzosoft.jprolog.core.terms.Variable
+                && arg2 instanceof it.denzosoft.jprolog.core.terms.Variable) {
+            String n = ((it.denzosoft.jprolog.core.terms.CompoundTerm) query).getName();
+            throw it.denzosoft.jprolog.core.engine.v4.Errors.instantiation(n, 2, "one argument must be bound");
+        }
+        // END_CHANGE: ISS-2025-0797
+
         if (arg1.isGround() && !arg2.isGround()) {
             if (arg1 instanceof Number) {
                 double val = ((Number) arg1).getValue();

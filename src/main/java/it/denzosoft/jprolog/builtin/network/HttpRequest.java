@@ -2,11 +2,12 @@ package it.denzosoft.jprolog.builtin.network;
 
 // START_CHANGE: ISS-2025-0109 - Network communication built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.io.*;
 import java.net.HttpURLConnection;
@@ -42,22 +43,22 @@ public class HttpRequest implements BuiltIn {
                 default: return false;
             }
         } catch (IOException e) {
-            throw new PrologEvaluationException(modeName() + ": " + e.getMessage());
+            throw Errors.host(e, "read", "socket", null, modeName(), LibArgs.arity(query));   // ISS-2025-0693
         }
     }
 
     private boolean executeRequest(List<Term> args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws IOException {
         if (args.size() != 4) {
-            throw new PrologEvaluationException(
-                "http_request/4 requires 4 arguments: http_request(+Method, +URL, -Status, -Body).");
+            throw LibArgs.unknownArity("http_request", args.size());   // ISS-2025-0693
         }
 
         Term methodTerm = args.get(0).resolveBindings(bindings);
         Term urlTerm = args.get(1).resolveBindings(bindings);
 
-        if (!(methodTerm instanceof Atom) || !(urlTerm instanceof Atom)) {
-            throw new PrologEvaluationException("http_request/4: Method and URL must be atoms.");
+        if (!(methodTerm instanceof Atom) || !(urlTerm instanceof Atom)) {   // ISS-2025-0693
+            Term bad = !(methodTerm instanceof Atom) ? methodTerm : urlTerm;
+            throw LibArgs.notA("atom", bad, "http_request", 4, "Method and URL");
         }
 
         String method = ((Atom) methodTerm).getName().toUpperCase();
@@ -83,15 +84,15 @@ public class HttpRequest implements BuiltIn {
     private boolean executePost(List<Term> args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws IOException {
         if (args.size() != 4) {
-            throw new PrologEvaluationException(
-                "http_post/4 requires 4 arguments: http_post(+URL, +ReqBody, -Status, -RespBody).");
+            throw LibArgs.unknownArity("http_post", args.size());   // ISS-2025-0693
         }
 
         Term urlTerm = args.get(0).resolveBindings(bindings);
         Term reqBodyTerm = args.get(1).resolveBindings(bindings);
 
-        if (!(urlTerm instanceof Atom) || !(reqBodyTerm instanceof Atom)) {
-            throw new PrologEvaluationException("http_post/4: URL and RequestBody must be atoms.");
+        if (!(urlTerm instanceof Atom) || !(reqBodyTerm instanceof Atom)) {   // ISS-2025-0693
+            Term bad = !(urlTerm instanceof Atom) ? urlTerm : reqBodyTerm;
+            throw LibArgs.notA("atom", bad, "http_post", 4, "URL and RequestBody");
         }
 
         String urlStr = ((Atom) urlTerm).getName();

@@ -1,5 +1,7 @@
 package it.denzosoft.jprolog.builtin.io;
 
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.v4.PrologStream;
@@ -153,7 +155,7 @@ public class StreamInfo implements BuiltIn {
 
     private static void require(List<Term> args, int n) {
         if (args == null || args.size() != n) {
-            throw new PrologEvaluationException("wrong arity: expected " + n + " arguments");
+            throw Errors.existence("procedure", Errors.pi("stream_info", args == null ? 0 : args.size()), "stream_info");   // ISS-2025-0697
         }
     }
 

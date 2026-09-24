@@ -64,6 +64,10 @@ final class NativeDb {
         t.register("nb_delete", 1, new NbDeleteB());
         t.register("current_prolog_flag", 2, new CurrentFlagB());
         t.register("set_prolog_flag", 2, new SetFlagB());
+        // START_CHANGE: ISS-2025-0730 - multifile/1 and discontiguous/1 as goals too (SWI)
+        t.register("multifile", 1, new DeclareB("multifile"));
+        t.register("discontiguous", 1, new DeclareB("discontiguous"));
+        // END_CHANGE: ISS-2025-0730
         t.register("halt", 0, new HaltB(0));
         t.register("halt", 1, new HaltB(1));
         // START_CHANGE: ISS-2025-0499 - findall/4 is NEW: findall/3 with an open tail (SWI/ISO cor.2)
@@ -94,12 +98,29 @@ final class NativeDb {
         }
     }
 
+    // START_CHANGE: ISS-2025-0730
+    private static final class DeclareB implements Builtin {
+        private final String kind;
+        DeclareB(String kind) { this.kind = kind; }
+        @Override public Outcome call(Machine m, Term[] args) {
+            prolog(m, kind + "/1").declarePredicates(m.resolve(args[0]), kind, m.contextModule(), true);
+            return Outcome.SUCCESS;
+        }
+    }
+    // END_CHANGE: ISS-2025-0730
+
     // ------------------------------------------------------------------ current_predicate/1
 
     private static final class CurrentPredicateB implements Builtin {
         @Override
         public Outcome call(Machine m, final Term[] args) {
             Term pi = m.deref(args[0]);
+            // START_CHANGE: ISS-2025-0732 - current_predicate(M:Name/Arity) (it raised type_error)
+            if (pi instanceof CompoundTerm && ":".equals(((CompoundTerm) pi).getName())
+                    && ((CompoundTerm) pi).getArguments().size() == 2) {
+                return qualified(m, (CompoundTerm) pi);
+            }
+            // END_CHANGE: ISS-2025-0732
             if (!(pi instanceof Variable)) {
                 boolean valid = false;
                 if (pi instanceof CompoundTerm) {
@@ -121,6 +142,7 @@ final class NativeDb {
             }
             final List<Term> all = new ArrayList<Term>();
             for (String s : m.engine().kb().getDefinedPredicates()) {         // ISS-2025-0610
+                if (":/2".equals(s)) continue;             // ISS-2025-0733: M:H clauses are M's
                 int slash = s.lastIndexOf('/');
                 if (slash <= 0) continue;
                 int arity;
@@ -146,12 +168,112 @@ final class NativeDb {
         }
     }
 
+    // START_CHANGE: ISS-2025-0732 - 4.6 wave Q3 (extra): current_predicate(M:Name/Arity). M is
+    // an atom or a variable; the candidates are user's defined predicates, every module's own
+    // clauses (a library module only when named, or once it is loaded), the `M:H` clauses of the
+    // flat store and the `:- multifile M:PI` declarations.
+    static Builtin.Outcome qualified(Machine m, CompoundTerm q) {
+        final Term mt = m.deref(q.getArguments().get(0));
+        Term pi = m.deref(q.getArguments().get(1));
+        if (!(mt instanceof Variable) && !(mt instanceof Atom)) {
+            throw new PrologException(ISOErrorTerms.typeError("module", m.resolve(mt), "current_predicate/1"));
+        }
+        if (!(pi instanceof Variable)) {
+            boolean valid = false;
+            if (pi instanceof CompoundTerm && "/".equals(((CompoundTerm) pi).getName())
+                    && ((CompoundTerm) pi).getArguments().size() == 2) {
+                Term name = m.deref(((CompoundTerm) pi).getArguments().get(0));
+                Term ar = m.deref(((CompoundTerm) pi).getArguments().get(1));
+                valid = ((name instanceof Variable) || (name instanceof Atom))
+                    && ((ar instanceof Variable) || (ar instanceof Number && ((Number) ar).isInteger()
+                        && ((Number) ar).getValue() >= 0));
+            }
+            if (!valid) {
+                throw new PrologException(ISOErrorTerms.typeError(
+                    "predicate_indicator", m.resolve(pi), "current_predicate/1"));
+            }
+        }
+        String only = (mt instanceof Atom) ? ((Atom) mt).getName() : null;
+        java.util.LinkedHashSet<String> keys = new java.util.LinkedHashSet<String>();   // "m\0name/arity"
+        Modules ms = m.engine().modules4();
+        if (only == null || Modules.USER.equals(only)) {
+            for (String s : m.engine().kb().getDefinedPredicates()) {
+                if (!":/2".equals(s)) keys.add(Modules.USER + "\0" + s);
+            }
+        }
+        for (String mod : ms.names()) {
+            if (Modules.USER.equals(mod) || Modules.SYSTEM.equals(mod)) continue;
+            if (only != null && !only.equals(mod)) continue;
+            for (String k : ms.localKeys(mod, only != null)) keys.add(mod + "\0" + k);
+        }
+        ClauseStore.Predicate fq = m.engine().store().lookup(":", 2);
+        if (fq.size() > 0) {
+            Clause[] cs = fq.all();
+            for (int i = 0; i < cs.length; i++) {
+                Term h = cs[i].head;
+                if (!(h instanceof CompoundTerm) || ((CompoundTerm) h).arity() != 2) continue;
+                Term hm = ((CompoundTerm) h).arg(0);
+                Term hg = ((CompoundTerm) h).arg(1);
+                if (!(hm instanceof Atom)) continue;
+                String mod = ((Atom) hm).getName();
+                if (only != null && !only.equals(mod)) continue;
+                if (hg instanceof Atom) keys.add(mod + "\0" + ((Atom) hg).getName() + "/0");
+                else if (hg instanceof CompoundTerm) keys.add(mod + "\0" + ((CompoundTerm) hg).getName() + "/" + ((CompoundTerm) hg).arity());
+            }
+        }
+        for (String d : m.engine().kb().qualifiedDeclarations()) {
+            int colon = d.indexOf(':');
+            String mod = d.substring(0, colon);
+            if (only == null || only.equals(mod)) keys.add(mod + "\0" + d.substring(colon + 1));
+        }
+        final List<Term[]> all = new ArrayList<Term[]>();
+        for (String k : keys) {
+            int z = k.indexOf('\0');
+            String s = k.substring(z + 1);
+            int slash = s.lastIndexOf('/');
+            if (slash <= 0) continue;
+            int arity;
+            try { arity = Integer.parseInt(s.substring(slash + 1)); } catch (NumberFormatException e) { continue; }
+            all.add(new Term[] { new Atom(k.substring(0, z)), new CompoundTerm(new Atom("/"), Arrays.asList(
+                (Term) new Atom(s.substring(0, slash)), (Term) Number.valueOf((long) arity))) });
+        }
+        final Term pair = q;
+        final int max = all.size();
+        if (max == 0) return Builtin.Outcome.FAILURE;
+        if (only != null && pi instanceof CompoundTerm
+                && !(m.deref(((CompoundTerm) pi).getArguments().get(0)) instanceof Variable)
+                && !(m.deref(((CompoundTerm) pi).getArguments().get(1)) instanceof Variable)) {
+            for (int k = 0; k < max; k++) {                     // a check: deterministic
+                Term[] cand = all.get(k);
+                if (m.unifyOrUndo(pair, new CompoundTerm(new Atom(":"), Arrays.asList(cand[0], cand[1])))) {
+                    return Builtin.Outcome.SUCCESS;
+                }
+            }
+            return Builtin.Outcome.FAILURE;
+        }
+        final int[] i = {0};
+        Generator gen = new Generator() {
+            @Override public boolean next(Machine mm) {
+                while (i[0] < max) {
+                    Term[] cand = all.get(i[0]++);
+                    if (i[0] >= max) mm.lastSolution();
+                    boolean ok = mm.unifyOrUndo(pair, new CompoundTerm(new Atom(":"), Arrays.asList(cand[0], cand[1])));
+                    if (ok) return true;
+                    mm.guard().step();
+                }
+                return false;
+            }
+        };
+        return m.pushGenerator(gen) ? Builtin.Outcome.SUSPENDED : Builtin.Outcome.FAILURE;
+    }
+    // END_CHANGE: ISS-2025-0732
+
     // ------------------------------------------------------------------ retractall/1, abolish/1
 
     private static final class RetractallB implements Builtin {
         @Override
         public Outcome call(Machine m, Term[] args) {
-            Term head = m.deref(args[0]);
+            Term head = Machine.stripUser(args[0]);                  // ISS-2025-0733: user:H is H
             if (head instanceof Variable) {
                 throw new PrologException(ISOErrorTerms.instantiationError(
                     "retractall/1: clause head must be instantiated"));

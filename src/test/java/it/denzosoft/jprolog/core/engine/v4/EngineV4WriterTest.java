@@ -208,8 +208,18 @@ public class EngineV4WriterTest {
         assertEquals("", out("print_message(silent, hello)"));
         // ISS-2025-0607 (P4.14): a term that is not a known message is "Unknown message: T" (SWI);
         // format(F, A) is formatted
-        assertEquals("% Unknown message: hello\n", out("print_message(informational, hello)"));
-        assertEquals("% hello\n", out("print_message(informational, format('hello', []))"));
+        // ISS-2025-0713 (4.6 Q2.5): informational messages go to user_error (SWI), not the output
+        assertEquals("", out("print_message(informational, hello)"));
+        java.io.ByteArrayOutputStream err = new java.io.ByteArrayOutputStream();
+        java.io.PrintStream prev = System.err;
+        System.setErr(new java.io.PrintStream(err, true));
+        try {
+            out("print_message(informational, hello)");
+            out("print_message(informational, format('hello', []))");
+        } finally {
+            System.setErr(prev);
+        }
+        assertEquals("% Unknown message: hello\n% hello\n", err.toString());
     }
 
     // ==================================================================

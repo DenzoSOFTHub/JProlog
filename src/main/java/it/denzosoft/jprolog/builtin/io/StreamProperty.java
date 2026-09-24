@@ -1,5 +1,7 @@
 package it.denzosoft.jprolog.builtin.io;
 
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.v4.PrologStream;
@@ -32,7 +34,7 @@ public class StreamProperty implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException("stream_property/2 requires exactly 2 arguments");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
 
         Term streamTerm = query.getArguments().get(0).resolveBindings(bindings);

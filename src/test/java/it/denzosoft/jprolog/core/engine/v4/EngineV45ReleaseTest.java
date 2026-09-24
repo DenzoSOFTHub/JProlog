@@ -152,12 +152,12 @@ public class EngineV45ReleaseTest {
         assertTrue(succeeds("\\+ call_dcg((\\+ [x], [x]), [x, y], _)"));
     }
 
-    /** The version flags follow the release (they said 2.0.15), in SWI's shapes. */
+    /** The version flags follow the release (they said 2.0.15), in SWI's shapes. ISS-2025-0799: 4.6.0. */
     @Test
     public void testISS0675_VersionFlags() {
-        assertTrue(succeeds("current_prolog_flag(version, V), V == 40500"));
-        assertTrue(succeeds("current_prolog_flag(version_data, D), D == jprolog(4, 5, 0, [])"));
-        assertTrue(succeeds("current_prolog_flag(prolog_version, P), P == 'jprolog-4.5.0'"));
+        assertTrue(succeeds("current_prolog_flag(version, V), V == 40600"));
+        assertTrue(succeeds("current_prolog_flag(version_data, D), D == jprolog(4, 6, 0, [])"));
+        assertTrue(succeeds("current_prolog_flag(prolog_version, P), P == 'jprolog-4.6.0'"));
         assertTrue(succeeds("catch(set_prolog_flag(version, 1), error(E, _), true), "
             + "E = permission_error(modify, flag, version)"));
     }

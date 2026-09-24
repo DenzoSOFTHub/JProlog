@@ -1,5 +1,7 @@
 package it.denzosoft.jprolog.builtin.debug;
 
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
@@ -31,7 +33,7 @@ public class NoSpy implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments() == null || query.getArguments().size() != 1) {
-            throw new PrologEvaluationException("nospy/1 requires exactly 1 argument");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         
         Term predicateIndicator = query.getArguments().get(0).resolveBindings(bindings);

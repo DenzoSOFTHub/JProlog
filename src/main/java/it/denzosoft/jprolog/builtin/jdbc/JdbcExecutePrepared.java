@@ -2,11 +2,12 @@ package it.denzosoft.jprolog.builtin.jdbc;
 
 // START_CHANGE: ISS-2025-0110 - Prepared statements with parameters and stored procedures
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.utils.CollectionUtils;
 
 import java.sql.PreparedStatement;
@@ -52,15 +53,14 @@ public class JdbcExecutePrepared implements BuiltIn {
     private boolean execQuery(List<Term> args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         if (args.size() != 2) {
-            throw new PrologEvaluationException(
-                "jdbc_execute_prepared_query/2 requires 2 arguments: jdbc_execute_prepared_query(+Stmt, -Rows).");
+            throw LibArgs.unknownArity("jdbc_execute_prepared_query", args.size());   // ISS-2025-0692
         }
 
         Term stmtTerm = args.get(0).resolveBindings(bindings);
         Term rowsTerm = args.get(1);
 
         if (!(stmtTerm instanceof Atom)) {
-            throw new PrologEvaluationException("jdbc_execute_prepared_query/2: Statement must be an atom handle.");
+            throw LibArgs.notA("atom", stmtTerm, "jdbc_execute_prepared_query", 2, "Statement must be an atom handle");   // ISS-2025-0692
         }
 
         String handle = ((Atom) stmtTerm).getName();
@@ -90,22 +90,21 @@ public class JdbcExecutePrepared implements BuiltIn {
             }
             return false;
         } catch (SQLException e) {
-            throw new PrologEvaluationException("jdbc_execute_prepared_query: " + e.getMessage());
+            throw Errors.host(e, "execute", "sql", null, "jdbc_execute_prepared_query", args.size());   // ISS-2025-0692
         }
     }
 
     private boolean execUpdate(List<Term> args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         if (args.size() != 2) {
-            throw new PrologEvaluationException(
-                "jdbc_execute_prepared_update/2 requires 2 arguments: jdbc_execute_prepared_update(+Stmt, -Rows).");
+            throw LibArgs.unknownArity("jdbc_execute_prepared_update", args.size());   // ISS-2025-0692
         }
 
         Term stmtTerm = args.get(0).resolveBindings(bindings);
         Term rowsTerm = args.get(1);
 
         if (!(stmtTerm instanceof Atom)) {
-            throw new PrologEvaluationException("jdbc_execute_prepared_update/2: Statement must be an atom handle.");
+            throw LibArgs.notA("atom", stmtTerm, "jdbc_execute_prepared_update", 2, "Statement must be an atom handle");   // ISS-2025-0692
         }
 
         try {
@@ -119,20 +118,19 @@ public class JdbcExecutePrepared implements BuiltIn {
             }
             return false;
         } catch (SQLException e) {
-            throw new PrologEvaluationException("jdbc_execute_prepared_update: " + e.getMessage());
+            throw Errors.host(e, "execute", "sql", null, "jdbc_execute_prepared_update", args.size());   // ISS-2025-0692
         }
     }
 
     private boolean execClose(List<Term> args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         if (args.size() != 1) {
-            throw new PrologEvaluationException(
-                "jdbc_close_statement/1 requires 1 argument.");
+            throw LibArgs.unknownArity("jdbc_close_statement", args.size());   // ISS-2025-0692
         }
 
         Term stmtTerm = args.get(0).resolveBindings(bindings);
         if (!(stmtTerm instanceof Atom)) {
-            throw new PrologEvaluationException("jdbc_close_statement/1: Statement must be an atom handle.");
+            throw LibArgs.notA("atom", stmtTerm, "jdbc_close_statement", 1, "Statement must be an atom handle");   // ISS-2025-0692
         }
 
         try {
@@ -145,7 +143,7 @@ public class JdbcExecutePrepared implements BuiltIn {
             solutions.add(bindings);
             return true;
         } catch (SQLException e) {
-            throw new PrologEvaluationException("jdbc_close_statement: " + e.getMessage());
+            throw Errors.host(e, "execute", "sql", null, "jdbc_close_statement", args.size());   // ISS-2025-0692
         }
     }
 

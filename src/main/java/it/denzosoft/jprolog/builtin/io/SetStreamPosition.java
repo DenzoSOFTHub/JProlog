@@ -1,10 +1,11 @@
 // START_CHANGE: LIM-007 - Stream Repositioning
 package it.denzosoft.jprolog.builtin.io;
 
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.v4.PrologStream;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
@@ -26,7 +27,7 @@ public class SetStreamPosition implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException("set_stream_position/2 requires exactly 2 arguments");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
 
         Term streamTerm = query.getArguments().get(0).resolveBindings(bindings);
@@ -55,7 +56,7 @@ public class SetStreamPosition implements BuiltIn {
                 ISOErrorTerms.domainError("stream_position", positionTerm, "set_stream_position/2"));
         }
         if (position < 0) {
-            throw new PrologEvaluationException("set_stream_position/2: Position must be non-negative");
+            throw new PrologException(ISOErrorTerms.domainError("stream_position", positionTerm, "set_stream_position/2"));   // ISS-2025-0697
         }
         if (!s.canReposition()) {
             throw new PrologException(
@@ -71,7 +72,7 @@ public class SetStreamPosition implements BuiltIn {
             throw pe;
         } catch (Exception e) {
             it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
-            throw new PrologEvaluationException("set_stream_position/2: I/O error: " + e.getMessage());
+            throw Errors.host(e, "reposition", "stream", null, "set_stream_position", 2);   // ISS-2025-0697
         }
         // END_CHANGE: ISS-2025-0472
     }

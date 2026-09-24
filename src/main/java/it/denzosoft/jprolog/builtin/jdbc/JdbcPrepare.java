@@ -2,9 +2,10 @@ package it.denzosoft.jprolog.builtin.jdbc;
 
 // START_CHANGE: ISS-2025-0110 - Prepared statements with parameters and stored procedures
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.sql.SQLException;
 import java.util.HashMap;
@@ -23,8 +24,7 @@ public class JdbcPrepare implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 3) {
-            throw new PrologEvaluationException(
-                "jdbc_prepare/3 requires 3 arguments: jdbc_prepare(+Conn, +SQL, -Stmt).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         Term connTerm = query.getArguments().get(0).resolveBindings(bindings);
@@ -32,10 +32,10 @@ public class JdbcPrepare implements BuiltIn {
         Term stmtTerm = query.getArguments().get(2);
 
         if (!(connTerm instanceof Atom)) {
-            throw new PrologEvaluationException("jdbc_prepare/3: Connection must be an atom handle.");
+            throw LibArgs.notA("atom", connTerm, "jdbc_prepare", 3, "Connection must be an atom handle");   // ISS-2025-0692
         }
         if (!(sqlTerm instanceof Atom)) {
-            throw new PrologEvaluationException("jdbc_prepare/3: SQL must be an atom.");
+            throw LibArgs.notA("atom", sqlTerm, "jdbc_prepare", 3, "SQL must be an atom");   // ISS-2025-0692
         }
 
         try {
@@ -50,7 +50,7 @@ public class JdbcPrepare implements BuiltIn {
             JdbcConnectionManager.getInstance().closeStatement(handle);
             return false;
         } catch (SQLException e) {
-            throw new PrologEvaluationException("jdbc_prepare: " + e.getMessage());
+            throw Errors.host(e, "execute", "sql", null, "jdbc_prepare", LibArgs.arity(query));   // ISS-2025-0692
         }
     }
 }

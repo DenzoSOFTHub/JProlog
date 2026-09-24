@@ -53,7 +53,7 @@ public final class JdbcConnectionManager {
     public Connection getConnection(String handle) {
         Connection conn = connections.get(handle);
         if (conn == null) {
-            throw new IllegalArgumentException("Unknown JDBC connection handle: " + handle);
+            throw it.denzosoft.jprolog.core.engine.v4.Errors.existence("jdbc_connection", new it.denzosoft.jprolog.core.terms.Atom(handle), "jdbc");   // ISS-2025-0692
         }
         return conn;
     }
@@ -84,7 +84,7 @@ public final class JdbcConnectionManager {
     public PreparedStatement getStatement(String handle) {
         PreparedStatement ps = statements.get(handle);
         if (ps == null) {
-            throw new IllegalArgumentException("Unknown JDBC statement handle: " + handle);
+            throw it.denzosoft.jprolog.core.engine.v4.Errors.existence("jdbc_statement", new it.denzosoft.jprolog.core.terms.Atom(handle), "jdbc");   // ISS-2025-0692
         }
         return ps;
     }
@@ -147,7 +147,7 @@ public final class JdbcConnectionManager {
     public CallableStatement getCallableStatement(String handle) {
         CallableStatement cs = callableStatements.get(handle);
         if (cs == null) {
-            throw new IllegalArgumentException("Unknown JDBC callable statement handle: " + handle);
+            throw it.denzosoft.jprolog.core.engine.v4.Errors.existence("jdbc_callable_statement", new it.denzosoft.jprolog.core.terms.Atom(handle), "jdbc");   // ISS-2025-0692
         }
         return cs;
     }
@@ -164,7 +164,7 @@ public final class JdbcConnectionManager {
     public ResultSet getResultSet(String handle) {
         ResultSet rs = resultSets.get(handle);
         if (rs == null) {
-            throw new IllegalArgumentException("Unknown JDBC result set handle: " + handle);
+            throw it.denzosoft.jprolog.core.engine.v4.Errors.existence("jdbc_result_set", new it.denzosoft.jprolog.core.terms.Atom(handle), "jdbc");   // ISS-2025-0692
         }
         return rs;
     }

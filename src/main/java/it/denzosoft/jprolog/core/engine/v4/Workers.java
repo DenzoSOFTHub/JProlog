@@ -118,6 +118,13 @@ public final class Workers {
         // non-worker thread: the CLI, an IDE background solve, an embedder) keeps the engine's.
         Object prevGlobals = (prolog == null) ? null : prolog.enterWorkerGlobals();
         // END_CHANGE: ISS-2025-0633
+        // START_CHANGE: ISS-2025-0749 - a worker machine has its own signal box (a thread_create
+        // worker binds its thread's box before it gets here); without one a concurrent_* pool
+        // thread would be `main` and take main's signals.
+        final boolean ownBox = !it.denzosoft.jprolog.core.engine.ThreadSignals.bound();
+        if (ownBox) it.denzosoft.jprolog.core.engine.ThreadSignals.bind(new it.denzosoft.jprolog.core.engine.ThreadSignals.Box());
+        // END_CHANGE: ISS-2025-0749
+        final Tabling prevSpace = Tabling.enterWorker(engine);       // ISS-2025-0752: private tables
         try {
             final Machine m = new Machine(engine, guard);           // ISS-2025-0624
             m.asWorker();   // engine-wide query-boundary sweeps belong to the top-level query
@@ -139,6 +146,11 @@ public final class Workers {
                 }
             });
         } finally {
+            Tabling.exitWorker(prevSpace);                                 // ISS-2025-0752
+            if (ownBox) {                                                  // ISS-2025-0749
+                it.denzosoft.jprolog.core.engine.ThreadSignals.discard(it.denzosoft.jprolog.core.engine.ThreadSignals.current());
+                it.denzosoft.jprolog.core.engine.ThreadSignals.bind(null);
+            }
             if (prolog != null) {
                 prolog.exitWorkerGlobals(prevGlobals);                     // ISS-2025-0633
                 it.denzosoft.jprolog.core.system.PrologFlags.setCurrent(prevFlags);

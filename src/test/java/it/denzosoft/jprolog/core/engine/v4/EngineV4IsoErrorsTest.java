@@ -54,6 +54,9 @@ import static org.junit.Assert.assertTrue;
  *       ISS-2025-0604.)</li>
  * </ol>
  *
+ * <p>Wave Q1 (ISS-2025-0699) added one row per bridged extended-library family and two for the exact
+ * registry arities; those rows pin the context too, as {@code context(Name/Arity, Message)}.
+ *
  * <p>The project-wide list of deliberate deviations (these rows, the engine design decisions and
  * the 4.5.0 decisions) is {@code docs/references/ref-deviations.md} (ISS-2025-0669).
  *
@@ -433,6 +436,54 @@ public class EngineV4IsoErrorsTest {
         // shape (no catch/3 at all) cannot be expressed here — every row runs under catch/3 —
         // and is pinned by EngineHardeningTest.testISS0513_UncaughtReportsTheCleanupsBall.
         row("call_cleanup(throw(a), throw(b))", "b");
+
+        // START_CHANGE: ISS-2025-0699 - wave Q1: one row per bridged EXTENDED LIBRARY family
+        // (LIM-038). Each raises error(Formal, context(Name/Arity, Message)) now, never a message
+        // atom; the host-failure rows use paths/handles that cannot exist, so nothing is touched.
+        row("xml_parse(1, X)", "error(type_error(atom, 1), context(xml_parse/2, *");
+        row("xml_parse('<a', X)", "error(syntax_error(xml), context(xml_parse/2, *");
+        row("re_match(X, abc)", "error(instantiation_error, context(re_match/2, *");
+        row("re_match('(', abc)", "error(syntax_error(invalid_regex), context(re_match/2, *");
+        row("md5_hash(f(x), H)", "error(type_error(atom, f(x)), context(md5_hash/2, *");
+        row("crypto_hash(sha999, abc, H)", "error(domain_error(hash_algorithm, sha999), context(crypto_hash/3, *");
+        row("csv_parse(X, R)", "error(instantiation_error, context(csv_parse/2, *");
+        row("date_add('2024-01-01', 1, fortnights, R)", "error(domain_error(date_unit, fortnights), context(date_add/4, *");
+        row("json_parse('{\"a\":', J)", "error(syntax_error(json), context(json_parse/2, *");
+        row("json_keys(foo, K)", "error(type_error(json, foo), context(json_keys/2, *");
+        row("getenv(f(x), V)", "error(type_error(atom, f(x)), context(getenv/2, *");
+        row("sleep(a)", "error(type_error(number, a), context(sleep/1, *");
+        row("file_exists(X)", "error(instantiation_error, context(file_exists/1, *");
+        row("read_file_to_atom('/nonexistent/q1/file.txt', A)",
+            "error(existence_error(file, '/nonexistent/q1/file.txt'), context(read_file_to_atom/2, *");
+        row("http_stop(nosuch)", "error(existence_error(http_server, nosuch), context(http_stop/1, *");
+        row("jdbc_connect(X, C)", "error(instantiation_error, context(jdbc_connect/2, *");
+        row("jdbc_driver_load('no.such.Driver')", "error(existence_error(class, 'no.such.Driver'), context(jdbc_driver_load/1, *");
+        row("tcp_connect(X, 80, S)", "error(instantiation_error, context(tcp_connect/3, *");
+        row("db_save(f(x))", "error(type_error(atom, f(x)), context(db_save/1, *");
+        row("persist(foo)", "error(type_error(predicate_indicator, foo), context(persist/1, *");
+        row("phrase_with_options(a, [], R, foo)", "error(type_error(list, foo), context(phrase_with_options/4, *");
+        row("leash(bogus)", "error(domain_error(leash_mode, bogus), context(leash/1, *");
+        row("graph_vertices([f(x)], V)", "error(type_error(edge, f(x)),*");
+        row("log_level(bogus)", "error(domain_error(log_level, bogus),*");
+        // Q1.2: an arity the built-in does not implement is an unknown procedure (ISS-2025-0685)
+        row("char_code(X)", "error(existence_error(procedure, char_code/1),*");
+        row("json_parse(X)", "error(existence_error(procedure, json_parse/1),*");
+        // END_CHANGE: ISS-2025-0699
+
+        // START_CHANGE: ISS-2025-0710..0716 - wave Q2: the new built-ins' argument contracts
+        row("limit(X, true)", "error(instantiation_error, 'limit/2')");
+        row("limit(a, true)", "error(type_error(integer, a), 'limit/2')");
+        row("offset(-1, true)", "error(domain_error(not_less_than_zero, -1), 'offset/2')");
+        row("call_nth(true, a)", "error(type_error(integer, a), 'call_nth/2')");
+        row("distinct(X, 1)", "error(type_error(callable, 1), 'distinct/2')");
+        row("order_by([], true)", "error(domain_error(non_empty_list, []), 'order_by/2')");
+        row("order_by([up(X)], true)", "error(domain_error(order_specifier, up(_*");
+        row("X is 1.0 rdiv 2", "error(type_error(rational, 1.0), *");
+        row("X is 1 rdiv 0", "error(evaluation_error(zero_divisor), *");
+        row("X is numerator(0.5)", "error(type_error(rational, 0.5), *");
+        row("aggregate(nosuch, true, R)", "error(domain_error(aggregate_spec, nosuch), 'aggregate/3')");
+        row("aggregate(count, G, R)", "error(instantiation_error, 'aggregate/3')");
+        // END_CHANGE: ISS-2025-0710..0716
 
         report(200);
     }

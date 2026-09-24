@@ -420,6 +420,8 @@ false.
 `copy_term(+Term, -Copy, -Attributes)` copies `Term` without its attributes and returns them as a
 list of goals that would restore them. `unifiable(@X, @Y, -Unifier)` returns the list of
 `Var = Value` bindings that unifying `X` and `Y` would make, **without** making them.
+For a CLP(FD) variable the goals are its domain and the constraints still alive on it, in
+SWI-Prolog's printed forms (v4.6.0; the same goals the toplevel prints after an answer).
 
 ```prolog
 ?- put_attr(X, mymod, 1), term_attvars(f(X, Y), Vs).
@@ -427,6 +429,9 @@ Vs = [X].
 
 ?- put_attr(X, mymod, 1), copy_term(X, Y, Attrs).
 Attrs = [put_attr(Y, mymod, 1)].
+
+?- X #> Y, copy_term(X-Y, C, Gs).
+C = _A-_B, Gs = [_B#=<_A+ -1].
 
 ?- unifiable(f(X, b), f(a, Y), U).
 U = [X = a, Y = b].
@@ -789,13 +794,20 @@ true.
 ```
 
 ### working_directory/2, file_modified/2, delete_directory/1
-**Purpose**: `working_directory(-Old, +New)` reads and changes the process working directory
+**Purpose**: `working_directory(-Old, +New)` reads and changes the engine's working directory
 (`working_directory(D, D)` only reads it); `file_modified(+Path, -Millis)` gives the modification
 time in epoch milliseconds; `delete_directory(+Path)` removes an empty directory.
 
+*v4.6.0* (ISS-2025-0745): the working directory belongs to the **engine** (each `Prolog`
+instance has its own, starting at the JVM's), never to the JVM: the `user.dir` property is not
+touched. Every relative file name — `open/3,4`, `consult/1` and the loaders, `absolute_file_name/2,3`,
+`exists_file/1`, the filesystem, CSV, persistence and logging built-ins — is resolved against it.
+`Old` ends with `/` (SWI); `New` may be relative to the current directory; a `New` that is not a
+directory is `existence_error(directory, New)`.
+
 ```prolog
 ?- working_directory(D, D).
-D = '/home/user/project'.
+D = '/home/user/project/'.
 
 ?- open('note.txt', write, W), close(W), file_modified('note.txt', T).
 T = 1787644907965.

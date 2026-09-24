@@ -26,7 +26,7 @@ import java.util.Map;
  */
 public class LoadFiles implements BuiltInWithContext {
 
-    public enum Mode { CONSULT, ENSURE_LOADED, LOAD_FILES, LIST, MAKE }
+    public enum Mode { CONSULT, ENSURE_LOADED, LOAD_FILES, LIST, MAKE, USE_MODULE }   // ISS-2025-0735: + use_module/1,2
 
     private final Mode mode;
 
@@ -43,6 +43,7 @@ public class LoadFiles implements BuiltInWithContext {
             case ENSURE_LOADED: return "ensure_loaded/1";
             case LOAD_FILES: return "load_files/2";
             case LIST: return "'.'/2";
+            case USE_MODULE: return "use_module/1";                             // ISS-2025-0735
             default: return "make/0";
         }
     }
@@ -58,6 +59,11 @@ public class LoadFiles implements BuiltInWithContext {
             case MAKE:
                 p.make(runner);
                 break;
+            // START_CHANGE: ISS-2025-0735 - use_module/1,2 as goals
+            case USE_MODULE:
+                p.useModule(args.get(0), args.size() == 2 ? args.get(1) : null, runner);
+                break;
+            // END_CHANGE: ISS-2025-0735
             case LIST: {
                 // [F|Fs] as a goal: consult F and every file of Fs
                 Term list = new CompoundTerm(new Atom("."), java.util.Arrays.asList(args.get(0), args.get(1)));

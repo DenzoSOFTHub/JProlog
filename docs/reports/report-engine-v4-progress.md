@@ -189,6 +189,24 @@ Added by the later waves (the table above is the W1/W2 snapshot): `NativeControl
     `new Variable()`; the source names travel only in `variable_names/1`. Named cells from two reads
     would be merged by the assert path, which numbers skeleton variables by NAME (invariant 5).
     Consult keeps named variables (one clause = one scope).
+16. **The trail is tidied on every deterministic frame pop** (ISS-2025-0787, 4.6 wave Q6):
+    `Bindings.tidy(cp.trailMark)` after the trust-me pop and the traced Exit pop drops the entries
+    of variables newer than the new top choice point. Consequence: a Bindings mark taken ABOVE a
+    choice point that is later popped is not stable — so anything that holds a mark across the
+    execution of goals must either raise `forceTrail` for the whole extent (tidy never runs then:
+    findall, runOnce, runSubQuery, `\=`, the catcher match) or take the mark with a choice point of
+    its own below it that outlives the extent (predsort's fail frame, ISS-2025-0779). Undo actions
+    are never dropped.
+17. **Run-time goals have call sites too** (ISS-2025-0777): `Machine.rtLookup`/`rtStore`, a
+    per-machine (name, arity) cache of `CallSite`s validated exactly like a skeleton's (context
+    module + `dispatchStamp()`); a body goal that resolved to a native keeps a `NativeSite`
+    (ISS-2025-0779). A new dispatch table must feed `Engine.dispatchStamp()`.
+18. **A native iteration runs its user goals on the goal stack** (ISS-2025-0779/0780):
+    `Machine.Step` is a goal action that may fail; predsort/3 and `NativeApply` push the user goal
+    followed by a Step, never a nested drive. A Step that emits ports claims them
+    (`claimNativePorts`) and reports Exit/Fail itself; `NativeApply` reproduces the two library
+    clauses' CLAUSES frame (look-ahead, trace fields, `popIfDeterministicTop`) whenever something
+    is traced or both alternatives remain — `EngineV4TraceTest` and the Q6.2 oracles pin it.
 
 
 ---

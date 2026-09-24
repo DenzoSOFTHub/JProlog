@@ -3,7 +3,8 @@ package it.denzosoft.jprolog.builtin.xml;
 // START_CHANGE: ISS-2025-0118 - XML built-in predicates
 // START_CHANGE: ISS-2025-0174 - XML XXE hardening
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
+import it.denzosoft.jprolog.core.terms.Variable;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -44,11 +45,18 @@ public class XmlPredicates implements BuiltIn {
                 case XPATH:         return doXpath(query, bindings, solutions);
                 default: return false;
             }
-        } catch (PrologEvaluationException e) {
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException e) {
             throw e;
         } catch (Exception e) {
             it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
-            throw new PrologEvaluationException(modeName() + ": " + e.getMessage());
+            // START_CHANGE: ISS-2025-0682 - wave Q1.1: malformed XML / XPath text is a syntax
+            // error of the argument, anything else a system error (never a message atom)
+            int n = query.getArguments() == null ? 0 : query.getArguments().size();
+            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            if (e instanceof org.xml.sax.SAXException) throw Errors.syntax("xml", modeName(), n, msg);
+            if (e instanceof javax.xml.xpath.XPathExpressionException) throw Errors.syntax("xpath", modeName(), n, msg);
+            throw Errors.host(e, "read", "xml", null, modeName(), n);
+            // END_CHANGE: ISS-2025-0682
         }
     }
 
@@ -97,12 +105,13 @@ public class XmlPredicates implements BuiltIn {
     private boolean doXmlParse(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 2);
-        String xml = resolveAtom(query.getArguments().get(0), bindings);
+        String xml = resolveAtom(query, 0, bindings);
 
         // START_CHANGE: ISS-2025-0174 - Use hardened factory
         DocumentBuilderFactory factory = createSecureDocumentBuilderFactory();
         // END_CHANGE: ISS-2025-0174
         DocumentBuilder builder = factory.newDocumentBuilder();
+        builder.setErrorHandler(SILENT);                               // ISS-2025-0682
         Document doc = builder.parse(new InputSource(new StringReader(xml)));
         Term term = domToTerm(doc.getDocumentElement());
         return unify(query.getArguments().get(1), term, bindings, solutions);
@@ -116,7 +125,7 @@ public class XmlPredicates implements BuiltIn {
             List<Map<String, Term>> solutions) {
         checkArity(query, 2);
         Term term = query.getArguments().get(0).resolveBindings(bindings);
-        String xml = termToXml(term);
+        String xml = termToXml(term);                                  // ISS-2025-0682: checks it
         return unify(query.getArguments().get(1), new Atom(xml), bindings, solutions);
     }
 
@@ -127,13 +136,14 @@ public class XmlPredicates implements BuiltIn {
     private boolean doXpath(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 3);
-        String xml = resolveAtom(query.getArguments().get(0), bindings);
-        String xpathExpr = resolveAtom(query.getArguments().get(1), bindings);
+        String xml = resolveAtom(query, 0, bindings);
+        String xpathExpr = resolveAtom(query, 1, bindings);
 
         // START_CHANGE: ISS-2025-0174 - Use hardened factory
         DocumentBuilderFactory factory = createSecureDocumentBuilderFactory();
         // END_CHANGE: ISS-2025-0174
         DocumentBuilder builder = factory.newDocumentBuilder();
+        builder.setErrorHandler(SILENT);                               // ISS-2025-0682
         Document doc = builder.parse(new InputSource(new StringReader(xml)));
 
         XPathFactory xpFactory = XPathFactory.newInstance();
@@ -187,11 +197,21 @@ public class XmlPredicates implements BuiltIn {
         if (term instanceof Atom) {
             return escapeXml(((Atom) term).getName());
         }
+        // START_CHANGE: ISS-2025-0682 - an unbound or malformed element is an argument fault
+        if (term instanceof Variable) throw Errors.instantiation("xml_serialize", 2, "the element must be bound");
         if (!(term instanceof CompoundTerm) || !"element".equals(((CompoundTerm) term).getName())) {
+            if (term instanceof CompoundTerm) {
+                throw Errors.type("xml_element", term, "xml_serialize", 2, "element(Tag, Attributes, Children) expected");
+            }
             return term.toString();
         }
         List<Term> args = term.getArguments();
-        if (args.size() != 3) throw new PrologEvaluationException("xml_serialize: element/3 expected.");
+        if (args.size() != 3) {
+            throw Errors.type("xml_element", term, "xml_serialize", 2, "element/3 expected");
+        }
+        if (args.get(0) instanceof Variable) throw Errors.instantiation("xml_serialize", 2, "the tag must be bound");
+        if (!(args.get(0) instanceof Atom)) throw Errors.type("atom", args.get(0), "xml_serialize", 2, "the tag must be an atom");
+        // END_CHANGE: ISS-2025-0682
 
         String tag = ((Atom) args.get(0)).getName();
         StringBuilder sb = new StringBuilder();
@@ -230,16 +250,30 @@ public class XmlPredicates implements BuiltIn {
                 .replace("\"", "&quot;").replace("'", "&apos;");
     }
 
+    // START_CHANGE: ISS-2025-0682 - wave Q1.1: ISO error terms, not message atoms
+    /** The default handler prints "[Fatal Error] ..." on System.err; the error term says it all. */
+    private static final org.xml.sax.ErrorHandler SILENT = new org.xml.sax.ErrorHandler() {
+        @Override public void warning(org.xml.sax.SAXParseException e) { }
+        @Override public void error(org.xml.sax.SAXParseException e) throws org.xml.sax.SAXException { throw e; }
+        @Override public void fatalError(org.xml.sax.SAXParseException e) throws org.xml.sax.SAXException { throw e; }
+    };
+
     private void checkArity(Term query, int expected) {
-        if (query.getArguments().size() != expected)
-            throw new PrologEvaluationException(modeName() + " requires " + expected + " arguments.");
+        int n = query.getArguments() == null ? 0 : query.getArguments().size();
+        if (n != expected) throw Errors.existence("procedure", Errors.pi(modeName(), n), modeName(), n, null);
     }
 
-    private String resolveAtom(Term term, Map<String, Term> bindings) {
-        Term resolved = term.resolveBindings(bindings);
-        if (!(resolved instanceof Atom)) throw new PrologEvaluationException(modeName() + ": argument must be an atom.");
+    private String resolveAtom(Term query, int i, Map<String, Term> bindings) {
+        int n = query.getArguments().size();
+        Term resolved = query.getArguments().get(i).resolveBindings(bindings);
+        if (resolved instanceof Variable) throw Errors.instantiation(modeName(), n, "argument " + (i + 1) + " must be bound");
+        if (resolved instanceof it.denzosoft.jprolog.core.terms.PrologString) {
+            return ((it.denzosoft.jprolog.core.terms.PrologString) resolved).getStringValue();
+        }
+        if (!(resolved instanceof Atom)) throw Errors.type("atom", resolved, modeName(), n, "argument " + (i + 1) + " must be an atom");
         return ((Atom) resolved).getName();
     }
+    // END_CHANGE: ISS-2025-0682
 
     private boolean unify(Term target, Term value, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {

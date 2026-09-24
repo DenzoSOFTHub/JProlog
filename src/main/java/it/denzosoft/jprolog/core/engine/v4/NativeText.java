@@ -51,6 +51,12 @@ final class NativeText {
     private static final Atom DOT = new Atom(".");
 
     static void register(BuiltinTable t) {
+        // START_CHANGE: ISS-2025-0718 - wave Q2.8: documented but missing. Pure path-text
+        // operations (no file-system access), so they are natives and stay in safe mode.
+        t.register("file_base_name", 2, new PathPartB(0));
+        t.register("file_directory_name", 2, new PathPartB(1));
+        t.register("file_extension", 2, new PathPartB(2));
+        // END_CHANGE: ISS-2025-0718
         t.register("atom_length", 2, new AtomLengthB());
         t.register("atom_concat", 3, new ConcatB(true));
         t.register("string_concat", 3, new ConcatB(false));
@@ -541,7 +547,8 @@ final class NativeText {
                 String s2 = (a instanceof Atom) ? ((Atom) a).getName() : m.resolve(a).toString();
                 return s1.equals(s2) ? Outcome.SUCCESS : Outcome.FAILURE;
             }
-            return Outcome.FAILURE;
+            // ISS-2025-0797 - 4.6 wave Q7: neither side bound raises (SWI), it failed silently
+            throw Errors.instantiation("string_to_atom/2");
         }
     }
 
@@ -1000,5 +1007,46 @@ final class NativeText {
         }
     }
     // END_CHANGE: ISS-2025-0602
+
+    // START_CHANGE: ISS-2025-0718
+    /**
+     * {@code file_base_name/2} (the part after the last {@code /}), {@code file_directory_name/2}
+     * (the part before it: {@code .} without one, {@code /} for a root file; trailing separators
+     * of a directory path are ignored, as SWI does) and {@code file_extension/2} (the text after the
+     * last dot of the base name, {@code ''} when there is none). An atom gives an atom, a string a
+     * string; an unbound path is an instantiation error, a non-text one a type error.
+     */
+    private static final class PathPartB implements Builtin {
+        private final int part;
+        PathPartB(int part) { this.part = part; }
+
+        @Override
+        public Outcome call(Machine m, Term[] args) {
+            String ind = (part == 0 ? "file_base_name" : part == 1 ? "file_directory_name" : "file_extension") + "/2";
+            Term p = m.deref(args[0]);
+            if (p instanceof Variable) throw Errors.instantiation(ind);
+            String path;
+            if (p instanceof Atom) path = ((Atom) p).getName();
+            else if (p instanceof PrologString) path = ((PrologString) p).getStringValue();
+            else throw Errors.type("atom", m.resolve(p), ind);
+            String r;
+            String trimmed = path;
+            while (trimmed.length() > 1 && trimmed.endsWith("/")) trimmed = trimmed.substring(0, trimmed.length() - 1);
+            int slash = trimmed.lastIndexOf('/');
+            if (part == 1) {
+                r = (slash < 0) ? "." : (slash == 0) ? "/" : trimmed.substring(0, slash);
+            } else {
+                String base = (path.endsWith("/")) ? "" : path.substring(path.lastIndexOf('/') + 1);
+                if (part == 0) r = base;
+                else {
+                    int dot = base.lastIndexOf('.');
+                    r = (dot <= 0) ? "" : base.substring(dot + 1);
+                }
+            }
+            Term out = (p instanceof PrologString) ? new PrologString(r) : new Atom(r);
+            return m.unify(args[1], out) ? Outcome.SUCCESS : Outcome.FAILURE;
+        }
+    }
+    // END_CHANGE: ISS-2025-0718
 }
 // END_CHANGE: ISS-2025-0497

@@ -30,7 +30,12 @@
                   nth0/3, nth1/3, last/2, reverse/2,
                   length/2, msort/2, sort/2, sum_list/2, sumlist/2, numlist/3,
                   permutation/2, max_list/2, min_list/2,
-                  subtract/3, intersection/3, union/3, sort/4]).
+                  subtract/3, intersection/3, union/3, sort/4,
+                  append/2, nextto/3, max_member/2, min_member/2,
+                  max_member/3, min_member/3, list_to_set/2, proper_length/2]).
+
+:- meta_predicate(max_member(2, -, +)).
+:- meta_predicate(min_member(2, -, +)).
 
 member(X, [X|_]).
 member(X, [_|T]) :- member(X, T).
@@ -88,3 +93,97 @@ subtract([E|T], D, R) :-
     subtract(T, D, R).
 subtract([H|T], D, [H|R]) :-
     subtract(T, D, R).
+
+% ISS-2025-0790 (wave Q7): the rest of SWI-Prolog 9's library(lists) that JProlog lacked,
+% as SWI defines them (library/lists.pl): append/2, nextto/3, max_member/2,3,
+% min_member/2,3 (standard order of terms, or the given order predicate),
+% list_to_set/2 (first occurrences kept, compared with ==) and proper_length/2.
+append(ListOfLists, List) :-
+    must_be(list, ListOfLists),
+    '$append_'(ListOfLists, List).
+
+'$append_'([], []).
+'$append_'([L|Ls], As) :-
+    append(L, Ws, As),
+    '$append_'(Ls, Ws).
+
+nextto(X, Y, [X,Y|_]).
+nextto(X, Y, [_|Zs]) :-
+    nextto(X, Y, Zs).
+
+max_member(Max, [H|T]) :-
+    '$max_member_'(T, H, Max).
+
+'$max_member_'([], Max0, Max) :-
+    Max = Max0.
+'$max_member_'([H|T], Max0, Max) :-
+    (   H @=< Max0
+    ->  Max1 = Max0
+    ;   Max1 = H
+    ),
+    '$max_member_'(T, Max1, Max).
+
+min_member(Min, [H|T]) :-
+    '$min_member_'(T, H, Min).
+
+'$min_member_'([], Min0, Min) :-
+    Min = Min0.
+'$min_member_'([H|T], Min0, Min) :-
+    (   H @>= Min0
+    ->  Min1 = Min0
+    ;   Min1 = H
+    ),
+    '$min_member_'(T, Min1, Min).
+
+max_member(Pred, Max, [H|T]) :-
+    '$max_member_p'(T, Pred, H, Max).
+
+'$max_member_p'([], _, Max, Max).
+'$max_member_p'([H|T], Pred, Max0, Max) :-
+    (   call(Pred, H, Max0)
+    ->  '$max_member_p'(T, Pred, Max0, Max)
+    ;   '$max_member_p'(T, Pred, H, Max)
+    ).
+
+min_member(Pred, Min, [H|T]) :-
+    '$min_member_p'(T, Pred, H, Min).
+
+'$min_member_p'([], _, Min, Min).
+'$min_member_p'([H|T], Pred, Min0, Min) :-
+    (   call(Pred, Min0, H)
+    ->  '$min_member_p'(T, Pred, Min0, Min)
+    ;   '$min_member_p'(T, Pred, H, Min)
+    ).
+
+list_to_set(List, Set) :-
+    must_be(list, List),
+    '$lts_number'(List, 1, Numbered),
+    sort(1, @=<, Numbered, ONum),
+    '$lts_remove_dup_keys'(ONum, NumSet),
+    sort(2, @=<, NumSet, ONumSet),
+    '$lts_keys'(ONumSet, Set).
+
+'$lts_number'([], _, []).
+'$lts_number'([H|T0], N, [H-N|T]) :-
+    N1 is N+1,
+    '$lts_number'(T0, N1, T).
+
+'$lts_remove_dup_keys'([], []).
+'$lts_remove_dup_keys'([H|T0], [H|T]) :-
+    H = V-_,
+    '$lts_remove_same_key'(T0, V, T1),
+    '$lts_remove_dup_keys'(T1, T).
+
+'$lts_remove_same_key'([V1-_|T0], V, T) :-
+    V1 == V,
+    !,
+    '$lts_remove_same_key'(T0, V, T).
+'$lts_remove_same_key'(L, _, L).
+
+'$lts_keys'([], []).
+'$lts_keys'([K-_|T], [K|Ks]) :-
+    '$lts_keys'(T, Ks).
+
+proper_length(List, Length) :-
+    is_list(List),
+    length(List, Length).

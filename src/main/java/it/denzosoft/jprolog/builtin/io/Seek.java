@@ -1,6 +1,8 @@
 // START_CHANGE: CR-2025-0005 - seek/4 stream positioning
 package it.denzosoft.jprolog.builtin.io;
 
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.v4.PrologStream;
@@ -28,7 +30,7 @@ public class Seek implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 4) {
-            throw new PrologEvaluationException("seek/4 requires exactly 4 arguments");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         Term streamTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term offsetTerm = query.getArguments().get(1).resolveBindings(bindings);
@@ -79,7 +81,7 @@ public class Seek implements BuiltIn {
             throw pe;
         } catch (Exception e) {
             it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
-            throw new PrologEvaluationException("seek/4: I/O error: " + e.getMessage());
+            throw Errors.host(e, "reposition", "stream", null, "seek", 4);   // ISS-2025-0697
         }
     }
 }

@@ -46,6 +46,34 @@ public final class EngineState {
         return prev;
     }
 
+    // START_CHANGE: ISS-2025-0745 - 4.6 wave Q4 (extra): the working directory is PER ENGINE.
+    // working_directory/2 used to set the JVM-wide `user.dir` property — a hazard with several
+    // engines or embedders in one JVM, and ineffective besides (java.io.File caches user.dir at
+    // startup, so relative paths never followed it). Every built-in that takes a file name now
+    // resolves a relative one against the working directory of the engine current on the thread.
+    /** The JVM's working directory at startup (java.io.File's own cached value). */
+    private static final String JVM_CWD = new java.io.File("").getAbsolutePath();
+
+    private volatile String workingDirectory = JVM_CWD;
+
+    /** This engine's working directory: an absolute path, without a trailing separator. */
+    public String workingDirectory() { return workingDirectory; }
+
+    /** Change this engine's working directory ({@code dir} must be an absolute directory path). */
+    public void setWorkingDirectory(String dir) { this.workingDirectory = dir; }
+
+    /** {@code path} as a file, a relative one resolved against the current engine's directory. */
+    public static java.io.File file(String path) {
+        java.io.File f = new java.io.File(path);
+        if (f.isAbsolute()) return f;
+        String base = current().workingDirectory;
+        return path.isEmpty() ? new java.io.File(base) : new java.io.File(base, path);
+    }
+
+    /** {@link #file(String)} as a path string. */
+    public static String path(String path) { return file(path).getPath(); }
+    // END_CHANGE: ISS-2025-0745
+
     /** This engine's stream table (design B.11). */
     public Streams streams() { return streams; }
 

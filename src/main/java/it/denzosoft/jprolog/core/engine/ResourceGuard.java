@@ -98,6 +98,64 @@ public final class ResourceGuard {
     }
     // END_CHANGE: ISS-2025-0624
 
+    // START_CHANGE: ISS-2025-0786 - 4.6 wave Q6 (extra 7, LIM-045): the bridged extended libraries
+    // (regex, json, xml, csv, crypto, ...) run outside the machine's drive loop, so the budget used
+    // to see one step for a call that could run for minutes (a pathological regular expression).
+    // The adapter installs the running query's guard here for the duration of a bridged call; the
+    // libraries charge their per-element work to it, and a regular expression matches over a
+    // CharSequence that charges every CHARGE_EVERY characters it reads — so catastrophic
+    // backtracking is bounded by the budget and stopped by a Stop request. What they throw is the
+    // same InferenceLimitException / QueryCancelledException as the machine's: plain runtime
+    // exceptions no catch/3 can intercept (the trust model).
+    private static final ThreadLocal<ResourceGuard> BRIDGE = new ThreadLocal<ResourceGuard>();
+
+    /** Install {@code g} as the guard of the bridged call about to run; returns the previous one. */
+    public static ResourceGuard enterBridge(ResourceGuard g) {
+        ResourceGuard prev = BRIDGE.get();
+        BRIDGE.set(g);
+        return prev;
+    }
+
+    /** Restore the guard {@link #enterBridge} replaced. */
+    public static void exitBridge(ResourceGuard prev) {
+        if (prev == null) BRIDGE.remove(); else BRIDGE.set(prev);
+    }
+
+    /** Charge {@code n} steps to the guard of the running bridged call (a no-op outside one). */
+    public static void chargeBridged(long n) {
+        ResourceGuard g = BRIDGE.get();
+        if (g != null) g.charge(n);
+    }
+
+    static final int CHARGE_EVERY = 256;
+
+    /**
+     * {@code s} as a CharSequence that charges the running bridged call one step per
+     * {@value #CHARGE_EVERY} characters read (java.util.regex reads its input through charAt, so
+     * this meters the matcher's real work, backtracking included). {@code s} itself outside a
+     * bridged call.
+     */
+    public static CharSequence guarded(final CharSequence s) {
+        final ResourceGuard g = BRIDGE.get();
+        if (g == null) return s;
+        return new Metered(s, g, new int[1]);
+    }
+
+    private static final class Metered implements CharSequence {
+        private final CharSequence s;
+        private final ResourceGuard g;
+        private final int[] reads;                  // shared by the subSequences of one input
+        Metered(CharSequence s, ResourceGuard g, int[] reads) { this.s = s; this.g = g; this.reads = reads; }
+        @Override public int length() { return s.length(); }
+        @Override public char charAt(int i) {
+            if (++reads[0] >= CHARGE_EVERY) { reads[0] = 0; g.charge(1); }
+            return s.charAt(i);
+        }
+        @Override public CharSequence subSequence(int a, int b) { return new Metered(s.subSequence(a, b), g, reads); }
+        @Override public String toString() { return s.toString(); }
+    }
+    // END_CHANGE: ISS-2025-0786
+
     /** Charge one resolution step. */
     public void step() {
         long n = ++steps;

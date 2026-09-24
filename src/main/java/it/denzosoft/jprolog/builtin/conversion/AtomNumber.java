@@ -190,6 +190,18 @@ public class AtomNumber implements BuiltIn {
                 i = j + 1;
                 while (i < len && s.charAt(i) >= '0' && s.charAt(i) <= '9') i++;
             }
+            // START_CHANGE: ISS-2025-0712 - a rational literal NrD (SWI), as the v2 lexer reads it
+            if (!isFloat && i + 1 < len && s.charAt(i) == 'r' && s.charAt(i + 1) >= '0' && s.charAt(i + 1) <= '9') {
+                int denStart = i + 1;
+                int j = denStart;
+                while (j < len && s.charAt(j) >= '0' && s.charAt(j) <= '9') j++;
+                if (j != len) return null;
+                java.math.BigInteger n = new java.math.BigInteger(s.substring(bodyStart, i));
+                java.math.BigInteger d = new java.math.BigInteger(s.substring(denStart, j));
+                if (d.signum() == 0) return null;
+                return it.denzosoft.jprolog.core.terms.Rational.of(neg ? n.negate() : n, d);
+            }
+            // END_CHANGE: ISS-2025-0712
             if (i != len) return null;                                // trailing characters
             String body = s.substring(bodyStart, len);
             if (isFloat) {

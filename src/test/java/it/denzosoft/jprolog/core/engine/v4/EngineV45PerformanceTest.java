@@ -393,8 +393,12 @@ public class EngineV45PerformanceTest {
         m.solve(parse("numlist(1, 3000, L), maplist(succ, L, L2), foldl(plus, L2, 0, S), S =:= 4504500"),
             sol -> { sols[0]++; return true; });
         assertEquals(1, sols[0]);
-        assertTrue("maplist/foldl recursion must take the call-site path, hits = " + m.siteHits,
-            m.siteHits >= 2 * 2990);
+        // START_CHANGE: ISS-2025-0780 - 4.6 wave Q6.2 repinned this: maplist/foldl no longer
+        // recurse through library clauses at all (NativeApply runs one native level per element),
+        // which is what the call sites were a step towards.
+        assertTrue("maplist/foldl must run as native levels, levels = " + m.applyLevels,
+            m.applyLevels >= 2 * 3000);
+        // END_CHANGE: ISS-2025-0780
         // the meta-argument still runs in the caller's context
         prolog.consult(":- module(mm, [go/1]).\nhelper(X, Y) :- Y is X * 10.\ngo(L) :- maplist(helper, [1,2,3], L).\n");
         assertEquals("[10,20,30]", one("mm:go(L)", "L"));

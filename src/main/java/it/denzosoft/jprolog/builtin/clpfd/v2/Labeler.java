@@ -143,4 +143,138 @@ public final class Labeler {
         return keepGoing;
     }
     // END_CHANGE: ISS-2025-0422
+
+    // START_CHANGE: ISS-2025-0769 - 4.6 wave Q5.4: branch and bound, ITERATIVE. The optimum of
+    // labeling/2's min(Expr)/max(Expr) used to be found by re-running the recursive labeler once per
+    // improvement (Java recursion one level per variable, a restart from the root each round). This
+    // is one depth-first search with an explicit frame stack: every solution tightens the bound on
+    // the objective, and the bound is re-imposed on every later branch, so the search never
+    // revisits a region that cannot improve and uses O(1) Java stack whatever the number of
+    // variables.
+    private static final class Frame {
+        final FdVar var;
+        final long[][] ranges;
+        final boolean up;
+        final int mark;
+        final int scanFrom;
+        int ri;
+        long next;
+        boolean done;
+
+        Frame(FdVar var, IntervalDomain d, boolean up, int mark, int scanFrom) {
+            this.var = var;
+            this.ranges = d.rangeArray();
+            this.up = up;
+            this.mark = mark;
+            this.scanFrom = scanFrom;
+            if (ranges.length == 0) { done = true; return; }
+            ri = up ? 0 : ranges.length - 1;
+            next = up ? ranges[0][0] : ranges[ranges.length - 1][1];
+        }
+
+        long take() {
+            long v = next;
+            if (up) {
+                if (next < ranges[ri][1]) next++;
+                else if (++ri < ranges.length) next = ranges[ri][0];
+                else done = true;
+            } else {
+                if (next > ranges[ri][0]) next--;
+                else if (--ri >= 0) next = ranges[ri][1];
+                else done = true;
+            }
+            return v;
+        }
+    }
+
+    /** Index of the next variable to branch on (-1: all fixed, -2: a wiped-out domain). */
+    private static int select(ClpStore s, List<FdVar> vars, VarSel varSel, int from) {
+        int chosen = -1;
+        IntervalDomain cd = null;
+        for (int i = (varSel == VarSel.LEFTMOST ? from : 0); i < vars.size(); i++) {
+            IntervalDomain d = s.dom(vars.get(i));
+            if (d.isEmpty()) return -2;
+            if (d.isSingleton()) continue;
+            if (chosen < 0) {
+                chosen = i; cd = d;
+                if (varSel == VarSel.LEFTMOST) break;
+                continue;
+            }
+            boolean better;
+            switch (varSel) {
+                case FF:  better = d.size() < cd.size(); break;
+                case FFC: {
+                    long a = d.size(), b = cd.size();
+                    better = a < b || (a == b && s.degree(vars.get(i)) > s.degree(vars.get(chosen)));
+                    break;
+                }
+                case MIN: better = d.min() < cd.min(); break;
+                case MAX: better = d.max() > cd.max(); break;
+                default:  better = false; break;
+            }
+            if (better) { chosen = i; cd = d; }
+        }
+        return chosen;
+    }
+
+    /**
+     * The optimum of {@code obj} (minimised or maximised) over the labelings of {@code vars}, or
+     * null when there is none. The store is restored before returning.
+     *
+     * @throws IllegalStateException when a complete labeling leaves {@code obj} unfixed (the
+     *         caller maps it to an instantiation error)
+     */
+    public static Long optimum(ClpStore s, List<FdVar> vars, VarSel varSel, ValOrder valOrder,
+                               FdVar obj, boolean minimize) {
+        final int rootMark = s.mark();
+        final boolean up = valOrder == ValOrder.UP;
+        Long best = null;
+        ArrayList<Frame> stack = new ArrayList<>();
+        try {
+            int first = select(s, vars, varSel, 0);
+            if (first == -2) return null;
+            if (first == -1) return fixedObjective(s, obj);
+            stack.add(frame(s, vars, first, up));
+            long nodes = 0;
+            while (!stack.isEmpty()) {
+                Frame top = stack.get(stack.size() - 1);
+                if (top.done) {
+                    s.undo(top.mark);
+                    stack.remove(stack.size() - 1);
+                    continue;
+                }
+                long val = top.take();
+                s.undo(top.mark);
+                if ((++nodes & 0x3FF) == 0) ClpStore.poll();
+                boolean ok = s.assign(top.var, val);
+                if (ok && best != null) {
+                    ok = minimize ? s.removeAbove(obj, best - 1) : s.removeBelow(obj, best + 1);
+                }
+                if (!ok || !s.propagate()) continue;
+                int nx = select(s, vars, varSel, top.scanFrom);
+                if (nx == -2) continue;
+                if (nx == -1) {                                    // a solution: tighten the bound
+                    best = fixedObjective(s, obj);
+                    continue;
+                }
+                stack.add(frame(s, vars, nx, up));
+            }
+            return best;
+        } finally {
+            s.undo(rootMark);
+        }
+    }
+
+    private static Frame frame(ClpStore s, List<FdVar> vars, int i, boolean up) {
+        IntervalDomain d = s.dom(vars.get(i));
+        if (d.size() > MAX_LABEL_DOMAIN) throw new TooLargeToLabel(d.size());
+        return new Frame(vars.get(i), d, up, s.mark(), i);
+    }
+
+    private static long fixedObjective(ClpStore s, FdVar obj) {
+        IntervalDomain od = s.dom(obj);
+        if (!od.isSingleton()) throw new IllegalStateException("objective not fixed by the labeling");
+        return od.value();
+    }
+    // END_CHANGE: ISS-2025-0769
 }

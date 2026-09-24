@@ -2,11 +2,12 @@ package it.denzosoft.jprolog.builtin.jdbc;
 
 // START_CHANGE: ISS-2025-0110 - Prepared statements with parameters and stored procedures
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.utils.CollectionUtils;
 
 import java.sql.CallableStatement;
@@ -63,7 +64,7 @@ public class JdbcCallProcedure implements BuiltIn {
                 default: return false;
             }
         } catch (SQLException e) {
-            throw new PrologEvaluationException(modeName() + ": " + e.getMessage());
+            throw Errors.host(e, "execute", "sql", null, modeName(), LibArgs.arity(query));   // ISS-2025-0692
         }
     }
 
@@ -71,8 +72,7 @@ public class JdbcCallProcedure implements BuiltIn {
             List<Map<String, Term>> solutions) throws SQLException {
         List<Term> args = query.getArguments();
         if (args.size() != 3) {
-            throw new PrologEvaluationException(
-                "jdbc_prepare_call/3 requires 3 arguments: jdbc_prepare_call(+Conn, +SQL, -CallStmt).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         String connHandle = resolveAtom(args.get(0), bindings, "Connection");
@@ -93,8 +93,7 @@ public class JdbcCallProcedure implements BuiltIn {
             List<Map<String, Term>> solutions) throws SQLException {
         List<Term> args = query.getArguments();
         if (args.size() != 3) {
-            throw new PrologEvaluationException(
-                "jdbc_call_set_param/3 requires 3 arguments: jdbc_call_set_param(+CallStmt, +Index, +Value).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         String handle = resolveAtom(args.get(0), bindings, "CallStmt");
@@ -112,8 +111,7 @@ public class JdbcCallProcedure implements BuiltIn {
             List<Map<String, Term>> solutions) throws SQLException {
         List<Term> args = query.getArguments();
         if (args.size() != 3) {
-            throw new PrologEvaluationException(
-                "jdbc_call_register_out/3 requires 3 arguments: jdbc_call_register_out(+CallStmt, +Index, +SqlType).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         String handle = resolveAtom(args.get(0), bindings, "CallStmt");
@@ -132,8 +130,7 @@ public class JdbcCallProcedure implements BuiltIn {
             List<Map<String, Term>> solutions) throws SQLException {
         List<Term> args = query.getArguments();
         if (args.size() != 1) {
-            throw new PrologEvaluationException(
-                "jdbc_call_execute/1 requires 1 argument: jdbc_call_execute(+CallStmt).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         String handle = resolveAtom(args.get(0), bindings, "CallStmt");
@@ -148,8 +145,7 @@ public class JdbcCallProcedure implements BuiltIn {
             List<Map<String, Term>> solutions) throws SQLException {
         List<Term> args = query.getArguments();
         if (args.size() != 3) {
-            throw new PrologEvaluationException(
-                "jdbc_call_get_result/3 requires 3 arguments: jdbc_call_get_result(+CallStmt, +Index, -Value).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         String handle = resolveAtom(args.get(0), bindings, "CallStmt");
@@ -179,8 +175,7 @@ public class JdbcCallProcedure implements BuiltIn {
             List<Map<String, Term>> solutions) throws SQLException {
         List<Term> args = query.getArguments();
         if (args.size() != 2) {
-            throw new PrologEvaluationException(
-                "jdbc_call_get_resultset/2 requires 2 arguments: jdbc_call_get_resultset(+CallStmt, -Rows).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         String handle = resolveAtom(args.get(0), bindings, "CallStmt");
@@ -188,7 +183,8 @@ public class JdbcCallProcedure implements BuiltIn {
         ResultSet rs = cs.getResultSet();
 
         if (rs == null) {
-            throw new PrologEvaluationException("jdbc_call_get_resultset: No ResultSet available.");
+            throw Errors.existence("result_set", args.get(0).resolveBindings(bindings), "jdbc_call_get_resultset", 2,
+                                   "no ResultSet available");   // ISS-2025-0692
         }
 
         // START_CHANGE: ISS-2025-0265 - try-with-resources so the ResultSet is closed even if
@@ -235,16 +231,15 @@ public class JdbcCallProcedure implements BuiltIn {
             case "date":                    return java.sql.Types.DATE;
             case "timestamp":               return java.sql.Types.TIMESTAMP;
             default:
-                throw new PrologEvaluationException(
-                    "jdbc_call_register_out: Unknown SQL type: " + typeName +
-                    ". Valid types: integer, bigint, double, decimal, varchar, boolean, date, timestamp.");
+                throw Errors.domain("sql_type", new Atom(typeName), "jdbc_call_register_out", 3,
+                    "valid types: integer, bigint, double, decimal, varchar, boolean, date, timestamp");   // ISS-2025-0692
         }
     }
 
     private String resolveAtom(Term term, Map<String, Term> bindings, String argName) {
         Term resolved = term.resolveBindings(bindings);
         if (!(resolved instanceof Atom)) {
-            throw new PrologEvaluationException(modeName() + ": " + argName + " must be an atom.");
+            throw LibArgs.notA("atom", resolved, modeName(), LibArgs.nameArity(modeName()), argName);   // ISS-2025-0692
         }
         return ((Atom) resolved).getName();
     }
@@ -252,7 +247,7 @@ public class JdbcCallProcedure implements BuiltIn {
     private int resolveInt(Term term, Map<String, Term> bindings, String argName) {
         Term resolved = term.resolveBindings(bindings);
         if (!(resolved instanceof Number)) {
-            throw new PrologEvaluationException(modeName() + ": " + argName + " must be a number.");
+            throw LibArgs.notA("number", resolved, modeName(), LibArgs.nameArity(modeName()), argName);   // ISS-2025-0692
         }
         return ((Number) resolved).getValue().intValue();
     }

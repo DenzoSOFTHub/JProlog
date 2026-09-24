@@ -56,6 +56,11 @@ final class NativeTerm {
         t.register("string", 1, new StringB());
         t.register("must_be", 2, new MustBeB());
         t.register("unify_with_occurs_check", 2, new UnifyOccursB());
+        // START_CHANGE: ISS-2025-0712 - wave Q2.3: rational/1 (an integer or a rational — SWI) and
+        // rational/3 (its numerator and denominator); the legacy registry test is retired.
+        t.register("rational", 1, new RationalB());
+        t.register("rational", 3, new Rational3B());
+        // END_CHANGE: ISS-2025-0712
     }
 
     // ------------------------------------------------------------------ functor/3
@@ -347,6 +352,33 @@ final class NativeTerm {
         }
     }
 
+    // START_CHANGE: ISS-2025-0712
+    private static final class RationalB implements Builtin {
+        @Override
+        public Outcome call(Machine m, Term[] args) {
+            Term t = m.deref(args[0]);
+            return (t instanceof Number && !((Number) t).isFloat()) ? Outcome.SUCCESS : Outcome.FAILURE;
+        }
+    }
+
+    /** {@code rational(@X, -N, -D)}: fails unless X is an integer or a rational. */
+    private static final class Rational3B implements Builtin {
+        @Override
+        public Outcome call(Machine m, Term[] args) {
+            Term t = m.deref(args[0]);
+            if (!(t instanceof Number) || ((Number) t).isFloat()) return Outcome.FAILURE;
+            Number x = (Number) t;
+            Term n = big(it.denzosoft.jprolog.core.terms.Rational.numeratorOf(x));
+            Term d = big(it.denzosoft.jprolog.core.terms.Rational.denominatorOf(x));
+            return (m.unify(args[1], n) && m.unify(args[2], d)) ? Outcome.SUCCESS : Outcome.FAILURE;
+        }
+
+        private static Term big(java.math.BigInteger v) {
+            return (v.bitLength() <= 63) ? Number.valueOf(v.longValue()) : new Number(v);
+        }
+    }
+    // END_CHANGE: ISS-2025-0712
+
     private static final class SimpleB implements Builtin {
         @Override
         public Outcome call(Machine m, Term[] args) {
@@ -380,7 +412,8 @@ final class NativeTerm {
             else if ("atomic".equals(type))            ok = (v instanceof Atom) || (v instanceof Number);
             else if ("number".equals(type))            ok = v instanceof Number;
             else if ("integer".equals(type))           ok = (v instanceof Number) && ((Number) v).isInteger();
-            else if ("float".equals(type))             ok = (v instanceof Number) && !((Number) v).isInteger();
+            else if ("float".equals(type))             ok = (v instanceof Number) && ((Number) v).isFloat();    // ISS-2025-0712
+            else if ("rational".equals(type))          ok = (v instanceof Number) && !((Number) v).isFloat();   // ISS-2025-0712
             else if ("compound".equals(type))          ok = v instanceof CompoundTerm;
             else if ("callable".equals(type))          ok = (v instanceof Atom) || (v instanceof CompoundTerm);
             else if ("var".equals(type))               ok = v instanceof Variable;

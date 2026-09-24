@@ -157,16 +157,32 @@ public final class Coroutining {
         List<Variable> vars = new ArrayList<Variable>();
         for (int i = 0; i < roots.size(); i++) Unify.termVariables(roots.get(i), vars, null);
         IdentityHashMap<Variable, Boolean> seen = new IdentityHashMap<Variable, Boolean>();
+        Object[] clp = new Object[1];                                    // ISS-2025-0760
         for (int i = 0; i < vars.size(); i++) {
             Variable v = vars.get(i);
             if (seen.put(v, Boolean.TRUE) != null) continue;
-            if (v.hasAttributes()) attributeGoals(v, out);
+            if (v.hasAttributes()) attributeGoals(v, out, clp);
         }
+        finishClpfd(clp, out);
         return out;
     }
 
+    // START_CHANGE: ISS-2025-0760 - 4.6 wave Q5.1: the CLP(FD) part renders the live constraints
+    // (SWI's clpfd:attribute_goals//1) through ONE state per answer, so a constraint shared by
+    // several variables is printed once and the auxiliary variables it reaches come last.
+    /** Close the CLP(FD) rendering state of one residual-goal collection (no-op when unused). */
+    static void finishClpfd(Object[] clp, List<Term> out) {
+        if (clp[0] == null) return;
+        try {
+            it.denzosoft.jprolog.builtin.clpfd.v2.ClpfdV2Bridge.finishResidualGoals(clp[0], out);
+        } catch (RuntimeException ex) {
+            ControlFlow.rethrowIfControl(ex);
+        }
+    }
+    // END_CHANGE: ISS-2025-0760
+
     /** The residual goals of one attributed cell, appended to {@code out}. */
-    static void attributeGoals(Variable v, List<Term> out) {
+    static void attributeGoals(Variable v, List<Term> out, Object[] clp) {
         for (Map.Entry<String, Term> e : v.getAttributes().entrySet()) {
             String mod = e.getKey();
             Term val = e.getValue();
@@ -189,13 +205,14 @@ public final class Coroutining {
                     }
                 }
             } else if (CLPFD.equals(mod)) {
-                Term dom = null;
+                // START_CHANGE: ISS-2025-0760 - the domain AND the live constraints (SWI form)
                 try {
-                    dom = it.denzosoft.jprolog.builtin.clpfd.v2.ClpfdV2Bridge.domainTermForCell(v);
+                    if (clp[0] == null) clp[0] = it.denzosoft.jprolog.builtin.clpfd.v2.ClpfdV2Bridge.newResidualState();
+                    it.denzosoft.jprolog.builtin.clpfd.v2.ClpfdV2Bridge.residualGoals(v, clp[0], out);
                 } catch (RuntimeException ex) {
                     ControlFlow.rethrowIfControl(ex);
                 }
-                if (dom != null) out.add(new CompoundTerm(new Atom("in"), Arrays.asList((Term) v, dom)));
+                // END_CHANGE: ISS-2025-0760
             } else {
                 out.add(new CompoundTerm(new Atom("put_attr"),
                     Arrays.asList((Term) v, (Term) new Atom(mod), val)));
@@ -334,9 +351,11 @@ public final class Coroutining {
             List<Variable> vars = new ArrayList<Variable>();
             Unify.termVariables(args[0], vars, m.guard());
             List<Term> goals = new ArrayList<Term>();
+            Object[] clp = new Object[1];                                // ISS-2025-0760
             for (int i = 0; i < vars.size(); i++) {
-                if (vars.get(i).hasAttributes()) attributeGoals(vars.get(i), goals);
+                if (vars.get(i).hasAttributes()) attributeGoals(vars.get(i), goals, clp);
             }
+            finishClpfd(clp, goals);
             Term goalList = Unify.copy(Machine.makeList(goals), map, m.guard());
             if (!m.unify(args[1], copy)) return Outcome.FAILURE;
             return m.unify(args[2], goalList) ? Outcome.SUCCESS : Outcome.FAILURE;

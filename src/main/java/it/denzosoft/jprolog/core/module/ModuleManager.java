@@ -19,7 +19,7 @@ public class ModuleManager {
     // END_CHANGE: ISS-2025-0167
 
     private final Map<String, Module> modules;
-    private Module currentModule;
+    private volatile Module currentModule;
     private Module userModule;
 
     // START_CHANGE: ISS-2025-0466 - engine v4 wave W6: a monotone modification stamp. The v4
@@ -33,14 +33,49 @@ public class ModuleManager {
 
     /** Record a change made through a {@link Module} handle this manager cannot observe
      *  (an export, a {@code meta_predicate} or a {@code module_transparent} declaration). */
-    public void touch() { stamp++; }
+    public void touch() { STAMP.incrementAndGet(this); }            // ISS-2025-0739: atomic, lock-free
+    private static final java.util.concurrent.atomic.AtomicLongFieldUpdater<ModuleManager> STAMP =
+        java.util.concurrent.atomic.AtomicLongFieldUpdater.newUpdater(ModuleManager.class, "stamp");
     // END_CHANGE: ISS-2025-0466
+
+    // START_CHANGE: ISS-2025-0739 - 4.6 wave Q3.8: while a thread is LOADING, the module its
+    // clauses go to and its `:- module` switches are its own (loads of different files may run
+    // in parallel); outside a load the shared current (type-in) module applies, as before.
+    private static final class LoadScope {
+        Module current;
+        int depth;
+    }
+
+    private final ThreadLocal<LoadScope> loadScope = new ThreadLocal<>();
+
+    /** The calling thread enters a load (nested loads nest). */
+    public void enterLoad() {
+        LoadScope sc = loadScope.get();
+        if (sc == null) {
+            sc = new LoadScope();
+            sc.current = currentModule;
+            loadScope.set(sc);
+        }
+        sc.depth++;
+    }
+
+    /** The calling thread leaves a load; the outermost exit drops its module scope. */
+    public void exitLoad() {
+        LoadScope sc = loadScope.get();
+        if (sc != null && --sc.depth <= 0) loadScope.remove();
+    }
+
+    private Module cur() {
+        LoadScope sc = loadScope.get();
+        return sc != null ? sc.current : currentModule;
+    }
+    // END_CHANGE: ISS-2025-0739
     
     /**
      * Create a new module manager with default 'user' module.
      */
     public ModuleManager() {
-        this.modules = new HashMap<>();
+        this.modules = new java.util.concurrent.ConcurrentHashMap<>();   // ISS-2025-0739: loads run in parallel
         this.userModule = new Module("user");
         this.modules.put("user", userModule);
         this.currentModule = userModule;
@@ -55,7 +90,7 @@ public class ModuleManager {
     public Module getOrCreateModule(String name) {
         Module existing = modules.get(name);
         if (existing != null) return existing;
-        stamp++;                                                  // ISS-2025-0466
+        touch();                                                  // ISS-2025-0466, 0739: atomic
         return modules.computeIfAbsent(name, Module::new);
     }
     
@@ -69,7 +104,7 @@ public class ModuleManager {
     public Module createModule(String name, List<PredicateSignature> exportList) {
         Module module = new Module(name, exportList);
         modules.put(name, module);
-        stamp++;                                                  // ISS-2025-0466
+        touch();                                                  // ISS-2025-0466, 0739: atomic
         return module;
     }
     
@@ -83,8 +118,9 @@ public class ModuleManager {
         if (module == null) {
             throw new IllegalArgumentException("Module not found: " + moduleName);
         }
-        this.currentModule = module;
-        stamp++;                                                  // ISS-2025-0466
+        LoadScope sc = loadScope.get();                           // ISS-2025-0739
+        if (sc != null) sc.current = module; else this.currentModule = module;
+        touch();                                                  // ISS-2025-0466
     }
     
     /**
@@ -93,7 +129,7 @@ public class ModuleManager {
      * @return The current module
      */
     public Module getCurrentModule() {
-        return currentModule;
+        return cur();                                             // ISS-2025-0739
     }
     
     /**
@@ -121,8 +157,14 @@ public class ModuleManager {
      * @param rule The rule to add
      */
     public void addRule(Rule rule) {
-        currentModule.addRule(rule);
-        stamp++;                                                  // ISS-2025-0466
+        cur().addRule(rule);
+        touch();                                                  // ISS-2025-0466, 0739: atomic
+    }
+
+    /** {@link #addRule(Rule)} into a module the caller already holds (ISS-2025-0739: the loader). */
+    public void addRule(Module module, Rule rule) {
+        module.addRule(rule);
+        touch();
     }
     
     /**
@@ -140,8 +182,8 @@ public class ModuleManager {
             checkImportCollision(sig, moduleName);
         }
         // END_CHANGE: ISS-2025-0167
-        currentModule.importModule(module);
-        stamp++;                                                  // ISS-2025-0466
+        cur().importModule(module);
+        touch();                                                  // ISS-2025-0466, 0739: atomic
     }
 
     /**
@@ -160,8 +202,8 @@ public class ModuleManager {
             checkImportCollision(sig, moduleName);
         }
         // END_CHANGE: ISS-2025-0167
-        currentModule.importModule(module, predicates);
-        stamp++;                                                  // ISS-2025-0466
+        cur().importModule(module, predicates);
+        touch();                                                  // ISS-2025-0466, 0739: atomic
     }
 
     // START_CHANGE: ISS-2025-0167 - Name collision detection
@@ -174,19 +216,19 @@ public class ModuleManager {
      * @param sourceModuleName The name of the module being imported from
      */
     private void checkImportCollision(PredicateSignature sig, String sourceModuleName) {
-        if (currentModule.isLocallyDefined(sig)) {
+        if (cur().isLocallyDefined(sig)) {
             LOGGER.warning("Import collision: predicate " + sig +
                 " from module '" + sourceModuleName +
                 "' conflicts with locally defined predicate in module '" +
-                currentModule.getName() + "'");
+                cur().getName() + "'");
         } else {
-            Module existingSource = currentModule.resolvePredicate(sig);
+            Module existingSource = cur().resolvePredicate(sig);
             if (existingSource != null && !existingSource.getName().equals(sourceModuleName)) {
                 LOGGER.warning("Import collision: predicate " + sig +
                     " from module '" + sourceModuleName +
                     "' conflicts with predicate already imported from module '" +
                     existingSource.getName() + "' in module '" +
-                    currentModule.getName() + "'");
+                    cur().getName() + "'");
             }
         }
     }
@@ -221,12 +263,12 @@ public class ModuleManager {
 
         // START_CHANGE: ISS-2025-0165 - Use internal resolution for current module, external for others
         // Current module can see all its own predicates (internal access)
-        Module resolvedModule = currentModule.resolvePredicate(signature);
-        if (resolvedModule != null && resolvedModule != currentModule) {
+        Module resolvedModule = cur().resolvePredicate(signature);
+        if (resolvedModule != null && resolvedModule != cur()) {
             // The predicate was found in an imported module - verify export visibility
             resolvedModule = resolvedModule.resolvePredicateForExternalAccess(signature);
         }
-        if (resolvedModule == null && currentModule != userModule) {
+        if (resolvedModule == null && cur() != userModule) {
             // Fall back to user module - use external access since it's a different module
             resolvedModule = userModule.resolvePredicateForExternalAccess(signature);
         } else if (resolvedModule == null) {
@@ -360,7 +402,7 @@ public class ModuleManager {
         userModule = new Module("user");
         modules.put("user", userModule);
         currentModule = userModule;
-        stamp++;                                                  // ISS-2025-0466
+        touch();                                                  // ISS-2025-0466, 0739: atomic
     }
     
     @Override

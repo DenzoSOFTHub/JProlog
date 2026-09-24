@@ -1,6 +1,8 @@
 // START_CHANGE: CR-2025-0009 - profile/0, noprofile/0, profile_data/1
 package it.denzosoft.jprolog.builtin.debug;
 
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.Profiler;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
@@ -50,7 +52,7 @@ public class Profile implements BuiltIn {
                 return true;
             case PROFILE_DATA: {
                 if (query.getArguments() == null || query.getArguments().size() != 1) {
-                    throw new PrologEvaluationException("profile_data/1 requires exactly 1 argument");
+                    throw LibArgs.unknownArity(query);   // ISS-2025-0697
                 }
                 Term out = query.getArguments().get(0);
                 List<Term> entries = new ArrayList<>();

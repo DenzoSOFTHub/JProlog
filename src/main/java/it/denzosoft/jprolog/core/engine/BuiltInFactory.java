@@ -518,6 +518,7 @@ public class BuiltInFactory {
         registerFactory("load_files", () -> new LoadFiles(LoadFiles.Mode.LOAD_FILES));
         registerFactory(".", () -> new LoadFiles(LoadFiles.Mode.LIST));
         registerFactory("make", () -> new LoadFiles(LoadFiles.Mode.MAKE));
+        registerFactory("use_module", () -> new LoadFiles(LoadFiles.Mode.USE_MODULE));   // ISS-2025-0735
         // END_CHANGE: ISS-2025-0574
         // START_CHANGE: ISS-2025-0576
         registerFactory("source_file", () -> new it.denzosoft.jprolog.builtin.system.SourceFiles(
@@ -537,7 +538,11 @@ public class BuiltInFactory {
         registerFactory("file_modified", () -> new FileSystemPredicates(FileSystemPredicates.Mode.FILE_MODIFIED));
         registerFactory("directory_files", () -> new FileSystemPredicates(FileSystemPredicates.Mode.DIR_FILES));
         registerFactory("working_directory", () -> new FileSystemPredicates(FileSystemPredicates.Mode.WORKING_DIR));
-        registerFactory("absolute_file_name", () -> new FileSystemPredicates(FileSystemPredicates.Mode.ABS_FILE_NAME));
+        // START_CHANGE: ISS-2025-0745 - SWI's names for file_exists/1 and directory_exists/1
+        registerFactory("exists_file", () -> new FileSystemPredicates(FileSystemPredicates.Mode.FILE_EXISTS));
+        registerFactory("exists_directory", () -> new FileSystemPredicates(FileSystemPredicates.Mode.DIR_EXISTS));
+        // END_CHANGE: ISS-2025-0745
+        registerFactory("absolute_file_name", () -> new it.denzosoft.jprolog.builtin.filesystem.AbsoluteFileName());   // ISS-2025-0737
         registerFactory("read_file_to_atom", () -> new FileSystemPredicates(FileSystemPredicates.Mode.READ_FILE));
         registerFactory("write_atom_to_file", () -> new FileSystemPredicates(FileSystemPredicates.Mode.WRITE_FILE));
         // END_CHANGE: ISS-2025-0115
@@ -547,6 +552,8 @@ public class BuiltInFactory {
         registerFactory("shell2", () -> new OsPredicates(OsPredicates.Mode.SHELL2));
         registerFactory("shell_output", () -> new OsPredicates(OsPredicates.Mode.SHELL_OUTPUT));
         registerFactory("getenv", () -> new OsPredicates(OsPredicates.Mode.GETENV));
+        registerFactory("setenv", () -> new OsPredicates(OsPredicates.Mode.SETENV));       // ISS-2025-0718
+        registerFactory("unsetenv", () -> new OsPredicates(OsPredicates.Mode.UNSETENV));   // ISS-2025-0718
         registerFactory("hostname", () -> new OsPredicates(OsPredicates.Mode.HOSTNAME));
         registerFactory("pid", () -> new OsPredicates(OsPredicates.Mode.PID));
         registerFactory("sleep", () -> new OsPredicates(OsPredicates.Mode.SLEEP));
@@ -596,6 +603,17 @@ public class BuiltInFactory {
         registerFactory("mutex_unlock", () -> new ThreadPredicates(ThreadPredicates.Mode.MUTEX_UNLOCK));
         registerFactory("mutex_unlock_all", () -> new ThreadPredicates(ThreadPredicates.Mode.MUTEX_UNLOCK_ALL));
         registerFactory("with_mutex", () -> new ThreadPredicates(ThreadPredicates.Mode.WITH_MUTEX));
+        // START_CHANGE: ISS-2025-0749/0750 - 4.6 wave Q4.1
+        registerFactory("thread_signal", () -> new ThreadPredicates(ThreadPredicates.Mode.THREAD_SIGNAL));
+        registerFactory("thread_statistics", () -> new ThreadPredicates(ThreadPredicates.Mode.THREAD_STATISTICS));
+        registerFactory("message_queue_property", () -> new ThreadPredicates(ThreadPredicates.Mode.MQ_PROPERTY));
+        registerFactory("mutex_property", () -> new ThreadPredicates(ThreadPredicates.Mode.MUTEX_PROPERTY));
+        registerFactory("thread_pool_create", () -> new ThreadPredicates(ThreadPredicates.Mode.POOL_CREATE));
+        registerFactory("thread_pool_destroy", () -> new ThreadPredicates(ThreadPredicates.Mode.POOL_DESTROY));
+        registerFactory("thread_create_in_pool", () -> new ThreadPredicates(ThreadPredicates.Mode.POOL_CREATE_THREAD));
+        registerFactory("thread_pool_property", () -> new ThreadPredicates(ThreadPredicates.Mode.POOL_PROPERTY));
+        registerFactory("current_thread_pool", () -> new ThreadPredicates(ThreadPredicates.Mode.POOL_CURRENT));
+        // END_CHANGE: ISS-2025-0749/0750
         registerFactory("concurrent_forall", () -> new ConcurrentPredicates(ConcurrentPredicates.OperationType.CONCURRENT_FORALL));
         // END_CHANGE: ISS-2025-0630..0632
         // END_CHANGE: ISS-2025-0119
@@ -739,16 +757,8 @@ public class BuiltInFactory {
         // attr_unify_hook protocol — neither the registry entry nor the Java class was reachable.
         // END_CHANGE: ISS-2025-0491
 
-        // START_CHANGE: LIM-012 - Rational number predicate
-        registerFactory("rational", () -> (it.denzosoft.jprolog.core.engine.BuiltIn) (query, bindings, solutions) -> {
-            it.denzosoft.jprolog.core.terms.Term arg = query.getArguments().get(0).resolveBindings(bindings);
-            if (arg instanceof it.denzosoft.jprolog.core.terms.Rational) {
-                solutions.add(new java.util.HashMap<>(bindings));
-                return true;
-            }
-            return false;
-        });
-        // END_CHANGE: LIM-012
+        // ISS-2025-0712: the LIM-012 registry rational/1 is retired — rational/1,3 are v4 natives
+        // (core.engine.v4.NativeTerm) and a rational is a real number kind of the engine now.
 
         // START_CHANGE: LIM-016 - Atom garbage collection predicates
         registerFactory("atom_gc", () -> (it.denzosoft.jprolog.core.engine.BuiltIn) (query, bindings, solutions) -> {

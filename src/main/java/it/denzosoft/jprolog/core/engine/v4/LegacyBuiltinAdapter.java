@@ -4,7 +4,9 @@ import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.BuiltInRegistry;
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.ControlFlow;
+import it.denzosoft.jprolog.core.engine.ResourceGuard;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
+import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
@@ -47,6 +49,23 @@ public final class LegacyBuiltinAdapter {
      *
      * @return 1 = succeeded, 0 = failed, -1 = not a built-in (try user clauses)
      */
+    // START_CHANGE: ISS-2025-0786
+    /** Steps charged before a bridged call: one per 64 characters of its atom/string arguments. */
+    static long inputCost(Term goal) {
+        if (!(goal instanceof CompoundTerm)) return 0;
+        CompoundTerm c = (CompoundTerm) goal;
+        long chars = 0;
+        for (int i = 0; i < c.arity(); i++) {
+            Term a = c.arg(i);
+            if (a instanceof Atom) chars += ((Atom) a).getName().length();
+            else if (a instanceof it.denzosoft.jprolog.core.terms.PrologString) {
+                chars += ((it.denzosoft.jprolog.core.terms.PrologString) a).getStringValue().length();
+            }
+        }
+        return chars >> 6;
+    }
+    // END_CHANGE: ISS-2025-0786
+
     static int run(Machine m, Term goal, String functor, int arity) {
         BuiltInRegistry registry = m.engine().registry();
         if (registry == null || !registry.isBuiltIn(functor, arity)) return -1;
@@ -60,6 +79,13 @@ public final class LegacyBuiltinAdapter {
         Map<String, Term> inMap = new HashMap<String, Term>();
         List<Map<String, Term>> sols = new ArrayList<Map<String, Term>>();
         boolean ok;
+        // START_CHANGE: ISS-2025-0786 - 4.6 wave Q6 (extra 7, LIM-045): a bridged call is charged
+        // to the budget — its text input up front (one step per 64 characters: parsing, hashing,
+        // encoding are linear in it), one step per solution it materialises, and whatever the
+        // library charges itself while it runs (the metered regex input).
+        m.guard().charge(inputCost(callGoal));
+        ResourceGuard prevBridge = ResourceGuard.enterBridge(m.guard());
+        // END_CHANGE: ISS-2025-0786
         try {
             if (b instanceof BuiltInWithContext) {
                 ok = ((BuiltInWithContext) b).executeWithContext(m.facade(), callGoal, inMap, sols);
@@ -79,7 +105,10 @@ public final class LegacyBuiltinAdapter {
             if (dd >= 0) m.portFail(goal, dd);
             throw Errors.system(e.getClass().getSimpleName()
                 + (e.getMessage() == null ? "" : ": " + e.getMessage()), functor + "/" + arity);
+        } finally {
+            ResourceGuard.exitBridge(prevBridge);                      // ISS-2025-0786
         }
+        m.guard().charge(sols.size());                                  // ISS-2025-0786
         if (!ok || sols.isEmpty()) {
             if (dd >= 0) m.portFail(goal, dd);
             return 0;

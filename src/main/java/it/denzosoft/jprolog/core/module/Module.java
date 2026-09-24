@@ -76,8 +76,40 @@ public class Module {
      *
      * @param rule The rule to add
      */
-    public void addRule(Rule rule) {
+    // START_CHANGE: ISS-2025-0784 - 4.6 wave Q6 (extra 4): the v4 engine mirrors this module
+    // (core.engine.v4.Modules). A load that queries the module after every clause (a module-local
+    // goal_expansion/2) made it rebuild the WHOLE mirror per clause — cubic in the clause count.
+    // It now asks what changed: the rule list only grows (getLocalRuleCount/getLocalRulesFrom),
+    // and everything else it mirrors (exports, imports, import specs, meta declarations) bumps
+    // this version.
+    private volatile long structVersion;
+
+    private void structChanged() { structVersion++; }
+
+    /** Changes whenever something other than the rule list changes. */
+    public long getStructVersion() { return structVersion; }
+
+    /** Number of local rules (they are only ever appended). */
+    public synchronized int getLocalRuleCount() { return localRules.size(); }
+
+    /** The local rules from position {@code from} on. */
+    public synchronized List<Rule> getLocalRulesFrom(int from) {
+        return new ArrayList<>(localRules.subList(Math.min(from, localRules.size()), localRules.size()));
+    }
+
+    /** Was the module declared with an export list (possibly empty)? */
+    public boolean hasExplicitExportList() { return hasExplicitExportList; }
+    // END_CHANGE: ISS-2025-0784
+
+    public synchronized void addRule(Rule rule) {
         localRules.add(rule);
+        // ISS-2025-0731: does this module define goal_expansion/2 (checked per clause at load time)
+        Term kh = rule.getHead();
+        if (kh instanceof it.denzosoft.jprolog.core.terms.CompoundTerm
+                && ((it.denzosoft.jprolog.core.terms.CompoundTerm) kh).getArguments().size() == 2
+                && "goal_expansion".equals(((it.denzosoft.jprolog.core.terms.CompoundTerm) kh).getName())) {
+            hasGoalExpansion = true;
+        }
 
         // START_CHANGE: ISS-2025-0248 - only auto-export when no explicit list given
         if (!hasExplicitExportList) {
@@ -99,7 +131,8 @@ public class Module {
      * @param signature The predicate signature
      * @param sourceModule The module to import from
      */
-    public void importPredicate(PredicateSignature signature, Module sourceModule) {
+    public synchronized void importPredicate(PredicateSignature signature, Module sourceModule) {
+        structChanged();                                           // ISS-2025-0784
         if (sourceModule.isExported(signature)) {
             importedPredicates.put(signature, sourceModule);
         } else {
@@ -113,7 +146,8 @@ public class Module {
      * 
      * @param module The module to import from
      */
-    public void importModule(Module module) {
+    public synchronized void importModule(Module module) {
+        structChanged();                                           // ISS-2025-0784
         importedModules.put(module.getName(), module);
         for (PredicateSignature signature : module.getExportedPredicates()) {
             importedPredicates.put(signature, module);
@@ -126,7 +160,8 @@ public class Module {
      * @param module The module to import from
      * @param predicates List of predicates to import
      */
-    public void importModule(Module module, List<PredicateSignature> predicates) {
+    public synchronized void importModule(Module module, List<PredicateSignature> predicates) {
+        structChanged();                                           // ISS-2025-0784
         importedModules.put(module.getName(), module);
         for (PredicateSignature signature : predicates) {
             importPredicate(signature, module);
@@ -220,6 +255,7 @@ public class Module {
      * @param signature The predicate signature to export
      */
     public void exportPredicate(PredicateSignature signature) {
+        structChanged();                                           // ISS-2025-0784
         exportedPredicates.add(signature);
     }
     
@@ -229,6 +265,7 @@ public class Module {
      * @param signature The predicate signature
      */
     public void declareMeta(String signature) {
+        structChanged();                                           // ISS-2025-0784
         metaPredicates.add(signature);
     }
     
@@ -252,6 +289,7 @@ public class Module {
      * @param argSpecs List of argument specifications
      */
     public void declareMetaPredicate(PredicateSignature sig, List<String> argSpecs) {
+        structChanged();                                           // ISS-2025-0784
         metaPredicateDeclarations.put(sig, new ArrayList<>(argSpecs));
     }
 
@@ -286,6 +324,7 @@ public class Module {
      * @param sig The predicate signature
      */
     public void declareTransparent(PredicateSignature sig) {
+        structChanged();                                           // ISS-2025-0784
         transparentPredicates.add(sig);
     }
 
@@ -310,6 +349,7 @@ public class Module {
      * @param sourceModule The module that originally defines the predicate
      */
     public void reexport(PredicateSignature sig, Module sourceModule) {
+        structChanged();                                           // ISS-2025-0784
         reexports.put(sig, sourceModule);
         exportedPredicates.add(sig);
         importedPredicates.put(sig, sourceModule);
@@ -348,11 +388,51 @@ public class Module {
     }
     // END_CHANGE: ISS-2025-0167
 
+    // START_CHANGE: ISS-2025-0735 - 4.6 wave Q3.4: use_module(File, Imports). What this module
+    // imports from another one: everything (no spec), only some indicators, everything except
+    // some, and aliases (`p/1 as q` makes q/1 here call the other module's p/1).
+    /** The import list of one {@code use_module/2}. Keys are {@code "name/arity"}. */
+    public static final class ImportSpec {
+        /** null = every export. */
+        public java.util.Set<String> only;
+        public final java.util.Set<String> except = new java.util.HashSet<>();
+        /** alias key ("new/arity") -> the imported predicate's name. */
+        public final java.util.Map<String, String> aliases = new java.util.LinkedHashMap<>();
+    }
+
+    private final Map<String, ImportSpec> importSpecs = new HashMap<>();
+
+    /** Has this module a goal_expansion/2 clause (ISS-2025-0731)? */
+    private volatile boolean hasGoalExpansion;
+
+    public boolean definesGoalExpansion() { return hasGoalExpansion; }
+
+    /**
+     * Record the import list for {@code module} (null = import everything, which drops a
+     * previous restriction). Two restricted imports of the same module are merged.
+     */
+    public synchronized void setImportSpec(String module, ImportSpec spec) {
+        structChanged();                                           // ISS-2025-0784
+        if (spec == null) { importSpecs.remove(module); return; }
+        ImportSpec old = importSpecs.get(module);
+        if (old != null) {
+            if (old.only == null || spec.only == null) spec.only = null;
+            else spec.only.addAll(old.only);
+            spec.except.retainAll(old.except);
+            for (Map.Entry<String, String> e : old.aliases.entrySet()) spec.aliases.putIfAbsent(e.getKey(), e.getValue());
+        }
+        importSpecs.put(module, spec);
+    }
+
+    public synchronized Map<String, ImportSpec> getImportSpecs() { return new HashMap<>(importSpecs); }
+    // END_CHANGE: ISS-2025-0735
+
     // Getters
     public String getName() { return name; }
-    public Set<PredicateSignature> getExportedPredicates() { return new HashSet<>(exportedPredicates); }
-    public List<Rule> getLocalRules() { return new ArrayList<>(localRules); }
-    public Map<String, Module> getImportedModules() { return new HashMap<>(importedModules); }
+    // ISS-2025-0739: synchronized — a module may be written by a load on another thread
+    public synchronized Set<PredicateSignature> getExportedPredicates() { return new HashSet<>(exportedPredicates); }
+    public synchronized List<Rule> getLocalRules() { return new ArrayList<>(localRules); }
+    public synchronized Map<String, Module> getImportedModules() { return new HashMap<>(importedModules); }
     
     @Override
     public String toString() {

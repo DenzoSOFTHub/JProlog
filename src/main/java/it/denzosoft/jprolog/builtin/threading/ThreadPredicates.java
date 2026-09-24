@@ -72,7 +72,10 @@ public class ThreadPredicates implements BuiltInWithContext {
         // ISS-2025-0630..0632
         MQ_DESTROY, THREAD_PROPERTY, THREAD_EXIT,
         MUTEX_CREATE, MUTEX_DESTROY, MUTEX_LOCK, MUTEX_TRYLOCK, MUTEX_UNLOCK, MUTEX_UNLOCK_ALL,
-        WITH_MUTEX
+        WITH_MUTEX,
+        // ISS-2025-0749/0750 - 4.6 wave Q4.1
+        THREAD_SIGNAL, THREAD_STATISTICS, MQ_PROPERTY, MUTEX_PROPERTY,
+        POOL_CREATE, POOL_DESTROY, POOL_CREATE_THREAD, POOL_PROPERTY, POOL_CURRENT
     }
 
     private final Mode mode;
@@ -89,6 +92,10 @@ public class ThreadPredicates implements BuiltInWithContext {
     private static final ConcurrentHashMap<Integer, PMutex> MUTEXES = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, PMutex> MUTEX_ALIASES = new ConcurrentHashMap<>();
     private static final ThreadLocal<PThread> SELF = new ThreadLocal<>();
+    /** ISS-2025-0750: JVM thread -> its worker record (mutex_property/2's owner). */
+    private static final ConcurrentHashMap<Thread, PThread> BY_JVM = new ConcurrentHashMap<>();
+    /** ISS-2025-0750: thread pools by name. */
+    private static final ConcurrentHashMap<String, Pool> POOLS = new ConcurrentHashMap<>();
 
     private static final String MAIN_ALIAS = "main";
     /** Every non-worker thread is `main` (see the class comment). */
@@ -112,12 +119,18 @@ public class ThreadPredicates implements BuiltInWithContext {
         boolean detached;
         /** Removed from the tables (joined, or a detached thread that finished). */
         boolean reclaimed;
+        /** ISS-2025-0749: the signal queue thread_signal/2 writes to. */
+        final it.denzosoft.jprolog.core.engine.ThreadSignals.Box signals;
+        /** ISS-2025-0750: the pool this thread occupies a slot of, or null. */
+        volatile Pool pool;
 
         PThread(int id, String alias, boolean worker) {
             this.id = id;
             this.alias = alias;
             this.worker = worker;
             this.queue = new MQueue(id, null);
+            this.signals = worker ? new it.denzosoft.jprolog.core.engine.ThreadSignals.Box()
+                                  : it.denzosoft.jprolog.core.engine.ThreadSignals.MAIN;
         }
 
         Term handle() { return alias != null ? (Term) new Atom(alias) : (Term) Number.valueOf(id); }
@@ -129,6 +142,10 @@ public class ThreadPredicates implements BuiltInWithContext {
         final String alias;
         private final LinkedList<Term> items = new LinkedList<>();
         private boolean destroyed;
+        /** ISS-2025-0750: max_size(N) of message_queue_create/2 (0 = unbounded). */
+        int maxSize;
+        /** ISS-2025-0750: threads blocked receiving from this queue (message_queue_property/2). */
+        int waiting;
 
         MQueue(int id, String alias) { this.id = id; this.alias = alias; }
 
@@ -139,6 +156,22 @@ public class ThreadPredicates implements BuiltInWithContext {
             items.addLast(msg);
             notifyAll();
         }
+
+        // START_CHANGE: ISS-2025-0750 - a bounded queue: the sender waits for room (SWI), until
+        // deadlineNanos; SIGNAL when the calling thread has a signal to run first, null on timeout.
+        synchronized Term offer(Term msg, long deadlineNanos, String ctx) throws InterruptedException {
+            for (;;) {
+                if (destroyed) throw Errors.existence("message_queue", handle(), ctx);
+                if (maxSize <= 0 || items.size() < maxSize) {
+                    items.addLast(msg);
+                    notifyAll();
+                    return msg;
+                }
+                if (it.denzosoft.jprolog.core.engine.ThreadSignals.hasPending()) return SIGNAL;
+                if (!waitSlice(this, deadlineNanos)) return null;
+            }
+        }
+        // END_CHANGE: ISS-2025-0750
 
         /**
          * The first queued message that unifies with {@code pattern} — removed when
@@ -152,17 +185,18 @@ public class ThreadPredicates implements BuiltInWithContext {
                 for (Iterator<Term> it = items.iterator(); it.hasNext();) {
                     Term msg = it.next();
                     if (pattern.unify(msg, new HashMap<String, Term>())) {
-                        if (remove) it.remove();
+                        if (remove) { it.remove(); notifyAll(); }            // room for a sender
                         return msg;
                     }
                 }
                 if (deadlineNanos == NO_WAIT) return null;
-                if (deadlineNanos == FOREVER) {
-                    wait();
-                } else {
-                    long left = deadlineNanos - System.nanoTime();
-                    if (left <= 0) return null;
-                    TimeUnit.NANOSECONDS.timedWait(this, left);
+                // ISS-2025-0749: a signal is run by the caller (outside this lock) before waiting on
+                if (it.denzosoft.jprolog.core.engine.ThreadSignals.hasPending()) return SIGNAL;
+                waiting++;
+                try {
+                    if (!waitSlice(this, deadlineNanos)) return null;
+                } finally {
+                    waiting--;
                 }
             }
         }
@@ -179,11 +213,78 @@ public class ThreadPredicates implements BuiltInWithContext {
     private static final long NO_WAIT = Long.MIN_VALUE;
     private static final long FOREVER = Long.MAX_VALUE;
 
+    // START_CHANGE: ISS-2025-0749 - blocking waits are signal-aware (thread_signal/2)
+    /** Returned by a wait that stopped because the calling thread has a signal to run. */
+    private static final Term SIGNAL = new Atom("$signal");
+    /** The longest a blocked thread sleeps before it re-checks its signals and the deadline. */
+    private static final long SLICE_NANOS = 100_000_000L;
+
+    /**
+     * Wait on {@code mon} (whose lock the caller holds) for at most one slice or until
+     * {@code deadlineNanos}; the monitor is published on the thread's signal box so a signal wakes
+     * it at once. False when the deadline has passed.
+     */
+    private static boolean waitSlice(Object mon, long deadlineNanos) throws InterruptedException {
+        long left = (deadlineNanos == FOREVER) ? SLICE_NANOS : deadlineNanos - System.nanoTime();
+        if (left <= 0) return false;
+        it.denzosoft.jprolog.core.engine.ThreadSignals.Box box = it.denzosoft.jprolog.core.engine.ThreadSignals.current();
+        box.monitor = mon;
+        try {
+            TimeUnit.NANOSECONDS.timedWait(mon, Math.min(left, SLICE_NANOS));
+        } finally {
+            box.monitor = null;
+        }
+        return true;
+    }
+
+    /** Run every signal queued for the calling thread, here, on its own machine. */
+    private static void runSignals(SolverContext solver) {
+        // every queued signal is taken first and run as ONE conjunction, so a signal that arrives
+        // while they run cannot overtake one that was sent before it
+        List<Term> sigs = new ArrayList<>();
+        for (Term g; (g = it.denzosoft.jprolog.core.engine.ThreadSignals.poll()) != null;) sigs.add(g);
+        if (sigs.isEmpty() || solver == null) return;
+        Term conj = it.denzosoft.jprolog.core.engine.v4.Machine.signalGoal(sigs.get(sigs.size() - 1));
+        for (int i = sigs.size() - 2; i >= 0; i--) {
+            conj = new CompoundTerm(new Atom(","), Arrays.asList(
+                it.denzosoft.jprolog.core.engine.v4.Machine.signalGoal(sigs.get(i)), conj));
+        }
+        it.denzosoft.jprolog.core.engine.ThreadSignals.enterHandler();   // no overtaking inside
+        try {
+            solver.solveMeta(conj, new HashMap<String, Term>(), new ArrayList<Map<String, Term>>());
+        } finally {
+            it.denzosoft.jprolog.core.engine.ThreadSignals.exitHandler();
+        }
+    }
+
+    private static long deadlineOf(Term options, String ctx, long dflt) {
+        long deadline = dflt;
+        for (Term o : options(options, ctx)) {
+            if (!(o instanceof CompoundTerm) || ((CompoundTerm) o).getArguments().size() != 1) continue;
+            CompoundTerm ct = (CompoundTerm) o;
+            Term v = ct.getArguments().get(0);
+            if ("timeout".equals(ct.getName())) {
+                double sec = number(v, ctx);
+                long d = (sec <= 0) ? NO_WAIT : System.nanoTime() + (long) (sec * 1e9);
+                deadline = (deadline == FOREVER) ? d : Math.min(deadline, d);
+            } else if ("deadline".equals(ct.getName())) {
+                double abs = number(v, ctx);
+                double left = abs - System.currentTimeMillis() / 1000.0;
+                long d = (left <= 0) ? NO_WAIT : System.nanoTime() + (long) (left * 1e9);
+                deadline = (deadline == FOREVER) ? d : Math.min(deadline, d);
+            }
+        }
+        return deadline;
+    }
+    // END_CHANGE: ISS-2025-0749
+
     /** A recursive mutex. */
     static final class PMutex {
         final int id;
         final String alias;
-        final ReentrantLock lock = new ReentrantLock();
+        final OwnedLock lock = new OwnedLock();
+        /** ISS-2025-0750: the holder's recursion count (written only by the holder). */
+        volatile int count;
 
         PMutex(int id, String alias) { this.id = id; this.alias = alias; }
 
@@ -192,6 +293,30 @@ public class ThreadPredicates implements BuiltInWithContext {
                 : new CompoundTerm(MUTEX_FUNCTOR, Collections.singletonList((Term) Number.valueOf(id)));
         }
     }
+
+    // START_CHANGE: ISS-2025-0750
+    /** A ReentrantLock that tells who holds it (mutex_property/2, the load-cycle check). */
+    static final class OwnedLock extends ReentrantLock {
+        private static final long serialVersionUID = 1L;
+        Thread holder() { return getOwner(); }
+    }
+
+    /** A thread pool of library(thread_pool): at most {@code size} running members. */
+    static final class Pool {
+        final String name;
+        final int size;
+        final int backlog;          // -1 = unbounded
+        final Term options;         // thread_create options every member inherits
+        int running;
+        int waiting;
+        /** The live members' JVM threads (the load-cycle check's view of a pool wait). */
+        final Set<Thread> members = ConcurrentHashMap.newKeySet();
+
+        Pool(String name, int size, int backlog, Term options) {
+            this.name = name; this.size = size; this.backlog = backlog; this.options = options;
+        }
+    }
+    // END_CHANGE: ISS-2025-0750
 
     public ThreadPredicates(Mode mode) {
         this.mode = mode;
@@ -217,25 +342,34 @@ public class ThreadPredicates implements BuiltInWithContext {
         try {
             switch (mode) {
                 case THREAD_CREATE:    return threadCreate(solver, args, bindings, solutions);
-                case THREAD_JOIN:      return threadJoin(args, bindings, solutions);
+                case THREAD_JOIN:      return threadJoin(solver, args, bindings, solutions);
                 case THREAD_DETACH:    return threadDetach(args, bindings, solutions);
                 case THREAD_SELF:      return unify(args[0], self().handle(), bindings, solutions);
-                case THREAD_SLEEP:     return threadSleep(args, bindings, solutions);
+                case THREAD_SLEEP:     return threadSleep(solver, args, bindings, solutions);
                 case THREAD_IS_ALIVE:  return threadIsAlive(args, bindings, solutions);
                 case THREAD_PROPERTY:  return threadProperty(args, bindings, solutions);
                 case THREAD_EXIT:      return threadExit(args);
                 case MQ_CREATE:        return mqCreate(args, bindings, solutions);
                 case MQ_DESTROY:       return mqDestroy(args, bindings, solutions);
-                case MQ_SEND:          return mqSend(args, bindings, solutions);
-                case MQ_GET:           return mqGet(args, bindings, solutions);
+                case MQ_SEND:          return mqSend(solver, args, bindings, solutions);
+                case MQ_GET:           return mqGet(solver, args, bindings, solutions);
                 case MQ_PEEK:          return mqPeek(args, bindings, solutions);
                 case MUTEX_CREATE:     return mutexCreate(args, bindings, solutions);
                 case MUTEX_DESTROY:    return mutexDestroy(args, bindings, solutions);
-                case MUTEX_LOCK:       return mutexLock(args, bindings, solutions);
+                case MUTEX_LOCK:       return mutexLock(solver, args, bindings, solutions);
                 case MUTEX_TRYLOCK:    return mutexTrylock(args, bindings, solutions);
                 case MUTEX_UNLOCK:     return mutexUnlock(args, bindings, solutions);
                 case MUTEX_UNLOCK_ALL: return mutexUnlockAll(bindings, solutions);
                 case WITH_MUTEX:       return withMutex(solver, args, bindings, solutions);
+                case THREAD_SIGNAL:    return threadSignal(solver, args, bindings, solutions);
+                case THREAD_STATISTICS: return threadStatistics(solver, args, bindings, solutions);
+                case MQ_PROPERTY:      return mqProperty(args, bindings, solutions);
+                case MUTEX_PROPERTY:   return mutexProperty(args, bindings, solutions);
+                case POOL_CREATE:      return poolCreate(args, bindings, solutions);
+                case POOL_DESTROY:     return poolDestroy(args, bindings, solutions);
+                case POOL_CREATE_THREAD: return poolCreateThread(solver, args, bindings, solutions);
+                case POOL_PROPERTY:    return poolProperty(args, bindings, solutions);
+                case POOL_CURRENT:     return poolCurrent(args, bindings, solutions);
                 default: return false;
             }
         } catch (InterruptedException e) {
@@ -250,11 +384,20 @@ public class ThreadPredicates implements BuiltInWithContext {
             List<Map<String, Term>> solutions) {
         final String ctx = "thread_create/" + args.length;
         final Term goal = callable(args[0], ctx);
-        String alias = null;
-        boolean detached = false;
-        Term atExit = null;
-        if (args.length == 3) {
-            for (Term o : options(args[2], ctx)) {
+        CreateOptions co = new CreateOptions();
+        if (args.length == 3) co.parse(args[2], ctx);
+        PThread pt = startThread(solver, goal, co, null, ctx);
+        return unify(args[1], pt.handle(), bindings, solutions);
+    }
+
+    // START_CHANGE: ISS-2025-0750 - thread_create/3's options, shared with thread_create_in_pool/4
+    private static final class CreateOptions {
+        String alias;
+        boolean detached;
+        Term atExit;
+
+        void parse(Term list, String ctx) {
+            for (Term o : options(list, ctx)) {
                 if (!(o instanceof CompoundTerm) || ((CompoundTerm) o).getArguments().size() != 1) continue;
                 CompoundTerm ct = (CompoundTerm) o;
                 Term v = ct.getArguments().get(0);
@@ -270,27 +413,51 @@ public class ThreadPredicates implements BuiltInWithContext {
                 // any other option (stack sizes, priority, ...) is accepted and ignored, as in SWI
             }
         }
+    }
 
-        final PThread pt = new PThread(IDS.incrementAndGet(), alias, true);
-        pt.detached = detached;
-        if (alias != null && THREAD_ALIASES.putIfAbsent(alias, pt) != null) {
-            throw Errors.permission("create", "thread", new Atom(alias), ctx);
+    /** Create and start a worker thread running {@code goal}; {@code pool} is its pool or null. */
+    private static PThread startThread(final SolverContext solver, final Term goal, CreateOptions co,
+                                       final Pool pool, String ctx) {
+        final PThread pt = new PThread(IDS.incrementAndGet(), co.alias, true);
+        pt.detached = co.detached;
+        pt.pool = pool;
+        if (co.alias != null && THREAD_ALIASES.putIfAbsent(co.alias, pt) != null) {
+            throw Errors.permission("create", "thread", new Atom(co.alias), ctx);
         }
         THREADS.put(pt.id, pt);
 
-        final Term fAtExit = atExit;
+        final Term fAtExit = co.atExit;
         Thread t = new Thread(new Runnable() {
             @Override public void run() {
                 SELF.set(pt);
-                Term status;
+                BY_JVM.put(Thread.currentThread(), pt);
+                if (pool != null) pool.members.add(Thread.currentThread());
+                it.denzosoft.jprolog.core.engine.ThreadSignals.bind(pt.signals);    // ISS-2025-0749
+                it.denzosoft.jprolog.core.engine.ThreadWaits.enterThread();         // ISS-2025-0746
+                Term status = new Atom("false");
                 try {
                     status = runGoal(solver, goal);
                     if (fAtExit != null) {
                         try { runGoal(solver, fAtExit); } catch (RuntimeException ignored) { /* SWI ignores it */ }
                     }
+                    // START_CHANGE: ISS-2025-0751 - 4.6 wave Q4.2: a mutex the thread still holds
+                    // is released AND reported (SWI prints a warning), never silently.
+                    for (Term mx : releaseMutexesOfThisThread()) {
+                        warn(solver, "Thread ~p exited while holding mutex ~p (released)",
+                             pt.handle(), mx);
+                    }
+                    // END_CHANGE: ISS-2025-0751
                 } finally {
                     releaseMutexesOfThisThread();
+                    it.denzosoft.jprolog.core.engine.ThreadSignals.discard(pt.signals);
+                    it.denzosoft.jprolog.core.engine.ThreadSignals.bind(null);
+                    it.denzosoft.jprolog.core.engine.ThreadWaits.exitThread();
+                    BY_JVM.remove(Thread.currentThread(), pt);
                     SELF.remove();
+                    if (pool != null) {
+                        pool.members.remove(Thread.currentThread());
+                        synchronized (pool) { pool.running--; pool.notifyAll(); }
+                    }
                 }
                 finish(pt, status);
             }
@@ -298,8 +465,21 @@ public class ThreadPredicates implements BuiltInWithContext {
         t.setDaemon(true);
         pt.thread = t;
         t.start();
-        return unify(args[1], pt.handle(), bindings, solutions);
+        return pt;
     }
+
+    /** print_message(warning, format(Fmt, Args)) on this thread, best effort. */
+    private static void warn(SolverContext solver, String fmt, Term... args) {
+        if (solver == null) return;
+        try {
+            Term msg = new CompoundTerm(new Atom("format"), Arrays.asList(
+                (Term) new Atom(fmt), it.denzosoft.jprolog.core.utils.CollectionUtils.createListTerm(Arrays.asList(args))));
+            runGoal(solver, new CompoundTerm(new Atom("print_message"), Arrays.asList((Term) new Atom("warning"), msg)));
+        } catch (RuntimeException ignored) {
+            // a warning must not change the thread's exit status
+        }
+    }
+    // END_CHANGE: ISS-2025-0750
 
     /** Run a goal on a worker machine on THIS thread and turn the outcome into a join status. */
     private static Term runGoal(SolverContext solver, Term goal) {
@@ -314,14 +494,21 @@ public class ThreadPredicates implements BuiltInWithContext {
             return struct("exception", ball != null ? detach(ball) : new Atom(String.valueOf(pe.getMessage())));
         // ISS-2025-0479: the control exceptions are REPORTED — the worker's top level is the analogue
         // of the embedder catching them, and the join status is how the parent learns about it.
+        // START_CHANGE: ISS-2025-0698 - wave Q1.3: the join status carries an ISO error TERM.
+        // Inside the query that ran out of budget the limit stays a control exception that no
+        // catch/3 can see (the trust model); the join status is read by ANOTHER query, outside the
+        // exhausted one, so reporting it as a term is safe and lets the parent match it with
+        // exception(error(resource_error(inference_limit), _)). The context keeps the old atom.
         } catch (InferenceLimitException ile) {
-            return struct("exception", new Atom("inference_limit_exceeded"));
+            return struct("exception", it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError(
+                "inference_limit", "inference_limit_exceeded"));
         } catch (QueryCancelledException qce) {
             return new Atom("cancelled");
         } catch (Throwable e) {
-            return struct("exception", new Atom(e.getClass().getSimpleName()
-                + (e.getMessage() == null ? "" : ": " + e.getMessage())));
+            return struct("exception", it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.systemError(
+                e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage()), "thread"));
         }
+        // END_CHANGE: ISS-2025-0698
     }
 
     /** The thread's goal is done: record the status; a detached thread is reclaimed at once. */
@@ -343,7 +530,7 @@ public class ThreadPredicates implements BuiltInWithContext {
 
     // ================================================================ join / detach / exit
 
-    private boolean threadJoin(Term[] args, Map<String, Term> bindings,
+    private boolean threadJoin(SolverContext solver, Term[] args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws InterruptedException {
         final String ctx = "thread_join/" + args.length;
         PThread pt = thread(args[0], ctx);
@@ -358,7 +545,11 @@ public class ThreadPredicates implements BuiltInWithContext {
             // ISS-2025-0639: the load lock lets the joined thread load in our place while we wait
             it.denzosoft.jprolog.core.engine.ThreadWaits.enterJoin(t);
             try {
-                t.join();                         // no timeout (SWI); interruptible
+                // no timeout (SWI); interruptible; ISS-2025-0749: signals are run while waiting
+                while (t.isAlive()) {
+                    runSignals(solver);
+                    t.join(SLICE_NANOS / 1_000_000L);
+                }
             } finally {
                 it.denzosoft.jprolog.core.engine.ThreadWaits.exitJoin();
             }
@@ -404,10 +595,23 @@ public class ThreadPredicates implements BuiltInWithContext {
         throw new ThreadExitException(detach(args[0]));                     // ISS-2025-0632
     }
 
-    private boolean threadSleep(Term[] args, Map<String, Term> bindings,
+    private boolean threadSleep(SolverContext solver, Term[] args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws InterruptedException {
         double seconds = number(args[0], "thread_sleep/1");
-        if (seconds > 0) Thread.sleep((long) (seconds * 1000), (int) ((seconds * 1e9) % 1000000));
+        if (seconds > 0) {
+            // ISS-2025-0749: a sleeping thread runs its signals as they arrive
+            long deadline = System.nanoTime() + (long) (seconds * 1e9);
+            Object mon = new Object();
+            for (;;) {
+                runSignals(solver);
+                synchronized (mon) {
+                    if (it.denzosoft.jprolog.core.engine.ThreadSignals.hasPending()) continue;
+                    if (!waitSlice(mon, deadline)) break;
+                }
+                if (System.nanoTime() - deadline >= 0) break;
+            }
+            runSignals(solver);
+        }
         solutions.add(new HashMap<>(bindings));
         return true;
     }
@@ -463,6 +667,7 @@ public class ThreadPredicates implements BuiltInWithContext {
             List<Map<String, Term>> solutions) {
         String ctx = "message_queue_create/" + args.length;
         String alias = null;
+        int maxSize = 0;
         if (args.length == 2) {
             for (Term o : options(args[1], ctx)) {
                 if (o instanceof CompoundTerm && "alias".equals(((CompoundTerm) o).getName())
@@ -471,11 +676,19 @@ public class ThreadPredicates implements BuiltInWithContext {
                     if (v instanceof Variable) throw Errors.instantiation(ctx);
                     if (!(v instanceof Atom)) throw Errors.type("atom", v, ctx);
                     alias = ((Atom) v).getName();
+                } else if (o instanceof CompoundTerm && "max_size".equals(((CompoundTerm) o).getName())
+                        && ((CompoundTerm) o).getArguments().size() == 1) {           // ISS-2025-0750
+                    Term v = ((CompoundTerm) o).getArguments().get(0);
+                    if (v instanceof Variable) throw Errors.instantiation(ctx);
+                    if (!(v instanceof Number) || !((Number) v).isInteger()) throw Errors.type("integer", v, ctx);
+                    if (((Number) v).longValue() < 1) throw Errors.domain("not_less_than_one", v, ctx);
+                    maxSize = (int) Math.min(Integer.MAX_VALUE, ((Number) v).longValue());
                 }
             }
         }
         if (!(args[0] instanceof Variable)) throw Errors.uninstantiation(args[0], ctx);
         MQueue q = new MQueue(IDS.incrementAndGet(), alias);
+        q.maxSize = maxSize;
         if (alias != null && (THREAD_ALIASES.containsKey(alias) || QUEUE_ALIASES.putIfAbsent(alias, q) != null)) {
             throw Errors.permission("create", "message_queue", new Atom(alias), ctx);
         }
@@ -500,40 +713,49 @@ public class ThreadPredicates implements BuiltInWithContext {
     }
     // END_CHANGE: ISS-2025-0630
 
-    private boolean mqSend(Term[] args, Map<String, Term> bindings,
-            List<Map<String, Term>> solutions) {
-        MQueue q = queue(args[0], "thread_send_message/2");
+    private boolean mqSend(SolverContext solver, Term[] args, Map<String, Term> bindings,
+            List<Map<String, Term>> solutions) throws InterruptedException {
+        String ctx = "thread_send_message/" + args.length;
+        MQueue q = queue(args[0], ctx);
+        // ISS-2025-0750: thread_send_message/3 takes timeout(T) / deadline(D) for a full queue
+        long deadline = (args.length == 3) ? deadlineOf(args[2], ctx, FOREVER) : FOREVER;
         // ISS-2025-0479: a message is a TERM and it is COPIED (design B.13)
-        q.put(detach(args[1]));
+        Term msg = detach(args[1]);
+        for (;;) {
+            Term r;
+            it.denzosoft.jprolog.core.engine.ThreadWaits.enterMessageWait();   // ISS-2025-0746
+            try {
+                r = q.offer(msg, deadline, ctx);
+            } finally {
+                it.denzosoft.jprolog.core.engine.ThreadWaits.exitMessageWait();
+            }
+            if (r == SIGNAL) { runSignals(solver); continue; }
+            if (r == null) return false;                               // timeout: fail (SWI)
+            break;
+        }
         solutions.add(new HashMap<>(bindings));
         return true;
     }
 
     // START_CHANGE: ISS-2025-0629 - selective receive; no fixed timeout; thread_get_message/3
-    private boolean mqGet(Term[] args, Map<String, Term> bindings,
+    private boolean mqGet(SolverContext solver, Term[] args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws InterruptedException {
         String ctx = "thread_get_message/" + args.length;
         MQueue q = (args.length == 1) ? self().queue : queue(args[0], ctx);
         Term pattern = (args.length == 1) ? args[0] : args[1];
-        long deadline = FOREVER;
-        if (args.length == 3) {
-            for (Term o : options(args[2], ctx)) {
-                if (!(o instanceof CompoundTerm) || ((CompoundTerm) o).getArguments().size() != 1) continue;
-                CompoundTerm ct = (CompoundTerm) o;
-                Term v = ct.getArguments().get(0);
-                if ("timeout".equals(ct.getName())) {
-                    double s = number(v, ctx);
-                    long d = (s <= 0) ? NO_WAIT : System.nanoTime() + (long) (s * 1e9);
-                    deadline = (deadline == FOREVER) ? d : Math.min(deadline, d);
-                } else if ("deadline".equals(ct.getName())) {
-                    double abs = number(v, ctx);
-                    double left = abs - System.currentTimeMillis() / 1000.0;
-                    long d = (left <= 0) ? NO_WAIT : System.nanoTime() + (long) (left * 1e9);
-                    deadline = (deadline == FOREVER) ? d : Math.min(deadline, d);
-                }
+        long deadline = (args.length == 3) ? deadlineOf(args[2], ctx, FOREVER) : FOREVER;
+        Term msg;
+        for (;;) {
+            // ISS-2025-0746: the load-cycle check sees a thread blocked on a message
+            it.denzosoft.jprolog.core.engine.ThreadWaits.enterMessageWait();
+            try {
+                msg = q.take(pattern, true, deadline, ctx);
+            } finally {
+                it.denzosoft.jprolog.core.engine.ThreadWaits.exitMessageWait();
             }
+            if (msg == SIGNAL) { runSignals(solver); continue; }   // ISS-2025-0749
+            break;
         }
-        Term msg = q.take(pattern, true, deadline, ctx);
         if (msg == null) return false;                              // timeout: fail (SWI)
         return unify(pattern, msg, bindings, solutions);
     }
@@ -588,16 +810,42 @@ public class ThreadPredicates implements BuiltInWithContext {
         return true;
     }
 
-    private boolean mutexLock(Term[] args, Map<String, Term> bindings,
+    private boolean mutexLock(SolverContext solver, Term[] args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws InterruptedException {
-        mutex(args[0], true, "mutex_lock/1").lock.lockInterruptibly();
+        acquire(solver, mutex(args[0], true, "mutex_lock/1"));
         solutions.add(new HashMap<>(bindings));
         return true;
     }
 
+    // START_CHANGE: ISS-2025-0746/0749 - a mutex wait is visible to the load-cycle check and runs
+    // the thread's signals while it waits.
+    private static void acquire(SolverContext solver, final PMutex mx) throws InterruptedException {
+        if (!mx.lock.tryLock()) {
+            it.denzosoft.jprolog.core.engine.ThreadWaits.enterLockWait(new java.util.function.Supplier<Thread>() {
+                @Override public Thread get() { return mx.lock.holder(); }
+            });
+            try {
+                do {
+                    runSignals(solver);
+                } while (!mx.lock.tryLock(SLICE_NANOS, TimeUnit.NANOSECONDS));
+            } finally {
+                it.denzosoft.jprolog.core.engine.ThreadWaits.exitLockWait();
+            }
+        }
+        mx.count = mx.lock.getHoldCount();                                  // ISS-2025-0750
+    }
+
+    private static void release(PMutex mx) {
+        mx.lock.unlock();
+        mx.count = mx.lock.getHoldCount();                                  // ISS-2025-0750
+    }
+    // END_CHANGE: ISS-2025-0746/0749
+
     private boolean mutexTrylock(Term[] args, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
-        if (!mutex(args[0], true, "mutex_trylock/1").lock.tryLock()) return false;
+        PMutex mx = mutex(args[0], true, "mutex_trylock/1");
+        if (!mx.lock.tryLock()) return false;
+        mx.count = mx.lock.getHoldCount();                                  // ISS-2025-0750
         solutions.add(new HashMap<>(bindings));
         return true;
     }
@@ -608,7 +856,7 @@ public class ThreadPredicates implements BuiltInWithContext {
         if (!mx.lock.isHeldByCurrentThread()) {
             throw Errors.permission("unlock", "mutex", args[0], "mutex_unlock/1");
         }
-        mx.lock.unlock();
+        release(mx);
         solutions.add(new HashMap<>(bindings));
         return true;
     }
@@ -619,10 +867,14 @@ public class ThreadPredicates implements BuiltInWithContext {
         return true;
     }
 
-    private static void releaseMutexesOfThisThread() {
-        for (PMutex mx : MUTEXES.values()) {
-            while (mx.lock.isHeldByCurrentThread()) mx.lock.unlock();
+    /** Release every mutex the calling thread holds; returns their handles (ISS-2025-0751). */
+    private static List<Term> releaseMutexesOfThisThread() {
+        List<Term> held = new ArrayList<>();
+        for (PMutex mx : new TreeMap<Integer, PMutex>(MUTEXES).values()) {
+            if (mx.lock.isHeldByCurrentThread()) held.add(mx.handle());
+            while (mx.lock.isHeldByCurrentThread()) release(mx);
         }
+        return held;
     }
 
     /** with_mutex(+Mutex, :Goal): once(Goal) holding Mutex; released however Goal ends. */
@@ -632,7 +884,7 @@ public class ThreadPredicates implements BuiltInWithContext {
         Term goal = callable(args[1], ctx);
         PMutex mx = mutex(args[0], true, ctx);
         if (solver == null) throw Errors.existence("procedure", Errors.pi("with_mutex", 2), ctx);
-        mx.lock.lockInterruptibly();
+        acquire(solver, mx);                                                // ISS-2025-0746/0749
         try {
             List<Map<String, Term>> sols = new ArrayList<>();
             Term once = new CompoundTerm(new Atom("once"), Collections.singletonList(goal));
@@ -641,10 +893,315 @@ public class ThreadPredicates implements BuiltInWithContext {
             solutions.add(sols.get(0));
             return true;
         } finally {
-            mx.lock.unlock();
+            release(mx);
         }
     }
     // END_CHANGE: ISS-2025-0631
+
+    // ================================================================ 4.6 wave Q4.1
+
+    // START_CHANGE: ISS-2025-0749 - thread_signal(+Thread, :Goal)
+    /**
+     * Queue {@code Goal} for {@code Thread}, which runs it at its next inference (or at once, when
+     * it is blocked in a thread built-in) on its own goal stack. Signalling oneself runs the goal
+     * now. {@code existence_error(thread, T)} for an unknown or finished thread.
+     */
+    private boolean threadSignal(SolverContext solver, Term[] args, Map<String, Term> bindings,
+            List<Map<String, Term>> solutions) {
+        String ctx = "thread_signal/2";
+        Term goal = callable(args[1], ctx);
+        PThread pt = thread(args[0], ctx);
+        if (pt == self()) {
+            if (solver != null) {
+                solver.solveMeta(it.denzosoft.jprolog.core.engine.v4.Machine.signalGoal(goal),
+                    new HashMap<String, Term>(bindings), new ArrayList<Map<String, Term>>());
+            }
+        } else {
+            synchronized (pt) {
+                if (pt.status != null || pt.reclaimed || !pt.signals.live) {
+                    throw Errors.existence("thread", args[0], ctx);
+                }
+            }
+            it.denzosoft.jprolog.core.engine.ThreadSignals.send(pt.signals, detach(goal));
+        }
+        solutions.add(new HashMap<>(bindings));
+        return true;
+    }
+    // END_CHANGE: ISS-2025-0749
+
+    // START_CHANGE: ISS-2025-0750 - thread_statistics/3, message_queue_property/2,
+    // mutex_property/2 and library(thread_pool)
+    /**
+     * {@code thread_statistics(+Thread, ?Key, -Value)}: {@code statistics/2} for another thread.
+     * The per-thread keys ({@code cputime}, {@code runtime}, {@code inferences},
+     * {@code thread_cputime}) are measured on the target; the process-wide ones are answered by
+     * {@code statistics/2}.
+     */
+    private boolean threadStatistics(SolverContext solver, Term[] args, Map<String, Term> bindings,
+            List<Map<String, Term>> solutions) {
+        String ctx = "thread_statistics/3";
+        PThread pt = thread(args[0], ctx);
+        Term key = args[1];
+        if (key instanceof Variable) throw Errors.instantiation(ctx);
+        if (!(key instanceof Atom)) throw Errors.domain("statistics_key", key, ctx);
+        String k = ((Atom) key).getName();
+        boolean perThread = "cputime".equals(k) || "runtime".equals(k) || "inferences".equals(k)
+            || "thread_cputime".equals(k);
+        if (pt == self() || !perThread) {
+            if (solver == null) return false;
+            List<Map<String, Term>> sols = new ArrayList<>();
+            Term q = new CompoundTerm(new Atom("statistics"), Arrays.asList(key, args[2]));
+            solver.solveMeta(q, new HashMap<String, Term>(bindings), sols);
+            if (sols.isEmpty()) return false;
+            solutions.add(sols.get(0));
+            return true;
+        }
+        Thread t = pt.worker ? pt.thread : pt.signals.thread;
+        Term value;
+        if ("inferences".equals(k)) {
+            it.denzosoft.jprolog.core.engine.ResourceGuard g = pt.signals.guard;
+            value = Number.valueOf(g == null ? 0L : g.getSteps());
+        } else {
+            long nanos = 0L;
+            java.lang.management.ThreadMXBean mx = java.lang.management.ManagementFactory.getThreadMXBean();
+            if (t != null && t.isAlive() && mx.isThreadCpuTimeSupported()) {
+                @SuppressWarnings("deprecation") long tid = t.getId();
+                long v = mx.getThreadCpuTime(tid);
+                if (v > 0) nanos = v;
+            }
+            if ("runtime".equals(k)) {
+                value = CollectionUtilsBridge.list(Number.valueOf(nanos / 1_000_000L), Number.valueOf(0L));
+            } else {
+                value = new Number(nanos / 1e9);
+            }
+        }
+        return unify(args[2], value, bindings, solutions);
+    }
+
+    /** Tiny list builder (keeps the imports of this file unchanged). */
+    private static final class CollectionUtilsBridge {
+        static Term list(Term... xs) {
+            return it.denzosoft.jprolog.core.utils.CollectionUtils.createListTerm(Arrays.asList(xs));
+        }
+    }
+
+    /** {@code message_queue_property(?Queue, ?Property)}: alias/1, size/1, max_size/1, waiting/1. */
+    private boolean mqProperty(Term[] args, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        String ctx = "message_queue_property/2";
+        Term prop = args[1];
+        if (!(prop instanceof Variable) && !(prop instanceof CompoundTerm)) {
+            throw Errors.domain("message_queue_property", prop, ctx);
+        }
+        List<MQueue> which = new ArrayList<>();
+        if (args[0] instanceof Variable) which.addAll(new TreeMap<Integer, MQueue>(QUEUES).values());
+        else which.add(queue(args[0], ctx));
+        boolean any = false;
+        for (MQueue q : which) {
+            List<Term> props = new ArrayList<>();
+            if (q.alias != null) props.add(struct("alias", new Atom(q.alias)));
+            int size, waiting;
+            synchronized (q) { size = q.size(); waiting = q.waiting; }
+            props.add(struct("size", Number.valueOf(size)));
+            if (q.maxSize > 0) props.add(struct("max_size", Number.valueOf(q.maxSize)));
+            props.add(struct("waiting", Number.valueOf(waiting)));
+            for (Term p : props) {
+                Map<String, Term> nb = new HashMap<>(bindings);
+                if (args[0].unify(q.handle(), nb) && prop.resolveBindings(nb).unify(p, nb)) {
+                    solutions.add(nb);
+                    any = true;
+                }
+            }
+        }
+        return any;
+    }
+
+    /** {@code mutex_property(?Mutex, ?Property)}: alias/1, status(unlocked | locked(Owner, Count)). */
+    private boolean mutexProperty(Term[] args, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        String ctx = "mutex_property/2";
+        Term prop = args[1];
+        if (!(prop instanceof Variable) && !(prop instanceof CompoundTerm)) {
+            throw Errors.domain("mutex_property", prop, ctx);
+        }
+        List<PMutex> which = new ArrayList<>();
+        if (args[0] instanceof Variable) which.addAll(new TreeMap<Integer, PMutex>(MUTEXES).values());
+        else which.add(mutex(args[0], false, ctx));
+        boolean any = false;
+        for (PMutex mx : which) {
+            List<Term> props = new ArrayList<>();
+            if (mx.alias != null) props.add(struct("alias", new Atom(mx.alias)));
+            Thread holder = mx.lock.holder();
+            Term status;
+            if (holder == null) {
+                status = new Atom("unlocked");
+            } else {
+                PThread owner = BY_JVM.get(holder);
+                Term oh = (owner != null) ? owner.handle() : MAIN.handle();
+                int c = Math.max(1, mx.count);
+                status = new CompoundTerm(new Atom("locked"), Arrays.asList(oh, (Term) Number.valueOf(c)));
+            }
+            props.add(struct("status", status));
+            for (Term p : props) {
+                Map<String, Term> nb = new HashMap<>(bindings);
+                if (args[0].unify(mx.handle(), nb) && prop.resolveBindings(nb).unify(p, nb)) {
+                    solutions.add(nb);
+                    any = true;
+                }
+            }
+        }
+        return any;
+    }
+
+    /** {@code thread_pool_create(+Pool, +Size, +Options)}: options backlog(N) + thread_create/3's. */
+    private boolean poolCreate(Term[] args, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        String ctx = "thread_pool_create/3";
+        String name = atomName(args[0], ctx);
+        Term sz = args[1];
+        if (sz instanceof Variable) throw Errors.instantiation(ctx);
+        if (!(sz instanceof Number) || !((Number) sz).isInteger()) throw Errors.type("integer", sz, ctx);
+        if (((Number) sz).longValue() < 1) throw Errors.domain("not_less_than_one", sz, ctx);
+        int backlog = -1;
+        List<Term> keep = new ArrayList<>();
+        for (Term o : options(args[2], ctx)) {
+            if (o instanceof CompoundTerm && "backlog".equals(((CompoundTerm) o).getName())
+                    && ((CompoundTerm) o).getArguments().size() == 1) {
+                Term v = ((CompoundTerm) o).getArguments().get(0);
+                if (v instanceof Atom && "infinite".equals(((Atom) v).getName())) { backlog = -1; continue; }
+                if (v instanceof Variable) throw Errors.instantiation(ctx);
+                if (!(v instanceof Number) || !((Number) v).isInteger()) throw Errors.type("integer", v, ctx);
+                backlog = (int) Math.max(0, Math.min(Integer.MAX_VALUE, ((Number) v).longValue()));
+            } else {
+                keep.add(o);
+            }
+        }
+        new CreateOptions().parse(args[2], ctx);                 // validate the thread options now
+        Pool pool = new Pool(name, (int) Math.min(Integer.MAX_VALUE, ((Number) sz).longValue()), backlog,
+            detach(it.denzosoft.jprolog.core.utils.CollectionUtils.createListTerm(keep)));
+        if (POOLS.putIfAbsent(name, pool) != null) {
+            throw Errors.permission("create", "thread_pool", args[0], ctx);
+        }
+        solutions.add(new HashMap<>(bindings));
+        return true;
+    }
+
+    private boolean poolDestroy(Term[] args, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        String ctx = "thread_pool_destroy/1";
+        String name = atomName(args[0], ctx);
+        Pool pool = POOLS.remove(name);
+        if (pool == null) throw Errors.existence("thread_pool", args[0], ctx);
+        synchronized (pool) { pool.notifyAll(); }                 // waiting creators see it is gone
+        solutions.add(new HashMap<>(bindings));
+        return true;
+    }
+
+    /**
+     * {@code thread_create_in_pool(+Pool, :Goal, -Id, +Options)}: a thread that occupies one of the
+     * pool's slots until it ends. With the pool full, {@code wait(true)} (the default) blocks until a
+     * member ends; {@code wait(false)} — or a full backlog — raises
+     * {@code resource_error(threads_in_pool(Pool))}.
+     */
+    private boolean poolCreateThread(SolverContext solver, Term[] args, Map<String, Term> bindings,
+            List<Map<String, Term>> solutions) throws InterruptedException {
+        String ctx = "thread_create_in_pool/4";
+        String name = atomName(args[0], ctx);
+        Term goal = callable(args[1], ctx);
+        Pool pool = POOLS.get(name);
+        if (pool == null) throw Errors.existence("thread_pool", args[0], ctx);
+        boolean wait = true;
+        List<Term> own = new ArrayList<>();
+        for (Term o : options(args[3], ctx)) {
+            if (o instanceof CompoundTerm && "wait".equals(((CompoundTerm) o).getName())
+                    && ((CompoundTerm) o).getArguments().size() == 1) {
+                wait = bool(((CompoundTerm) o).getArguments().get(0), ctx);
+            } else {
+                own.add(o);
+            }
+        }
+        CreateOptions co = new CreateOptions();
+        co.parse(pool.options, ctx);
+        co.parse(it.denzosoft.jprolog.core.utils.CollectionUtils.createListTerm(own), ctx);   // call options win
+        Term full = new CompoundTerm(new Atom("resource_error"), Collections.singletonList(
+            struct("threads_in_pool", new Atom(name))));
+        final Pool fpool = pool;
+        it.denzosoft.jprolog.core.engine.ThreadWaits.enterAnyWait(                // ISS-2025-0746
+            new java.util.function.Supplier<java.util.Collection<Thread>>() {
+                @Override public java.util.Collection<Thread> get() { return new ArrayList<Thread>(fpool.members); }
+            });
+        try {
+        for (;;) {
+            synchronized (pool) {
+                if (POOLS.get(name) != pool) throw Errors.existence("thread_pool", args[0], ctx);
+                if (pool.running < pool.size) { pool.running++; break; }
+                if (!wait || (pool.backlog >= 0 && pool.waiting >= pool.backlog)) {
+                    throw Errors.error(full, "thread_create_in_pool", 4, null);
+                }
+                pool.waiting++;
+                try {
+                    waitSlice(pool, FOREVER);
+                } finally {
+                    pool.waiting--;
+                }
+            }
+            runSignals(solver);
+        }
+        } finally {
+            it.denzosoft.jprolog.core.engine.ThreadWaits.exitAnyWait();
+        }
+        PThread pt;
+        try {
+            pt = startThread(solver, goal, co, pool, ctx);
+        } catch (RuntimeException e) {
+            synchronized (pool) { pool.running--; pool.notifyAll(); }
+            throw e;
+        }
+        return unify(args[2], pt.handle(), bindings, solutions);
+    }
+
+    /** {@code thread_pool_property(?Pool, ?Property)}: size/1, running/1, free/1, backlog/1, options/1. */
+    private boolean poolProperty(Term[] args, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        String ctx = "thread_pool_property/2";
+        List<Pool> which = new ArrayList<>();
+        if (args[0] instanceof Variable) which.addAll(new TreeMap<String, Pool>(POOLS).values());
+        else {
+            Pool p = POOLS.get(atomName(args[0], ctx));
+            if (p == null) throw Errors.existence("thread_pool", args[0], ctx);
+            which.add(p);
+        }
+        boolean any = false;
+        for (Pool p : which) {
+            int running, waiting;
+            synchronized (p) { running = p.running; waiting = p.waiting; }
+            List<Term> props = Arrays.asList(
+                struct("size", Number.valueOf(p.size)),
+                struct("running", Number.valueOf(running)),
+                struct("free", Number.valueOf(Math.max(0, p.size - running))),
+                struct("backlog", Number.valueOf(waiting)),
+                struct("options", p.options));
+            for (Term pr : props) {
+                Map<String, Term> nb = new HashMap<>(bindings);
+                if (args[0].unify(new Atom(p.name), nb) && args[1].resolveBindings(nb).unify(pr, nb)) {
+                    solutions.add(nb);
+                    any = true;
+                }
+            }
+        }
+        return any;
+    }
+
+    private boolean poolCurrent(Term[] args, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
+        boolean any = false;
+        for (String n : new TreeMap<String, Pool>(POOLS).keySet()) {
+            Map<String, Term> nb = new HashMap<>(bindings);
+            if (args[0].unify(new Atom(n), nb)) { solutions.add(nb); any = true; }
+        }
+        return any;
+    }
+
+    private static String atomName(Term t, String ctx) {
+        if (t instanceof Variable) throw Errors.instantiation(ctx);
+        if (!(t instanceof Atom)) throw Errors.type("atom", t, ctx);
+        return ((Atom) t).getName();
+    }
+    // END_CHANGE: ISS-2025-0750
 
     // ================================================================ lookups and helpers
 

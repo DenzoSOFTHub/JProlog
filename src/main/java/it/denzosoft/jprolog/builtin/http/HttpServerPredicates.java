@@ -2,11 +2,11 @@ package it.denzosoft.jprolog.builtin.http;
 
 // START_CHANGE: ISS-2025-0125 - HTTP server/client built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.utils.CollectionUtils;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -113,11 +113,11 @@ public class HttpServerPredicates implements BuiltIn {
                 case URL_DECODE:       return doUrlDecode(query, bindings, solutions);
                 default: return false;
             }
-        } catch (PrologEvaluationException e) {
+        } catch (it.denzosoft.jprolog.core.exceptions.PrologException e) {
             throw e;
         } catch (Exception e) {
             it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
-            throw new PrologEvaluationException(modeName() + ": " + e.getMessage());
+            throw Errors.host(e, "read", "url", null, modeName(), arityOf(query));   // ISS-2025-0691
         }
     }
 
@@ -130,11 +130,7 @@ public class HttpServerPredicates implements BuiltIn {
     private boolean doHttpServer(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 2);
-        Term portTerm = query.getArguments().get(0).resolveBindings(bindings);
-        if (!(portTerm instanceof Number)) {
-            throw new PrologEvaluationException("http_server/2: first argument must be a port number.");
-        }
-        int port = ((Number) portTerm).getValue().intValue();
+        int port = (int) it.denzosoft.jprolog.builtin.LibArgs.integer(query, 0, bindings, "http_server", "the port");   // ISS-2025-0691
 
         String handle = "http_server_" + serverCounter.incrementAndGet();
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
@@ -162,10 +158,10 @@ public class HttpServerPredicates implements BuiltIn {
     private boolean doHttpStop(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 1);
-        String handle = resolveAtom(query.getArguments().get(0), bindings);
+        String handle = resolveAtom(query, 0, bindings);
         HttpServer server = activeServers.remove(handle);
         if (server == null) {
-            throw new PrologEvaluationException("http_stop/1: no server with handle '" + handle + "'.");
+            throw Errors.existence("http_server", new Atom(handle), "http_stop", 1, "no server with this handle");   // ISS-2025-0691
         }
         server.stop(1);
         // START_CHANGE: ISS-2025-0173 - Clean up request queue and pending exchanges on server stop
@@ -187,14 +183,14 @@ public class HttpServerPredicates implements BuiltIn {
     private boolean doHttpHandler(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 3);
-        String handle = resolveAtom(query.getArguments().get(0), bindings);
-        String path = resolveAtom(query.getArguments().get(1), bindings);
+        String handle = resolveAtom(query, 0, bindings);
+        String path = resolveAtom(query, 1, bindings);
         // HandlerAtom is stored for identification but all requests go to the queue
-        resolveAtom(query.getArguments().get(2), bindings);
+        resolveAtom(query, 2, bindings);
 
         HttpServer server = activeServers.get(handle);
         if (server == null) {
-            throw new PrologEvaluationException("http_handler/3: no server with handle '" + handle + "'.");
+            throw Errors.existence("http_server", new Atom(handle), "http_handler", 3, "no server with this handle");   // ISS-2025-0691
         }
         LinkedBlockingQueue<RequestContext> queue = requestQueues.get(handle);
         server.createContext(path, new QueueingHandler(handle, queue));
@@ -210,10 +206,10 @@ public class HttpServerPredicates implements BuiltIn {
     private boolean doHttpGetRequest(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 2);
-        String handle = resolveAtom(query.getArguments().get(0), bindings);
+        String handle = resolveAtom(query, 0, bindings);
         LinkedBlockingQueue<RequestContext> queue = requestQueues.get(handle);
         if (queue == null) {
-            throw new PrologEvaluationException("http_get_request/2: no server with handle '" + handle + "'.");
+            throw Errors.existence("http_server", new Atom(handle), "http_get_request", 2, "no server with this handle");   // ISS-2025-0691
         }
 
         RequestContext ctx = queue.poll(30, TimeUnit.SECONDS);
@@ -253,18 +249,15 @@ public class HttpServerPredicates implements BuiltIn {
             List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 4);
         // ServerHandle is accepted but we key on RequestId
-        resolveAtom(query.getArguments().get(0), bindings);
-        String requestId = resolveAtom(query.getArguments().get(1), bindings);
-        Term statusTerm = query.getArguments().get(2).resolveBindings(bindings);
-        if (!(statusTerm instanceof Number)) {
-            throw new PrologEvaluationException("http_reply/4: status code must be a number.");
-        }
+        resolveAtom(query, 0, bindings);
+        String requestId = resolveAtom(query, 1, bindings);
+        Term statusTerm = it.denzosoft.jprolog.builtin.LibArgs.number(query, 2, bindings, "http_reply", "the status code");   // ISS-2025-0691
         int statusCode = ((Number) statusTerm).getValue().intValue();
-        String body = resolveAtom(query.getArguments().get(3), bindings);
+        String body = resolveAtom(query, 3, bindings);
 
         HttpExchange exchange = pendingExchanges.remove(requestId);
         if (exchange == null) {
-            throw new PrologEvaluationException("http_reply/4: no pending request with id '" + requestId + "'.");
+            throw Errors.existence("http_request", new Atom(requestId), "http_reply", 4, "no pending request with this id");   // ISS-2025-0691
         }
 
         sendResponse(exchange, statusCode, "text/plain; charset=utf-8", body);
@@ -279,13 +272,13 @@ public class HttpServerPredicates implements BuiltIn {
     private boolean doHttpReplyJson(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 3);
-        resolveAtom(query.getArguments().get(0), bindings);
-        String requestId = resolveAtom(query.getArguments().get(1), bindings);
-        String jsonBody = resolveAtom(query.getArguments().get(2), bindings);
+        resolveAtom(query, 0, bindings);
+        String requestId = resolveAtom(query, 1, bindings);
+        String jsonBody = resolveAtom(query, 2, bindings);
 
         HttpExchange exchange = pendingExchanges.remove(requestId);
         if (exchange == null) {
-            throw new PrologEvaluationException("http_reply_json/3: no pending request with id '" + requestId + "'.");
+            throw Errors.existence("http_request", new Atom(requestId), "http_reply_json", 3, "no pending request with this id");   // ISS-2025-0691
         }
 
         sendResponse(exchange, 200, "application/json; charset=utf-8", jsonBody);
@@ -302,7 +295,7 @@ public class HttpServerPredicates implements BuiltIn {
     private boolean doHttpClientGet(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 2);
-        String url = resolveAtom(query.getArguments().get(0), bindings);
+        String url = resolveAtom(query, 0, bindings);
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
@@ -322,8 +315,8 @@ public class HttpServerPredicates implements BuiltIn {
     private boolean doHttpClientPost(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 3);
-        String url = resolveAtom(query.getArguments().get(0), bindings);
-        String postBody = resolveAtom(query.getArguments().get(1), bindings);
+        String url = resolveAtom(query, 0, bindings);
+        String postBody = resolveAtom(query, 1, bindings);
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
@@ -345,12 +338,15 @@ public class HttpServerPredicates implements BuiltIn {
     private boolean doHttpOpen(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 3);
-        String url = resolveAtom(query.getArguments().get(0), bindings);
+        String url = resolveAtom(query, 0, bindings);
         Term optionsTerm = query.getArguments().get(1).resolveBindings(bindings);
 
         List<Term> options = CollectionUtils.termToList(optionsTerm);
-        if (options == null) {
-            throw new PrologEvaluationException("http_open/3: second argument must be a list of options.");
+        if (options == null) {                                         // ISS-2025-0691
+            if (optionsTerm instanceof it.denzosoft.jprolog.core.terms.Variable) {
+                throw Errors.instantiation("http_open", 3, "the options must be bound");
+            }
+            throw Errors.type("list", optionsTerm, "http_open", 3, "the options must be a list");
         }
 
         String method = "GET";
@@ -410,7 +406,7 @@ public class HttpServerPredicates implements BuiltIn {
     private boolean doUrlEncode(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 2);
-        String text = resolveAtom(query.getArguments().get(0), bindings);
+        String text = resolveAtom(query, 0, bindings);
         String encoded = URLEncoder.encode(text, StandardCharsets.UTF_8.name());
         return unify(query.getArguments().get(1), new Atom(encoded), bindings, solutions);
     }
@@ -421,7 +417,7 @@ public class HttpServerPredicates implements BuiltIn {
     private boolean doUrlDecode(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws Exception {
         checkArity(query, 2);
-        String encoded = resolveAtom(query.getArguments().get(0), bindings);
+        String encoded = resolveAtom(query, 0, bindings);
         String decoded = URLDecoder.decode(encoded, StandardCharsets.UTF_8.name());
         return unify(query.getArguments().get(1), new Atom(decoded), bindings, solutions);
     }
@@ -564,19 +560,24 @@ public class HttpServerPredicates implements BuiltIn {
         return resolved.toString();
     }
 
+    // START_CHANGE: ISS-2025-0691 - wave Q1.1: ISO error terms (LIM-038)
+    private static int arityOf(Term query) { return it.denzosoft.jprolog.builtin.LibArgs.arity(query); }
+
     private void checkArity(Term query, int expected) {
-        if (query.getArguments().size() != expected) {
-            throw new PrologEvaluationException(modeName() + " requires " + expected + " arguments.");
-        }
+        if (arityOf(query) != expected) throw it.denzosoft.jprolog.builtin.LibArgs.unknownArity(query);
     }
 
-    private String resolveAtom(Term term, Map<String, Term> bindings) {
-        Term resolved = term.resolveBindings(bindings);
-        if (!(resolved instanceof Atom)) {
-            throw new PrologEvaluationException(modeName() + ": argument must be an atom, got: " + resolved);
-        }
-        return ((Atom) resolved).getName();
+    private String resolveAtom(Term query, int i, Map<String, Term> bindings) {
+        return it.denzosoft.jprolog.builtin.LibArgs.text(query, i, bindings, modeName(), "argument " + (i + 1));
     }
+
+    /** {@code term} as text (atom or string), raising the ISO error of {@link #modeName()}. */
+    private String resolveAtom(Term term, Map<String, Term> bindings) {
+        String nm = modeName();
+        return it.denzosoft.jprolog.builtin.LibArgs.text(term.resolveBindings(bindings), nm,
+            it.denzosoft.jprolog.builtin.LibArgs.nameArity(nm), "the argument");
+    }
+    // END_CHANGE: ISS-2025-0691
 
     private boolean unify(Term target, Term value, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {

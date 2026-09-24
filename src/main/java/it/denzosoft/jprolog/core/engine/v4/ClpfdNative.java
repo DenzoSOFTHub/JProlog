@@ -118,6 +118,12 @@ final class ClpfdNative {
         t.register("$clpfd_tuples_in", 2, new TuplesIn());
         t.register("$clpfd_gcc", 2, new Gcc());
         // END_CHANGE: ISS-2025-0650
+        // START_CHANGE: ISS-2025-0762 / ISS-2025-0763 / ISS-2025-0766 / ISS-2025-0760 - 4.6 wave Q5
+        t.register("$clpfd_circuit", 1, new CircuitB());
+        t.register("$clpfd_cumulative", 2, new CumulativeB());
+        t.register("fd_degree", 2, new FdDegree());
+        t.register("$clpfd_attribute_goals", 2, new AttributeGoalsB());
+        // END_CHANGE: ISS-2025-0762 / ISS-2025-0763 / ISS-2025-0766 / ISS-2025-0760
     }
 
     // START_CHANGE: ISS-2025-0486 - the cell-model posting predicates.
@@ -195,6 +201,15 @@ final class ClpfdNative {
     private static Builtin.Outcome post(Machine m, Term l, Constraint.Rel rel, Term r) {
         // START_CHANGE: ISS-2025-0644 - X #= 10^12*10^12 binds X to the exact big integer
         if (rel == Constraint.Rel.EQ) {
+            // START_CHANGE: ISS-2025-0761 - SWI: X #= Y between two variables constrains X to the
+            // integers and UNIFIES them (clpfd_equal_: constrain_to_integer(X), X = Y), so the
+            // answer is X = Y, Y in inf..sup rather than a residual X#=Y.
+            if (l instanceof Variable && r instanceof Variable && l != r) {
+                if (!ClpfdV2Bridge.postDomain(l, IntervalDomain.ALL)) return Builtin.Outcome.FAILURE;
+                if (!m.unify(l, r)) return Builtin.Outcome.FAILURE;
+                return bindDetermined(m);
+            }
+            // END_CHANGE: ISS-2025-0761
             Term var = null, expr = null;
             if (l instanceof Variable && ClpfdV2Bridge.isGround(r)) { var = l; expr = r; }
             else if (r instanceof Variable && ClpfdV2Bridge.isGround(l)) { var = r; expr = l; }
@@ -409,6 +424,96 @@ final class ClpfdNative {
         }
     }
 
+    // START_CHANGE: ISS-2025-0762 - circuit/1
+    private static final class CircuitB implements Builtin {
+        @Override public Outcome call(Machine m, Term[] args) {
+            List<Term> xs = properList(m, args[0], "circuit/1");
+            for (int i = 0; i < xs.size(); i++) {
+                Term x = m.deref(xs.get(i));
+                if (!(x instanceof Variable) && !(x instanceof Number && ((Number) x).isInteger())) {
+                    throw Errors.type("integer", m.resolve(x), "circuit/1");
+                }
+                xs.set(i, x);
+            }
+            if (!ClpfdV2Bridge.postCircuit(xs)) return Outcome.FAILURE;
+            return bindDetermined(m);
+        }
+    }
+    // END_CHANGE: ISS-2025-0762
+
+    // START_CHANGE: ISS-2025-0763 - cumulative/2 (cumulative/1 is limit(1), in the prelude)
+    private static final class CumulativeB implements Builtin {
+        @Override public Outcome call(Machine m, Term[] args) {
+            String ind = "cumulative/2";
+            List<Term> ts = properList(m, args[0], ind);
+            List<Term> opts = properList(m, args[1], ind);
+            Term limit = Number.valueOf(1);
+            for (Term o : opts) {
+                Term ot = m.deref(o);
+                if (ot instanceof Variable) throw Errors.instantiation(ind);
+                if (ot instanceof CompoundTerm && "limit".equals(((CompoundTerm) ot).getName())
+                        && ((CompoundTerm) ot).getArguments().size() == 1) {
+                    limit = checkFd(m, ((CompoundTerm) ot).getArguments().get(0), ind);
+                } else {
+                    throw Errors.domain("cumulative_option", m.resolve(ot), ind);
+                }
+            }
+            List<Term[]> tasks = new ArrayList<Term[]>(ts.size());
+            for (Term t : ts) {
+                Term tt = m.deref(t);
+                if (tt instanceof Variable) throw Errors.instantiation(ind);
+                if (!(tt instanceof CompoundTerm) || !"task".equals(((CompoundTerm) tt).getName())
+                        || ((CompoundTerm) tt).getArguments().size() != 5) {
+                    throw Errors.domain("cumulative_task", m.resolve(tt), ind);
+                }
+                List<Term> as = ((CompoundTerm) tt).getArguments();
+                Term[] task = new Term[5];
+                for (int j = 0; j < 4; j++) task[j] = checkFd(m, as.get(j), ind);
+                task[4] = m.resolve(as.get(4));
+                tasks.add(task);
+            }
+            if (!ClpfdV2Bridge.postCumulative(tasks, limit)) return Outcome.FAILURE;
+            return bindDetermined(m);
+        }
+    }
+
+    /** An FD operand: a variable or an integer (type_error(integer, T) otherwise). */
+    private static Term checkFd(Machine m, Term t, String ind) {
+        Term x = m.deref(t);
+        if (x instanceof Variable) return x;
+        if (x instanceof Number && ((Number) x).isInteger()) return x;
+        throw Errors.type("integer", m.resolve(x), ind);
+    }
+    // END_CHANGE: ISS-2025-0763
+
+    // START_CHANGE: ISS-2025-0766 - fd_degree(X, D): the live constraints on X (0 for an integer)
+    private static final class FdDegree implements Builtin {
+        @Override public Outcome call(Machine m, Term[] args) {
+            Term x = m.deref(args[0]);
+            int d;
+            if (x instanceof Variable) d = ClpfdV2Bridge.cellLiveDegree((Variable) x);
+            else if (x instanceof Number && ((Number) x).isInteger()) d = 0;
+            else throw Errors.type("integer", m.resolve(x), "fd_degree/2");
+            return m.unify(args[1], Number.valueOf(d)) ? Outcome.SUCCESS : Outcome.FAILURE;
+        }
+    }
+    // END_CHANGE: ISS-2025-0766
+
+    // START_CHANGE: ISS-2025-0760 - '$clpfd_attribute_goals'(X, Goals): clpfd:attribute_goals//1
+    private static final class AttributeGoalsB implements Builtin {
+        @Override public Outcome call(Machine m, Term[] args) {
+            Term x = m.deref(args[0]);
+            List<Term> out = new ArrayList<Term>();
+            if (x instanceof Variable) {
+                Object st = ClpfdV2Bridge.newResidualState();
+                ClpfdV2Bridge.residualGoals((Variable) x, st, out);
+                ClpfdV2Bridge.finishResidualGoals(st, out);
+            }
+            return m.unify(args[1], Machine.makeList(out)) ? Outcome.SUCCESS : Outcome.FAILURE;
+        }
+    }
+    // END_CHANGE: ISS-2025-0760
+
     private static long fdInt(Machine m, Term t, String ind) {
         Term x = m.deref(t);
         if (x instanceof Variable) throw Errors.instantiation(ind);
@@ -537,6 +642,9 @@ final class ClpfdNative {
      * One labeling step: bind what propagation has determined, select the next variable, push the
      * continuation and a generator over its branches. SUCCESS once every variable is bound.
      */
+    /** ISS-2025-0782 (test hook): list cells the labeling steps have visited (all threads). */
+    static long labelCellsVisited;
+
     private static Builtin.Outcome step(Machine m, Term listT, int code) {
         if (bindDetermined(m) == Builtin.Outcome.FAILURE) return Builtin.Outcome.FAILURE;
         Labeler.VarSel sel = Labeler.VarSel.values()[code % 8];
@@ -547,11 +655,21 @@ final class ClpfdNative {
         int bestDeg = -1;
         Term cur = m.deref(listT);
         int n = 0;
-        while (cur instanceof CompoundTerm && ((CompoundTerm) cur).getArguments().size() == 2) {
-            Term e = m.deref(((CompoundTerm) cur).getArguments().get(0));
-            cur = m.deref(((CompoundTerm) cur).getArguments().get(1));
+        // START_CHANGE: ISS-2025-0782 - 4.6 wave Q6 (extra 3): the continuation resumes at the
+        // list cell of the first variable still unbound. Every element before it is bound and
+        // stays bound on the way forward (backtracking restores the continuation that still
+        // holds the earlier cell), so leftmost labeling no longer rescans the labeled prefix at
+        // every step — n steps over n variables were O(n^2).
+        Term firstCell = null;
+        while (cur instanceof CompoundTerm && ((CompoundTerm) cur).arity() == 2) {
+            Term cell = cur;
+            Term e = m.deref(((CompoundTerm) cur).arg(0));
+            cur = m.deref(((CompoundTerm) cur).arg(1));
             if ((++n & 0x3FF) == 0) m.guard().step();
+            labelCellsVisited++;
             if (!(e instanceof Variable)) continue;
+            if (firstCell == null) firstCell = cell;
+            // END_CHANGE: ISS-2025-0782
             Variable v = (Variable) e;
             IntervalDomain d = ClpfdV2Bridge.cellDomain(v);
             if (d == null || !d.isFinite()) throw Errors.instantiation("labeling/2");
@@ -578,7 +696,7 @@ final class ClpfdNative {
             if (better) { best = v; bestDom = d; }
         }
         if (best == null) return Builtin.Outcome.SUCCESS;                // everything is labeled
-        m.pushGoal(new CompoundTerm(LABEL_STEP, Arrays.asList(listT, (Term) Number.valueOf(code))));
+        m.pushGoal(new CompoundTerm(LABEL_STEP, Arrays.asList(firstCell, (Term) Number.valueOf(code))));   // ISS-2025-0782
         Generator g;
         if (bestDom.isSingleton() || branch == ENUM) g = new EnumGen(best, bestDom, up);
         else if (branch == BISECT) g = new BisectGen(best, bestDom, up);

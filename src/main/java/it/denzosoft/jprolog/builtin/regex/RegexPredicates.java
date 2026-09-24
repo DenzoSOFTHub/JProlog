@@ -3,10 +3,10 @@ package it.denzosoft.jprolog.builtin.regex;
 // START_CHANGE: ISS-2025-0117 - Regex built-in predicates
 // START_CHANGE: ISS-2025-0174 - Regex injection / escaping security hardening
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.utils.CollectionUtils;
 
 import java.util.*;
@@ -48,21 +48,34 @@ public class RegexPredicates implements BuiltIn {
      * Safely compile a regex pattern, throwing a proper Prolog syntax_error
      * instead of letting PatternSyntaxException propagate as a Java exception.
      */
+    // START_CHANGE: ISS-2025-0786 - 4.6 wave Q6 (extra 7): the matcher reads its input through
+    // a CharSequence that charges the query's inference budget (and polls a Stop), so a
+    // catastrophically backtracking pattern is bounded instead of invisible to the budget.
+    private static CharSequence metered(String input) {
+        return it.denzosoft.jprolog.core.engine.ResourceGuard.guarded(input);
+    }
+    // END_CHANGE: ISS-2025-0786
+
     private Pattern safeCompile(String pattern, String predicateName) {
         try {
             return Pattern.compile(pattern);
         } catch (PatternSyntaxException e) {
-            throw new PrologEvaluationException(
-                "error(syntax_error(invalid_regex), " + predicateName + "): " + e.getMessage());
+            // START_CHANGE: ISS-2025-0683 - a real error(syntax_error(invalid_regex), _) term; the
+            // old code built that term as a Java STRING, so the ball was a bare atom
+            int slash = predicateName.lastIndexOf('/');
+            String nm = slash > 0 ? predicateName.substring(0, slash) : predicateName;
+            int ar = slash > 0 ? Integer.parseInt(predicateName.substring(slash + 1)) : 0;
+            throw Errors.syntax("invalid_regex", nm, ar, e.getDescription());
+            // END_CHANGE: ISS-2025-0683
         }
     }
 
     private boolean doMatch(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 2);
-        String pattern = resolveAtom(query.getArguments().get(0), bindings);
-        String input = resolveAtom(query.getArguments().get(1), bindings);
-        if (safeCompile(pattern, "re_match/2").matcher(input).find()) {
+        String pattern = resolveAtom(query, 0, bindings);
+        String input = resolveAtom(query, 1, bindings);
+        if (safeCompile(pattern, "re_match/2").matcher(metered(input)).find()) {
             solutions.add(bindings);
             return true;
         }
@@ -72,9 +85,9 @@ public class RegexPredicates implements BuiltIn {
     private boolean doMatchSub(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 3);
-        String pattern = resolveAtom(query.getArguments().get(0), bindings);
-        String input = resolveAtom(query.getArguments().get(1), bindings);
-        Matcher m = safeCompile(pattern, "re_matchsub/3").matcher(input);
+        String pattern = resolveAtom(query, 0, bindings);
+        String input = resolveAtom(query, 1, bindings);
+        Matcher m = safeCompile(pattern, "re_matchsub/3").matcher(metered(input));
         if (m.find()) {
             List<Term> groups = new ArrayList<>();
             for (int i = 0; i <= m.groupCount(); i++) {
@@ -89,13 +102,13 @@ public class RegexPredicates implements BuiltIn {
     private boolean doReplace(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 4);
-        String pattern = resolveAtom(query.getArguments().get(0), bindings);
-        String replacement = resolveAtom(query.getArguments().get(1), bindings);
-        String input = resolveAtom(query.getArguments().get(2), bindings);
+        String pattern = resolveAtom(query, 0, bindings);
+        String replacement = resolveAtom(query, 1, bindings);
+        String input = resolveAtom(query, 2, bindings);
         // START_CHANGE: ISS-2025-0174 - Use Matcher.quoteReplacement to prevent unintended group substitution
         Pattern compiled = safeCompile(pattern, "re_replace/4");
         String safeReplacement = Matcher.quoteReplacement(replacement);
-        String result = compiled.matcher(input).replaceAll(safeReplacement);
+        String result = compiled.matcher(metered(input)).replaceAll(safeReplacement);
         // END_CHANGE: ISS-2025-0174
         return unify(query.getArguments().get(3), new Atom(result), bindings, solutions);
     }
@@ -103,11 +116,11 @@ public class RegexPredicates implements BuiltIn {
     private boolean doSplit(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 3);
-        String pattern = resolveAtom(query.getArguments().get(0), bindings);
-        String input = resolveAtom(query.getArguments().get(1), bindings);
-        // Validate pattern before use
-        safeCompile(pattern, "re_split/3");
-        String[] parts = input.split(pattern);
+        String pattern = resolveAtom(query, 0, bindings);
+        String input = resolveAtom(query, 1, bindings);
+        // Validate pattern before use (ISS-2025-0786: and split over the metered input — the
+        // same result as String.split, which compiles the same pattern)
+        String[] parts = safeCompile(pattern, "re_split/3").split(metered(input));
         List<Term> list = new ArrayList<>();
         for (String p : parts) list.add(new Atom(p));
         return unify(query.getArguments().get(2), CollectionUtils.createListTerm(list), bindings, solutions);
@@ -116,12 +129,13 @@ public class RegexPredicates implements BuiltIn {
     private boolean doFindAll(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 3);
-        String pattern = resolveAtom(query.getArguments().get(0), bindings);
-        String input = resolveAtom(query.getArguments().get(1), bindings);
-        Matcher m = safeCompile(pattern, "re_findall/3").matcher(input);
+        String pattern = resolveAtom(query, 0, bindings);
+        String input = resolveAtom(query, 1, bindings);
+        Matcher m = safeCompile(pattern, "re_findall/3").matcher(metered(input));
         List<Term> matches = new ArrayList<>();
         while (m.find()) {
             matches.add(new Atom(m.group()));
+            it.denzosoft.jprolog.core.engine.ResourceGuard.chargeBridged(1);   // ISS-2025-0786: per match
         }
         return unify(query.getArguments().get(2), CollectionUtils.createListTerm(matches), bindings, solutions);
     }
@@ -130,22 +144,41 @@ public class RegexPredicates implements BuiltIn {
     private boolean doEscape(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 2);
-        String input = resolveAtom(query.getArguments().get(0), bindings);
+        String input = resolveAtom(query, 0, bindings);
         String escaped = Pattern.quote(input);
         return unify(query.getArguments().get(1), new Atom(escaped), bindings, solutions);
     }
     // END_CHANGE: ISS-2025-0174
 
-    private void checkArity(Term query, int expected) {
-        if (query.getArguments().size() != expected)
-            throw new PrologEvaluationException(modeName() + " requires " + expected + " arguments.");
+
+    // START_CHANGE: ISS-2025-0683 - wave Q1.1: ISO error terms error(Formal, context(Name/Arity, Msg)),
+    // not message atoms (LIM-038)
+    private static int arityOf(Term query) {
+        return query.getArguments() == null ? 0 : query.getArguments().size();
     }
 
-    private String resolveAtom(Term term, Map<String, Term> bindings) {
-        Term resolved = term.resolveBindings(bindings);
-        if (!(resolved instanceof Atom)) throw new PrologEvaluationException(modeName() + ": argument must be an atom.");
+    /** Unreachable through the registry since ISS-2025-0685 (exact arities); kept for direct calls. */
+    private void checkArity(Term query, int expected) {
+        int n = arityOf(query);
+        if (n != expected) throw Errors.existence("procedure", Errors.pi(modeName(), n), modeName(), n, null);
+    }
+
+    /** Argument {@code i} as text: an atom (or a string); unbound is an instantiation error. */
+    private String resolveAtom(Term query, int i, Map<String, Term> bindings) {
+        int n = arityOf(query);
+        Term resolved = query.getArguments().get(i).resolveBindings(bindings);
+        if (resolved instanceof it.denzosoft.jprolog.core.terms.Variable) {
+            throw Errors.instantiation(modeName(), n, "argument " + (i + 1) + " must be bound");
+        }
+        if (resolved instanceof it.denzosoft.jprolog.core.terms.PrologString) {
+            return ((it.denzosoft.jprolog.core.terms.PrologString) resolved).getStringValue();
+        }
+        if (!(resolved instanceof Atom)) {
+            throw Errors.type("atom", resolved, modeName(), n, "argument " + (i + 1) + " must be an atom");
+        }
         return ((Atom) resolved).getName();
     }
+    // END_CHANGE: ISS-2025-0683
 
     private boolean unify(Term target, Term value, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {

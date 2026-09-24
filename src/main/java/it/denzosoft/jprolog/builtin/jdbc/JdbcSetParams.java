@@ -2,10 +2,11 @@ package it.denzosoft.jprolog.builtin.jdbc;
 
 // START_CHANGE: ISS-2025-0110 - Prepared statements with parameters and stored procedures
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -28,15 +29,14 @@ public class JdbcSetParams implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException(
-                "jdbc_set_params/2 requires 2 arguments: jdbc_set_params(+Stmt, +Params).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         Term stmtTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term paramsTerm = query.getArguments().get(1).resolveBindings(bindings);
 
         if (!(stmtTerm instanceof Atom)) {
-            throw new PrologEvaluationException("jdbc_set_params/2: Statement must be an atom handle.");
+            throw LibArgs.notA("atom", stmtTerm, "jdbc_set_params", 2, "Statement must be an atom handle");   // ISS-2025-0692
         }
 
         String handle = ((Atom) stmtTerm).getName();
@@ -50,7 +50,7 @@ public class JdbcSetParams implements BuiltIn {
             solutions.add(bindings);
             return true;
         } catch (SQLException e) {
-            throw new PrologEvaluationException("jdbc_set_params: " + e.getMessage());
+            throw Errors.host(e, "execute", "sql", null, "jdbc_set_params", LibArgs.arity(query));   // ISS-2025-0692
         }
     }
 

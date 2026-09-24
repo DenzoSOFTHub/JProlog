@@ -19,8 +19,10 @@ public class TableDirective implements BuiltInWithContext {
             Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         // START_CHANGE: ISS-2025-0572 - every table/1 form, through the one spec parser
         if (query.getArguments() != null && query.getArguments().size() == 1) {
-            solver.getPrologContext().getTableStore().declareSpec(
-                query.getArguments().get(0).resolveBindings(bindings), "table/1");
+            for (String w : solver.getPrologContext().getTableStore().declareSpec(          // ISS-2025-0753
+                    query.getArguments().get(0).resolveBindings(bindings), "table/1")) {
+                solver.getPrologContext().warnUser(w);
+            }
             solutions.add(new HashMap<>(bindings));
             return true;
         }

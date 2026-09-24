@@ -1,6 +1,8 @@
 // START_CHANGE: ISS-2025-0046 - Implement get_byte/1 and get_byte/2
 package it.denzosoft.jprolog.builtin.io;
 
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.v4.PrologStream;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
@@ -22,7 +24,7 @@ public class GetByte implements BuiltIn {
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         int arity = query.getArguments().size();
         if (arity != 1 && arity != 2) {
-            throw new PrologEvaluationException("get_byte expects 1 or 2 arguments, got " + arity);
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         String ctx = "get_byte/" + arity;
         Term byteTerm = query.getArguments().get(arity - 1);
@@ -46,7 +48,7 @@ public class GetByte implements BuiltIn {
             }
             return false;
         } catch (IOException e) {
-            throw new PrologEvaluationException("I/O error in get_byte: " + e.getMessage());
+            throw Errors.host(e, "read", "stream", null, "get_byte", LibArgs.arity(query));   // ISS-2025-0697
         }
         // END_CHANGE: ISS-2025-0472
     }

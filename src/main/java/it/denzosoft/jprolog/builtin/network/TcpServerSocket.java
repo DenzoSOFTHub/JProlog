@@ -2,10 +2,11 @@ package it.denzosoft.jprolog.builtin.network;
 
 // START_CHANGE: ISS-2025-0109 - Network communication built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -21,15 +22,14 @@ public class TcpServerSocket implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException(
-                "tcp_server_socket/2 requires 2 arguments: tcp_server_socket(+Port, -ServerSocket).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0693
         }
 
         Term portTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term ssTerm = query.getArguments().get(1);
 
         if (!(portTerm instanceof Number)) {
-            throw new PrologEvaluationException("tcp_server_socket/2: Port must be a number.");
+            throw LibArgs.notA("number", portTerm, "tcp_server_socket", 2, "Port must be a number");   // ISS-2025-0693
         }
 
         int port = ((Number) portTerm).getValue().intValue();
@@ -44,7 +44,7 @@ public class TcpServerSocket implements BuiltIn {
             SocketManager.getInstance().closeServerSocket(handle);
             return false;
         } catch (IOException e) {
-            throw new PrologEvaluationException("tcp_server_socket: " + e.getMessage());
+            throw Errors.host(e, "read", "socket", null, "tcp_server_socket", LibArgs.arity(query));   // ISS-2025-0693
         }
     }
 }

@@ -2,9 +2,10 @@ package it.denzosoft.jprolog.builtin.jdbc;
 
 // START_CHANGE: ISS-2025-0108 - JDBC built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.sql.SQLException;
 import java.util.List;
@@ -19,12 +20,12 @@ public class JdbcDisconnect implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 1) {
-            throw new PrologEvaluationException("jdbc_disconnect/1 requires exactly 1 argument.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         Term connTerm = query.getArguments().get(0).resolveBindings(bindings);
         if (!(connTerm instanceof Atom)) {
-            throw new PrologEvaluationException("jdbc_disconnect/1: Connection must be an atom handle.");
+            throw LibArgs.notA("atom", connTerm, "jdbc_disconnect", 1, "Connection must be an atom handle");   // ISS-2025-0692
         }
 
         try {
@@ -32,7 +33,7 @@ public class JdbcDisconnect implements BuiltIn {
             solutions.add(bindings);
             return true;
         } catch (SQLException e) {
-            throw new PrologEvaluationException("jdbc_disconnect: " + e.getMessage());
+            throw Errors.host(e, "execute", "sql", null, "jdbc_disconnect", LibArgs.arity(query));   // ISS-2025-0692
         }
     }
 }

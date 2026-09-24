@@ -2,9 +2,10 @@ package it.denzosoft.jprolog.builtin.network;
 
 // START_CHANGE: ISS-2025-0109 - Network communication built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -22,15 +23,14 @@ public class TcpAccept implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException(
-                "tcp_accept/2 requires 2 arguments: tcp_accept(+ServerSocket, -ClientSocket).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0693
         }
 
         Term ssTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term clientTerm = query.getArguments().get(1);
 
         if (!(ssTerm instanceof Atom)) {
-            throw new PrologEvaluationException("tcp_accept/2: ServerSocket must be an atom handle.");
+            throw LibArgs.notA("atom", ssTerm, "tcp_accept", 2, "ServerSocket must be an atom handle");   // ISS-2025-0693
         }
 
         try {
@@ -46,7 +46,7 @@ public class TcpAccept implements BuiltIn {
             SocketManager.getInstance().closeSocket(handle);
             return false;
         } catch (IOException e) {
-            throw new PrologEvaluationException("tcp_accept: " + e.getMessage());
+            throw Errors.host(e, "read", "socket", null, "tcp_accept", LibArgs.arity(query));   // ISS-2025-0693
         }
     }
 }

@@ -2,9 +2,10 @@ package it.denzosoft.jprolog.builtin.jdbc;
 
 // START_CHANGE: ISS-2025-0108 - JDBC built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.sql.SQLException;
 import java.util.HashMap;
@@ -24,13 +25,12 @@ public class JdbcConnect implements BuiltIn {
         int arity = args.size();
 
         if (arity != 2 && arity != 4) {
-            throw new PrologEvaluationException(
-                "jdbc_connect requires 2 or 4 arguments: jdbc_connect(+URL, -Conn) or jdbc_connect(+URL, +User, +Pass, -Conn).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         Term urlTerm = args.get(0).resolveBindings(bindings);
         if (!(urlTerm instanceof Atom)) {
-            throw new PrologEvaluationException("jdbc_connect: URL must be an atom.");
+            throw LibArgs.notA("atom", urlTerm, "jdbc_connect", args.size(), "the URL");   // ISS-2025-0692
         }
         String url = ((Atom) urlTerm).getName();
 
@@ -44,8 +44,9 @@ public class JdbcConnect implements BuiltIn {
             } else {
                 Term userTerm = args.get(1).resolveBindings(bindings);
                 Term passTerm = args.get(2).resolveBindings(bindings);
-                if (!(userTerm instanceof Atom) || !(passTerm instanceof Atom)) {
-                    throw new PrologEvaluationException("jdbc_connect/4: User and Password must be atoms.");
+                if (!(userTerm instanceof Atom) || !(passTerm instanceof Atom)) {   // ISS-2025-0692
+                    Term bad = !(userTerm instanceof Atom) ? userTerm : passTerm;
+                    throw LibArgs.notA("atom", bad, "jdbc_connect", 4, "User and Password");
                 }
                 handle = JdbcConnectionManager.getInstance().openConnection(
                     url, ((Atom) userTerm).getName(), ((Atom) passTerm).getName());
@@ -60,7 +61,7 @@ public class JdbcConnect implements BuiltIn {
             JdbcConnectionManager.getInstance().closeConnection(handle);
             return false;
         } catch (SQLException e) {
-            throw new PrologEvaluationException("jdbc_connect: " + e.getMessage());
+            throw Errors.host(e, "execute", "sql", null, "jdbc_connect", LibArgs.arity(query));   // ISS-2025-0692
         }
     }
 }

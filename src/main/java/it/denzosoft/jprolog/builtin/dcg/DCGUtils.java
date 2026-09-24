@@ -1,9 +1,10 @@
 package it.denzosoft.jprolog.builtin.dcg;
 
+import it.denzosoft.jprolog.core.engine.v4.Errors;
+import it.denzosoft.jprolog.builtin.LibArgs;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.BuiltInWithContext;
 import it.denzosoft.jprolog.core.engine.SolverContext;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.*;
 
 import java.util.*;
@@ -26,7 +27,7 @@ public class DCGUtils {
                                           Map<String, Term> bindings,
                                           List<Map<String, Term>> solutions) {
             if (query.getArguments().size() != 3) {
-                throw new PrologEvaluationException("call_dcg/3 requires exactly 3 arguments");
+                throw LibArgs.unknownArity(query);   // ISS-2025-0695
             }
 
             Term dcgBody = query.getArguments().get(0).resolveBindings(bindings);
@@ -74,7 +75,7 @@ public class DCGUtils {
         @Override
         public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
             if (query.getArguments().size() != 4) { // DCG predicates get extra args
-                throw new PrologEvaluationException("dcg_body//2 requires 2 DCG arguments plus difference list");
+                throw LibArgs.unknownArity(query);   // ISS-2025-0695
             }
             
             // This is a meta-DCG predicate that would need special handling

@@ -1,5 +1,7 @@
 package it.denzosoft.jprolog.builtin.debug;
 
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
@@ -43,13 +45,14 @@ public class Spy implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments() == null || query.getArguments().size() != 1) {
-            throw new PrologEvaluationException("spy/1 requires exactly 1 argument");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         
         Term predicateIndicator = query.getArguments().get(0).resolveBindings(bindings);
         
         if (predicateIndicator instanceof Variable) {
-            return false; // Fail silently for unbound variables
+            // ISS-2025-0797 - 4.6 wave Q7: SWI raises; it failed silently (invariant 65)
+            throw Errors.instantiation("spy", 1, "the predicate indicator must be bound");
         }
         
         String spyPoint = null;

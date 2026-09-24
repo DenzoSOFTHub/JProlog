@@ -483,13 +483,16 @@ public class EngineV45LoadReadWriteTest {
         ok("findall(V, fl2(k, V), [2])");
         ok("predicate_property(sp(_, _, _), tabled)");
         ok("p3");
-        err("table(q(_, lattice(j/3)))", "domain_error(table_mode, lattice(j/3))");
+        // START_CHANGE: ISS-2025-0754 - lattice/po are implemented since 4.6 (wave Q4.4); an unknown
+        // mode is SWI's domain_error(tabled_mode, M)
+        err("table(q(_, lattice(j/2)))", "domain_error(lattice_arity, 2)");
         try {
-            new Prolog().consult(":- table z(_, po(foo/2)).\nz(1, 2).\n");
+            new Prolog().consult(":- table z(_, bogus_mode).\nz(1, 2).\n");
             fail("an unsupported table mode must be reported");
         } catch (RuntimeException e) {
-            assertTrue(e.getMessage(), e.getMessage().contains("table_mode"));
+            assertTrue(e.getMessage(), e.getMessage().contains("tabled_mode"));
         }
+        // END_CHANGE: ISS-2025-0754
     }
 
     // ------------------------------------------------------------------ P3.2 module scope

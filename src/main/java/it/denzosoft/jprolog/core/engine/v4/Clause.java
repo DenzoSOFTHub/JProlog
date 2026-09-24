@@ -76,6 +76,10 @@ public final class Clause {
 
     public boolean isAlive(long generation) { return birth <= generation && generation < death; }
 
+    /** ISS-2025-0780: set on the FIRST clause of a library(apply) iteration predicate
+     *  (a {@code NativeApply.Op}); the machine then runs the predicate natively. */
+    Object apply;
+
     public boolean isFact() { return body.length == 0; }
 
     // ------------------------------------------------------------------ compilation
@@ -363,6 +367,9 @@ public final class Clause {
         if (a instanceof Atom) return ((Atom) a).getName();
         if (a instanceof Number) {
             Number n = (Number) a;
+            // ISS-2025-0712: a rational is its own key (exact equals/hashCode, equal only to a
+            // rational), so 1r3 never shares a bucket with the float 0.333.. or with 1
+            if (n instanceof it.denzosoft.jprolog.core.terms.Rational) return n;
             // Type-faithful: 1 and 1.0 are different terms and must land in different buckets.
             if (!n.isInteger()) return Double.valueOf(n.doubleValue());
             if (n.isLongInteger()) return Long.valueOf(n.longValue());

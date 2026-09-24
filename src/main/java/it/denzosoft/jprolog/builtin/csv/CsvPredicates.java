@@ -2,11 +2,11 @@ package it.denzosoft.jprolog.builtin.csv;
 
 // START_CHANGE: ISS-2025-0120 - CSV built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.utils.CollectionUtils;
 
 import java.io.*;
@@ -41,15 +41,16 @@ public class CsvPredicates implements BuiltIn {
                 default: return false;
             }
         } catch (IOException e) {
-            throw new PrologEvaluationException(modeName() + ": " + e.getMessage());
+            // ISS-2025-0686: a host failure of the file, not an argument fault
+            throw Errors.host(e, mode.name().contains("WRITE") ? "write" : "read", "file", null, modeName(), arityOf(query));
         }
     }
 
     private boolean doReadFile(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws IOException {
         checkArity(query, 2);
-        String path = resolveAtom(query.getArguments().get(0), bindings);
-        String content = new String(Files.readAllBytes(Paths.get(path)));
+        String path = resolveAtom(query, 0, bindings);
+        String content = new String(Files.readAllBytes(Paths.get(it.denzosoft.jprolog.core.engine.v4.EngineState.path(path))));
         List<Term> rows = parseCsv(content);
         return unify(query.getArguments().get(1), CollectionUtils.createListTerm(rows), bindings, solutions);
     }
@@ -57,10 +58,10 @@ public class CsvPredicates implements BuiltIn {
     private boolean doWriteFile(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) throws IOException {
         checkArity(query, 2);
-        String path = resolveAtom(query.getArguments().get(0), bindings);
+        String path = resolveAtom(query, 0, bindings);
         Term rowsTerm = query.getArguments().get(1).resolveBindings(bindings);
         String csv = serializeCsv(rowsTerm);
-        Files.write(Paths.get(path), csv.getBytes());
+        Files.write(Paths.get(it.denzosoft.jprolog.core.engine.v4.EngineState.path(path)), csv.getBytes());
         solutions.add(bindings);
         return true;
     }
@@ -68,7 +69,7 @@ public class CsvPredicates implements BuiltIn {
     private boolean doParse(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 2);
-        String csvStr = resolveAtom(query.getArguments().get(0), bindings);
+        String csvStr = resolveAtom(query, 0, bindings);
         List<Term> rows = parseCsv(csvStr);
         return unify(query.getArguments().get(1), CollectionUtils.createListTerm(rows), bindings, solutions);
     }
@@ -140,7 +141,13 @@ public class CsvPredicates implements BuiltIn {
 
     private String serializeCsv(Term rowsTerm) {
         List<Term> rows = CollectionUtils.termToList(rowsTerm);
-        if (rows == null) throw new PrologEvaluationException("csv_serialize: argument must be a list of row(...) terms.");
+        // ISS-2025-0686
+        if (rows == null) {
+            if (rowsTerm instanceof it.denzosoft.jprolog.core.terms.Variable) {
+                throw Errors.instantiation(modeName(), 2, "the rows must be bound");
+            }
+            throw Errors.type("list", rowsTerm, modeName(), 2, "a list of row(...) terms expected");
+        }
         StringBuilder sb = new StringBuilder();
         for (Term row : rows) {
             if (row instanceof CompoundTerm && "row".equals(((CompoundTerm) row).getName())) {
@@ -170,16 +177,35 @@ public class CsvPredicates implements BuiltIn {
         return t.toString();
     }
 
-    private void checkArity(Term query, int expected) {
-        if (query.getArguments().size() != expected)
-            throw new PrologEvaluationException(modeName() + " requires " + expected + " arguments.");
+
+    // START_CHANGE: ISS-2025-0686 - wave Q1.1: ISO error terms error(Formal, context(Name/Arity, Msg)),
+    // not message atoms (LIM-038)
+    private static int arityOf(Term query) {
+        return query.getArguments() == null ? 0 : query.getArguments().size();
     }
 
-    private String resolveAtom(Term term, Map<String, Term> bindings) {
-        Term resolved = term.resolveBindings(bindings);
-        if (!(resolved instanceof Atom)) throw new PrologEvaluationException(modeName() + ": argument must be an atom.");
+    /** Unreachable through the registry since ISS-2025-0685 (exact arities); kept for direct calls. */
+    private void checkArity(Term query, int expected) {
+        int n = arityOf(query);
+        if (n != expected) throw Errors.existence("procedure", Errors.pi(modeName(), n), modeName(), n, null);
+    }
+
+    /** Argument {@code i} as text: an atom (or a string); unbound is an instantiation error. */
+    private String resolveAtom(Term query, int i, Map<String, Term> bindings) {
+        int n = arityOf(query);
+        Term resolved = query.getArguments().get(i).resolveBindings(bindings);
+        if (resolved instanceof it.denzosoft.jprolog.core.terms.Variable) {
+            throw Errors.instantiation(modeName(), n, "argument " + (i + 1) + " must be bound");
+        }
+        if (resolved instanceof it.denzosoft.jprolog.core.terms.PrologString) {
+            return ((it.denzosoft.jprolog.core.terms.PrologString) resolved).getStringValue();
+        }
+        if (!(resolved instanceof Atom)) {
+            throw Errors.type("atom", resolved, modeName(), n, "argument " + (i + 1) + " must be an atom");
+        }
         return ((Atom) resolved).getName();
     }
+    // END_CHANGE: ISS-2025-0686
 
     private boolean unify(Term target, Term value, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {

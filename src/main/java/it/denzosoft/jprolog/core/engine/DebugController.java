@@ -73,7 +73,46 @@ public class DebugController {
     private volatile int stepOutTargetDepth = -1;
 
     // Call stack maintained by CALL/EXIT/FAIL hooks
-    private final List<DebugStackEntry> callStack = new ArrayList<>();
+    // START_CHANGE: ISS-2025-0787 - 4.6 wave Q6 (extra 8): an IMMUTABLE linked stack. Every trace
+    // event carried a copy of the whole call stack (new ArrayList per port), so a traced or
+    // debugged recursion D levels deep cost O(D) per port — a 20 000-level deterministic
+    // recursion under the IDE's trace panel was quadratic. A snapshot is now the current node
+    // (O(1)); it is turned into a list only when a listener reads it (a paused event).
+    private static final class Frame {
+        final DebugStackEntry entry;
+        final Frame up;
+        final int size;
+        Frame(DebugStackEntry entry, Frame up) { this.entry = entry; this.up = up; this.size = (up == null) ? 1 : up.size + 1; }
+    }
+
+    /** A read-only list view of a stack node, bottom first; materialised on first access. */
+    private static final class StackView extends java.util.AbstractList<DebugStackEntry> {
+        private final Frame f;
+        private DebugStackEntry[] items;
+        StackView(Frame f) { this.f = f; }
+        private DebugStackEntry[] items() {
+            if (items == null) {
+                DebugStackEntry[] a = new DebugStackEntry[f == null ? 0 : f.size];
+                int i = a.length;
+                for (Frame x = f; x != null; x = x.up) a[--i] = x.entry;
+                items = a;
+            }
+            return items;
+        }
+        @Override public DebugStackEntry get(int i) { return items()[i]; }
+        @Override public int size() { return f == null ? 0 : f.size; }
+    }
+
+    private volatile Frame stackTop;
+
+    private void popToDepth(int depth) {
+        Frame t = stackTop;
+        while (t != null && t.entry.getDepth() >= depth) t = t.up;
+        stackTop = t;
+    }
+
+    private List<DebugStackEntry> stackSnapshot() { return new StackView(stackTop); }
+    // END_CHANGE: ISS-2025-0787
 
     // Thread synchronization
     private final Object pauseLock = new Object();
@@ -260,23 +299,17 @@ public class DebugController {
         // Manage call stack
         switch (port) {
             case CALL:
-                callStack.add(new DebugStackEntry(goal, depth, bindings));
+                stackTop = new Frame(new DebugStackEntry(goal, depth, bindings), stackTop);   // ISS-2025-0787
                 break;
             case EXIT:
             case FAIL:
                 // Pop entries at this depth or deeper
-                while (!callStack.isEmpty() &&
-                       callStack.get(callStack.size() - 1).getDepth() >= depth) {
-                    callStack.remove(callStack.size() - 1);
-                }
+                popToDepth(depth);                                                           // ISS-2025-0787
                 break;
             case REDO:
                 // Pop and re-push for redo
-                while (!callStack.isEmpty() &&
-                       callStack.get(callStack.size() - 1).getDepth() >= depth) {
-                    callStack.remove(callStack.size() - 1);
-                }
-                callStack.add(new DebugStackEntry(goal, depth, bindings));
+                popToDepth(depth);                                                           // ISS-2025-0787
+                stackTop = new Frame(new DebugStackEntry(goal, depth, bindings), stackTop);
                 break;
         }
 
@@ -287,7 +320,7 @@ public class DebugController {
 
         // Always send trace if enabled
         if (traceEnabled && listener != null) {
-            event = new DebugEvent(port, goal, depth, bindings, new ArrayList<>(callStack));
+            event = new DebugEvent(port, goal, depth, bindings, stackSnapshot());
             listener.onTraceEvent(event);
         }
         // END_CHANGE: ISS-2025-0481
@@ -328,7 +361,7 @@ public class DebugController {
 
         if (shouldPause) {
             if (event == null) {   // ISS-2025-0481
-                event = new DebugEvent(port, goal, depth, bindings, new ArrayList<>(callStack));
+                event = new DebugEvent(port, goal, depth, bindings, stackSnapshot());
             }
             waitForUserAction(event);
         }
@@ -458,7 +491,7 @@ public class DebugController {
         stopped = false;
         paused = false;
         pendingAction = null;
-        callStack.clear();
+        stackTop = null;                                                                      // ISS-2025-0787
         currentMode = DebugEvent.Action.STEP_INTO;
         stepOverTargetDepth = -1;
         stepOutTargetDepth = -1;
@@ -483,14 +516,11 @@ public class DebugController {
         if (stopped) return;
 
         // Pop entries at this depth or deeper (same as FAIL handling)
-        while (!callStack.isEmpty() &&
-               callStack.get(callStack.size() - 1).getDepth() >= depth) {
-            callStack.remove(callStack.size() - 1);
-        }
+        popToDepth(depth);                                                                    // ISS-2025-0787
 
         // Fire a FAIL event so listeners are notified
         DebugEvent event = new DebugEvent(DebugEvent.Port.FAIL, goal, depth, bindings,
-                new ArrayList<>(callStack));
+                stackSnapshot());
 
         if (traceEnabled && listener != null) {
             listener.onTraceEvent(event);
@@ -509,7 +539,7 @@ public class DebugController {
     }
 
     public List<DebugStackEntry> getCallStack() {
-        return new ArrayList<>(callStack);
+        return new ArrayList<>(stackSnapshot());                                              // ISS-2025-0787
     }
 
     /**

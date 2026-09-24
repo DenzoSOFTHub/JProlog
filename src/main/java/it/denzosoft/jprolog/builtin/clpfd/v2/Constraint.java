@@ -56,6 +56,39 @@ public abstract class Constraint {
     }
     // END_CHANGE: ISS-2025-0644
 
+    // START_CHANGE: ISS-2025-0760 - residual goals (SWI's attribute_goals//1)
+    /** Rendering hint for a constraint that stands for a different source form (#\ X). */
+    public static final int FORM_NOT = 1;
+    /** A constraint that is part of another one's residual goal (circuit/1's all_distinct). */
+    public static final int FORM_HIDDEN = 2;
+    int form;
+
+    /**
+     * Is the constraint still telling something the domains do not? SWI kills a propagator once it
+     * is entailed; a dead constraint is not printed as a residual goal. Default: some variable is
+     * not fixed and the constraint is not entailed by the current domains.
+     */
+    public boolean alive(ClpStore s) {
+        for (FdVar v : variables()) {
+            IntervalDomain d = s.dom(v);
+            if (!d.isSingleton() && d.exactBig() == null) return entailment(s) != Entail.TRUE;
+        }
+        return false;
+    }
+
+    /** Append this constraint's residual goal(s), in SWI's printed form, to {@code out}. */
+    void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) { }
+
+    /** The constraint as the inner goal of a reification ({@code X#>=4} in {@code X#>=4#<==>B}). */
+    it.denzosoft.jprolog.core.terms.Term reifiedForm(Residuals r) { return null; }
+
+    static final BigInteger[] UNIT_PAIR = {BigInteger.ONE, BigInteger.ONE.negate()};
+
+    static void emit(List<it.denzosoft.jprolog.core.terms.Term> out, it.denzosoft.jprolog.core.terms.Term t) {
+        if (t != null) out.add(t);
+    }
+    // END_CHANGE: ISS-2025-0760
+
     /** The logical negation of this constraint (override where reification is supported). */
     public Constraint negation() {
         throw new UnsupportedOperationException("negation not supported for " + getClass().getSimpleName());
@@ -117,6 +150,14 @@ public abstract class Constraint {
         private final FdVar a, b;
         private final Rel rel;
         public Cmp(FdVar a, Rel rel, FdVar b) { this.a = a; this.rel = rel; this.b = b; }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            emit(out, r.linear(UNIT_PAIR, new FdVar[]{a, b}, rel, BigInteger.ZERO, false));
+        }
+        @Override it.denzosoft.jprolog.core.terms.Term reifiedForm(Residuals r) {
+            return r.linear(UNIT_PAIR, new FdVar[]{a, b}, rel, BigInteger.ZERO, true);
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() { return Arrays.asList(a, b); }
 
@@ -214,6 +255,12 @@ public abstract class Constraint {
     public static final class Sum extends Constraint {
         private final FdVar x, y, z;
         public Sum(FdVar x, FdVar y, FdVar z) { this.x = x; this.y = y; this.z = z; }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            emit(out, r.linear(new BigInteger[]{BigInteger.ONE, BigInteger.ONE, BigInteger.ONE.negate()},
+                new FdVar[]{x, y, z}, Rel.EQ, BigInteger.ZERO, false));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() { return Arrays.asList(x, y, z); }
 
@@ -235,6 +282,18 @@ public abstract class Constraint {
     public static class AllDifferent extends Constraint {
         protected final List<FdVar> vars;
         public AllDifferent(List<FdVar> vars) { this.vars = new ArrayList<>(vars); }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        /** Alive while two variables are free (one free variable is pruned by value elimination). */
+        @Override public boolean alive(ClpStore s) {
+            int free = 0;
+            for (FdVar v : vars) if (!s.dom(v).isSingleton() && ++free >= 2) return true;
+            return false;
+        }
+        protected String residualName() { return "all_different"; }
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            out.add(Residuals.op(residualName(), Residuals.list(r.terms(vars))));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() { return vars; }
 
@@ -298,6 +357,7 @@ public abstract class Constraint {
         private int[] warm;                                   // previous matching (hint only)
 
         public AllDistinct(List<FdVar> vars) { super(vars); }
+        @Override protected String residualName() { return "all_distinct"; }   // ISS-2025-0760
 
         /** Regin filtering needs every narrowing, not just fixings. */
         @Override protected boolean wakesOnFixOnly() { return false; }
@@ -470,6 +530,11 @@ public abstract class Constraint {
     public static final class Mul extends Constraint {
         private final FdVar x, y, z;
         public Mul(FdVar x, FdVar y, FdVar z) { this.x = x; this.y = y; this.z = z; }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            out.add(Residuals.op("#=", Residuals.op("*", r.term(x), r.term(y)), r.term(z)));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() { return Arrays.asList(x, y, z); }
 
@@ -551,6 +616,12 @@ public abstract class Constraint {
     public static final class Square extends Constraint {
         private final FdVar x, z;
         public Square(FdVar x, FdVar z) { this.x = x; this.z = z; }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            it.denzosoft.jprolog.core.terms.Term tx = r.term(x);
+            out.add(Residuals.op("#=", Residuals.op("*", tx, tx), r.term(z)));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() { return Arrays.asList(x, z); }
 
@@ -602,6 +673,11 @@ public abstract class Constraint {
     public static final class Min extends Constraint {
         private final FdVar x, y, z;
         public Min(FdVar x, FdVar y, FdVar z) { this.x = x; this.y = y; this.z = z; }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            out.add(Residuals.op("#=", r.term(z), Residuals.op("min", r.term(x), r.term(y))));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() { return Arrays.asList(x, y, z); }
 
@@ -625,6 +701,11 @@ public abstract class Constraint {
     public static final class Max extends Constraint {
         private final FdVar x, y, z;
         public Max(FdVar x, FdVar y, FdVar z) { this.x = x; this.y = y; this.z = z; }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            out.add(Residuals.op("#=", r.term(z), Residuals.op("max", r.term(x), r.term(y))));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() { return Arrays.asList(x, y, z); }
 
@@ -652,6 +733,11 @@ public abstract class Constraint {
     public static final class Abs extends Constraint {
         private final FdVar x, y;
         public Abs(FdVar x, FdVar y) { this.x = x; this.y = y; }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            out.add(Residuals.op("#=", r.term(y), Residuals.op("abs", r.term(x))));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() { return Arrays.asList(x, y); }
 
@@ -679,6 +765,11 @@ public abstract class Constraint {
         private final FdVar x, z;
         private final long m;
         public Mod(FdVar x, long m, FdVar z) { this.x = x; this.m = m; this.z = z; }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            out.add(Residuals.op("#=", Residuals.op("mod", r.term(x), Residuals.num(m)), r.term(z)));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() { return Arrays.asList(x, z); }
 
@@ -725,6 +816,19 @@ public abstract class Constraint {
         private final Fn op;
         private final FdVar x, y, z;
         public ArithFn(Fn op, FdVar x, FdVar y, FdVar z) { this.op = op; this.x = x; this.y = y; this.z = z; }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            String f;
+            switch (op) {
+                case TDIV: f = "//"; break;
+                case FDIV: f = "div"; break;
+                case REM: f = "rem"; break;
+                case MOD: f = "mod"; break;
+                default: f = "^"; break;
+            }
+            out.add(Residuals.op("#=", Residuals.op(f, r.term(x), r.term(y)), r.term(z)));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() { return Arrays.asList(x, y, z); }
 
@@ -932,6 +1036,12 @@ public abstract class Constraint {
         private final BigInteger kBig;
         private final boolean kFits;
         private final long k;
+        // START_CHANGE: ISS-2025-0768 - 4.6 wave Q5.3: exact coefficients beyond 64 bits. Null (the
+        // normal case) keeps the long fast path untouched; when a coefficient does not fit, this
+        // holds every coefficient exactly, coeffs[] holds only their signs, and the constraint runs
+        // on the exact (BigInteger, infinity-aware) path.
+        private final BigInteger[] bigC;
+        // END_CHANGE: ISS-2025-0768
 
         public Linear(long[] coeffs, FdVar[] vars, Rel rel, long k) {
             this(coeffs, vars, rel, BigInteger.valueOf(k));
@@ -946,7 +1056,37 @@ public abstract class Constraint {
             this.kBig = k;
             this.kFits = k.bitLength() <= 62;
             this.k = kFits ? k.longValue() : 0;
+            this.bigC = null;
         }
+
+        // START_CHANGE: ISS-2025-0768
+        /** Exact coefficients: the long representation is used whenever every one fits. */
+        public Linear(BigInteger[] coeffs, FdVar[] vars, Rel rel, BigInteger k) {
+            if (coeffs.length != vars.length) throw new IllegalArgumentException("coeffs/vars length mismatch");
+            boolean fits = true;
+            for (BigInteger c : coeffs) if (c.bitLength() > 62) { fits = false; break; }
+            this.coeffs = new long[coeffs.length];
+            for (int i = 0; i < coeffs.length; i++) this.coeffs[i] = fits ? coeffs[i].longValue() : coeffs[i].signum();
+            this.bigC = fits ? null : coeffs.clone();
+            this.vars = vars.clone();
+            this.rel = rel;
+            this.kBig = k;
+            this.kFits = k.bitLength() <= 62;
+            this.k = kFits ? k.longValue() : 0;
+        }
+
+        /** True when a coefficient does not fit a long (the exact path only). */
+        public boolean isBig() { return bigC != null; }
+
+        private BigInteger coefB(int i) { return bigC != null ? bigC[i] : BigInteger.valueOf(coeffs[i]); }
+
+        BigInteger[] exactCoeffs() {
+            if (bigC != null) return bigC.clone();
+            BigInteger[] out = new BigInteger[coeffs.length];
+            for (int i = 0; i < out.length; i++) out[i] = BigInteger.valueOf(coeffs[i]);
+            return out;
+        }
+        // END_CHANGE: ISS-2025-0768
 
         public long[] coeffs() { return coeffs.clone(); }
         public FdVar[] vars() { return vars.clone(); }
@@ -956,25 +1096,38 @@ public abstract class Constraint {
 
         @Override public List<FdVar> variables() { return Arrays.asList(vars); }
 
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            if (form == FORM_NOT && vars.length == 2) {                 // #\ X  as  X + Z = 1
+                out.add(Residuals.op("#<==>", Residuals.op("#\\", r.term(vars[0])), r.term(vars[1])));
+                return;
+            }
+            emit(out, r.linear(exactCoeffs(), vars, rel, kBig, false));
+        }
+        @Override it.denzosoft.jprolog.core.terms.Term reifiedForm(Residuals r) {
+            return r.linear(exactCoeffs(), vars, rel, kBig, true);
+        }
+        // END_CHANGE: ISS-2025-0760
+
         @Override public BigInteger solveFor(FdVar v, ClpStore s) {      // ISS-2025-0644
             if (rel != Rel.EQ) return null;
             BigInteger rest = kBig;
-            long cv = 0;
+            BigInteger cv = BigInteger.ZERO;                                // ISS-2025-0768: exact
             for (int i = 0; i < vars.length; i++) {
-                if (vars[i] == v) { cv += coeffs[i]; continue; }
+                if (vars[i] == v) { cv = cv.add(coefB(i)); continue; }
                 if (coeffs[i] == 0) continue;
                 BigInteger fx = fixedValue(s, vars[i]);
                 if (fx == null) return null;
-                rest = rest.subtract(BigInteger.valueOf(coeffs[i]).multiply(fx));
+                rest = rest.subtract(coefB(i).multiply(fx));
             }
-            if (cv == 0) return null;
-            BigInteger[] qr = rest.divideAndRemainder(BigInteger.valueOf(cv));
+            if (cv.signum() == 0) return null;
+            BigInteger[] qr = rest.divideAndRemainder(cv);
             return qr[1].signum() == 0 ? qr[0] : null;
         }
 
         @Override public boolean propagate(ClpStore s) {
             // START_CHANGE: ISS-2025-0644 - exact long fast path, BigInteger + infinities otherwise
-            if (kFits) {
+            if (kFits && bigC == null) {                                    // ISS-2025-0768
                 try {
                     int r = propagateLong(s);
                     if (r >= 0) return r == 1;
@@ -1036,6 +1189,14 @@ public abstract class Constraint {
             return -Math.floorDiv(-a, b);
         }
 
+        /** The exact lower (or upper) bound of a domain, or null when it is infinite (ISS-2025-0768:
+         *  a variable fixed to an out-of-range value contributes that value exactly). */
+        private static BigInteger exactBound(IntervalDomain d, boolean lower) {
+            if (d.exactBig() != null) return d.exactBig();
+            long b = lower ? d.min() : d.max();
+            return isInf(b) ? null : BigInteger.valueOf(b);
+        }
+
         private boolean propagateBig(ClpStore s) {
             int n = vars.length;
             BigInteger[] lo = new BigInteger[n], hi = new BigInteger[n];     // null = infinite
@@ -1044,11 +1205,11 @@ public abstract class Constraint {
             for (int i = 0; i < n; i++) {
                 IntervalDomain d = s.dom(vars[i]);
                 if (d.isEmpty()) return false;
-                BigInteger c = BigInteger.valueOf(coeffs[i]);
-                BigInteger dmin = d.min() == INF ? null : BigInteger.valueOf(d.min());
-                BigInteger dmax = d.max() == SUP ? null : BigInteger.valueOf(d.max());
-                if (coeffs[i] == 0) { lo[i] = BigInteger.ZERO; hi[i] = BigInteger.ZERO; continue; }
-                if (coeffs[i] > 0) {
+                BigInteger c = coefB(i);
+                if (c.signum() == 0) { lo[i] = BigInteger.ZERO; hi[i] = BigInteger.ZERO; continue; }
+                BigInteger dmin = exactBound(d, true);
+                BigInteger dmax = exactBound(d, false);
+                if (c.signum() > 0) {
                     lo[i] = dmin == null ? null : c.multiply(dmin);
                     hi[i] = dmax == null ? null : c.multiply(dmax);
                 } else {
@@ -1065,7 +1226,9 @@ public abstract class Constraint {
             if (rel == Rel.GE && upperFinite && upperF.compareTo(K) < 0) return false;
 
             for (int i = 0; i < n; i++) {
-                if (coeffs[i] == 0) continue;
+                BigInteger c = coefB(i);
+                if (c.signum() == 0) continue;
+                if (s.dom(vars[i]).exactBig() != null) continue;             // fixed exactly
                 BigInteger restLow = (loInf - (lo[i] == null ? 1 : 0)) > 0 ? null
                     : (lo[i] == null ? lowerF : lowerF.subtract(lo[i]));
                 BigInteger restHigh = (hiInf - (hi[i] == null ? 1 : 0)) > 0 ? null
@@ -1073,9 +1236,8 @@ public abstract class Constraint {
                 BigInteger termLo = null, termHi = null;               // null = unbounded
                 if (rel != Rel.LE && restHigh != null) termLo = K.subtract(restHigh);
                 if (rel != Rel.GE && restLow != null) termHi = K.subtract(restLow);
-                BigInteger c = BigInteger.valueOf(coeffs[i]);
                 BigInteger xLo, xHi;
-                if (coeffs[i] > 0) {
+                if (c.signum() > 0) {
                     xLo = (termLo == null) ? null : ceilDiv(termLo, c);
                     xHi = (termHi == null) ? null : floorDiv(termHi, c);
                 } else {
@@ -1098,12 +1260,12 @@ public abstract class Constraint {
             for (int i = 0; i < vars.length; i++) {
                 IntervalDomain d = s.dom(vars[i]);
                 if (d.isEmpty()) return Entail.FALSE;
-                if (coeffs[i] == 0) continue;
-                BigInteger c = BigInteger.valueOf(coeffs[i]);
-                long a = coeffs[i] > 0 ? d.min() : d.max();
-                long b = coeffs[i] > 0 ? d.max() : d.min();
-                if (isInf(a)) lowerInf = true; else lower = lower.add(c.multiply(BigInteger.valueOf(a)));
-                if (isInf(b)) upperInf = true; else upper = upper.add(c.multiply(BigInteger.valueOf(b)));
+                BigInteger c = coefB(i);                                      // ISS-2025-0768
+                if (c.signum() == 0) continue;
+                BigInteger a = exactBound(d, c.signum() > 0);
+                BigInteger b = exactBound(d, c.signum() < 0);
+                if (a == null) lowerInf = true; else lower = lower.add(c.multiply(a));
+                if (b == null) upperInf = true; else upper = upper.add(c.multiply(b));
             }
             switch (rel) {
                 case EQ:
@@ -1111,7 +1273,7 @@ public abstract class Constraint {
                     if (!upperInf && upper.compareTo(kBig) < 0) return Entail.FALSE;
                     if (!lowerInf && !upperInf && lower.equals(upper) && lower.equals(kBig)) return Entail.TRUE;
                     if (vars.length == 1 && coeffs[0] != 0) {
-                        BigInteger[] qr = kBig.divideAndRemainder(BigInteger.valueOf(coeffs[0]));
+                        BigInteger[] qr = kBig.divideAndRemainder(coefB(0));
                         if (qr[1].signum() != 0) return Entail.FALSE;
                         long v = clamp(qr[0]);
                         if (!isInf(v) && !s.dom(vars[0]).contains(v)) return Entail.FALSE;
@@ -1131,10 +1293,11 @@ public abstract class Constraint {
         }
 
         @Override public Constraint negation() {
+            BigInteger[] cs = exactCoeffs();                                  // ISS-2025-0768
             switch (rel) {
-                case EQ: return new LinearNE(coeffs, vars, kBig);
-                case LE: return new Linear(coeffs, vars, Rel.GE, kBig.add(BigInteger.ONE));
-                case GE: return new Linear(coeffs, vars, Rel.LE, kBig.subtract(BigInteger.ONE));
+                case EQ: return new LinearNE(cs, vars, kBig);
+                case LE: return new Linear(cs, vars, Rel.GE, kBig.add(BigInteger.ONE));
+                case GE: return new Linear(cs, vars, Rel.LE, kBig.subtract(BigInteger.ONE));
                 default: throw new UnsupportedOperationException("negation of " + rel);
             }
         }
@@ -1154,6 +1317,7 @@ public abstract class Constraint {
         private final BigInteger k;
         private final boolean kFits;
         private final long kL;
+        private final BigInteger[] bigC;                                      // ISS-2025-0768
 
         public LinearNE(long[] coeffs, FdVar[] vars, BigInteger k) {
             this.coeffs = coeffs.clone();
@@ -1161,14 +1325,47 @@ public abstract class Constraint {
             this.k = k;
             this.kFits = k.bitLength() <= 62;
             this.kL = kFits ? k.longValue() : 0;
+            this.bigC = null;
         }
+
+        // START_CHANGE: ISS-2025-0768 - exact coefficients (see Linear)
+        public LinearNE(BigInteger[] coeffs, FdVar[] vars, BigInteger k) {
+            boolean fits = true;
+            for (BigInteger c : coeffs) if (c.bitLength() > 62) { fits = false; break; }
+            this.coeffs = new long[coeffs.length];
+            for (int i = 0; i < coeffs.length; i++) this.coeffs[i] = fits ? coeffs[i].longValue() : coeffs[i].signum();
+            this.bigC = fits ? null : coeffs.clone();
+            this.vars = vars.clone();
+            this.k = k;
+            this.kFits = k.bitLength() <= 62;
+            this.kL = kFits ? k.longValue() : 0;
+        }
+
+        private BigInteger coefB(int i) { return bigC != null ? bigC[i] : BigInteger.valueOf(coeffs[i]); }
+
+        BigInteger[] exactCoeffs() {
+            if (bigC != null) return bigC.clone();
+            BigInteger[] out = new BigInteger[coeffs.length];
+            for (int i = 0; i < out.length; i++) out[i] = BigInteger.valueOf(coeffs[i]);
+            return out;
+        }
+        // END_CHANGE: ISS-2025-0768
 
         @Override public List<FdVar> variables() { return Arrays.asList(vars); }
 
         @Override protected boolean wakesOnFixOnly() { return true; }
 
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            emit(out, r.linear(exactCoeffs(), vars, Rel.NE, k, false));
+        }
+        @Override it.denzosoft.jprolog.core.terms.Term reifiedForm(Residuals r) {
+            return r.linear(exactCoeffs(), vars, Rel.NE, k, true);
+        }
+        // END_CHANGE: ISS-2025-0760
+
         @Override public boolean propagate(ClpStore s) {
-            if (kFits) {
+            if (kFits && bigC == null) {                                    // ISS-2025-0768
                 // exact long fast path (the N-queens hot path); overflow falls back below
                 try {
                     int free = -1;
@@ -1195,33 +1392,21 @@ public abstract class Constraint {
             }
             int free = -1;
             BigInteger sum = BigInteger.ZERO;
-            long sumL = 0;
-            boolean exactLong = true;
             for (int i = 0; i < vars.length; i++) {
                 IntervalDomain d = s.dom(vars[i]);
                 if (d.isEmpty()) return false;
                 if (coeffs[i] == 0) continue;
-                if (d.isSingleton()) {
-                    if (exactLong) {
-                        try {
-                            sumL = Math.addExact(sumL, Math.multiplyExact(coeffs[i], d.value()));
-                            continue;
-                        } catch (ArithmeticException e) {
-                            exactLong = false;
-                            sum = BigInteger.valueOf(sumL);
-                            sumL = 0;
-                        }
-                    }
-                    sum = sum.add(BigInteger.valueOf(coeffs[i]).multiply(BigInteger.valueOf(d.value())));
+                BigInteger fx = d.isSingleton() ? BigInteger.valueOf(d.value()) : d.exactBig();
+                if (fx != null) {
+                    sum = sum.add(coefB(i).multiply(fx));
                     continue;
                 }
                 if (free != -1) return true;                       // two free variables: wait
                 free = i;
             }
-            BigInteger total = exactLong ? BigInteger.valueOf(sumL) : sum.add(BigInteger.valueOf(sumL));
-            BigInteger rest = k.subtract(total);                    // coeff_free * x != rest
+            BigInteger rest = k.subtract(sum);                      // coeff_free * x != rest
             if (free == -1) return rest.signum() != 0;
-            BigInteger[] qr = rest.divideAndRemainder(BigInteger.valueOf(coeffs[free]));
+            BigInteger[] qr = rest.divideAndRemainder(coefB(free));
             if (qr[1].signum() != 0) return true;                   // never equal
             long v = clamp(qr[0]);
             if (isInf(v)) return true;
@@ -1229,15 +1414,73 @@ public abstract class Constraint {
         }
 
         @Override public Entail entailment(ClpStore s) {
-            Entail e = new Linear(coeffs, vars, Rel.EQ, k).entailment(s);
+            Entail e = new Linear(exactCoeffs(), vars, Rel.EQ, k).entailment(s);
             if (e == Entail.TRUE) return Entail.FALSE;
             if (e == Entail.FALSE) return Entail.TRUE;
             return Entail.UNKNOWN;
         }
 
-        @Override public Constraint negation() { return new Linear(coeffs, vars, Rel.EQ, k); }
+        @Override public Constraint negation() { return new Linear(exactCoeffs(), vars, Rel.EQ, k); }
     }
     // END_CHANGE: ISS-2025-0641
+
+    // START_CHANGE: ISS-2025-0783 - 4.6 wave Q6 (extra 2): |X - Y| =\= C as ONE propagator
+    // (SWI's absdiff_neq). Posted through the general path, abs(X-Y) #\= C became an auxiliary
+    // D = X - Y, an auxiliary A = abs(D) and A =\= C: nothing was pruned until BOTH X and Y were
+    // fixed, so N-queens written with abs/1 lost all its forward checking (20 queens: 3.9 s).
+    // Here a fixed X removes Y = X - C and Y = X + C at once, and symmetrically.
+    public static final class AbsDiffNE extends Constraint {
+        private final FdVar x, y;
+        private final long c;
+        public AbsDiffNE(FdVar x, FdVar y, long c) { this.x = x; this.y = y; this.c = c; }
+
+        @Override public List<FdVar> variables() { return Arrays.asList(x, y); }
+
+        @Override protected boolean wakesOnFixOnly() { return true; }
+
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            out.add(Residuals.op("#\\=", Residuals.op("abs", Residuals.op("-", r.term(x), r.term(y))),
+                it.denzosoft.jprolog.core.terms.Number.valueOf(c)));
+        }
+
+        @Override public boolean propagate(ClpStore s) {
+            IntervalDomain dx = s.dom(x), dy = s.dom(y);
+            if (dx.isEmpty() || dy.isEmpty()) return false;
+            boolean fx = dx.isSingleton(), fy = dy.isSingleton();
+            if (fx && fy) {
+                long d = sub(dx.value(), dy.value());
+                return isInf(d) || absSat(d) != c;
+            }
+            if (fx) return removeBoth(s, y, dx.value());
+            if (fy) return removeBoth(s, x, dy.value());
+            return true;
+        }
+
+        private boolean removeBoth(ClpStore s, FdVar v, long at) {
+            long lo = sub(at, c), hi = add(at, c);
+            if (!isInf(lo) && !s.removeValue(v, lo)) return false;
+            return isInf(hi) || s.removeValue(v, hi);
+        }
+
+        @Override public Entail entailment(ClpStore s) {
+            IntervalDomain dx = s.dom(x), dy = s.dom(y);
+            if (dx.isSingleton() && dy.isSingleton()) {
+                long d = sub(dx.value(), dy.value());
+                return (isInf(d) || absSat(d) != c) ? Entail.TRUE : Entail.FALSE;
+            }
+            // one side fixed and both forbidden values already gone: nothing left to say (SWI
+            // kills the propagator then, so it is no residual goal either)
+            if (dx.isSingleton()) return excludes(dy, dx.value()) ? Entail.TRUE : Entail.UNKNOWN;
+            if (dy.isSingleton()) return excludes(dx, dy.value()) ? Entail.TRUE : Entail.UNKNOWN;
+            return Entail.UNKNOWN;
+        }
+
+        private boolean excludes(IntervalDomain d, long at) {
+            long lo = sub(at, c), hi = add(at, c);
+            return (isInf(lo) || !d.contains(lo)) && (isInf(hi) || !d.contains(hi));
+        }
+    }
+    // END_CHANGE: ISS-2025-0783
 
     // =====================================================================================
     // Reification:  B #<==> C    (B is 0/1; B=1 iff C holds)
@@ -1252,6 +1495,19 @@ public abstract class Constraint {
             this.c = c;
             this.notC = c.negation();   // requires C to support negation
         }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override public boolean alive(ClpStore s) {
+            IntervalDomain db = s.dom(b);
+            if (db.isSingleton()) return (db.value() == 1 ? c : notC).alive(s);
+            return c.entailment(s) == Entail.UNKNOWN;
+        }
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            IntervalDomain db = r.store().dom(b);
+            if (db.isSingleton()) { (db.value() == 1 ? c : notC).render(r, out); return; }
+            it.denzosoft.jprolog.core.terms.Term inner = c.reifiedForm(r);
+            if (inner != null) out.add(Residuals.op("#<==>", inner, r.term(b)));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() {
             List<FdVar> vs = new ArrayList<>();
@@ -1283,6 +1539,36 @@ public abstract class Constraint {
         private final BoolOp op;
         private final FdVar a, b, z;
         public Bool(BoolOp op, FdVar a, FdVar b, FdVar z) { this.op = op; this.a = a; this.b = b; this.z = z; }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        /** Dead once every combination the domains allow satisfies it. */
+        @Override public boolean alive(ClpStore s) {
+            IntervalDomain da = s.dom(a), db = s.dom(b), dz = s.dom(z);
+            for (int x = 0; x <= 1; x++) {
+                if (!da.contains(x)) continue;
+                for (int y = 0; y <= 1; y++) {
+                    if (!db.contains(y)) continue;
+                    for (int w = 0; w <= 1; w++) {
+                        if (dz.contains(w) && (apply(op, x == 1, y == 1) ? 1 : 0) != w) return true;
+                    }
+                }
+            }
+            return false;
+        }
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            String f;
+            switch (op) {
+                case AND: f = "#/\\"; break;
+                case OR: f = "#\\/"; break;
+                case XOR: f = "#\\"; break;
+                case IMPL: f = "#==>"; break;
+                default: f = "#<==>"; break;
+            }
+            it.denzosoft.jprolog.core.terms.Term body = Residuals.op(f, r.term(a), r.term(b));
+            IntervalDomain dz = r.store().dom(z);
+            if (dz.isSingleton()) out.add(dz.value() == 1 ? body : Residuals.op("#\\", body));
+            else out.add(Residuals.op("#<==>", body, r.term(z)));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() { return Arrays.asList(a, b, z); }
 
@@ -1326,6 +1612,11 @@ public abstract class Constraint {
         private final FdVar x;
         private final IntervalDomain d;
         public InDomain(FdVar x, IntervalDomain d) { this.x = x; this.d = d; }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override it.denzosoft.jprolog.core.terms.Term reifiedForm(Residuals r) {
+            return Residuals.op("in", r.term(x), ClpfdV2Bridge.domainToTerm(d));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() { return Arrays.asList(x); }
         @Override public boolean propagate(ClpStore s) { return s.narrow(x, d); }
@@ -1351,6 +1642,12 @@ public abstract class Constraint {
         public Element(FdVar index, FdVar[] list, FdVar value) {
             this.index = index; this.list = list.clone(); this.value = value;
         }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            out.add(new it.denzosoft.jprolog.core.terms.CompoundTerm(new it.denzosoft.jprolog.core.terms.Atom("element"),
+                Arrays.asList(r.term(index), Residuals.list(r.terms(Arrays.asList(list))), r.term(value))));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() {
             List<FdVar> vs = new ArrayList<>(list.length + 2);
@@ -1394,6 +1691,18 @@ public abstract class Constraint {
         private final FdVar[] vars;
         private final long[][] rows;
         public Table(FdVar[] vars, long[][] rows) { this.vars = vars.clone(); this.rows = rows; }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            List<it.denzosoft.jprolog.core.terms.Term> rs = new ArrayList<>(rows.length);
+            for (long[] row : rows) {
+                List<it.denzosoft.jprolog.core.terms.Term> vs = new ArrayList<>(row.length);
+                for (long v : row) vs.add(Residuals.num(v));
+                rs.add(Residuals.list(vs));
+            }
+            it.denzosoft.jprolog.core.terms.Term tuple = Residuals.list(r.terms(Arrays.asList(vars)));
+            out.add(Residuals.op("tuples_in", Residuals.list(Arrays.asList(tuple)), Residuals.list(rs)));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() { return Arrays.asList(vars); }
 
@@ -1429,6 +1738,13 @@ public abstract class Constraint {
         public Gcc(FdVar[] vars, long[] keys, FdVar[] counts) {
             this.vars = vars.clone(); this.keys = keys.clone(); this.counts = counts.clone();
         }
+        // START_CHANGE: ISS-2025-0760 - residual goal
+        @Override void render(Residuals r, List<it.denzosoft.jprolog.core.terms.Term> out) {
+            List<it.denzosoft.jprolog.core.terms.Term> pairs = new ArrayList<>(keys.length);
+            for (int j = 0; j < keys.length; j++) pairs.add(Residuals.op("-", Residuals.num(keys[j]), r.term(counts[j])));
+            out.add(Residuals.op("global_cardinality", Residuals.list(r.terms(Arrays.asList(vars))), Residuals.list(pairs)));
+        }
+        // END_CHANGE: ISS-2025-0760
 
         @Override public List<FdVar> variables() {
             List<FdVar> vs = new ArrayList<>(Arrays.asList(vars));

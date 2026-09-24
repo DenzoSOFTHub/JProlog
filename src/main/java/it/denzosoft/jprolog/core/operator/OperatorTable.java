@@ -114,6 +114,13 @@ public class OperatorTable {
         // END_CHANGE: R5
         
         defineOperator(1100, Operator.Type.XFY, ";");
+        // START_CHANGE: ISS-2025-0734 - 4.6 wave Q3.5: the bar is the infix operator '|'
+        // (SWI-Prolog 9 manual, section 4.25 "Operators", table of system operators:
+        // `1105 xfy |` and `700 xfx ... as ...`); `as` is what makes `:- table p/1 as subsumptive`
+        // parse.
+        defineOperator(1105, Operator.Type.XFY, "|");
+        defineOperator(700, Operator.Type.XFX, "as");
+        // END_CHANGE: ISS-2025-0734
         defineOperator(1050, Operator.Type.XFY, "->");
         // START_CHANGE: ISS-2025-0201 - soft-cut operator
         defineOperator(1050, Operator.Type.XFY, "*->");

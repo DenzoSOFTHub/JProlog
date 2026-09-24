@@ -2,10 +2,11 @@ package it.denzosoft.jprolog.builtin.jdbc;
 
 // START_CHANGE: ISS-2025-0108 - JDBC built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.sql.SQLException;
 import java.util.HashMap;
@@ -21,8 +22,7 @@ public class JdbcExecuteUpdate implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 3) {
-            throw new PrologEvaluationException(
-                "jdbc_execute_update/3 requires exactly 3 arguments: jdbc_execute_update(+Conn, +SQL, -Rows).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         Term connTerm = query.getArguments().get(0).resolveBindings(bindings);
@@ -30,10 +30,10 @@ public class JdbcExecuteUpdate implements BuiltIn {
         Term rowsTerm = query.getArguments().get(2);
 
         if (!(connTerm instanceof Atom)) {
-            throw new PrologEvaluationException("jdbc_execute_update/3: Connection must be an atom handle.");
+            throw LibArgs.notA("atom", connTerm, "jdbc_execute_update", 3, "Connection must be an atom handle");   // ISS-2025-0692
         }
         if (!(sqlTerm instanceof Atom)) {
-            throw new PrologEvaluationException("jdbc_execute_update/3: SQL must be an atom.");
+            throw LibArgs.notA("atom", sqlTerm, "jdbc_execute_update", 3, "SQL must be an atom");   // ISS-2025-0692
         }
 
         try {
@@ -47,7 +47,7 @@ public class JdbcExecuteUpdate implements BuiltIn {
             }
             return false;
         } catch (SQLException e) {
-            throw new PrologEvaluationException("jdbc_execute_update: " + e.getMessage());
+            throw Errors.host(e, "execute", "sql", null, "jdbc_execute_update", LibArgs.arity(query));   // ISS-2025-0692
         }
     }
 }

@@ -144,6 +144,41 @@ public class Prolog {
     }
     // END_CHANGE: ISS-2025-0636
 
+    // START_CHANGE: ISS-2025-0736 - 4.6 wave Q3.6: initialization(G, main) for embedders. Call
+    // setDeferInitializationMain(true) before loading, then runMain(): the collected goals run in
+    // load order, as SWI's main does, and the exit code the process WOULD halt with is returned
+    // (nothing halts the JVM).
+    /**
+     * Run the deferred {@code initialization(G, main)} goals.
+     *
+     * @return -1 when there is no main goal; 0 when every goal succeeded; 1 when one failed or
+     *         raised an uncaught error (reported on {@code user_error}); N when one called
+     *         {@code halt(N)}
+     */
+    public int runMain() {
+        List<Term> mains = takeInitializationMain();
+        if (mains.isEmpty()) return -1;
+        for (Term g : mains) {
+            try {
+                if (!runOnce(g)) {
+                    warn("goal (" + it.denzosoft.jprolog.core.engine.v4.Writer.format(g,
+                        it.denzosoft.jprolog.core.engine.v4.Writer.Options.writeq()) + ") failed");
+                    return 1;
+                }
+            } catch (PrologException pe) {
+                if (pe.isHalt()) return pe.getExitCode();
+                Term et = pe.getErrorTerm();
+                warn("goal (" + it.denzosoft.jprolog.core.engine.v4.Writer.format(g,
+                    it.denzosoft.jprolog.core.engine.v4.Writer.Options.writeq()) + ") raised "
+                    + (et != null ? it.denzosoft.jprolog.core.engine.v4.Writer.format(et,
+                        it.denzosoft.jprolog.core.engine.v4.Writer.Options.writeq()) : String.valueOf(pe.getMessage())));
+                return 1;
+            }
+        }
+        return 0;
+    }
+    // END_CHANGE: ISS-2025-0736
+
     // START_CHANGE: ISS-2025-0627 - wave P6.4: streaming with determinism, for a toplevel.
     /** One answer of {@link #solveStream(String, AnswerSink)}. */
     public interface AnswerSink {
@@ -159,14 +194,33 @@ public class Prolog {
     public void solveStream(String queryString, final AnswerSink sink) {
         final it.denzosoft.jprolog.core.engine.v4.Machine[] holder = new it.denzosoft.jprolog.core.engine.v4.Machine[1];
         State prev = enterState();
+        it.denzosoft.jprolog.core.engine.v4.Machine[] prevStreaming = streamingMachine.get();   // ISS-2025-0755
         try {
             machineHolder.set(holder);
+            streamingMachine.set(holder);
             solveStreamGuarded(queryString, sol -> sink.onAnswer(sol, holder[0] == null || holder[0].hasAlternatives()));
         } finally {
             machineHolder.remove();
+            if (prevStreaming == null) streamingMachine.remove(); else streamingMachine.set(prevStreaming);
             exitState(prev);
         }
     }
+
+    // START_CHANGE: ISS-2025-0755 - 4.6 wave Q4.5: a toplevel can tell a conditional answer.
+    private final ThreadLocal<it.denzosoft.jprolog.core.engine.v4.Machine[]> streamingMachine =
+        new ThreadLocal<it.denzosoft.jprolog.core.engine.v4.Machine[]>();
+
+    /**
+     * Inside an {@link AnswerSink} of {@link #solveStream(String, AnswerSink)}: the delayed
+     * literals of the answer being delivered (a conjunction such as {@code tnot(p)}), or null when
+     * the answer is unconditional. Non-null means the answer is <i>undefined</i> under the
+     * well-founded semantics.
+     */
+    public Term currentAnswerDelays() {
+        it.denzosoft.jprolog.core.engine.v4.Machine[] h = streamingMachine.get();
+        return (h == null || h[0] == null) ? null : h[0].answerDelays();
+    }
+    // END_CHANGE: ISS-2025-0755
 
     /** Set by {@link #solveStream(String, AnswerSink)} so the machine can be handed back. */
     private final ThreadLocal<it.denzosoft.jprolog.core.engine.v4.Machine[]> machineHolder =
@@ -215,6 +269,12 @@ public class Prolog {
         // END_CHANGE: ISS-2025-0092
         this.engineContext = new EngineContext(this, knowledgeBase, builtInRegistry);   // ISS-2025-0484
         registerBuiltInPredicates();
+        // START_CHANGE: ISS-2025-0737 - file_search_path/2 is a user dynamic multifile predicate
+        // (defined, initially without clauses: the library/swi/foreign defaults are applied by
+        // the file search itself, see FileSearch)
+        knowledgeBase.markDynamic("file_search_path", 2);
+        knowledgeBase.markMultifile("file_search_path", 2);
+        // END_CHANGE: ISS-2025-0737
         // START_CHANGE: ISS-2025-0294 - optionally make the clean-room v2 CLP(FD) the default
         // (enable with -Djprolog.clpfd=v2 or Prolog.setUseV2Clpfd(true)).
         if (USE_V2_CLPFD) {
@@ -319,14 +379,12 @@ public class Prolog {
             // START_CHANGE: ISS-2025-0573 - every consult is one LOAD: its module scope ends with it
             if (USE_V2_PARSER) { consultV2(program); return; }
             LoadContext ctx = newLoadContext(null, null);
-            loadLock.lock(); try {
-                loadStack.push(ctx);
-                try {
-                    consultGuarded(program);
-                } finally {
-                    try { runInitGoals(ctx); } finally { loadStack.pop(); endLoad(ctx); }
-                }
-            } finally { loadLock.unlock(); }
+            beginLoad(ctx);                                                  // ISS-2025-0739
+            try {
+                consultGuarded(program);
+            } finally {
+                try { runInitGoals(ctx); } finally { finishLoad(ctx); }
+            }
             // END_CHANGE: ISS-2025-0573
         } finally { exitState(prev); }
     }
@@ -454,6 +512,21 @@ public class Prolog {
         final java.util.function.Function<Term, Boolean> runner;
         String diagnosticsName;
         int includeDepth;
+        // START_CHANGE: ISS-2025-0730 - clause ownership and the discontiguous check
+        /** The file that OWNS the clauses of this load (an include's clauses belong to the
+         *  including file); null for text consulted from Java. */
+        final String owner;
+        /** Predicates of this file seen so far, and the one the previous clause belonged to. */
+        final Set<String> seenKeys = new HashSet<>();
+        String lastName, lastModule;
+        int lastArity = -1;
+        /** discontiguous/1 declarations of this load (shared with its includes). */
+        final Set<String> discontiguous;
+        /** Did this load store clauses for another module (flat M:Head clauses)? */
+        final boolean[] qualifiedClauses;
+        /** The files this load included (for make/0). */
+        final List<String> includes;
+        // END_CHANGE: ISS-2025-0730
 
         LoadContext(String file, String directory, String source, String startModule,
                     java.util.function.Function<Term, Boolean> runner) {
@@ -468,6 +541,10 @@ public class Prolog {
             this.clauses = new int[1];
             this.errors = new ArrayList<>();
             this.runner = runner;
+            this.owner = file;                                                   // ISS-2025-0730
+            this.discontiguous = new HashSet<>();
+            this.qualifiedClauses = new boolean[1];
+            this.includes = new ArrayList<>();
         }
 
         /** The context of an included file: same load, another file. */
@@ -485,6 +562,10 @@ public class Prolog {
             this.runner = parent.runner;
             this.diagnosticsName = parent.diagnosticsName;
             this.includeDepth = parent.includeDepth + 1;
+            this.owner = parent.owner;                                           // ISS-2025-0730
+            this.discontiguous = parent.discontiguous;
+            this.qualifiedClauses = parent.qualifiedClauses;
+            this.includes = parent.includes;
         }
 
         public String file() { return file; }
@@ -520,22 +601,58 @@ public class Prolog {
         long modified;
         String module;
         Set<String> userPredicates = new LinkedHashSet<>();
+        boolean qualifiedClauses;                                               // ISS-2025-0730
+        /** Included files and their modification times when loaded (ISS-2025-0736, make/0). */
+        Map<String, Long> includes = new LinkedHashMap<>();
         FileRecord(String path) { this.path = path; }
     }
 
-    private final LoadLock loadLock = new LoadLock();                  // ISS-2025-0639
-    private final ArrayDeque<LoadContext> loadStack = new ArrayDeque<>();
+    // START_CHANGE: ISS-2025-0739 - 4.6 wave Q3.8: the lock is per FILE and the load-context
+    // stack is per THREAD (a load on another thread is another load); the loaded-file table has
+    // its own monitor.
+    private final LoadLock loadLock = new LoadLock();
+    private final ThreadLocal<ArrayDeque<LoadContext>> loadStacks = ThreadLocal.withInitial(ArrayDeque::new);
+    /** The lock key of text consulted from Java (such loads are serialised with each other). */
+    private static final String TEXT_LOAD_KEY = "<text>";
+
+    private ArrayDeque<LoadContext> loadStack() { return loadStacks.get(); }
+
+    /** Enter a load: its file's lock, the thread's module scope, the context stack. */
+    private void beginLoad(LoadContext ctx) {
+        String key = ctx.file != null ? ctx.file : TEXT_LOAD_KEY;
+        loadLock.lock(key);
+        moduleManager.enterLoad();
+        loadStack().push(ctx);
+    }
+
+    /** Leave a load entered with {@link #beginLoad}: end it (module scope, imports), then unlock. */
+    private void finishLoad(LoadContext ctx) {
+        String key = ctx.file != null ? ctx.file : TEXT_LOAD_KEY;
+        try {
+            loadStack().pop();
+            endLoad(ctx);
+        } finally {
+            try { moduleManager.exitLoad(); } finally { loadLock.unlock(key); }
+        }
+    }
+
+    /** Is {@code file} being loaded by THIS thread (a file that loads itself)? */
+    private boolean loadingOnThisThread(String file) {
+        for (LoadContext c : loadStack()) if (file.equals(c.file) && !c.include) return true;
+        return false;
+    }
+    // END_CHANGE: ISS-2025-0739
     private final Map<String, FileRecord> loadedFiles = new LinkedHashMap<>();
 
     private LoadContext newLoadContext(String file, java.util.function.Function<Term, Boolean> runner) {
         String dir;
         if (file != null) {
-            dir = new java.io.File(file).getParent();
+            dir = it.denzosoft.jprolog.core.engine.v4.EngineState.file(file).getAbsoluteFile().getParent();   // ISS-2025-0745
         } else {
-            LoadContext outer = loadStack.peek();
-            dir = outer != null ? outer.directory : new java.io.File("").getAbsolutePath();
+            LoadContext outer = loadStack().peek();
+            dir = outer != null ? outer.directory : engineState.workingDirectory();   // ISS-2025-0745
         }
-        LoadContext outer = loadStack.peek();
+        LoadContext outer = loadStack().peek();
         String source = file != null ? file : (outer != null ? outer.source : null);
         String start = moduleManager.getCurrentModule() != null ? moduleManager.getCurrentModule().getName() : "user";
         return new LoadContext(file, dir, source, start, runner);
@@ -543,21 +660,18 @@ public class Prolog {
 
     /** The innermost active load, or null. */
     public LoadContext currentLoad() {
-        loadLock.lock(); try { return loadStack.peek(); } finally { loadLock.unlock(); }
+        return loadStack().peek();                                          // ISS-2025-0739: per thread
     }
 
     /** Load program text as one load. Parse and clause errors are collected, never thrown. */
     private LoadResult loadText(String program, LoadContext ctx, boolean v2) {
-        loadLock.lock(); try {
-            loadStack.push(ctx);
-            try {
-                loadClauses(program, ctx);
-                runInitGoals(ctx);
-            } finally {
-                loadStack.pop();
-                endLoad(ctx);
-            }
-        } finally { loadLock.unlock(); }
+        beginLoad(ctx);                                                      // ISS-2025-0739
+        try {
+            loadClauses(program, ctx);
+            runInitGoals(ctx);
+        } finally {
+            finishLoad(ctx);
+        }
         return new LoadResult(ctx.file, ctx.clauses[0], ctx.errors,
             ctx.modules.isEmpty() ? null : ctx.modules.get(0));
     }
@@ -615,6 +729,192 @@ public class Prolog {
         handleRule(null, clauseTerm, line, ctx);
     }
 
+    // START_CHANGE: ISS-2025-0731 - 4.6 wave Q3.2: goal_expansion/2 (SWI). When user or the module
+    // being loaded defines goal_expansion/2, every goal of a clause body (and of a directive) is
+    // expanded at load time, through the control constructs and the goal arguments of the common
+    // meta-predicates, to a fixpoint — the module's own goal_expansion/2 first, then user's —
+    // with a depth cap that turns a non-terminating expansion into a load error.
+    static final int GOAL_EXPANSION_MAX_DEPTH = 100;
+
+    private boolean goalExpansionDefined() {
+        if (knowledgeBase.hasRules("goal_expansion/2")) return true;
+        String cm = moduleManager.getCurrentModule().getName();
+        return !"user".equals(cm) && moduleManager.getCurrentModule().definesGoalExpansion();
+    }
+
+    private Rule expandRuleGoals(Rule rule) {
+        if (rule.getBody().isEmpty() || !goalExpansionDefined()) return rule;
+        // one call per clause: the head and the body travel together, so the variables the
+        // expansion shares with the rest of the clause stay shared
+        Term body = rule.getBody().get(rule.getBody().size() - 1);
+        for (int i = rule.getBody().size() - 2; i >= 0; i--) {
+            body = new CompoundTerm(new Atom(","), Arrays.asList(rule.getBody().get(i), body));
+        }
+        Term whole = new CompoundTerm(new Atom(":-"), Arrays.asList(rule.getHead(), body));
+        Term[] out = expandGoalsOf(whole, body);
+        if (out == null) return rule;
+        Rule r = new Rule(((CompoundTerm) out[0]).getArguments().get(0), flattenConjunction(out[1]));
+        r.setSourceLine(rule.getSourceLine());
+        return r;
+    }
+
+    /** Expand a directive's goal (null-safe: the goal itself when nothing applies). */
+    private Term expandDirectiveGoal(Term goal) {
+        if (!goalExpansionDefined()) return goal;
+        Term[] out = expandGoalsOf(goal, goal);
+        return out == null ? goal : out[1];
+    }
+
+    /**
+     * Expand every goal of {@code goals} (a subterm of {@code context}); returns the context and
+     * the goals AFTER the expansion (as they came back from the engine, variables shared), or
+     * null when nothing changed.
+     */
+    private Term[] expandGoalsOf(Term context, Term goals) {
+        final boolean[] changed = {false};
+        final Map<Term, Term> done = new IdentityHashMap<>();
+        Term expanded = expandGoal(goals, 0, changed);
+        if (!changed[0]) return null;
+        // re-read the context with the expanded goals put in place (identity substitution)
+        done.put(goals, expanded);
+        return new Term[] { substituteIdentity(context, done), expanded };
+    }
+
+    private static Term substituteIdentity(Term t, Map<Term, Term> map) {
+        Term r = map.get(t);
+        if (r != null) return r;
+        if (t instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) t;
+            List<Term> args = c.getArguments();
+            List<Term> out = null;
+            for (int i = 0; i < args.size(); i++) {
+                Term a = args.get(i);
+                Term b = substituteIdentity(a, map);
+                if (b != a && out == null) { out = new ArrayList<>(args); }
+                if (out != null) out.set(i, b);
+            }
+            return out == null ? t : new CompoundTerm(c.getFunctor(), out);
+        }
+        return t;
+    }
+
+    private Term expandGoal(Term g0, int depth, boolean[] changed) {
+        Term g = it.denzosoft.jprolog.core.engine.v4.Unify.deref(g0);
+        if (g instanceof Variable) return g;
+        if (g instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) g;
+            String f = c.getName();
+            int n = c.getArguments().size();
+            int[] goalArgs = metaGoalArgs(f, n);
+            if (goalArgs != null) {
+                List<Term> args = new ArrayList<>(c.getArguments());
+                boolean any = false;
+                for (int k : goalArgs) {
+                    Term a = args.get(k);
+                    Term b = expandMetaArg(a, depth, changed);
+                    if (b != a) { args.set(k, b); any = true; }
+                }
+                return any ? new CompoundTerm(c.getFunctor(), args) : g;
+            }
+        } else if (!(g instanceof Atom)) {
+            return g;
+        }
+        if (depth > GOAL_EXPANSION_MAX_DEPTH) {
+            throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.resourceError(
+                "goal_expansion_depth", "goal_expansion/2"));
+        }
+        Term r = callGoalExpansion(g);
+        if (r == null || variantOf(r, g)) return g;
+        changed[0] = true;
+        return expandGoal(r, depth + 1, changed);
+    }
+
+    /** A meta-argument: `V^G` (bagof/setof) keeps the `^` prefix; `M:G` expands G. */
+    private Term expandMetaArg(Term a0, int depth, boolean[] changed) {
+        Term a = it.denzosoft.jprolog.core.engine.v4.Unify.deref(a0);
+        if (a instanceof CompoundTerm && ((CompoundTerm) a).getArguments().size() == 2
+                && ("^".equals(((CompoundTerm) a).getName()) || ":".equals(((CompoundTerm) a).getName()))) {
+            Term inner = ((CompoundTerm) a).getArguments().get(1);
+            Term e = expandMetaArg(inner, depth, changed);
+            return e == inner ? a : new CompoundTerm(((CompoundTerm) a).getFunctor(),
+                Arrays.asList(((CompoundTerm) a).getArguments().get(0), e));
+        }
+        return expandGoal(a, depth, changed);
+    }
+
+    /** The goal-argument positions of the control constructs and common meta-predicates. */
+    private static int[] metaGoalArgs(String f, int n) {
+        switch (n) {
+            case 1:
+                if ("\\+".equals(f) || "call".equals(f) || "once".equals(f) || "ignore".equals(f)
+                        || "not".equals(f)) return new int[] {0};
+                return null;
+            case 2:
+                if (",".equals(f) || ";".equals(f) || "->".equals(f) || "*->".equals(f) || "|".equals(f)
+                        || "forall".equals(f)) return new int[] {0, 1};
+                if (":".equals(f)) return new int[] {1};
+                return null;
+            case 3:
+                if ("findall".equals(f) || "bagof".equals(f) || "setof".equals(f)
+                        || "aggregate_all".equals(f)) return new int[] {1};
+                if ("catch".equals(f)) return new int[] {0, 2};
+                if ("setup_call_cleanup".equals(f)) return new int[] {0, 1, 2};
+                return null;
+            case 4:
+                if ("findall".equals(f)) return new int[] {1};
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    /** goal_expansion(G, X) in the loading module, then in user: X, or null. */
+    private Term callGoalExpansion(Term g) {
+        String cm = moduleManager.getCurrentModule().getName();
+        if (!"user".equals(cm) && moduleManager.getCurrentModule().definesGoalExpansion()) {
+            Term r = runGoalExpansion(g, cm);
+            if (r != null) return r;
+        }
+        if (knowledgeBase.hasRules("goal_expansion/2")) return runGoalExpansion(g, null);
+        return null;
+    }
+
+    private Term runGoalExpansion(Term g, String module) {
+        Variable out = new Variable("GoalExpansionResult__");
+        Term call = new CompoundTerm(new Atom("goal_expansion"), Arrays.asList(g, (Term) out));
+        if (module != null) call = new CompoundTerm(new Atom(":"), Arrays.asList((Term) new Atom(module), call));
+        List<Map<String, Term>> sols = solve(new CompoundTerm(new Atom("once"), Collections.singletonList(call)));
+        if (sols.isEmpty()) return null;
+        return sols.get(0).get("GoalExpansionResult__");
+    }
+
+    /** Are {@code a} and {@code b} variants (equal up to a consistent renaming of variables)? */
+    private static boolean variantOf(Term a, Term b) {
+        return variant(a, b, new IdentityHashMap<Variable, Variable>(), new IdentityHashMap<Variable, Variable>());
+    }
+
+    private static boolean variant(Term a0, Term b0, Map<Variable, Variable> ab, Map<Variable, Variable> ba) {
+        Term a = it.denzosoft.jprolog.core.engine.v4.Unify.deref(a0);
+        Term b = it.denzosoft.jprolog.core.engine.v4.Unify.deref(b0);
+        if (a instanceof Variable || b instanceof Variable) {
+            if (!(a instanceof Variable) || !(b instanceof Variable)) return false;
+            Variable x = ab.get(a), y = ba.get(b);
+            if (x == null && y == null) { ab.put((Variable) a, (Variable) b); ba.put((Variable) b, (Variable) a); return true; }
+            return x == b && y == a;
+        }
+        if (a instanceof CompoundTerm) {
+            if (!(b instanceof CompoundTerm)) return false;
+            CompoundTerm x = (CompoundTerm) a, y = (CompoundTerm) b;
+            if (!x.getName().equals(y.getName()) || x.getArguments().size() != y.getArguments().size()) return false;
+            for (int i = 0; i < x.getArguments().size(); i++) {
+                if (!variant(x.getArguments().get(i), y.getArguments().get(i), ab, ba)) return false;
+            }
+            return true;
+        }
+        return it.denzosoft.jprolog.core.engine.v4.Unify.equalTerms(a, b, null);
+    }
+    // END_CHANGE: ISS-2025-0731
+
     // START_CHANGE: ISS-2025-0571
     /** The clauses term_expansion/2 turns {@code t} into, or null when it does not apply. */
     private List<Term> termExpansion(Term t) {
@@ -659,9 +959,9 @@ public class Prolog {
             } else if (isDCGRule(rule)) {
                 Rule transformed = transformDCGRule(rule);
                 if (line > 0) transformed.setSourceLine(line);
-                addLoadedClause(transformed, ctx);
+                addLoadedClause(expandRuleGoals(transformed), ctx);           // ISS-2025-0731
             } else {
-                addLoadedClause(rule, ctx);
+                addLoadedClause(expandRuleGoals(rule), ctx);                  // ISS-2025-0731
             }
         // START_CHANGE: ISS-2025-0346 - a halt raised by a directive aborts the load
         } catch (PrologException pe) {
@@ -677,17 +977,109 @@ public class Prolog {
     }
 
     private void addLoadedClause(Rule rule, LoadContext ctx) {
+        // START_CHANGE: ISS-2025-0733 - a module-qualified head (`m:foo(1).`, `user:hook(X) :- B`)
+        // defines the predicate in THAT module (SWI), not a flat ':'/2 predicate
+        if (rule.getHead() instanceof CompoundTerm && ":".equals(((CompoundTerm) rule.getHead()).getName())
+                && ((CompoundTerm) rule.getHead()).getArguments().size() == 2) {
+            rule = placeQualified(rule, ctx);
+            if (rule == null) { ctx.clauses[0]++; return; }
+        }
+        // END_CHANGE: ISS-2025-0733
         checkBuiltInConflict(rule);
-        moduleManager.addRule(rule);
-        if ("user".equals(moduleManager.getCurrentModule().getName())) {
+        // START_CHANGE: ISS-2025-0730 - ownership + the SWI discontiguous warning
+        if (ctx.owner != null) rule.setSourceFile(ctx.owner);
+        it.denzosoft.jprolog.core.module.Module curMod = moduleManager.getCurrentModule();
+        String cur = curMod.getName();
+        boolean newPred = noteClauseKey(rule, cur, ctx);
+        // END_CHANGE: ISS-2025-0730
+        moduleManager.addRule(curMod, rule);
+        if ("user".equals(cur)) {
             knowledgeBase.addRule(rule);
-            if (ctx.file != null) {
-                Term h = rule.getHead();
-                ctx.userPredicates.add(TermUtils.getFunctorName(h) + "/" + TermUtils.getArity(h));
-            }
+            // ISS-2025-0730: recorded once per run of clauses of one predicate, not per clause
+            if (ctx.file != null && newPred) ctx.userPredicates.add(ctx.lastName + "/" + ctx.lastArity);
         }
         ctx.clauses[0]++;
     }
+
+    // START_CHANGE: ISS-2025-0730 - 4.6 wave Q3.1: discontiguous/1 (SWI: a warning, not an error)
+    /** Returns true when the clause starts a new run of clauses (another predicate than the last). */
+    private boolean noteClauseKey(Rule rule, String module, LoadContext ctx) {
+        Term h = rule.getHead();
+        String name = TermUtils.getFunctorName(h);
+        int arity = TermUtils.getArity(h);
+        if (arity == ctx.lastArity && name.equals(ctx.lastName) && module.equals(ctx.lastModule)) return false;
+        ctx.lastName = name;
+        ctx.lastArity = arity;
+        ctx.lastModule = module;
+        String key = "user".equals(module) ? name + "/" + arity : module + ":" + name + "/" + arity;
+        if (!ctx.seenKeys.add(key) && !ctx.discontiguous.contains(key)
+                && !("user".equals(module) && knowledgeBase.isDynamic(TermUtils.getFunctorName(h), TermUtils.getArity(h)))) {
+            warn((ctx.file != null ? ctx.file + ":" + rule.getSourceLine() + ": " : "")
+                + "Clauses of " + key + " are not together in the source-file");
+        }
+        return true;
+    }
+    // END_CHANGE: ISS-2025-0730
+
+    // START_CHANGE: ISS-2025-0733 - 4.6 wave Q3 (extra): clauses with a module-qualified head.
+    // `user:H :- B` goes into user; `M:H` for the module being loaded is an ordinary clause of it;
+    // any other module is created on demand and the clause is stored as the `M:H` clause every
+    // other path (assertz(M:H), clause/2, retract/1, M:G calls) already uses. When the clause is
+    // written inside another module S, its body runs in S (SWI: a clause added to another
+    // module's multifile predicate keeps the source module's context), so the body's goals are
+    // qualified with S.
+    /** Store {@code rule} (head {@code M:H}); returns the unqualified rule to add normally, or null. */
+    private Rule placeQualified(Rule rule, LoadContext ctx) {
+        Term mt = ((CompoundTerm) rule.getHead()).getArguments().get(0);
+        Term inner = ((CompoundTerm) rule.getHead()).getArguments().get(1);
+        while (inner instanceof CompoundTerm && ":".equals(((CompoundTerm) inner).getName())
+                && ((CompoundTerm) inner).getArguments().size() == 2) {
+            mt = ((CompoundTerm) inner).getArguments().get(0);
+            inner = ((CompoundTerm) inner).getArguments().get(1);
+        }
+        if (!(mt instanceof Atom) || !(inner instanceof Atom || inner instanceof CompoundTerm)) return rule;
+        String target = ((Atom) mt).getName();
+        String source = moduleManager.getCurrentModule().getName();
+        if (target.equals(source)) {
+            Rule r = new Rule(inner, rule.getBody());
+            r.setSourceLine(rule.getSourceLine());
+            return r;
+        }
+        List<Term> body = qualifyBody(rule.getBody(), source);
+        Rule r;
+        if ("user".equals(target)) {
+            r = new Rule(inner, body);
+            r.setSourceLine(rule.getSourceLine());
+            checkBuiltInConflict(r);
+            if (ctx.owner != null) r.setSourceFile(ctx.owner);
+            noteClauseKey(r, "user", ctx);
+            knowledgeBase.addRule(r);
+            if (ctx.file != null) ctx.userPredicates.add(TermUtils.getFunctorName(inner) + "/" + TermUtils.getArity(inner));
+            return null;
+        }
+        ensureModule(target);
+        r = new Rule(new CompoundTerm(new Atom(":"), Arrays.asList((Term) new Atom(target), inner)), body);
+        r.setSourceLine(rule.getSourceLine());
+        if (ctx.owner != null) r.setSourceFile(ctx.owner);
+        knowledgeBase.addRule(r);
+        ctx.qualifiedClauses[0] = true;
+        return null;
+    }
+
+    /** Create module {@code name} on demand (a clause or declaration names it). */
+    public void ensureModule(String name) {
+        if ("user".equals(name) || "system".equals(name)) return;
+        if (getV4Engine().modules4().isModule(name)) return;
+        moduleManager.getOrCreateModule(name);
+    }
+
+    /** The body goals, each run in module {@code m}: `m:G` for every goal outside a control construct. */
+    private static List<Term> qualifyBody(List<Term> body, String m) {
+        List<Term> out = new ArrayList<>(body.size());
+        for (Term g : body) out.add(it.denzosoft.jprolog.core.engine.v4.Machine.qualifyGoal(g, m));
+        return out;
+    }
+    // END_CHANGE: ISS-2025-0733
 
     private void runInitGoals(LoadContext ctx) {
         if (ctx.initGoals.isEmpty()) return;
@@ -743,10 +1135,9 @@ public class Prolog {
         checkSafeRead(f, spec, "include/1");                                   // ISS-2025-0625
         String text = readSourceText(f, spec, "include/1");
         LoadContext child = new LoadContext(ctx, canonical(f));
-        loadLock.lock(); try {
-            loadStack.push(child);
-            try { loadClauses(text, child); } finally { loadStack.pop(); }
-        } finally { loadLock.unlock(); }
+        if (!ctx.includes.contains(child.file)) ctx.includes.add(child.file);   // ISS-2025-0736
+        loadStack().push(child);                  // ISS-2025-0739: same load, same thread, same lock
+        try { loadClauses(text, child); } finally { loadStack().pop(); }
     }
     // END_CHANGE: ISS-2025-0575
 
@@ -797,6 +1188,25 @@ public class Prolog {
         }
         throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.existenceError("source_sink", s, ctx));
     }
+
+    // START_CHANGE: ISS-2025-0737 - a source specification: a file name, or Alias(Path) searched
+    // through file_search_path/2 (library(X) included) for a readable Prolog source
+    java.io.File resolveLoadFile(Term spec0, String dir, String ctx) {
+        Term spec = resolveTermSimple(spec0);
+        if (spec instanceof CompoundTerm && ((CompoundTerm) spec).getArguments().size() == 1) {
+            FileSearch.Options o = new FileSearch.Options();
+            o.fileType = "prolog";
+            o.access = "read";
+            o.extensions = new ArrayList<>(Arrays.asList(".pl", ".prolog", ""));
+            List<String> found = FileSearch.resolve(spec, o, this::solve, dir, ctx);
+            if (found.isEmpty()) {
+                throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.existenceError("source_sink", spec, ctx));
+            }
+            return new java.io.File(found.get(0));
+        }
+        return resolveSourceFile(spec, dir, ctx);
+    }
+    // END_CHANGE: ISS-2025-0737
 
     private static String readSourceText(java.io.File f, Term spec, String ctx) {
         try {
@@ -869,8 +1279,12 @@ public class Prolog {
         return it.denzosoft.jprolog.core.engine.v4.Unify.deref(t);
     }
 
+    /** Print {@code Warning: text} on this engine's user_error (ISS-2025-0753: also for table/1). */
+    public void warnUser(String text) { warn(text); }
+
     private void warn(String text) {
-        java.io.PrintStream err = it.denzosoft.jprolog.builtin.io.StreamManager.streams().userError().out();
+        it.denzosoft.jprolog.core.engine.v4.Streams st = it.denzosoft.jprolog.builtin.io.StreamManager.streams();
+        java.io.PrintStream err = st.writerFor(st.userError());      // ISS-2025-0730: the live user_error
         if (err == null) err = System.err;
         err.println("Warning: " + text);
         err.flush();
@@ -889,35 +1303,52 @@ public class Prolog {
                 && ((CompoundTerm) spec).getArguments().size() == 1) {
             String lib = specText(resolveTermSimple(((CompoundTerm) spec).getArguments().get(0)));
             it.denzosoft.jprolog.core.engine.v4.Modules ms = getV4Engine().modules4();
-            if (lib != null && ms.isModule(lib)) {
+            if (lib != null && ms.isModule(lib) && moduleManager.getModule(lib) == null) {
                 ms.ensureLoaded(lib);
                 return null;
             }
             if (lib != null && BUILTIN_LIBRARIES.contains(lib)) return null;
-            throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.existenceError("source_sink", spec, ctx));
+            // ISS-2025-0737: any other library(X) is searched on file_search_path/2 (below)
         }
         LoadContext outer = currentLoad();
-        String dir = outer != null ? outer.directory : new java.io.File("").getAbsolutePath();
-        java.io.File f = resolveSourceFile(spec, dir, ctx);
+        String dir = outer != null ? outer.directory : engineState.workingDirectory();   // ISS-2025-0745
+        java.io.File f = resolveLoadFile(spec, dir, ctx);                        // ISS-2025-0737
         checkSafeRead(f, spec, ctx);                                           // ISS-2025-0625
         String abs = canonical(f);
         FileRecord rec;
-        loadLock.lock(); try { rec = loadedFiles.get(abs); } finally { loadLock.unlock(); }
+        Map<String, List<Rule>> tails = null;                                   // ISS-2025-0794
+        synchronized (loadedFiles) { rec = loadedFiles.get(abs); }               // ISS-2025-0739
+        if (loadingOnThisThread(abs)) return null;           // ISS-2025-0739: a file that loads itself
         if (rec != null) {
             if ("not_loaded".equals(ifMode) || ("changed".equals(ifMode) && rec.modified == f.lastModified())) {
                 importLoadedModule(rec);
                 return null;
             }
-            unloadFile(rec);
+            tails = unloadFile(rec);                                              // ISS-2025-0794
         }
         String text = readSourceText(f, spec, ctx);
         LoadContext lc = newLoadContext(abs, runner);
-        LoadResult r = loadText(text, lc, true);
+        LoadResult r;
+        try {
+            r = loadText(text, lc, true);
+        } finally {
+            // START_CHANGE: ISS-2025-0794 - other files' clauses go back behind the reloaded ones
+            if (tails != null) {
+                for (Map.Entry<String, List<Rule>> t : tails.entrySet()) {
+                    String pi = t.getKey();
+                    int slash = pi.lastIndexOf('/');
+                    knowledgeBase.moveToEnd(pi.substring(0, slash), Integer.parseInt(pi.substring(slash + 1)), t.getValue());
+                }
+            }
+            // END_CHANGE: ISS-2025-0794
+        }
         FileRecord nr = new FileRecord(abs);
         nr.modified = f.lastModified();
         nr.module = r.module;
         nr.userPredicates.addAll(lc.userPredicates);
-        loadLock.lock(); try { loadedFiles.put(abs, nr); } finally { loadLock.unlock(); }
+        nr.qualifiedClauses = lc.qualifiedClauses[0];                                  // ISS-2025-0730
+        for (String inc : lc.includes) nr.includes.put(inc, new java.io.File(inc).lastModified());   // ISS-2025-0736
+        synchronized (loadedFiles) { loadedFiles.put(abs, nr); }                // ISS-2025-0739
         if (mustBeModule && r.module == null) {
             throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.domainError("module_file", spec, ctx));
         }
@@ -934,21 +1365,38 @@ public class Prolog {
     }
 
     /** Reconsult: the user predicates a file defined are wiped before it is loaded again. */
-    private void unloadFile(FileRecord rec) {
+    private Map<String, List<Rule>> unloadFile(FileRecord rec) {
+        // START_CHANGE: ISS-2025-0730 - 4.6 wave Q3.1: only the clauses THIS file owns go (it
+        // abolished every predicate the file touched, so clauses other files had added — to a
+        // multifile predicate or not — and the dynamic declaration were lost)
+        Map<String, List<Rule>> tails = new java.util.LinkedHashMap<>();         // ISS-2025-0794
         for (String pi : rec.userPredicates) {
             int slash = pi.lastIndexOf('/');
-            knowledgeBase.abolishPredicate(pi.substring(0, slash), Integer.parseInt(pi.substring(slash + 1)));
+            String f = pi.substring(0, slash);
+            int n = Integer.parseInt(pi.substring(slash + 1));
+            List<Rule> tail = knowledgeBase.rulesAfterFirstOwnedBy(f, n, rec.path);   // ISS-2025-0794
+            if (!tail.isEmpty()) tails.put(pi, tail);
+            knowledgeBase.removeClausesOwnedBy(f, n, rec.path);
         }
+        if (rec.qualifiedClauses) knowledgeBase.removeClausesOwnedBy(":", 2, rec.path);
+        // END_CHANGE: ISS-2025-0730
+        return tails;
     }
 
     /** make/0: reload every loaded file modified since it was loaded. Returns how many. */
     public int make(java.util.function.Function<Term, Boolean> runner) {
         List<FileRecord> recs;
-        loadLock.lock(); try { recs = new ArrayList<>(loadedFiles.values()); } finally { loadLock.unlock(); }
+        synchronized (loadedFiles) { recs = new ArrayList<>(loadedFiles.values()); }   // ISS-2025-0739
         int n = 0;
         for (FileRecord rec : recs) {
             java.io.File f = new java.io.File(rec.path);
-            if (f.isFile() && f.lastModified() != rec.modified) {
+            // ISS-2025-0736: a changed INCLUDED file reloads the file that includes it
+            boolean incChanged = false;
+            for (Map.Entry<String, Long> ie : rec.includes.entrySet()) {
+                java.io.File inf = new java.io.File(ie.getKey());
+                if (!inf.isFile() || inf.lastModified() != ie.getValue()) { incChanged = true; break; }
+            }
+            if (f.isFile() && (f.lastModified() != rec.modified || incChanged)) {
                 loadFromGoal(new Atom(rec.path), "true", false, runner, "make/0");
                 n++;
             }
@@ -958,15 +1406,15 @@ public class Prolog {
 
     /** source_file/1: the loaded files, in load order (absolute paths). */
     public List<String> loadedSourceFiles() {
-        loadLock.lock(); try { return new ArrayList<>(loadedFiles.keySet()); } finally { loadLock.unlock(); }
+        synchronized (loadedFiles) { return new ArrayList<>(loadedFiles.keySet()); }   // ISS-2025-0739
     }
 
     /** source_file/2: the user predicates ("name/arity") each loaded file defined. */
     public Map<String, Set<String>> loadedSourcePredicates() {
         Map<String, Set<String>> out = new LinkedHashMap<>();
-        loadLock.lock(); try {
+        synchronized (loadedFiles) {                                             // ISS-2025-0739
             for (FileRecord r : loadedFiles.values()) out.put(r.path, new LinkedHashSet<>(r.userPredicates));
-        } finally { loadLock.unlock(); }
+        }
         return out;
     }
     // END_CHANGE: ISS-2025-0574
@@ -1102,12 +1550,15 @@ public class Prolog {
                         processDynamicDirective(directive);
                         break;
                     // END_CHANGE: ISS-2025-0347
+                    // START_CHANGE: ISS-2025-0730 - 4.6 wave Q3.1: multifile/1 defines the
+                    // predicate(s) and discontiguous/1 silences the warning (they were no-ops)
                     case "discontiguous":
                     case "multifile":
-                        // ISS-2025-0574: ensure_loaded/1 is a real load now (a goal, below)
-                        // These are declaration directives - acknowledge and continue
-                        if (LOGGER.isLoggable(java.util.logging.Level.FINE)) LOGGER.log(Level.FINE, "Declaration directive processed: " + directive);   // ISS-2025-0550: lazy
+                        for (Term a : ((CompoundTerm) directive).getArguments()) {
+                            declarePredicates(a, functor, moduleManager.getCurrentModule().getName());
+                        }
                         break;
+                    // END_CHANGE: ISS-2025-0730
                     // START_CHANGE: ISS-2025-0279 - initialization(Goal): run Goal AFTER the whole
                     // file has been loaded (so it may reference predicates defined later in the file).
                     case "initialization":
@@ -1134,7 +1585,7 @@ public class Prolog {
                     // END_CHANGE: ISS-2025-0279
                     default:
                         // ISO Prolog: unknown directives are executed as goals
-                        executeGoalDirective(directive);
+                        executeGoalDirective(expandDirectiveGoal(directive));     // ISS-2025-0731
                     // END_CHANGE: ISS-2025-0122
                 }
             } else if (directive instanceof Atom) {
@@ -1144,6 +1595,52 @@ public class Prolog {
             }
         }
     }
+
+    // START_CHANGE: ISS-2025-0730 - multifile/discontiguous declarations: PI, M:PI, sequences, lists
+    /** multifile/1 and discontiguous/1 called as goals (in module {@code module}). */
+    public void declarePredicates(Term spec, String kind, String module, boolean asGoal) {
+        if (spec instanceof Variable) {
+            throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError(kind + "/1"));
+        }
+        declarePredicates(spec, kind, module);
+    }
+
+    private void declarePredicates(Term spec, String kind, String module) {
+        if (spec instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) spec;
+            String f = c.getName();
+            int ar = c.getArguments().size();
+            if ((",".equals(f) || ".".equals(f)) && ar == 2) {
+                declarePredicates(c.getArguments().get(0), kind, module);
+                declarePredicates(c.getArguments().get(1), kind, module);
+                return;
+            }
+            if (":".equals(f) && ar == 2 && c.getArguments().get(0) instanceof Atom) {
+                declarePredicates(c.getArguments().get(1), kind, ((Atom) c.getArguments().get(0)).getName());
+                return;
+            }
+            if (("/".equals(f) || "//".equals(f)) && ar == 2 && c.getArguments().get(0) instanceof Atom
+                    && c.getArguments().get(1) instanceof it.denzosoft.jprolog.core.terms.Number) {
+                String name = ((Atom) c.getArguments().get(0)).getName();
+                int n = (int) ((it.denzosoft.jprolog.core.terms.Number) c.getArguments().get(1)).longValue()
+                    + ("//".equals(f) ? 2 : 0);
+                if ("discontiguous".equals(kind)) {
+                    LoadContext lc = currentLoad();
+                    if (lc != null) lc.discontiguous.add("user".equals(module) ? name + "/" + n : module + ":" + name + "/" + n);
+                } else if ("user".equals(module)) {
+                    knowledgeBase.markMultifile(name, n);
+                } else {
+                    ensureModule(module);
+                    knowledgeBase.declareQualified(module, name, n);
+                }
+                return;
+            }
+        }
+        if (spec instanceof Atom && "[]".equals(((Atom) spec).getName())) return;
+        throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError(
+            "predicate_indicator", spec, kind + "/1"));
+    }
+    // END_CHANGE: ISS-2025-0730
 
     // START_CHANGE: ISS-2025-0347 - parse ':- dynamic(PI)' (PI = Name/Arity, a ','-sequence of
     // indicators, or a list) and mark each procedure dynamic in the KnowledgeBase.
@@ -1311,7 +1808,113 @@ public class Prolog {
     /**
      * Process a use_module directive.
      */
+    // START_CHANGE: ISS-2025-0735 - 4.6 wave Q3.4: use_module/2 honours its import list
     private void processUseModuleDirective(Term directive) {
+        String mod = useModuleDirective(directive);
+        if (mod != null && directive instanceof CompoundTerm && TermUtils.getArity(directive) == 2) {
+            applyImportSpec(mod, TermUtils.getArgument((CompoundTerm) directive, 1), "use_module/2");
+        }
+    }
+
+    /** use_module/1,2 as a goal (the file is loaded once, then imported per the list). */
+    public void useModule(Term spec, Term imports, java.util.function.Function<Term, Boolean> runner) {
+        State prev = enterState();
+        try {
+            Term s0 = resolveTermSimple(spec);
+            if (s0 instanceof Variable) {
+                throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError(
+                    imports == null ? "use_module/1" : "use_module/2"));
+            }
+            List<Term> args = new ArrayList<>();
+            args.add(s0);
+            if (imports != null) args.add(resolveTermSimple(imports));
+            Term d = new CompoundTerm(new Atom("use_module"), args);
+            // the goal form shares the directive's logic; its directives run on the caller's machine
+            LoadContext lc = newLoadContext(null, runner);
+            loadStack().push(lc);
+            try { processUseModuleDirective(d); } finally { loadStack().pop(); }
+        } finally { exitState(prev); }
+    }
+
+    /** Restrict what the current module imports from {@code mod} to {@code list}. */
+    private void applyImportSpec(String mod, Term list0, String ctx) {
+        Term list = resolveTermSimple(list0);
+        if (list instanceof Variable) {
+            throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError(ctx));
+        }
+        it.denzosoft.jprolog.core.module.Module.ImportSpec spec = new it.denzosoft.jprolog.core.module.Module.ImportSpec();
+        if (list instanceof CompoundTerm && "except".equals(((CompoundTerm) list).getName())
+                && ((CompoundTerm) list).getArguments().size() == 1) {
+            for (Term e : listElements(((CompoundTerm) list).getArguments().get(0), ctx)) {
+                String[] a = importItem(e, ctx);
+                if (a[1] != null) spec.aliases.put(a[1] + "/" + a[2], a[0]);
+                spec.except.add(a[0] + "/" + a[2]);
+            }
+        } else if (list instanceof Atom && "all".equals(((Atom) list).getName())) {
+            spec = null;
+        } else {
+            spec.only = new HashSet<>();
+            for (Term e : listElements(list, ctx)) {
+                String[] a = importItem(e, ctx);
+                if (a[1] != null) spec.aliases.put(a[1] + "/" + a[2], a[0]);
+                else spec.only.add(a[0] + "/" + a[2]);
+            }
+        }
+        moduleManager.getCurrentModule().setImportSpec(mod, spec);
+        moduleManager.touch();
+    }
+
+    private static List<Term> listElements(Term l0, String ctx) {
+        List<Term> out = new ArrayList<>();
+        Term l = resolveTermSimple(l0);
+        while (l instanceof CompoundTerm && ".".equals(((CompoundTerm) l).getName())
+                && ((CompoundTerm) l).getArguments().size() == 2) {
+            out.add(resolveTermSimple(((CompoundTerm) l).getArguments().get(0)));
+            l = resolveTermSimple(((CompoundTerm) l).getArguments().get(1));
+        }
+        if (l instanceof Variable) {
+            throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError(ctx));
+        }
+        if (!(l instanceof Atom && "[]".equals(((Atom) l).getName()))) {
+            throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("list", l0, ctx));
+        }
+        return out;
+    }
+
+    /** {name, alias-or-null, arity} of `N/A`, `N//A` or `PI as Alias`. */
+    private static String[] importItem(Term e, String ctx) {
+        String alias = null;
+        if (e instanceof CompoundTerm && "as".equals(((CompoundTerm) e).getName())
+                && ((CompoundTerm) e).getArguments().size() == 2) {
+            Term al = resolveTermSimple(((CompoundTerm) e).getArguments().get(1));
+            if (!(al instanceof Atom)) {
+                throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("atom", al, ctx));
+            }
+            alias = ((Atom) al).getName();
+            e = resolveTermSimple(((CompoundTerm) e).getArguments().get(0));
+        }
+        if (e instanceof CompoundTerm && ("/".equals(((CompoundTerm) e).getName()) || "//".equals(((CompoundTerm) e).getName()))
+                && ((CompoundTerm) e).getArguments().size() == 2) {
+            Term n = resolveTermSimple(((CompoundTerm) e).getArguments().get(0));
+            Term a = resolveTermSimple(((CompoundTerm) e).getArguments().get(1));
+            if (n instanceof Variable || a instanceof Variable) {
+                throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError(ctx));
+            }
+            if (n instanceof Atom && a instanceof it.denzosoft.jprolog.core.terms.Number
+                    && ((it.denzosoft.jprolog.core.terms.Number) a).isInteger()) {
+                long ar = ((it.denzosoft.jprolog.core.terms.Number) a).longValue()
+                    + ("//".equals(((CompoundTerm) e).getName()) ? 2 : 0);
+                return new String[] { ((Atom) n).getName(), alias, Long.toString(ar) };
+            }
+        }
+        if (e instanceof Variable) {
+            throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.instantiationError(ctx));
+        }
+        throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.typeError("predicate_indicator", e, ctx));
+    }
+
+    /** The existing directive logic; returns the module that was imported (or null). */
+    private String useModuleDirective(Term directive) {
         if (directive instanceof CompoundTerm && TermUtils.getArity(directive) >= 1) {
             Term moduleTerm = TermUtils.getArgument((CompoundTerm) directive, 0);
             // START_CHANGE: Round5 minor - accept library(Name) form for SWI compatibility
@@ -1328,22 +1931,33 @@ public class Prolog {
                     if ("clpfd".equals(moduleName) || "lists".equals(moduleName)
                         || "between".equals(moduleName) || "apply".equals(moduleName)
                         || "assoc".equals(moduleName) || "format".equals(moduleName)) {
-                        LOGGER.log(Level.INFO, "Library auto-load (built-in): " + moduleName);
-                        return;
+                        if (LOGGER.isLoggable(Level.FINE)) LOGGER.log(Level.FINE, "Library auto-load (built-in): " + moduleName);   // ISS-2025-0735: was INFO on stderr
+                        return null;
                     }
+                    // START_CHANGE: ISS-2025-0737 - the prelude modules and the libraries JProlog
+                    // implements natively; anything else is searched on file_search_path/2
+                    it.denzosoft.jprolog.core.engine.v4.Modules ms4 = getV4Engine().modules4();
+                    if (ms4.isModule(moduleName) && moduleManager.getModule(moduleName) == null) {
+                        ms4.ensureLoaded(moduleName);
+                        return null;
+                    }
+                    if (BUILTIN_LIBRARIES.contains(moduleName)) return null;
+                    // END_CHANGE: ISS-2025-0737
                 }
             }
             // START_CHANGE: ISS-2025-0574 - use_module(File): a module FILE is loaded (once) and
             // imported into the loading module
             if ((moduleName == null || moduleManager.getModule(moduleName) == null)
                     && (!safeMode || (safeModeOptions != null && !safeModeOptions.readDirs().isEmpty()))   // ISS-2025-0625
-                    && !(moduleTerm instanceof CompoundTerm && "library".equals(((CompoundTerm) moduleTerm).getName()))) {
+                    ) {                                                            // ISS-2025-0737: library(X) searched too
                 LoadContext lc = currentLoad();
                 try {
-                    java.io.File mf = resolveSourceFile(moduleTerm, lc != null ? lc.directory : new java.io.File("").getAbsolutePath(), "use_module/1");
+                    java.io.File mf = resolveLoadFile(moduleTerm, lc != null ? lc.directory : engineState.workingDirectory(), "use_module/1");   // ISS-2025-0745
                     checkSafeRead(mf, moduleTerm, "use_module/1");                 // ISS-2025-0625
                     loadFromGoal(moduleTerm, "not_loaded", false, lc != null ? lc.runner : null, "use_module/1");
-                    return;
+                    FileRecord fr;
+                    synchronized (loadedFiles) { fr = loadedFiles.get(canonical(mf)); }   // ISS-2025-0739
+                    return fr != null ? fr.module : null;
                 } catch (PrologException notAFile) {
                     if (notAFile.isHalt()) throw notAFile;
                     if (safeMode && notAFile.getErrorTerm() instanceof CompoundTerm
@@ -1359,17 +1973,20 @@ public class Prolog {
             // END_CHANGE: ISS-2025-0574
             if (moduleName == null) {
                 LOGGER.log(Level.WARNING, "use_module: unrecognized module spec: " + moduleTerm);
-                return;
+                return null;
             }
             try {
                 moduleManager.importModule(moduleName);
-                LOGGER.log(Level.INFO, "Module imported: " + moduleName);
+                if (LOGGER.isLoggable(Level.FINE)) LOGGER.log(Level.FINE, "Module imported: " + moduleName);   // ISS-2025-0735: was INFO on stderr
+                return moduleName;
             } catch (IllegalArgumentException e) {
                 LOGGER.log(Level.WARNING, "Failed to import module: " + moduleName + " - " + e.getMessage());
             }
             // END_CHANGE: Round5 minor
         }
+        return null;
     }
+    // END_CHANGE: ISS-2025-0735
     
     // START_CHANGE: ISS-2025-0085 - Process op/3 directives to update shared OperatorTable
     /**
@@ -1425,7 +2042,8 @@ public class Prolog {
         // START_CHANGE: ISS-2025-0572 - comma lists, lists, `as` options and mode-directed heads;
         // an unsupported form raises (it was a logged no-op and the program then looped)
         if (directive instanceof CompoundTerm && TermUtils.getArity(directive) == 1) {
-            tableStore.declareSpec(TermUtils.getArgument((CompoundTerm) directive, 0), "table/1");
+            // ISS-2025-0753: an accepted-but-unimplemented `as` option is reported, never silent
+            for (String w : tableStore.declareSpec(TermUtils.getArgument((CompoundTerm) directive, 0), "table/1")) warn(w);
             return;
         }
         throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.domainError(
@@ -2278,7 +2896,7 @@ public class Prolog {
     // were any of them ever made native or moved, safe mode would still strip them.
     private static final String[] UNSAFE_PREDICATE_NAMES = {
         "open", "see", "seen", "tell", "told", "csv_read_file", "csv_write_file", "log_to_file",
-        "consult", "ensure_loaded", "load_files", "make", "absolute_file_name", "exists_file",
+        "consult", "ensure_loaded", "load_files", "make", "use_module", "absolute_file_name", "exists_file",
         "exists_directory", "delete_file", "shell", "getenv", "setenv"
     };
     /** Safe-mode options in force (null when safe mode is off). */
@@ -2308,7 +2926,7 @@ public class Prolog {
         final SafeModeOptions opts = (options == null) ? new SafeModeOptions() : options;
         final boolean reads = !opts.readDirs().isEmpty();
         java.util.Set<String> loaders = new java.util.HashSet<String>(java.util.Arrays.asList(
-            "consult", "ensure_loaded", "load_files", "."));
+            "consult", "ensure_loaded", "load_files", ".", "use_module"));   // ISS-2025-0735
         java.util.Set<String> deniedNames = new java.util.HashSet<String>(java.util.Arrays.asList(UNSAFE_PREDICATE_NAMES));
         int removed = 0;
         for (String name : new java.util.ArrayList<String>(builtInRegistry.getBuiltInNames())) {
@@ -2382,7 +3000,7 @@ public class Prolog {
                 : (file instanceof it.denzosoft.jprolog.core.terms.PrologString)
                     ? ((it.denzosoft.jprolog.core.terms.PrologString) file).getStringValue() : null;
             boolean readMode = mode instanceof Atom && "read".equals(((Atom) mode).getName());
-            if (path == null || !readMode || !opts.allowsRead(new java.io.File(path))) {
+            if (path == null || !readMode || !opts.allowsRead(it.denzosoft.jprolog.core.engine.v4.EngineState.file(path))) {   // ISS-2025-0745
                 throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms.permissionError(
                     "open", "source_sink", file, "open/" + a.size()));
             }
@@ -2691,8 +3309,8 @@ public class Prolog {
                 operatorTable.defineOperator(op.getPrecedence(), op.getType(), op.getName());
             }
             LoadContext ctx = newLoadContext(file, null);
-            loadLock.lock(); try {
-                loadStack.push(ctx);
+            beginLoad(ctx);                                                  // ISS-2025-0739
+            {
                 try {
                     for (Rule rule : program.rules) {
                         if (!!knowledgeBase.hasRules("term_expansion/2")) {
@@ -2705,10 +3323,9 @@ public class Prolog {
                     }
                     runInitGoals(ctx);
                 } finally {
-                    loadStack.pop();
-                    endLoad(ctx);
+                    finishLoad(ctx);
                 }
-            } finally { loadLock.unlock(); }
+            }
             return new LoadResult(file, ctx.clauses[0], ctx.errors, ctx.modules.isEmpty() ? null : ctx.modules.get(0));
         } finally {
             exitState(prev);

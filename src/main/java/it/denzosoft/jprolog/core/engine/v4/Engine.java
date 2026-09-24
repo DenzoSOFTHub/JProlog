@@ -35,7 +35,9 @@ public final class Engine {
     // the home of the `:- table p/n` DECLARATIONS (written by the consult-time directive and by
     // table/1); the ANSWERS live here, as variant-normalised terms on the cell model rather than
     // name-keyed solution maps (ISS-2025-0491: and now they live ONLY here).
-    private final Tabling tabling = new Tabling();
+    // ISS-2025-0752: the main table space; worker machines get private ones (Tabling.enterWorker)
+    private final Tabling.Shared tablingShared = new Tabling.Shared();
+    private final Tabling tabling = new Tabling(this, tablingShared);
     // END_CHANGE: ISS-2025-0463
     // START_CHANGE: ISS-2025-0608 - P4.15: statistics(inferences, N) — the steps of every
     // finished top-level query of this engine (the running query adds its guard's count).
@@ -77,7 +79,15 @@ public final class Engine {
     public TableStore tables() { return tables; }
     public ClauseStore store() { return store; }
     public BuiltinTable natives() { return natives; }
-    Tabling tabling() { return tabling; }
+    /** The table space of the calling thread (ISS-2025-0752). */
+    Tabling tabling() { return Tabling.current(this, tabling); }
+
+    Tabling.Shared tablingShared() { return tablingShared; }
+
+    // START_CHANGE: ISS-2025-0791 - wave Q7: the recorded database and flag/3 table
+    private final NativeRecords.Store records = new NativeRecords.Store();
+    NativeRecords.Store records() { return records; }
+    // END_CHANGE: ISS-2025-0791
 
     // START_CHANGE: ISS-2025-0540 - wave P2.1: the dispatch stamp. A body goal's call-site cache
     // (Machine.CallSite) records that "name/arity is a plain user predicate" — not a native, not a

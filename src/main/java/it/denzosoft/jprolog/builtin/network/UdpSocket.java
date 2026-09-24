@@ -2,11 +2,12 @@ package it.denzosoft.jprolog.builtin.network;
 
 // START_CHANGE: ISS-2025-0109 - Network communication built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
@@ -48,7 +49,7 @@ public class UdpSocket implements BuiltIn {
                 default: return false;
             }
         } catch (IOException e) {
-            throw new PrologEvaluationException(modeName() + ": " + e.getMessage());
+            throw Errors.host(e, "read", "socket", null, modeName(), LibArgs.arity(query));   // ISS-2025-0693
         }
     }
 
@@ -56,11 +57,11 @@ public class UdpSocket implements BuiltIn {
             List<Map<String, Term>> solutions) throws IOException {
         List<Term> args = query.getArguments();
         if (args.size() != 2) {
-            throw new PrologEvaluationException("udp_socket/2 requires 2 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0693
         }
         Term portTerm = args.get(0).resolveBindings(bindings);
         if (!(portTerm instanceof Number)) {
-            throw new PrologEvaluationException("udp_socket/2: Port must be a number.");
+            throw LibArgs.notA("number", portTerm, "udp_socket", 2, "Port must be a number");   // ISS-2025-0693
         }
         int port = ((Number) portTerm).getValue().intValue();
         DatagramSocket ds = new DatagramSocket(port);
@@ -80,7 +81,7 @@ public class UdpSocket implements BuiltIn {
             List<Map<String, Term>> solutions) throws IOException {
         List<Term> args = query.getArguments();
         if (args.size() != 4) {
-            throw new PrologEvaluationException("udp_send/4 requires 4 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0693
         }
         String handle = resolveAtom(args.get(0), bindings, "Socket");
         String host = resolveAtom(args.get(1), bindings, "Host");
@@ -100,7 +101,7 @@ public class UdpSocket implements BuiltIn {
             List<Map<String, Term>> solutions) throws IOException {
         List<Term> args = query.getArguments();
         if (args.size() != 4) {
-            throw new PrologEvaluationException("udp_receive/4 requires 4 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0693
         }
         String handle = resolveAtom(args.get(0), bindings, "Socket");
         int maxBytes = resolveInt(args.get(3), bindings, "MaxBytes");
@@ -129,7 +130,7 @@ public class UdpSocket implements BuiltIn {
             List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
         if (args.size() != 1) {
-            throw new PrologEvaluationException("udp_close/1 requires 1 argument.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0693
         }
         String handle = resolveAtom(args.get(0), bindings, "Socket");
         DatagramSocket ds = sockets.remove(handle);
@@ -143,7 +144,8 @@ public class UdpSocket implements BuiltIn {
     private DatagramSocket getSocket(String handle) {
         DatagramSocket ds = sockets.get(handle);
         if (ds == null) {
-            throw new PrologEvaluationException("Unknown UDP socket handle: " + handle);
+            throw Errors.existence("udp_socket", new Atom(handle), modeName(), LibArgs.nameArity(modeName()),
+                                   "unknown UDP socket handle");   // ISS-2025-0693
         }
         return ds;
     }
@@ -151,7 +153,7 @@ public class UdpSocket implements BuiltIn {
     private String resolveAtom(Term term, Map<String, Term> bindings, String argName) {
         Term resolved = term.resolveBindings(bindings);
         if (!(resolved instanceof Atom)) {
-            throw new PrologEvaluationException(modeName() + ": " + argName + " must be an atom.");
+            throw LibArgs.notA("atom", resolved, modeName(), LibArgs.nameArity(modeName()), argName);   // ISS-2025-0693
         }
         return ((Atom) resolved).getName();
     }
@@ -159,7 +161,7 @@ public class UdpSocket implements BuiltIn {
     private int resolveInt(Term term, Map<String, Term> bindings, String argName) {
         Term resolved = term.resolveBindings(bindings);
         if (!(resolved instanceof Number)) {
-            throw new PrologEvaluationException(modeName() + ": " + argName + " must be a number.");
+            throw LibArgs.notA("integer", resolved, modeName(), LibArgs.nameArity(modeName()), argName);   // ISS-2025-0693
         }
         return ((Number) resolved).getValue().intValue();
     }

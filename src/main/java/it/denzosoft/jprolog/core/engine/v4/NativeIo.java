@@ -120,23 +120,137 @@ final class NativeIo {
             if (kindT instanceof Variable) throw Errors.instantiation("print_message/2");
             String kind = (kindT instanceof Atom) ? ((Atom) kindT).getName()
                         : (kindT instanceof CompoundTerm) ? ((CompoundTerm) kindT).getName() : "informational";
-            if ("silent".equals(kind)) return Outcome.SUCCESS;
             Term msg = m.deref(args[1]);
-            String body = messageText(m, msg);
+            // START_CHANGE: ISS-2025-0713 - wave Q2.5 (LIM-043): the SWI extension points.
+            // 1. prolog:message//1 translates the message into lines (user-defined DCG, multifile);
+            // 2. user:message_hook(+Message, +Kind, +Lines) intercepts it — when it succeeds the
+            //    message counts as printed (SWI calls it for silent messages too);
+            // 3. the verbose flag = silent suppresses informational messages;
+            // 4. every kind is printed on user_error (SWI), not only errors and warnings.
+            // A hook or translation that itself calls print_message/2 is not re-entered.
+            int[] depth = HOOK_DEPTH.get();
+            List<Term> lines = null;
+            if (depth[0] == 0) {
+                depth[0]++;
+                try {
+                    try {
+                        lines = userLines(m, msg);
+                    } catch (PrologException e) {
+                        lines = null;               // a broken translation: the default text
+                    }
+                    if (hasHook(m)) {
+                        Term linesT = Machine.makeList(lines != null ? lines : defaultLines(m, msg));
+                        Term hook = new CompoundTerm(new Atom("message_hook"), new Term[] { msg, kindT, linesT });
+                        if (!m.findAll(TRUE_ATOM, new CompoundTerm(new Atom("once"), new Term[] { hook })).isEmpty()) {
+                            return Outcome.SUCCESS;
+                        }
+                    }
+                } catch (PrologException e) {
+                    // a broken hook: the message is printed as if there were none
+                } finally {
+                    depth[0]--;
+                }
+            }
+            if ("silent".equals(kind)) return Outcome.SUCCESS;
+            if (("informational".equals(kind) || "banner".equals(kind)) && verboseSilent()) return Outcome.SUCCESS;
+            String body = (lines != null) ? renderLines(m, lines) : messageText(m, msg);
+            // END_CHANGE: ISS-2025-0713
             String prefix = "error".equals(kind) ? "ERROR: " : "warning".equals(kind) ? "Warning: " : "% ";
             StringBuilder sb = new StringBuilder();
-            String[] lines = body.split("\n", -1);
-            for (int i = 0; i < lines.length; i++) {
-                if (i == lines.length - 1 && lines[i].isEmpty() && i > 0) break;
-                sb.append(prefix).append(lines[i]).append('\n');
+            String[] textLines = body.split("\n", -1);
+            for (int i = 0; i < textLines.length; i++) {
+                if (i == textLines.length - 1 && textLines[i].isEmpty() && i > 0) break;
+                sb.append(prefix).append(textLines[i]).append('\n');
             }
             Streams st = StreamManager.streams();
-            PrintStream out = ("error".equals(kind) || "warning".equals(kind))
-                ? st.writerFor(st.userError()) : StreamManager.out();
+            PrintStream out = st.writerFor(st.userError());               // ISS-2025-0713: SWI
             out.print(sb);
             out.flush();
             return Outcome.SUCCESS;
         }
+
+        // START_CHANGE: ISS-2025-0713
+        private static final ThreadLocal<int[]> HOOK_DEPTH = new ThreadLocal<int[]>() {
+            @Override protected int[] initialValue() { return new int[1]; }
+        };
+        private static final Atom TRUE_ATOM = new Atom("true");
+
+        /** user:message_hook/3 has clauses. */
+        private static boolean hasHook(Machine m) {
+            return m.engine().store().lookup("message_hook", 3).size() > 0;
+        }
+
+        /** The lines prolog:message//1 translates {@code msg} into, or null when it does not. */
+        private static List<Term> userLines(Machine m, Term msg) {
+            // a `prolog:message(...) --> ...` rule is either a clause of a real `prolog` module or
+            // (the usual case: no such module) a flat clause with a qualified head (:/2)
+            if (m.engine().modules4().localPred("prolog", "message", 3) == null
+                    && m.engine().store().lookup(":", 2).size() == 0) return null;
+            Variable l = new Variable();
+            Term call = new CompoundTerm(new Atom(":"), new Term[] { new Atom("prolog"),
+                new CompoundTerm(new Atom("message"), new Term[] { msg, l, NIL }) });
+            List<Term> r = m.findAll(l, new CompoundTerm(new Atom("once"), new Term[] { call }));
+            if (r.isEmpty()) return null;
+            return NativeLibrary.elements(r.get(0), m.guard());
+        }
+
+        /** The built-in translation as SWI line elements: one '~w'-[Line] per line, nl between. */
+        private static List<Term> defaultLines(Machine m, Term msg) {
+            String[] parts = messageText(m, msg).split("\n", -1);
+            List<Term> out = new ArrayList<Term>();
+            for (int i = 0; i < parts.length; i++) {
+                if (i > 0) out.add(new Atom("nl"));
+                out.add(new CompoundTerm(new Atom("-"), new Term[] { new Atom("~w"),
+                    Machine.makeList(Collections.<Term>singletonList(new Atom(parts[i]))) }));
+            }
+            return out;
+        }
+
+        /** Render SWI message line elements: Fmt-Args, Fmt, nl, ansi(_, Fmt, Args), url(L), ... */
+        private static String renderLines(Machine m, List<Term> lines) {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < lines.size(); i++) {
+                Term e = m.deref(lines.get(i));
+                if (e instanceof Atom) {
+                    String n = ((Atom) e).getName();
+                    if ("nl".equals(n)) { sb.append('\n'); continue; }
+                    if ("flush".equals(n) || "at_same_line".equals(n)) continue;
+                    if ("full_stop".equals(n)) { sb.append('.'); continue; }
+                    sb.append(new Fmt(m, "print_message/2").run(n, Collections.<Term>emptyList()));
+                    continue;
+                }
+                if (e instanceof PrologString) {
+                    sb.append(new Fmt(m, "print_message/2").run(((PrologString) e).getStringValue(),
+                                                             Collections.<Term>emptyList()));
+                    continue;
+                }
+                if (e instanceof CompoundTerm) {
+                    CompoundTerm c = (CompoundTerm) e;
+                    String f = c.getName();
+                    if ("-".equals(f) && c.arity() == 2) {
+                        String fs = formatString(c.arg(0), m);
+                        if (fs != null) { sb.append(new Fmt(m, "print_message/2").run(fs, argumentList(c.arg(1), m))); continue; }
+                    }
+                    if ("ansi".equals(f) && c.arity() == 3) {
+                        String fs = formatString(c.arg(1), m);
+                        if (fs != null) { sb.append(new Fmt(m, "print_message/2").run(fs, argumentList(c.arg(2), m))); continue; }
+                    }
+                    if ("url".equals(f) && c.arity() == 1) {
+                        sb.append(Writer.format(m.resolve(c.arg(0)), new Writer.Options(), 1200));
+                        continue;
+                    }
+                    if (("begin".equals(f) || "end".equals(f)) && c.arity() <= 2) continue;
+                }
+                sb.append(Writer.format(m.resolve(e), Writer.Options.writeq(), 1200));
+            }
+            return sb.toString();
+        }
+
+        private static boolean verboseSilent() {
+            Term v = it.denzosoft.jprolog.core.system.PrologFlags.getFlag("verbose");
+            return v instanceof Atom && "silent".equals(((Atom) v).getName());
+        }
+        // END_CHANGE: ISS-2025-0713
 
         /** The text of a message term, without the kind prefix. */
         static String messageText(Machine m, Term msg) {
@@ -538,11 +652,21 @@ final class NativeIo {
             if (fmt == null) return Outcome.FAILURE;
             List<Term> list = argumentList(argsT, m);
 
+            // START_CHANGE: ISS-2025-0714 - wave Q2.6: a stream sink is resolved BEFORE formatting,
+            // so the column stops count from the column the stream is at (SWI's line position);
+            // a memory sink (atom(A), string(S), codes(C[, T]), chars(C[, T])) starts at column 0.
+            PrintStream outStream = null;
+            int startCol = 0;
+            if (!isMemorySink(sink)) {
+                outStream = IOStreamUtils.resolveOutputStream(sink, NOB, "format/3");
+                startCol = startColumn(outStream, arity == 3 ? sink : null);
+            }
+            // END_CHANGE: ISS-2025-0714
             String output;
             // START_CHANGE: ISS-2025-0595 - P4.6: errors name format/1,2,3; the sinks include the
             // difference lists codes(C, Tail) and chars(C, Tail) (SWI).
             try {
-                output = new Fmt(m, "format/" + arity).run(fmt, list);
+                output = new Fmt(m, "format/" + arity, startCol).run(fmt, list);   // ISS-2025-0714
             } catch (PrologException pe) {
                 throw pe;
             } catch (RuntimeException e) {
@@ -565,12 +689,33 @@ final class NativeIo {
                 }
             }
             // END_CHANGE: ISS-2025-0595
-            PrintStream ps = IOStreamUtils.resolveOutputStream(sink, NOB, "format/3");
+            PrintStream ps = (outStream != null) ? outStream : IOStreamUtils.resolveOutputStream(sink, NOB, "format/3");
             ps.print(output);
             ps.flush();
             return Outcome.SUCCESS;
         }
     }
+
+    // START_CHANGE: ISS-2025-0714
+    private static boolean isMemorySink(Term sink) {
+        if (!(sink instanceof CompoundTerm)) return false;
+        CompoundTerm sc = (CompoundTerm) sink;
+        String f = sc.getName();
+        if (sc.arity() == 1) return "atom".equals(f) || "string".equals(f) || "codes".equals(f) || "chars".equals(f);
+        return sc.arity() == 2 && ("codes".equals(f) || "chars".equals(f));
+    }
+
+    /** The column {@code ps} is at: tracked by the stream itself, or by its PrologStream counter. */
+    private static int startColumn(PrintStream ps, Term streamTerm) {
+        long c = Streams.columnOf(ps);
+        if (c < 0) {
+            Streams st = StreamManager.streams();
+            PrologStream s = (streamTerm != null) ? st.byTerm(streamTerm) : st.currentOutput();
+            c = (s != null && !s.isInput()) ? s.linePosition() : 0;
+        }
+        return (int) Math.min(Integer.MAX_VALUE, Math.max(0, c));
+    }
+    // END_CHANGE: ISS-2025-0714
 
     private static boolean isOneChar(String s) {                       // ISS-2025-0605
         return !s.isEmpty() && Character.charCount(s.codePointAt(0)) == s.length();
@@ -666,6 +811,9 @@ final class NativeIo {
         private final List<int[]> fills = new ArrayList<int[]>();
 
         Fmt(Machine m, String ctx) { this.m = m; this.ctx = ctx; }
+
+        /** ISS-2025-0714: formatting that starts at column {@code startCol} of its stream. */
+        Fmt(Machine m, String ctx, int startCol) { this(m, ctx); this.segCol = startCol; }
 
         String run(String fmt, List<Term> arguments) {
             this.args = arguments;

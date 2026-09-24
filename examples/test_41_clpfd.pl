@@ -140,8 +140,13 @@ test_introspection :-
         (in(X, '..'(1, 10)), fd_size(X, S), S == 10)),
     run_test(fd_size_after_constraint,
         (in(X, '..'(1, 10)), '#<'(X, 5), fd_size(X, S), S == 4)),
+    % ISS-2025-0793 (4.6 wave Q7): since 4.5.0 fd_dom/2 answers the SWI domain
+    % term (From..To, joined with \/), not a list of values.
     run_test(fd_dom_basic,
-        (in(X, '..'(1, 3)), fd_dom(X, Dom), Dom == [1, 2, 3])).
+        (in(X, '..'(1, 3)), fd_dom(X, Dom), Dom == '..'(1, 3))),
+    run_test(fd_dom_holes,
+        (in(X, '..'(1, 5)), '#\\='(X, 3), fd_dom(X, Dom),
+         Dom == '\\/'('..'(1, 2), '..'(4, 5)))).
 
 % ============================================================
 % 7. Puzzle examples

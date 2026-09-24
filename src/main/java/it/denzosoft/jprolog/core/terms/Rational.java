@@ -17,7 +17,14 @@ public class Rational extends Number {
     // START_CHANGE: ISS-2025-0424 - ENG-02: shared by the constructor's two super() arguments
     private static double ratioAsDouble(BigInteger numerator, BigInteger denominator) {
         if (denominator.signum() == 0) return throwZeroDenominator();
-        return numerator.doubleValue() / denominator.doubleValue();
+        // START_CHANGE: ISS-2025-0712 - the quotient of the two doubles overflows (10^400r3 was
+        // NaN) and rounds twice; a 40-digit decimal quotient rounds once, for any magnitude.
+        if (numerator.bitLength() <= 53 && denominator.bitLength() <= 53) {
+            return numerator.doubleValue() / denominator.doubleValue();   // both exact: one rounding
+        }
+        return new java.math.BigDecimal(numerator).divide(new java.math.BigDecimal(denominator),
+            new java.math.MathContext(40, java.math.RoundingMode.HALF_EVEN)).doubleValue();
+        // END_CHANGE: ISS-2025-0712
     }
     // END_CHANGE: ISS-2025-0424
 
@@ -150,18 +157,100 @@ public class Rational extends Number {
         return isWholeNumber();
     }
 
+    // START_CHANGE: ISS-2025-0712 - wave Q2.3: rationals are a real number kind of the v4 engine
+    // (SWI-Prolog 9 semantics, prefer_rationals = false). The engine only ever builds them through
+    // of(), which normalises (lowest terms, denominator > 0) and answers a plain integer Number
+    // when the denominator is 1 — so a Rational the machine sees is never whole, never a float.
+
+    /** A rational is not a float: {@code float(1r3)} fails (Number's default is !isInteger()). */
+    @Override
+    public boolean isFloat() {
+        return false;
+    }
+
+    /** Truncation toward zero (the integer part), not the double image's. */
+    @Override
+    public BigInteger bigIntegerValue() {
+        return numerator.divide(denominator);
+    }
+
+    @Override
+    public long longValue() {
+        return bigIntegerValue().longValue();
+    }
+
+    @Override
+    public boolean isLongInteger() {
+        return isWholeNumber() && numerator.bitLength() < 64;
+    }
+
+    @Override
+    public boolean fitsInLong() {
+        return isWholeNumber() && numerator.bitLength() <= 63;
+    }
+
+    @Override
+    public boolean isBigInteger() {
+        return isWholeNumber() && numerator.bitLength() > 63;
+    }
+
+    /**
+     * The normalised value {@code n/d}: an integer {@link Number} when {@code d} divides {@code n},
+     * a {@code Rational} in lowest terms with a positive denominator otherwise.
+     *
+     * @throws ArithmeticException when {@code d} is zero
+     */
+    public static Number of(BigInteger n, BigInteger d) {
+        if (d.signum() == 0) throwZeroDenominator();
+        if (d.signum() < 0) { n = n.negate(); d = d.negate(); }
+        BigInteger g = n.gcd(d);
+        if (!g.equals(BigInteger.ONE) && g.signum() != 0) { n = n.divide(g); d = d.divide(g); }
+        if (d.equals(BigInteger.ONE)) {
+            return (n.bitLength() <= 63) ? Number.valueOf(n.longValue()) : new Number(n);
+        }
+        return new Rational(n, d, true);
+    }
+
+    /** Already normalised (lowest terms, d > 1): no gcd. */
+    private Rational(BigInteger n, BigInteger d, boolean normalised) {
+        super(ratioAsDouble(n, d), false);
+        this.numerator = n;
+        this.denominator = d;
+    }
+
+    /** The numerator of an integer or rational (not a float). */
+    public static BigInteger numeratorOf(Number x) {
+        return (x instanceof Rational) ? ((Rational) x).numerator : x.bigIntegerValue();
+    }
+
+    /** The denominator of an integer or rational (not a float): 1 for an integer. */
+    public static BigInteger denominatorOf(Number x) {
+        return (x instanceof Rational) ? ((Rational) x).denominator : BigInteger.ONE;
+    }
+
+    /** Exact comparison of two integers/rationals (neither may be a float). */
+    public static int compareExact(Number a, Number b) {
+        if (!(a instanceof Rational) && !(b instanceof Rational)) {
+            return a.bigIntegerValue().compareTo(b.bigIntegerValue());
+        }
+        return numeratorOf(a).multiply(denominatorOf(b)).compareTo(numeratorOf(b).multiply(denominatorOf(a)));
+    }
+
+    /** SWI-Prolog's syntax: {@code 1r3}, {@code -1r3}. */
     @Override
     public String toString() {
         if (isWholeNumber()) {
             return numerator.toString();
         }
-        return numerator.toString() + " rdiv " + denominator.toString();
+        return numerator.toString() + "r" + denominator.toString();
     }
 
+    /** Immutable, like every number. */
     @Override
     public Term copy() {
-        return new Rational(numerator, denominator);
+        return this;
     }
+    // END_CHANGE: ISS-2025-0712
 
     // START_CHANGE: ISS-2025-0189 - Exact rational unification instead of double comparison
     @Override

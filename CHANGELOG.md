@@ -7,6 +7,124 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.6.0] - 2026-09-24
+
+### The completeness release: waves Q1..Q7
+
+The residue of the 4.5 production-readiness program (LIM-037/038, LIM-041..046) and the gaps found
+while verifying 4.5.0, turned into seven waves, each implemented by one agent and verified
+independently. Spec, decisions and every wave record (what was done, measurements, deviations):
+`docs/reports/report-completeness-4.6-2026-09-23.md`. Every deliberate difference from ISO/SWI is
+in `docs/references/ref-deviations.md` (new sections 4a–4e). Reference semantics unchanged:
+**ISO 13211-1 first, SWI-Prolog 9 where ISO is silent.**
+
+| Wave | Scope | Issues |
+|---|---|---|
+| Q1 | ISO error terms in the extended libraries; exact registry arities | ISS-2025-0680 .. 0699 |
+| Q2 | missing standard predicates (solution_sequences, rationals, aggregate, message hooks) | ISS-2025-0710 .. 0718 |
+| Q3 | loader, modules and reader (multifile, goal_expansion, file_search_path, `\|`, `as`) | ISS-2025-0730 .. 0739 |
+| Q4 | threads and tabling (signals, pools, table spaces, moded tabling, minimal WFS) | ISS-2025-0745 .. 0755 |
+| Q5 | CLP(FD) (residual constraints, circuit, cumulative, big coefficients) | ISS-2025-0760 .. 0770 |
+| Q6 | performance (run-time call cache, native apply family, native streams, CLP(FD) queues) | ISS-2025-0775 .. 0787 |
+| Q7 | residue sweep, test hardening, this release | ISS-2025-0790 .. 0799 |
+
+Suite **1547/1547** (4.5.0: 1452; +5 Q1, +15 Q2, +17 Q3, +15 Q4, +15 Q5, +15 Q6, +13 Q7);
+**20/20 example programs** with the per-program "Successful queries" counts unchanged (2, 0, 0, 1,
+1, 0, 0, 0, 0, 0, 2, 1, 0, 0, 2, 0, 0, 0, 0, 0). The Q1 probe harness (3 942 goals over every
+registered built-in) reports 0 message-atom errors, 0 arity-guard messages, 0 timeouts; the Q2
+documentation sweep finds every documented predicate.
+
+#### Behaviour changes (read this first)
+
+1. **Library errors are ISO terms** (Q1): every extended-library argument fault is
+   `error(Formal, context(Name/Arity, Message))` (it was a message atom such as
+   `'xml_parse: argument must be an atom.'`); host failures map to `existence_error`,
+   `permission_error`, `io_error/2`, `system_error/1`. A registered name called with an arity it
+   does not implement is `existence_error(procedure, Name/Arity)` (`char_code(X)` answered
+   `'char_code/2 requires exactly 2 arguments'`). A worker stopped by the budget joins with
+   `exception(error(resource_error(inference_limit), _))`.
+2. **The bar and `as`** (Q3): `(a|b)` reads as `'|'(a,b)` (priority 1105, SWI; a goal `'|'/2` is
+   `;/2`), `as` is `op(700, xfx)`. **Reconsulting a file removes only that file's clauses**;
+   `multifile/1` is real; discontiguous clauses warn on `user_error`; `goal_expansion/2` is
+   applied; a fresh engine defines `file_search_path/2` (dynamic, no clauses).
+3. **The working directory is per engine** (Q4): `working_directory/2` no longer writes the JVM's
+   `user.dir`; every relative file name resolves against the engine's directory.
+4. **Tabling across threads** (Q4): each worker thread has a PRIVATE table space; `:- table p/1
+   as shared` publishes complete tables; a second thread evaluates instead of waiting. Moded
+   arguments are evaluated free (SWI); an unknown mode is `domain_error(tabled_mode, M)`.
+   `tnot/1`, `undefined/0` and `call_delays/2` exist (minimal WFS).
+5. **CLP(FD) answers show residual constraints** (Q5): `X #> Y` answers `Y#=<X+ -1`, not two
+   unconstrained variables; `X #= Y` between variables unifies them (SWI).
+6. **Rationals** (Q2): `rdiv`, `rational/1,3`, `rationalize/1`, `numerator/1`, `denominator/1`
+   and the `1r3` syntax on the v2 reader; `prefer_rationals` is false, so `1/3` is still a float.
+7. **All `print_message/2` kinds go to `user_error`** (Q2), with `message_hook/3` and
+   `prolog:message//1`; `format/2,3` column stops count from the stream's column.
+8. **The FFI raises** (Q7): `java_*` argument faults are ISO errors, an unknown class/method/field
+   is `existence_error`, a Java exception is `error(java_exception(Class), context(PI, Msg))` —
+   they all FAILED silently. Also raising now instead of failing: an unbound or non-list graph in
+   the graph library, `json_get(Var, …)`, `spy(Var)`, `string_to_atom/2`, `atom_to_number/2`,
+   `number_to_atom/2`, `to_codes/2` with both sides unbound. **`enhanced_phrase/2,3` run the
+   grammar** (they are `phrase/2,3`; the registry version answered `true` without running it).
+9. **A reloaded multifile file keeps its place** (Q7): f1 `{p(a)}`, f2 `{p(b)}`, reconsult f1 →
+   `[a,b]` (SWI manual 4.3.2; 4.6 Q3 appended: `[b,a]`).
+10. **`current_prolog_flag(version, V)`** is `40600`, `version_data` `jprolog(4,6,0,[])`.
+
+#### Highlights by wave
+
+- **Q1 — ISO errors in the libraries.** `ExtendedLibraryErrorsTest` probes every registered name ×
+  arities 0..4 × {all unbound, `f(x)`}: 368 message atoms and 1 089 arity-guard messages → 0.
+  `Errors` library builders + `builtin.LibArgs`; every registered name declares its arities.
+- **Q2 — standard predicates.** `library(solution_sequences)` (`limit/2`, `offset/2`,
+  `order_by/2`, `distinct/1,2`, `call_nth/2`, lazy, in the caller's continuation); rationals;
+  `aggregate/3,4`, `aggregate_all/4`; `garbage_collect/0` & co.; the apply library is
+  deterministic (look-ahead clause filtering); `file_base_name/2`, `file_directory_name/2`,
+  `file_extension/2`, `shell/2`, `setenv/2`, `unsetenv/1`; `DocumentedPredicatesTest`.
+- **Q3 — loader, modules, reader.** Clause ownership per file, `multifile/1`,
+  `discontiguous/1`, `goal_expansion/2`, `file_search_path/2` + `absolute_file_name/2,3`,
+  `use_module/2` import lists (`except/1`, `as`), `make/0` over includes, `Prolog.runMain()`,
+  `subterm_positions/1` and `comments/1`, module-qualified clause heads,
+  `current_predicate(M:PI)`, the per-FILE load lock with cycle detection.
+- **Q4 — threads and tabling.** `thread_signal/2` (runs on the target's goal stack),
+  `thread_statistics/3`, `message_queue_property/2`, `thread_send_message/3`,
+  `mutex_property/2`, thread pools; a mutex held at exit warns; thread-safe library autoload;
+  table spaces; `lattice(PI)`/`po(PI)` modes; `Spec as Options`; minimal WFS; `exists_file/1`,
+  `exists_directory/1`.
+- **Q5 — CLP(FD).** `Residuals` (SWI's printed forms, `copy_term/3`,
+  `clpfd:attribute_goals//1`); `circuit/1`, `cumulative/1,2`, `chain/2`, `lex_chain/1`,
+  `disjoint2/1`, `automaton/3,8`, `zcompare/3`, `fd_degree/2`, `global_cardinality/3`; BigInteger
+  coefficients; iterative branch and bound.
+- **Q6 — performance.** Run-time goal call cache (`call/N` loop −43 %), native
+  maplist/foldl/include/exclude/partition (`NativeApply`, within 1.0–1.3× of a hand recursion),
+  native stream built-ins (`NativeStreams`, 22 indicators), predsort on the goal stack (−27..30 %),
+  CLP(FD) change queues (20k-variable chain 11 s → 0.1 s), `abs(X-Y) #\= C` propagator,
+  incremental module mirror (module load with goal_expansion 103 s → 0.1 s), trail tidying on
+  deterministic exits (a debugged 20 000-level recursion no longer runs out of memory), bridged
+  libraries charged to the inference budget. nrev −19 %, loop −13 %.
+- **Q7 — residue and release.** SWI `append/2`, `nextto/3`, `max_member/2,3`, `min_member/2,3`,
+  `list_to_set/2`, `proper_length/2`; `library(ordsets)` (19 predicates); the recorded database
+  (`recorda/2,3`, `recordz/2,3`, `recorded/2,3`, `erase/1`, `current_key/1`) and `flag/3` (new
+  `NativeRecords`); the prelude export-list scanner skips comments; FFI and library argument
+  checks; multifile reload order; `FamousPrologProgramsTest` gains a solution_sequences pipeline,
+  a `file_search_path` library load, a tabled shortest path with `min` and the 6×6 knight's tour.
+
+#### Deleted
+
+- `builtin.filesystem.FileSystemPredicates`: `Mode.ABS_FILE_NAME` and `doAbsFileName` (dead since
+  ISS-2025-0737 routed `absolute_file_name/2,3` to `builtin.filesystem.AbsoluteFileName`;
+  ISS-2025-0795).
+
+#### Limitations
+
+Resolved: **LIM-038** (library message atoms, Q1). Shrunk: LIM-037 (the stream half of `io` is
+native, Q6), LIM-041 (CLP(FD): residuals, globals, big coefficients, Q5), LIM-042 (run-time
+goals, apply family, predsort, Q6), LIM-043 (solution_sequences, message hooks, column stops, Q2;
+list/ordset/recorded predicates, Q7), LIM-044 (loader and reader, Q3; tabling modes, Q4),
+LIM-045 (load lock, Q3; thread API, signals, tabling across threads, Q4; budget, Q6), LIM-046
+(minimal WFS, Q4). New: **LIM-047** (library goals that still fail or succeed on a bad input —
+the reviewed list; `phrase_with_options/4` does not run its grammar).
+
+---
+
 ## [4.5.0] - 2026-09-23
 
 ### The production-readiness release: waves P1..P7

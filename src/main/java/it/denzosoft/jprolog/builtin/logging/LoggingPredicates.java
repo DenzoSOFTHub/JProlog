@@ -131,6 +131,7 @@ public class LoggingPredicates implements BuiltInWithContext {
 
     private static void setFile(LogState st, Term arg, String ctx) {
         String path = (arg instanceof PrologString) ? ((PrologString) arg).getStringValue() : atom(arg, ctx);
+        path = it.denzosoft.jprolog.core.engine.v4.EngineState.path(path);   // ISS-2025-0745: engine cwd
         try (OutputStream probe = new FileOutputStream(path, true)) {
             // opened (and created) now, so a bad path is reported here and not at the first message
         } catch (IOException e) {

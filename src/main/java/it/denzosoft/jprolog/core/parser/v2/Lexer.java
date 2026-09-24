@@ -36,6 +36,8 @@ public final class Lexer {
         public final boolean quotedAtom;   // ATOM that came from '...' (never an operator/end)
         public final int pos;
         public final int line;
+        /** Offset just past the token (ISS-2025-0738: subterm positions). */
+        public int end;
 
         Token(Kind kind, String text, Term number, boolean precededByLayout,
               boolean quotedAtom, int pos, int line) {
@@ -67,10 +69,30 @@ public final class Lexer {
         Token t;
         do {
             t = lex.next();
+            t.end = lex.pos;                                   // ISS-2025-0738
             tokens.add(t);
         } while (t.kind != Kind.EOF);
         return tokens;
     }
+
+    // START_CHANGE: ISS-2025-0738 - 4.6 wave Q3.7: the comments of a text, for read_term/2,3's
+    // comments(-List) option. Each entry is {start offset, line (1-based), end offset}.
+    private List<int[]> comments;
+
+    /** {@link #tokenize(String)}, also collecting the comments' spans into {@code comments}. */
+    public static List<Token> tokenize(String src, List<int[]> comments) {
+        Lexer lex = new Lexer(src);
+        lex.comments = comments;
+        List<Token> tokens = new ArrayList<>();
+        Token t;
+        do {
+            t = lex.next();
+            t.end = lex.pos;
+            tokens.add(t);
+        } while (t.kind != Kind.EOF);
+        return tokens;
+    }
+    // END_CHANGE: ISS-2025-0738
 
     private char peek() { return pos < src.length() ? src.charAt(pos) : '\0'; }
     private char peek(int k) { return pos + k < src.length() ? src.charAt(pos + k) : '\0'; }
@@ -90,12 +112,16 @@ public final class Lexer {
             if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f') {
                 advance(); skipped = true;
             } else if (c == '%') {                       // line comment
+                int cs = pos, cl = line;
                 while (!eof() && peek() != '\n') advance();
+                if (comments != null) comments.add(new int[] {cs, cl, pos});   // ISS-2025-0738
                 skipped = true;
             } else if (c == '/' && peek(1) == '*') {     // block comment
+                int cs = pos, cl = line;
                 advance(); advance();
                 while (!eof() && !(peek() == '*' && peek(1) == '/')) advance();
                 if (!eof()) { advance(); advance(); }
+                if (comments != null) comments.add(new int[] {cs, cl, pos});   // ISS-2025-0738
                 skipped = true;
             } else {
                 break;
@@ -252,6 +278,19 @@ public final class Lexer {
             if (Double.isInfinite(d)) throw new LexException("floating point literal overflow", line, pos);
             return numTok(new Number(d, false), layout, start, startLine);
         }
+        // START_CHANGE: ISS-2025-0712 - wave Q2.3: SWI-Prolog's rational literal NrD (1r3), the
+        // form the writer prints. Normalised: 2r4 reads as 1r2, 4r2 as the integer 2; a zero
+        // denominator is a syntax error. `1r3` was a syntax error before, so no program changes.
+        if (peek() == 'r' && Character.isDigit(peek(1))) {
+            advance();                             // 'r'
+            StringBuilder den = new StringBuilder();
+            while (!eof() && Character.isDigit(peek())) den.append(advance());
+            BigInteger d = new BigInteger(den.toString());
+            if (d.signum() == 0) throw new LexException("rational literal with a zero denominator", line, pos);
+            return numTok(it.denzosoft.jprolog.core.terms.Rational.of(new BigInteger(sb.toString()), d),
+                          layout, start, startLine);
+        }
+        // END_CHANGE: ISS-2025-0712
         return numTok(new Number(new BigInteger(sb.toString())), layout, start, startLine);
     }
 

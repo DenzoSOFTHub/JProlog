@@ -704,7 +704,7 @@ final class NativeLibrary {
     private static final class ClauseB implements Builtin {
         @Override
         public Outcome call(Machine m, final Term[] args) {
-            Term head = m.deref(args[0]);
+            Term head = Machine.stripUser(args[0]);                   // ISS-2025-0733: user:H is H
             if (head instanceof Variable) throw Errors.instantiation("clause/2");
             if (!(head instanceof Atom) && !(head instanceof CompoundTerm)) {
                 throw Errors.type("callable", head, "clause/2");
@@ -739,6 +739,7 @@ final class NativeLibrary {
             if (w.size() == 0) return Outcome.FAILURE;
             final long gen = m.engine().store().generation();
             final int[] i = {w.from};
+            final Term headArg = head;                                  // ISS-2025-0733
             Generator g = new Generator() {
                 @Override
                 public boolean next(Machine mm) {
@@ -751,7 +752,7 @@ final class NativeLibrary {
                         b.forceTrail++;
                         boolean ok;
                         try {
-                            ok = Unify.unify(args[0], t.getArguments().get(0), b)
+                            ok = Unify.unify(headArg, t.getArguments().get(0), b)
                               && Unify.unify(args[1], t.getArguments().get(1), b);
                             if (!ok) b.undo(mark);
                         } finally {

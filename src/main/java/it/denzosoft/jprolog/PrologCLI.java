@@ -316,13 +316,16 @@ public class PrologCLI {
                     // ISS-2025-0476: quoted operator notation, _A-style names, residual goals
                     List<String> lines = it.denzosoft.jprolog.core.engine.v4.Answer.lines(
                         sol, prolog.residualGoals(sol), prolog.getOps().table());   // ISS-2025-0490
+                    // ISS-2025-0755: a conditional (WFS) answer is `undefined`, as in SWI
+                    boolean undefined = prolog.currentAnswerDelays() != null;
                     if (lines.isEmpty()) {
-                        out.print("true");
+                        out.print(undefined ? "undefined" : "true");
                     } else {
                         for (int k = 0; k < lines.size(); k++) {
                             if (k > 0) out.print(",\n");
                             out.print(lines.get(k));
                         }
+                        if (undefined) out.print(",\nundefined");
                     }
                     boolean capped = maxSolutions > 0 && count[0] >= maxSolutions;
                     if (!more || capped) {

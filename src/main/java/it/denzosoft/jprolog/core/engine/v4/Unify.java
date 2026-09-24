@@ -303,10 +303,14 @@ public final class Unify {
                 Number n1 = (Number) a, n2 = (Number) c;
                 int r;
                 if (n1.isInteger() && n2.isInteger()) r = n1.bigIntegerValue().compareTo(n2.bigIntegerValue());
+                // START_CHANGE: ISS-2025-0712 - integers and rationals compare exactly; a float
+                // against either compares by value as a float (SWI) and sorts first on a tie
+                else if (!n1.isFloat() && !n2.isFloat()) r = it.denzosoft.jprolog.core.terms.Rational.compareExact(n1, n2);
                 else r = Double.compare(n1.doubleValue(), n2.doubleValue());
                 if (r != 0) return r < 0 ? -1 : 1;
-                if (n1.isInteger() == n2.isInteger()) return 0;
-                return n1.isInteger() ? 1 : -1;                       // float sorts before integer
+                if (n1.isFloat() == n2.isFloat()) return 0;
+                return n1.isFloat() ? -1 : 1;                         // float sorts before integer/rational
+                // END_CHANGE: ISS-2025-0712
             }
             case 2: {
                 int r = ((Atom) a).getName().compareTo(((Atom) c).getName());

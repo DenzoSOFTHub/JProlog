@@ -1,8 +1,8 @@
 # JProlog Reference Manual
 
-**Built-in predicates and operators — version 4.5.0**
+**Built-in predicates and operators — version 4.6.0**
 
-Generated on 2026-09-23 from the JProlog sources and reference documentation. This file is the source of
+Generated on 2026-09-24 from the JProlog sources and reference documentation. This file is the source of
 `guide-builtin-manual.pdf`; regenerate both with `tools/build-manual.sh` after changing a built-in.
 
 # Part I — Introduction
@@ -709,6 +709,29 @@ F = '42'.
 
 ?- format_number(3.14159, F).
 F = '3.14'.
+```
+
+### rational/1 and rational/3
+**Purpose**: `rational(@X)` is true when X is an integer or a rational number (SWI: rationals
+include the integers); `rational(@X, -Numerator, -Denominator)` also gives its parts (an integer
+N is `N/1`); both fail on anything else. *(v4.6, ISS-2025-0712)*
+
+Rationals are a number kind since 4.6 (SWI-Prolog 9 semantics, `prefer_rationals = false`): they
+come from `rdiv/2`, `rational/1`, `rationalize/1`, arithmetic on rationals and the literal `1r3`,
+and are always normalised (lowest terms, positive denominator, an integer when the denominator is
+1). `number/1` and `atomic/1` are true for them, `integer/1` and `float/1` false. They compare
+exactly with integers and rationals (`1r3 < 1`, standard order by value); against a float they
+compare as floats, and the float sorts first on a tie.
+
+```prolog
+?- X is 1 rdiv 3, rational(X), \+ float(X).
+X = 1r3.
+
+?- rational(3r4, N, D).
+N = 3, D = 4.
+
+?- X = 2r4.
+X = 1r2.
 ```
 
 ### atomic/1
@@ -1780,6 +1803,87 @@ X = [2, 3].
 X = [1, 2, 3, 4].
 ```
 
+### append/2
+
+*v4.6.0* (ISS-2025-0790, wave Q7): SWI-Prolog's library(lists) definition.
+**Purpose**: `append(+ListOfLists, ?List)` — concatenate a list of lists. `ListOfLists` must be a
+list (`must_be(list, ...)`: a non-list is `type_error(list, T)`); its elements may be partial, so
+the predicate also splits.
+```prolog
+?- append([[a], [b, c], []], L).
+L = [a, b, c].
+
+?- append([X, Y], [a]).
+X = [], Y = [a] ;
+X = [a], Y = [].
+```
+
+### nextto/3
+
+*v4.6.0* (ISS-2025-0790): **Purpose**: `nextto(?X, ?Y, ?List)` — `Y` directly follows `X` in `List`.
+```prolog
+?- findall(X-Y, nextto(X, Y, [1, 2, 3]), L).
+L = [1-2, 2-3].
+```
+
+### max_member/2, min_member/2, max_member/3, min_member/3
+
+*v4.6.0* (ISS-2025-0790): SWI's definitions. **Purpose**: the largest / smallest element by the
+standard order of terms (`/2`), or by the order predicate `Pred` (`/3`: `max_member(:Pred, -Max,
++List)`, `call(Pred, A, B)` means `A` is "not greater than" `B`). Unlike `max_list/2` nothing is
+evaluated; an empty list fails.
+```prolog
+?- max_member(M, [3, 1, f(x), a]).
+M = f(x).
+
+?- min_member(@=<, M, [3, 1, 4]).
+M = 1.
+```
+
+### list_to_set/2
+
+*v4.6.0* (ISS-2025-0790): SWI's definition. **Purpose**: `list_to_set(+List, -Set)` removes
+duplicates, keeping the FIRST occurrence of each element; elements are compared with `==` (so
+two distinct variables stay). O(n log n).
+```prolog
+?- list_to_set([a, b, a, X, c, X, b, Y], S).
+S = [a, b, X, c, Y].
+```
+
+### proper_length/2
+
+*v4.6.0* (ISS-2025-0790): **Purpose**: `proper_length(@List, -Length)` — the length of a proper
+list; fails on a partial or cyclic list (unlike `length/2`, which extends a partial one).
+```prolog
+?- proper_length([a, b], N).
+N = 2.
+
+?- proper_length([a|_], N).
+false.
+```
+
+### library(ordsets): ord_union/2, ord_union/3, ord_subtract/3, ord_intersection/2, ord_intersection/3, ord_memberchk/2, ord_add_element/3, ord_insert/3, ord_del_element/3, ord_selectchk/3, ord_subset/2, ord_intersect/2, ord_disjoint/2, ord_seteq/2, ord_symdiff/3, ord_empty/1, is_ordset/1, list_to_ord_set/2
+
+*v4.6.0* (ISS-2025-0790, wave Q7): the prelude module `ordsets` (autoloaded on first use,
+`use_module(library(ordsets))` accepted), with SWI-Prolog 9's definitions. An ordered set is a
+list sorted by the standard order of terms without duplicates (`list_to_ord_set/2` is `sort/2`).
+The merge-based predicates are linear and deterministic. `ord_insert/3` is the DEC-10/YAP name
+of `ord_add_element/3`; `ord_union/2` and `ord_intersection/2` take a list of sets
+(`ord_intersection([], [])`).
+```prolog
+?- ord_union([a, c, e], [b, c, d], U).
+U = [a, b, c, d, e].
+
+?- ord_subtract([a, b, c, d], [b, d, e], D).
+D = [a, c].
+
+?- ord_intersection([[a, b, c], [b, c], [c, d]], I).
+I = [c].
+
+?- ord_memberchk(c, [a, b, c]), ord_subset([b], [a, b]), \+ ord_intersect([a], [b]).
+true.
+```
+
 ### maplist/2, maplist/3, maplist/4, maplist/5
 **Purpose**: Apply a goal to each element of a list (or each tuple across multiple lists). Higher-order predicate.
 ```prolog
@@ -1887,6 +1991,8 @@ Prolog treats arithmetic expressions differently from other terms:
 **Float-only** (`sqrt`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `exp`, `log`, `log/2` *(v2.8.1)*, `cot` *(v2.8.1)*, `acot` *(v2.8.1)*, `cbrt` *(v2.8.1)*, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh` *(all v2.8.1)*)
 
 **Float manipulation** (`truncate`, `round`, `floor`, `ceiling`, `float`, `integer` *(v2.8.1)*, `float_integer_part`, `float_fractional_part`, `rational` / `rationalize` *(v2.8.1)*)
+
+**Rational** (*v4.6*, ISS-2025-0712: `rdiv` (exact division), `numerator`, `denominator`, `rational` (the EXACT value of a float), `rationalize` (the simplest rational that converts back to the same float); addition, subtraction, multiplication, division, min, max and an integer power stay exact on integers and rationals; the flag prefer_rationals, false by default, makes a non-exact integer division a rational)
 
 **Bitwise integer** (`/\`, `\/`, `xor`, `\` (NOT), `<<`, `>>`, `msb`, `lsb`, `popcount`)
 
@@ -2204,6 +2310,11 @@ min(_, Y, Y).  % Assumes X >= Y without checking
 
 ### -> (if-then) and ; (else)
 **Purpose**: Implements conditional execution (if-then-else).
+
+*v4.6.0* (ISS-2025-0734, wave Q3.5): the bar is no longer read as `;`. `(a | b)` reads as the term
+`'|'(a, b)` (infix operator `|`, priority 1105, type `xfy` — SWI-Prolog 9); as a GOAL `'|'/2` is
+the same as `;/2` (cut-transparent, `->` inside it an if-then-else), and in a DCG body it is
+alternation. `X = (a | b), X =.. L` gives `L = ['|', a, b]`; `writeq` prints `'|'(a,b)`.
 
 **When to use**: Use for conditional logic where you need different actions based on conditions.
 
@@ -2834,6 +2945,72 @@ salary_report(Count, Total, Max, Min) :-
 Count = 3, Total = 165000, Max = 60000, Min = 50000.
 ```
 
+
+### aggregate/3, aggregate/4 and aggregate_all/4
+**Purpose**: `library(aggregate)`'s bagof-style forms. *(v4.6, ISS-2025-0716)*
+`aggregate(+Template, :Goal, -Result)` is `bagof/3` followed by the aggregation: it GROUPS by the
+free variables of Goal (use `V^Goal` to quantify one away) and fails when Goal has no solution.
+`aggregate(+Template, +Discriminator, :Goal, -Result)` is the `setof/3` form: only solutions with
+distinct `Discriminator-Template` values count. `aggregate_all(+Template, +Discriminator, :Goal,
+-Result)` is the `findall/3` form of the latter (no grouping, an empty count is 0). Templates are
+those of `aggregate_all/3` — `count`, `count(T)`, `sum(E)`, `max(E)`, `min(E)`, `max(E, W)`,
+`min(E, W)`, `bag(T)`, `set(T)` — or a compound of them (`r(count, sum(X))` answers `r(C, S)`).
+
+```prolog
+?- aggregate(count, member(X, [a,b]), C).
+X = a, C = 1 ;
+X = b, C = 1.
+
+?- aggregate(count, X^member(X, [a,b]), C).
+C = 2.
+
+?- aggregate(sum(V), member(K-V, [a-1, b-2, a-3]), S).
+K = a, S = 4 ;
+K = b, S = 2.
+
+?- aggregate(r(count, max(X)), member(X, [3,1,2]), R).
+R = r(3, 3).
+
+?- aggregate_all(count, P, member(P-_, [a-1, a-2, b-3]), C).
+C = 2.
+```
+
+### limit/2, offset/2, call_nth/2, distinct/1, distinct/2, order_by/2
+**Purpose**: SWI-Prolog's `library(solution_sequences)`. *(v4.6, ISS-2025-0710)*
+- `limit(+Count, :Goal)` — at most Count solutions. Lazy: at the Count-th solution the goal's
+  remaining choice points are cut (its `setup_call_cleanup/3` cleanups run then), so an infinite
+  generator is fine. `limit(0, G)` fails, `limit(infinite, G)` is `call(G)`.
+- `offset(+Count, :Goal)` — skip the first Count solutions (a negative Count is
+  `domain_error(not_less_than_zero, C)`).
+- `call_nth(:Goal, ?Nth)` — with Nth unbound, number the solutions 1, 2, ...; with Nth bound, only
+  the Nth solution, and the goal is cut after it (`call_nth(G, 0)` fails).
+- `distinct(:Goal)`, `distinct(?Witness, :Goal)` — only the first solution for each distinct
+  Witness (Goal itself for `/1`); witnesses are compared as VARIANTS, and the goal stays lazy.
+- `order_by(+Specs, :Goal)` — the solutions sorted by the `asc(Key)`/`desc(Key)` list (the first
+  spec is the primary key; stable, duplicates kept). Necessarily eager.
+
+The goal is called as `call/1` (a cut in it is local) in the caller's module. The counters are
+not undone on backtracking (as SWI's `nb_setarg/3` state).
+
+```prolog
+?- findall(X, limit(3, between(1, inf, X)), L).
+L = [1, 2, 3].
+
+?- findall(X, limit(2, offset(1, member(X, [a,b,c,d]))), L).
+L = [b, c].
+
+?- call_nth(member(X, [a,b,c]), N).
+X = a, N = 1 ;
+X = b, N = 2 ;
+X = c, N = 3.
+
+?- findall(X, distinct(X, member(X, [a,b,a,c,b])), L).
+L = [a, b, c].
+
+?- findall(N-A, order_by([asc(A), desc(N)], member(N-A, [bob-30, al-25, cy-30])), L).
+L = [al-25, cy-30, bob-30].
+```
+
 # 7. Input/Output
 
 I/O predicates handle reading from and writing to files and streams.
@@ -2967,6 +3144,11 @@ is written `'\e'` (ISS-2025-0673; it was the octal `'\33\'`, which still reads b
 ### format/2 and format/3
 
 *v4.5.0* (ISS-2025-0595): rewritten after SWI-Prolog. Integers are exact for `~d`, `~D`, `~r`, `~R`, `~f`; `~e`/`~f`/`~g` follow C printf on the exact binary value (`~g` of 0.1 is `0.1`); column stops take a fill character (`` ~`-t~30| ``, `~48t` for `0`), `~+` defaults to 8 columns; `~Nn` prints N newlines; `~Nc`, `~*c`, `~i`, `~W` (term + write options), `~k` (write_canonical), `~p` (print = portray + writeq) are complete; `~@` runs its goal once. Every argument fault (`~a` of a compound, `~d` of a non-integer, `~c` of a non-code, `~e/~f/~g` of a non-number, `~s` of a non-text, `~r` without a radix), a missing and a SURPLUS argument raise `error(format(Message), _)`. `format/3` sinks: `atom(A)`, `string(S)`, `codes(C)`, `codes(C, Tail)`, `chars(C)`, `chars(C, Tail)`, or a stream. `~Nw`/`~Nq` right-align in N columns (JProlog extension).
+
+*v4.6* (ISS-2025-0714): column stops (`~t~20|`, `~+`) count from the column the output STREAM is
+at (SWI's line position), not from the start of the call: `write(abc), format("~t~w~10|", [x])`
+writes `abc      x`. The console, files and `with_output_to/2` track their column
+(`line_position(user_output, P)` is now exact); a memory sink (`atom(A)`, ...) starts at 0.
 **Purpose**: Formatted output driven by a directive string (`~w`, `~a`, `~d`, `~q`, `~n`, `~2f`, ...), similar to C's printf.
 
 **When to use**: Use for readable, formatted output instead of chains of `write/1` calls.
@@ -3083,11 +3265,23 @@ T = foo(1, 2).
 *v4.5.0* (ISS-2025-0566): on the v2 parser. Options: `variables/1`, `variable_names/1`,
 `singletons/1` (named variables occurring once, `_X` names excluded), `term_position/1`,
 `double_quotes/1` (overrides the flag for this read), `syntax_errors(error|fail|quiet|dec10)`,
-`comments/1` (always `[]`); `module/1`, `subterm_positions/1`, `backquoted_string/1`, `cycles/1`,
+`comments/1`; `module/1`, `backquoted_string/1`, `cycles/1`,
 `dotlists/1`, `var_prefix/1` are accepted and ignored; anything else is
 `domain_error(read_option, O)`. An unknown stream raises `existence_error(stream, S)` (it used to
 read stdin). Nesting is bounded by a real limit of 200 000 levels (`resource_error(parser_nesting)`),
 not 1 000.
+
+*v4.6.0* (ISS-2025-0738, wave Q3.7): `subterm_positions(P)` gives SWI's layout term, character
+offsets in the stream: `From-To` for an atom, number or variable, `string_position(From, To)`,
+`brace_term_position(From, To, Arg)`, `list_position(From, To, Elems, Tail)` (`Tail = none` without
+`|`), `term_position(From, To, FFrom, FTo, Args)` for a compound (the functor or operator span), and
+`parentheses_term_position(From, To, Inner)`. `comments(C)` gives the comments read with the term as
+`'$stream_position'(Char, Line, LinePos, Byte)-"text"` pairs.
+
+```prolog
+?- open_string("foo(X, bar).", S), read_term(S, T, [subterm_positions(P)]).
+P = term_position(0, 11, 0, 3, [4-5, 7-10]).
+```
 
 ### read_term_from_atom/3
 **Purpose**: `read_term_from_atom(+Atom, -Term, +Options)` parses the text of an atom (or string)
@@ -3317,7 +3511,15 @@ p(A, B) :-
 *v4.5.0* (ISS-2025-0607): native. `format(Format, Args)` is formatted; `error(Formal, context(PI, Msg))` is rendered SWI-style (`PI: Type error: ...`); any other term prints `Unknown message: T`. Kinds `error`/`warning` go to `user_error` with `ERROR: `/`Warning: ` on every line, the others to the current output with `% `; `silent` prints nothing.
 **Purpose**: `print_message(+Kind, +Message)` — report a message. *(added v3.14.0)*
 
-An ISO `error(Formal, Context)` ball is rendered readably; anything else is written with `quoted(true)`. `error` and `warning` go to `user_error`, `silent` prints nothing, every other kind goes to the current output. A user-defined `message_hook/3` is **not** consulted (JProlog has no message-catalogue layer).
+An ISO `error(Formal, Context)` ball is rendered readably; anything else is written with `quoted(true)`.
+
+*v4.6* (ISS-2025-0713): the SWI extension points. A user `prolog:message//1` rule translates a
+message term into lines (`Format-Args`, `Format`, `nl`, `ansi(Attrs, Format, Args)`, `url(L)`,
+`flush`); `user:message_hook(+Message, +Kind, +Lines)` is called first (also for `silent`) and,
+when it succeeds, the message counts as printed. EVERY kind is printed on `user_error` (SWI) with
+`ERROR: `, `Warning: ` or `% ` on each line; the flag `verbose = silent` suppresses the
+`informational` and `banner` kinds. A hook or rule that itself calls `print_message/2` is not
+re-entered; one that throws is ignored.
 
 ```prolog
 ?- print_message(error, error(type_error(integer, abc), foo/1)).
@@ -3325,7 +3527,20 @@ ERROR: Type error: `integer' expected, found `abc' (foo/1)
 true.
 
 ?- print_message(informational, hello).
-% hello
+% Unknown message: hello
+true.
+
+:- multifile prolog:message//1.
+prolog:message(greet(Who)) --> ['Hello ~w'-[Who], nl, 'nice to see you'].
+
+?- print_message(informational, greet(bob)).
+% Hello bob
+% nice to see you
+true.
+
+message_hook(quiet(_), _, _).         % swallow quiet(...) messages
+
+?- print_message(warning, quiet(x)).
 true.
 ```
 
@@ -3701,6 +3916,9 @@ show_config :-
 ### current_predicate/1
 
 *v4.5.0* (ISS-2025-0610): a declared dynamic predicate without clauses is current (SWI).
+*v4.6.0* (ISS-2025-0732): `current_predicate(M:Name/Arity)` checks or enumerates module `M`'s own
+predicates (`M` bound or not): its clauses, its `M:H` clauses and its `:- multifile M:PI`
+declarations; `user:` is the flat knowledge base. It raised `type_error` before.
 **Purpose**: Check or enumerate defined predicates.
 
 **When to use**: Use to check if predicates exist or list available predicates.
@@ -3734,6 +3952,44 @@ safe_call_predicate(Name, Arity, _) :-
     \+ current_predicate(Name/Arity),
     write('Undefined predicate: '), write(Name/Arity), nl,
     fail.
+```
+
+### recorda/2, recorda/3, recordz/2, recordz/3, recorded/2, recorded/3, erase/1, current_key/1
+
+*v4.6.0* (ISS-2025-0791, wave Q7): SWI-Prolog's recorded database, as v4 natives.
+**Purpose**: a key-indexed store of terms outside the clause database.
+- `recorda(+Key, +Term)` / `recordz(+Key, +Term)` add a COPY of `Term` first / last under `Key`;
+  the `/3` forms return a reference `'$record'(N)` (the third argument must be unbound).
+- `recorded(?Key, ?Term)` / `recorded(?Key, ?Term, ?Ref)` enumerate the records (a fresh copy
+  each time), in order; an unbound `Key` enumerates every key; a bound `Ref` looks the record up
+  directly. The logical update view applies: the records are taken when the call starts.
+- `erase(+Ref)` removes a record; erasing an already erased record fails.
+- `current_key(?Key)` enumerates the keys that have records.
+- A key is an atom, an integer or a compound term, of which only the name and arity count
+  (`foo(1,2)` and `foo(a,b)` are the same key). Anything else is `type_error(key, K)`, an
+  unbound key of `recorda/recordz` is `instantiation_error`, a bad reference
+  `type_error(db_reference, R)`.
+- The store belongs to the `Prolog` instance and is shared by its threads.
+```prolog
+?- recordz(color, red), recordz(color, green), recorda(color, blue, R).
+R = '$record'(3).
+
+?- findall(C, recorded(color, C), L).
+L = [blue, red, green].
+
+?- recorded(color, red, R), erase(R), findall(C, recorded(color, C), L).
+L = [blue, green].
+```
+
+### flag/3
+
+*v4.6.0* (ISS-2025-0791): **Purpose**: `flag(+Key, -Old, +New)` — a global counter per key
+(SWI). `Old` is unified with the current value (0 for a new key), then `New` — an arithmetic
+expression evaluated after that unification, or an atom — becomes the value. Keys as for
+`recorda/2`; the update is atomic with respect to other threads of the engine.
+```prolog
+?- flag(hits, N, N+1), flag(hits, M, M+1).
+N = 0, M = 1.
 ```
 
 # 9. Atom and String Operations
@@ -4438,6 +4694,10 @@ Rest = [runs].
 ```
 
 ### enhanced_phrase/2 and enhanced_phrase/3
+
+*v4.6.0* (ISS-2025-0797, wave Q7): `enhanced_phrase/2,3` are `phrase/2,3` (v4 natives). The
+registry implementation never ran the grammar — it expanded the body and answered `true` — so an
+unbound or undefined body "succeeded"; now the grammar runs and the errors are `phrase/2,3`'s.
 **Purpose**: Enhanced DCG parsing with ISO/IEC DTS 13211-3 compliance.
 
 **When to use**: Use for advanced parsing with complex grammars.
@@ -4828,8 +5088,22 @@ check_requirements :-
 
 System predicates provide access to Prolog system features and configuration.
 
+### garbage_collect/0, garbage_collect_atoms/0, trim_stacks/0
+**Purpose**: SWI-Prolog's memory-management hooks; they succeed. *(v4.6, ISS-2025-0711)* The JVM
+collects garbage, atoms are Java strings and there are no Prolog stacks to trim.
+`garbage_collect/0` deliberately does not call `System.gc()` (an embedded engine shares its JVM).
+
+```prolog
+?- garbage_collect, garbage_collect_atoms, trim_stacks.
+true.
+```
+
 ### current_prolog_flag/2
 **Purpose**: Queries system flags and configuration.
+
+*v4.6* (ISS-2025-0712, 0713): new flags `prefer_rationals` (`false`; `true` makes a non-exact
+integer division a rational), `rational_syntax` (read-only `compatibility`: `1r3` is read) and
+`verbose` (`normal` | `silent`; `silent` suppresses informational messages).
 
 **When to use**: Use to check system capabilities or configuration.
 
@@ -5012,8 +5286,17 @@ has no extension (then `.prolog`, then the bare name). Consulting a file that is
 module being loaded, on the calling query's machine (same inference budget). Clause errors are
 printed as warnings on `user_error` and loading continues; a missing file is
 `existence_error(source_sink, F)`. `library(X)` loads a prelude module (lists, apply, pairs,
-coroutining, clpfd) or is a no-op for a library JProlog implements natively; any other library is
-an existence error.
+coroutining, clpfd) or is a no-op for a library JProlog implements natively; *v4.6.0*
+(ISS-2025-0737): any other library, and any `Alias(Path)`, is searched through
+`file_search_path/2` (see below) — an existence error only when no readable file is found.
+
+*v4.6.0* (ISS-2025-0730): a reload removes only the clauses THIS file added (see `multifile/1`);
+a file that loads itself (directly or through its directives) is not loaded again. A clause with a
+module-qualified head (`user:portray(X) :- ...`, `m:foo(1).`) belongs to that module
+(ISS-2025-0733): `user:H` is an ordinary user clause, a clause for the module being loaded is an
+ordinary clause of it, and any other module is created on demand (`current_module/1` sees it) and
+holds the clause as the `M:H` clause `assertz(M:H)` also stores. Its body runs in the module the
+clause was written in (SWI).
 
 The loader keeps a **load context**: when a file that declares `:- module(M, Exports)` has been
 loaded, the current (type-in) module is the one the load started in again and `M`'s exports are
@@ -5025,7 +5308,12 @@ These predicates live in `builtin.filesystem`, so `Prolog.enableSafeMode()` remo
 `enableSafeMode(new SafeModeOptions().allowFileRead(dir))` keeps them, restricted to files inside
 `dir` (`permission_error(open, source_sink, F)` otherwise). *v4.5.0* (ISS-2025-0639): a thread started
 by a directive may consult while the loading thread is blocked in `thread_join/1,2` on it (it used to
-deadlock on the engine's load lock). *v4.5.0* (ISS-2025-0636): `:- initialization(G, main)` in a file
+deadlock on the engine's load lock). *v4.6.0* (ISS-2025-0739, wave Q3.8): the load lock is per
+FILE: loads of different files proceed in parallel on different threads (so a directive may also
+wait with `thread_get_message/1,2` or `concurrent_*` for threads that load other files), the same
+file loaded concurrently waits for the first load, and a load that could never proceed — the file's
+loader waits (through file locks, joins or `concurrent_*` workers) for the thread that asks —
+raises `permission_error(load, source_sink, File)` instead of hanging. *v4.5.0* (ISS-2025-0636): `:- initialization(G, main)` in a file
 given to the CLI runs `G` after loading and ends the process (0; 1 on failure or error; N on
 `halt(N)`); an embedder's load runs `G` after the load without halting.
 
@@ -5047,6 +5335,69 @@ accepted and ignored. *(added v4.5.0, ISS-2025-0574)*
 
 ### make/0
 **Purpose**: Reload every loaded source file modified since it was loaded. *(added v4.5.0)*
+*v4.6.0* (ISS-2025-0736): a file is also reloaded when a file it `:- include`s changed.
+
+### use_module/1, use_module/2
+**Purpose**: Load a module file once (like `ensure_loaded/1`) and import its exports into the
+current module. *(as goals: v4.6.0, ISS-2025-0735; the directive forms since v4.5.0)*
+
+`use_module(File, Imports)` imports only what `Imports` names: a list of `Name/Arity`,
+`Name//Arity` and `PI as NewName` (the predicate is visible under the new name only), or
+`except(List)` (everything but the listed indicators; an `as` item there renames). Two restricted
+imports of one module accumulate; `use_module(File)` imports everything again. `library(X)` is a
+prelude module or a library JProlog implements natively; any other `library(X)` (and any
+`Alias(Path)`) is searched through `file_search_path/2`.
+
+```prolog
+:- use_module(geometry, [area/2, perimeter/2 as perim]).
+:- use_module(library(mylib), except([internal/1])).
+```
+
+### multifile/1, discontiguous/1
+**Purpose**: Declarations (also callable as goals). *(v4.6.0, ISS-2025-0730, wave Q3.1)*
+
+`:- multifile p/1.` (or `M:p/1`, a comma sequence or a list) makes `p/1` **defined**: a call with no
+clause fails instead of raising `existence_error` (SWI), and `predicate_property(p(_), multifile)`
+holds. Every consulted clause remembers the file it came from; **reconsulting a file removes only
+the clauses that file added** — clauses other files added to the same predicate always stay, and
+so do `assertz/1`-added clauses of a multifile predicate (those of any other predicate the file
+defines are reset with it). `:- discontiguous p/1.` silences the SWI warning
+`Clauses of p/1 are not together in the source-file` that a load now prints on `user_error` when
+the clauses of a predicate are interrupted by another predicate's (a warning, never an error).
+
+### Goal expansion at load time
+*v4.6.0* (ISS-2025-0731, wave Q3.2): when `user` (or the module being loaded) defines
+`goal_expansion/2`, every goal of a loaded clause body and of a directive is expanded — through
+`,`/`;`/`->`/`*->`/`|`, `\+`, `call/1`, `once/1`, `ignore/1`, `forall/2`, `findall/3,4`,
+`bagof/3`, `setof/3` (under `^`), `aggregate_all/3`, `catch/3`, `setup_call_cleanup/3` and `M:G`
+— repeatedly until `goal_expansion/2` fails or returns a variant of its input (the module's own
+hook first, then `user`'s). 100 successive rewrites of one goal are a load error
+(`resource_error(goal_expansion_depth)`). Variables shared with the rest of the clause stay shared.
+
+```prolog
+goal_expansion(dbl(X, Y), Y is X * 2).
+p(A, B) :- dbl(A, B).          % stored as p(A, B) :- B is A*2.
+```
+
+### file_search_path/2
+**Purpose**: `file_search_path(Alias, Dir)`: the user's search path for `Alias(Path)` file
+specifications (`library(X)`, `mine(foo)`). Dynamic and multifile, without clauses in a fresh engine.
+Its entries are tried first; then the built-in defaults: `swi` = the JProlog home
+(`-Djprolog.home`, else `~/.jprolog`), `library` = `swi(library)` and the directory of the bundled
+prelude when it is on disk, `foreign` = `swi(lib)`. `Dir` may itself be `Alias2(Sub)`.
+*(v4.6.0, ISS-2025-0737, wave Q3.3)*
+
+```prolog
+?- assertz(file_search_path(mine, '/opt/prolog/lib')),
+   consult(mine(utils)).       % /opt/prolog/lib/utils.pl
+```
+
+### Prolog.runMain() (Java API)
+*v4.6.0* (ISS-2025-0736): an embedder that wants SWI's `initialization(G, main)` calls
+`setDeferInitializationMain(true)` before loading and then `runMain()`: the collected goals run in
+load order and the method returns the exit code the program would halt with (0 success, 1 failure
+or an uncaught error — reported on `user_error` —, N for `halt(N)`, -1 when there is no main goal).
+Nothing halts the JVM.
 
 ### include/1 (directive)
 **Purpose**: `:- include(File).` reads the clauses of `File` in place, as if they were written
@@ -5490,37 +5841,11 @@ get_year(Date, Year) :-
 H = 14, M = 30, S = 45.
 ```
 
-### format_date/3
-**Purpose**: Formats a date or datetime term into a string according to a format pattern.
+### Formatting and parsing dates
 
-**When to use**: Use to produce human-readable or standardized date strings.
-
-```prolog
-% Syntax: format_date(+Format, +Date, -Formatted)
-?- format_date('~Y-~m-~d', date(2026, 3, 21), S).
-S = '2026-03-21'.
-
-?- format_date('~d/~m/~Y', date(2026, 3, 21), S).
-S = '21/03/2026'.
-
-% ISO 8601 formatting
-iso_date(Date, IsoString) :-
-    format_date('~Y-~m-~d', Date, IsoString).
-```
-
-### parse_date/3
-**Purpose**: Parses a date string into a date term according to a format pattern.
-
-**When to use**: Use to convert user input or file data into structured date terms.
-
-```prolog
-% Syntax: parse_date(+Format, +String, -Date)
-?- parse_date('~Y-~m-~d', '2026-03-21', D).
-D = date(2026, 3, 21).
-
-?- parse_date('~d/~m/~Y', '21/03/2026', D).
-D = date(2026, 3, 21).
-```
+`format_date/3` and `parse_date/3` used to be documented here but were never implemented (the
+4.6 documentation sweep, ISS-2025-0718, removed them). Use `format_time/3` — strftime-style
+directives, e.g. `format_time(atom(A), '%Y-%m-%d', Stamp)` — and `parse_time/3` instead.
 
 # 17. Filesystem Predicates
 
@@ -5560,6 +5885,11 @@ true.
 ?- directory_exists('/nonexistent').
 false.
 ```
+
+### exists_file/1, exists_directory/1
+*v4.6.0* (ISS-2025-0745). SWI's names for `file_exists/1` and `directory_exists/1`. Relative paths
+(here and in every filesystem predicate) resolve against the engine's working directory
+(`working_directory/2`).
 
 ### delete_file/1
 **Purpose**: Deletes a file from the filesystem.
@@ -5654,8 +5984,22 @@ true.
 true.
 ```
 
-### absolute_file_name/2
+### absolute_file_name/2, absolute_file_name/3
 **Purpose**: Resolves a relative or aliased file path to an absolute path.
+
+*v4.6.0* (ISS-2025-0737, wave Q3.3): `absolute_file_name(+Spec, -Abs, +Options)` (SWI).
+`Spec` is a name (relative to `relative_to(Dir)`, else the directory of the file being loaded, else
+the working directory) or `Alias(Path)` searched through `file_search_path/2`. Options:
+`extensions(List)`, `file_type(txt|prolog|source|directory|regular|executable|qlf)` (`prolog` and
+`source` try `.pl`, `.prolog`, then no extension), `access(read|write|append|execute|exist|none)`,
+`relative_to(FileOrDir)`, `solutions(first|all)` and `file_errors(error|fail)`. With no access, type
+or extension condition the first candidate is the answer; otherwise the first candidate that meets
+them, or `existence_error(source_sink, Spec)` (`fail` with `file_errors(fail)`).
+
+```prolog
+?- absolute_file_name(library(lists), F, [file_type(prolog), access(read)]).
+F = '/.../prelude/lists.pl'.
+```
 
 **When to use**: Use to normalize file paths for consistent handling.
 
@@ -5688,6 +6032,11 @@ consult_all(Dir) :-
 
 ### file_extension/2
 **Purpose**: Extracts the file extension from a filename.
+
+*v4.6* (ISS-2025-0718): `file_extension/2`, `file_base_name/2` and `file_directory_name/2` exist
+now (they were documented but missing). They are pure text operations on the path (no file-system
+access, so they stay available in safe mode); an atom gives an atom, a string a string; a file
+without an extension gives `''`; `file_directory_name('data.pl', D)` gives `'.'`.
 
 **When to use**: Use to filter files by type or determine how to process a file.
 
@@ -5752,9 +6101,25 @@ db_host(Host) :-
 
 **When to use**: Use to configure the environment for child processes or shell commands.
 
+*v4.6* (ISS-2025-0718): implemented (it was documented but missing). A JVM cannot change its own
+process environment, so the value is a process-wide overlay: `getenv/2` sees it and the child
+processes of `shell/1,2` and `shell_output/3` inherit it. Removed in safe mode.
+
 ```prolog
 % Syntax: setenv(+VarName, +Value)
 ?- setenv('MY_APP_MODE', 'production').
+true.
+
+?- setenv('MY_APP_MODE', production), getenv('MY_APP_MODE', V), shell('test "$MY_APP_MODE" = production', C).
+V = production, C = 0.
+```
+
+### unsetenv/1
+**Purpose**: `unsetenv(+VarName)` removes a variable from the overlay of `setenv/2` (and hides the
+JVM's own value from `getenv/2` and from child processes). *(v4.6, ISS-2025-0718)*
+
+```prolog
+?- unsetenv('MY_APP_MODE'), \+ getenv('MY_APP_MODE', _).
 true.
 ```
 
@@ -5856,6 +6221,9 @@ true.  % File exists
 
 ### shell/2
 **Purpose**: Executes a shell command and unifies the second argument with the exit code.
+
+*v4.6* (ISS-2025-0718): it was registered only under the name `shell2/2`; `shell/2` now exists
+(`shell2/2` is kept as an alias).
 
 **When to use**: Use when you need to inspect the exit status of a command.
 
@@ -6114,7 +6482,7 @@ T = 4.
 **When to use**: Use to synchronize with a thread and retrieve its result.
 
 The status is `true` when the goal succeeded, `false` when it failed, `exception(Ball)` when it
-threw (including `exception(inference_limit_exceeded)` when it exhausted the engine's inference
+threw (including `exception(error(resource_error(inference_limit), _))` when it exhausted the engine's inference
 budget), and `cancelled` when the thread was interrupted. The thread argument may be an id or an
 alias. A detached thread cannot be joined.
 
@@ -6336,6 +6704,83 @@ create a mutex named by an atom on first use. `mutex_unlock/1` by a thread that 
 ```prolog
 bump :- with_mutex(counter, (retract(n(N)), N1 is N + 1, assertz(n(N1)))).
 ```
+*v4.6.0* (ISS-2025-0751): a mutex a thread still holds when it ends is released **and reported**
+with `print_message(warning, format("Thread ~p exited while holding mutex ~p (released)", [Id, M]))`
+(SWI warns too; 4.5 released it silently).
+
+### thread_signal/2
+*v4.6.0* (ISS-2025-0749). `thread_signal(+Thread, :Goal)` makes `Thread` run `Goal` at its next
+inference — pushed on the target's own goal stack, never asynchronously — or at once when the
+target is blocked in `thread_get_message/1,2,3`, `thread_join/1,2`, `thread_sleep/1`,
+`mutex_lock/1`, `with_mutex/2`, a full queue's `thread_send_message/2,3` or a full pool's
+`thread_create_in_pool/4`. The goal runs as `ignore(\+ \+ Goal)`: once, its bindings undone, a
+failure ignored; an **exception it raises unwinds the target** as if the interrupted goal had
+raised it (SWI). Signals run in the order they were sent. Signalling oneself runs the goal
+immediately. `main` (every non-worker thread: the CLI, an embedder, the IDE) can be signalled too.
+Unknown or finished thread: `existence_error(thread, T)`.
+```prolog
+?- thread_create((repeat, fail), T), thread_signal(T, throw(stop)), thread_join(T, S).
+S = exception(stop).
+```
+
+### thread_statistics/3
+*v4.6.0* (ISS-2025-0750). `thread_statistics(+Thread, +Key, -Value)`: `statistics/2` for another
+thread. `cputime` (seconds, float), `thread_cputime`, `runtime` (`[Ms, 0]`) and `inferences` are
+measured on the target; every other key is answered by `statistics/2` (process-wide values).
+```prolog
+?- thread_statistics(main, inferences, N).
+```
+
+### message_queue_property/2
+*v4.6.0* (ISS-2025-0750). `message_queue_property(?Queue, ?Property)`: `alias(A)`, `size(N)`
+(messages waiting), `max_size(N)` (when created with it) and `waiting(N)` (threads blocked
+receiving). An unbound `Queue` enumerates the queues made by `message_queue_create/1,2`; a
+thread id or alias names that thread's queue. `message_queue_create/2` accepts `max_size(N)`:
+a sender then waits for room.
+
+### thread_send_message/3
+*v4.6.0* (ISS-2025-0750). `thread_send_message(+Queue, +Term, +Options)`: as `/2`; for a queue
+created with `max_size(N)` that is full, `timeout(Seconds)` / `deadline(Time)` bound the wait and
+the call **fails** when it expires (SWI).
+```prolog
+?- message_queue_create(Q, [max_size(1)]), thread_send_message(Q, a),
+   \+ thread_send_message(Q, b, [timeout(0.1)]).
+```
+
+### mutex_property/2
+*v4.6.0* (ISS-2025-0750). `mutex_property(?Mutex, ?Property)`: `alias(A)` and `status(S)`, where
+`S` is `unlocked` or `locked(Owner, Count)` (the holding thread and its recursion count).
+```prolog
+?- mutex_create(M, [alias(m)]), mutex_lock(m), mutex_property(m, status(S)).
+S = locked(main, 1).
+```
+
+### thread_pool_create/3
+*v4.6.0* (ISS-2025-0750, library(thread_pool)). `thread_pool_create(+Pool, +Size, +Options)`
+creates a named pool of at most `Size` running threads. `backlog(N)` bounds the creators that may
+wait for a slot (default unbounded); the other options are `thread_create/3` options every member
+inherits. A second pool with the same name is `permission_error(create, thread_pool, Pool)`.
+
+### thread_create_in_pool/4
+*v4.6.0* (ISS-2025-0750). `thread_create_in_pool(+Pool, :Goal, -Id, +Options)` creates a thread
+that occupies one slot until it ends. With the pool full, `wait(true)` (the default) blocks until a
+member ends; `wait(false)`, or a full backlog, raises `resource_error(threads_in_pool(Pool))`. An
+unknown pool is `existence_error(thread_pool, Pool)`.
+```prolog
+?- thread_pool_create(workers, 4, []),
+   thread_create_in_pool(workers, heavy_job, Id, []), thread_join(Id, S).
+```
+
+### thread_pool_destroy/1
+*v4.6.0* (ISS-2025-0750). `thread_pool_destroy(+Pool)` removes the pool; running members go on,
+waiting creators get `existence_error(thread_pool, Pool)`.
+
+### thread_pool_property/2
+*v4.6.0* (ISS-2025-0750). `thread_pool_property(?Pool, ?Property)`: `size(N)`, `running(N)`,
+`free(N)`, `backlog(N)` (creators waiting) and `options(List)`.
+
+### current_thread_pool/1
+*v4.6.0* (ISS-2025-0750). `current_thread_pool(?Pool)` enumerates the pools.
 
 # 22. CSV Predicates
 
@@ -6531,16 +6976,40 @@ CLP(FD) (Constraint Logic Programming over Finite Domains) predicates allow you 
   SWI's options and `label/1` = leftmost selection.
 - **Exact integers**: ground expressions are evaluated exactly (`X #= 10^12*10^12`), and a value
   beyond the 64-bit domain range that a constraint determines is bound exactly
-  (`X #= Y+1, Y = 2^63`). Coefficients must fit 64 bits (else `representation_error(max_integer)`).
+  (`X #= Y+1, Y = 2^63`). Coefficients must fit 64 bits (else `representation_error(max_integer)`)
+  — lifted in v4.6.0, see below.
 - **Cyclic difference constraints fail fast**: `X #> Y, Y #> X` fails at once (negative-cycle
   check), also over huge finite domains.
 - New: `ins/2`, `sum/3`, `scalar_product/4`, reification (`#<==>`, `#==>`, `#<==`, `#\/`, `#/\`,
   `#\`), `//`, `div`, `rem`, `mod`, `^` in expressions, `fd_inf/2`, `fd_sup/2`, `fd_var/1`,
   `element/3`, `tuples_in/2`, `global_cardinality/2`, `transpose/2`, and a domain-consistent
   `all_distinct/1`.
-- Not implemented (SWI has them): `circuit/1`, `cumulative/1,2`, `disjoint2/1`, `automaton/3,8`,
-  `chain/2`, `lex_chain/1`, `zcompare/3`, `fd_degree/2`; answers print the remaining domains of
-  constrained variables but not the residual constraints themselves.
+
+### clpfd:attribute_goals//1
+
+*v4.6.0* (ISS-2025-0760, wave Q5): the SWI hook behind residual goals — `phrase(clpfd:attribute_goals(X), Gs)`
+lists the CLP(FD) goals (domain and live constraints, SWI's printed forms) that constrain `X`.
+`copy_term/3`, the answers of the CLI and `Prolog.residualGoals` use it.
+```prolog
+?- X #> Y, phrase(clpfd:attribute_goals(X), Gs).
+Gs = [Y#=<X+ -1].
+```
+
+*v4.6.0 (wave Q5)*:
+- **Residual constraints**: an answer, `copy_term/3` and `clpfd:attribute_goals//1` show the
+  constraints still alive on the answer's variables in SWI-Prolog's printed forms, after their
+  domains (`X in 1..2\/4..5`, shown unless it is `inf..sup` and a constraint is left):
+  `X #> Y` answers `Y#=<X+ -1`, `X #= Y+Z` answers `Y+Z#=X`, `B #<==> X #> 3` answers
+  `B in 0..1, X#>=4#<==>B`; the globals print by name (`all_different([X,Y])`, `circuit(Vs)`,
+  ...). An entailed constraint is not shown (`X #> Y, X = 5` answers `X = 5, Y in inf..4`), an
+  auxiliary variable of the compiled store is a fresh `_A`. `freeze/2`, `dif/2` and `when/2`
+  residuals are shown as before. `X #= Y` between two variables unifies them (SWI).
+- **Coefficients beyond 64 bits**: `X*10^20 #= Y` is an ordinary linear constraint (an exact,
+  slower propagation path only for such constraints; everything else keeps the 64-bit path).
+- **Branch and bound** (`labeling/2` with `min(E)`/`max(E)`) is one iterative search that
+  tightens the bound at every solution; it no longer recurses once per variable.
+- New: `circuit/1`, `cumulative/1,2`, `disjoint2/1`, `lex_chain/1`, `chain/2`, `automaton/3,8`,
+  `zcompare/3`, `fd_degree/2`, `global_cardinality/3`.
 
 ### in/2
 **Purpose**: Constrains a variable to a finite domain range.
@@ -6761,6 +7230,117 @@ L = [1-2, 2-3].
 L = [[1,1,2], [1,2,1], [2,1,1]].
 ```
 
+### circuit/1
+**Purpose**: `circuit(Succs)`: the list `Succs` of 1-based successors forms a single
+Hamiltonian cycle — element `I` is the node that follows node `I`. v4.6.0: all-different
+(domain consistent), no self loop, a chain of fixed successors shorter than N may not close on
+itself, and the successor graph must stay strongly connected (no subtours).
+
+```prolog
+?- length(L, 3), circuit(L), findall(L, label(L), Ls).
+Ls = [[2,3,1], [3,1,2]].
+
+?- circuit([2,1,_]).
+false.
+```
+
+### cumulative/1, cumulative/2
+**Purpose**: `cumulative(Tasks, Options)`: `Tasks` is a list of `task(S, D, E, C, T)` (start,
+duration, end, resource amount, task id); at every moment the running tasks use at most the
+limit of the option `limit(L)` (default 1; `cumulative/1` is limit 1). `S + D #= E` is posted
+for every task. v4.6.0: time-table propagation over the compulsory parts. An unknown option is
+`domain_error(cumulative_option, O)`, a malformed task `domain_error(cumulative_task, T)`.
+
+```prolog
+?- Ts = [task(S1,3,_,1,a), task(S2,2,_,1,b)], [S1,S2] ins 0..4,
+   cumulative(Ts), S1 #< S2, label([S1,S2]).
+S1 = 0, S2 = 3 ;
+S1 = 0, S2 = 4 ;
+S1 = 1, S2 = 4 ;
+false.
+```
+
+### disjoint2/1
+**Purpose**: `disjoint2(Rects)`: the rectangles `F(X, W, Y, H)` (x, width, y, height; any
+functor) do not overlap pairwise (v4.6.0, a reified disjunction per pair).
+
+```prolog
+?- disjoint2([r(X,2,0,2), r(Y,2,0,2)]), [X,Y] ins 0..3, findall(X-Y, label([X,Y]), L).
+L = [0-2, 0-3, 1-3, 2-0, 3-0, 3-1].
+```
+
+### lex_chain/1
+**Purpose**: `lex_chain(Lists)`: the lists (of integers or CLP(FD) variables) are
+lexicographically non-decreasing, each with respect to the next (v4.6.0).
+
+```prolog
+?- lex_chain([[A],[1]]), A in 0..5.
+A in 0..1.
+```
+
+### chain/2
+**Purpose**: `chain(Zs, Relation)`: `Relation` (`#=`, `#=<`, `#>=`, `#<` or `#>`) holds between
+every pair of neighbours of `Zs`; another relation is `domain_error(chain_relation, R)` (v4.6.0).
+
+```prolog
+?- chain([A,B,C], #<), A = 1, C = 3.
+A = 1, B = 2, C = 3.
+```
+
+### automaton/3, automaton/8
+**Purpose**: `automaton(Sigs, Nodes, Arcs)`: the finite automaton with `Nodes` (`source(N)` and
+`sink(N)` terms) and `Arcs` (`arc(N0, Label, N1)`) accepts the list of CLP(FD) variables `Sigs`.
+`automaton(Seqs, Template, Sigs, Nodes, Arcs, Counters, Initials, Finals)` adds counters: an arc
+`arc(N0, L, N1, Exprs)` updates each counter to its expression, where the `Counters` variables
+stand for the previous values and the `Template` variables for the current element of `Seqs`;
+an arc without expressions leaves the counters unchanged; `Initials` are the initial values and
+`Finals` the values after the last transition (SWI semantics; v4.6.0, decomposed into
+`tuples_in/2` and reified implications).
+
+```prolog
+?- length(Vs, 3), automaton(Vs, [source(a),sink(c)],
+       [arc(a,0,a), arc(a,1,b), arc(b,0,a), arc(b,1,c), arc(c,0,c), arc(c,1,c)]),
+   findall(Vs, label(Vs), L).
+L = [[0,1,1], [1,1,0], [1,1,1]].
+
+?- length(Vs, 4), Vs ins 0..1,
+   automaton(Vs, _, Vs, [source(s),sink(s)], [arc(s,0,s), arc(s,1,s,[C+1])], [C], [0], [2]),
+   findall(Vs, label(Vs), L), length(L, N).
+N = 6.
+```
+
+### zcompare/3
+**Purpose**: `zcompare(Order, A, B)`: `Order` (`<`, `=` or `>`) is the order of the integers
+`A` and `B`, reified: it is bound as soon as the domains decide it, and binding it posts the
+matching constraint (v4.6.0).
+
+```prolog
+?- X in 1..3, Y in 5..7, zcompare(O, X, Y).
+O = (<), X in 1..3, Y in 5..7.
+```
+
+### fd_degree/2
+**Purpose**: `fd_degree(X, D)`: `D` is the number of constraints still alive on the CLP(FD)
+variable `X` (0 for an integer or a variable with no constraint; v4.6.0).
+
+```prolog
+?- X #> Y, Y #> Z, fd_degree(Y, D).
+D = 2.
+```
+
+### global_cardinality/3
+**Purpose**: `global_cardinality(Vs, Pairs, Options)`: `global_cardinality/2` with options:
+`consistency(value)` (accepted: it is the propagation `global_cardinality/2` does) and
+`cost(Cost, Matrix)` — `Matrix` has one row per variable and one column per key, and `Cost` is
+the sum of the entries the assignment selects. Another option is
+`domain_error(global_cardinality_option, O)` (v4.6.0).
+
+```prolog
+?- global_cardinality([X,Y,Z], [1-_, 2-_], [cost(C, [[1,5],[1,5],[2,2]])]),
+   once(labeling([min(C)], [X,Y,Z])).
+C = 4, X = 1, Y = 1, Z = 1.
+```
+
 ### transpose/2
 **Purpose**: `transpose(Matrix, Transposed)` for a list of equal-length lists (SWI
 library(clpfd), the sudoku idiom). v4.5.0.
@@ -6943,8 +7523,16 @@ path(X, Y) :- path(X, Z), edge(Z, Y).
   tracked — call `abolish_all_tables/0` yourself (this is also what XSB requires). Tables persist
   across queries; two safety caps (100 000 tables, 4 000 000 answers) drop the oldest completed
   tables at a query boundary so a long-lived engine cannot grow the store without bound.
-- **`tnot/1` (tabled negation) is not implemented** on any engine: it raises
-  `existence_error(procedure, tnot/1)`.
+- *v4.6.0* (ISS-2025-0755): **`tnot/1`, `undefined/0` and `call_delays/2`** give a minimal
+  well-founded semantics — see `tnot/1` below. Plain `\+` keeps the 4.5 rule that follows.
+- *v4.6.0* (ISS-2025-0752): **tables across threads.** Every worker thread (`thread_create/2,3`,
+  the `concurrent_*` pool) evaluates in a **private** table space that ends with it — SWI's
+  default; every non-worker thread (`main`) shares the engine's main space. A predicate declared
+  `:- table p/1 as shared` also publishes its **complete** tables engine-wide, where every thread
+  reuses them; an incomplete table always belongs to the thread evaluating it, and a thread that
+  calls a shared variant another thread is still evaluating evaluates it itself instead of waiting
+  (SWI waits) — so tabling can never deadlock two threads. Asserting to / retracting from a tabled
+  predicate, `abolish_table/1` and `abolish_all_tables/0` invalidate the tables of every space.
 - *v4.5.0* (ISS-2025-0661, LIM-046): **non-stratified negation raises**. `\+ G` inside a tabled
   evaluation whose `G` reads a table that an ancestor of the negation is still evaluating (e.g.
   `:- table p/1. p(X) :- \+ p(X).`, or `win(X) :- move(X, Y), \+ win(Y).` over a cycle) raises
@@ -6976,23 +7564,78 @@ F = 832040.
 ?- fib(1000, F).                     % 209 digits, ~0.1 s on v4
 ```
 
-**Errors** (v4.5.0): `instantiation_error`, `type_error(predicate_indicator, S)`, `domain_error(table_mode, M)`.
+**Errors** (v4.6.0): `instantiation_error`, `type_error(predicate_indicator, S)`,
+`domain_error(tabled_mode, M)` (SWI's name; 4.5 said `table_mode`), `domain_error(lattice_arity, N)`,
+`domain_error(po_arity, N)`, `domain_error(table_option, O)`.
 
 *v4.5.0* (ISS-2025-0572, wave P3.3): every form of the directive is accepted —
 `:- table ev/1, od/1.`, `:- table([a/1, b/1]).`, `Name//Arity` (a DCG non-terminal),
-`Spec as Options` (options accepted and ignored: tables are variant tables) — and
-**mode-directed tabling**: `:- table path(_, _, min).` keeps, per distinct combination of the
-index arguments (`_`, `index`, `+`), only the best answer for the moded one: `min`, `max`
-(standard order of terms), `first` / `-` (the first answer found), `last` (the latest). `lattice(PI)`
-and `po(PI)` are not implemented and raise `domain_error(table_mode, M)` — a table directive never
-fails silently any more (the old code logged a warning and the program then looped).
+`Spec as Options` — and **mode-directed tabling**: `:- table path(_, _, min).` keeps, per distinct
+combination of the index arguments (`_`, `index`, `+`), one aggregated answer. A table directive
+never fails silently (the old code logged a warning and the program then looped).
 `predicate_property(P, tabled)` holds for a tabled predicate.
+
+*v4.6.0* (ISS-2025-0754, SWI's `boot/tabling.pl` semantics): the modes are `first` / `-`, `last`,
+`min` and `max` (standard order of terms), `sum`, `lattice(PI)` — `call(PI, Old, New, Agg)`, `PI`
+of arity 3 given as `Name/3`, `Name`, `Module:Name/3` or a head — and `po(PI)` — keep `Old` when
+`call(PI, Old, New)` succeeds, else take `New` (`po('<'/2)` keeps the smallest). **Each** moded
+argument is aggregated on its own, and the answer is replaced only when the aggregate is not a
+variant of the old one; a failing lattice join rejects the new answer. A call with a **bound**
+moded argument is evaluated with it free and then unified with the aggregate (SWI): with
+`:- table f(_, first). f(k, 1). f(k, 2).`, `f(k, 2)` fails. `sum` over a recursive component may
+not terminate (every completion round adds again).
+
+*v4.6.0* (ISS-2025-0753): `Spec as Options` — `variant` (the default), `shared` and `private`
+(see "tables across threads" above) are implemented; `subsumptive`, `incremental`, `opaque`,
+`monotonic`, `lazy`, `dynamic`, `max_answers/1`, `subgoal_abstract/1` and `answer_abstract/1`
+are accepted with a `Warning:` on `user_error` and variant tabling is used; any other option is
+`domain_error(table_option, O)`. Options may be one option, a `,`-sequence or a list.
 
 ```prolog
 :- table sp(_, _, min).
 sp(X, Y, D) :- edge(X, Y, D).
 sp(X, Y, D) :- sp(X, Z, D1), edge(Z, Y, D2), D is D1 + D2.
 ?- sp(a, b, D).              % the shortest distance only, even on a cyclic graph
+
+:- table lp(_, _, lattice(longer/3)).
+longer(P1, P2, P) :- length(P1, L1), length(P2, L2), (L1 >= L2 -> P = P1 ; P = P2).
+```
+
+### tnot/1
+*v4.6.0* (ISS-2025-0755). `tnot(:Goal)`: tabled negation of a **tabled** `Goal` under a minimal
+well-founded semantics (SWI's algorithm on linear tabling). An unconditional answer of `Goal`
+makes it fail; a complete table with no answer makes it succeed; otherwise — `Goal` is still being
+evaluated by an ancestor (a loop through negation) or has only conditional answers — it succeeds
+with `tnot(Goal)` **delayed**. The answers derived with delays are **conditional**; when the
+strongly connected component completes they are simplified (a literal that became true is
+dropped, one that became false kills the derivation) and what is left is **undefined**. The CLI
+prints `undefined` for such an answer; an embedder asks `Prolog.currentAnswerDelays()` inside a
+`solveStream` sink, or uses `call_delays/2`. A non-tabled goal is
+`permission_error(tnot, non_tabled_procedure, Name/Arity)`.
+```prolog
+:- table win/1.
+win(X) :- move(X, Y), tnot(win(Y)).
+move(a, b). move(b, a). move(b, c). move(c, d).
+?- win(c).        % true
+?- win(d).        % false
+?- win(a).        % undefined
+```
+Not done (LIM-046): answer completion (an unsupported positive loop among conditional answers
+stays undefined instead of becoming false), the residual program, delays through
+mode-directed tables.
+
+### undefined/0
+*v4.6.0* (ISS-2025-0755). Succeeds with the truth value *undefined* (a delay that never resolves),
+like SWI's `undefined :- tnot(undefined)`.
+
+### call_delays/2
+*v4.6.0* (ISS-2025-0755). `call_delays(:Goal, -Delays)`: runs `Goal`; `Delays` is `true` for an
+unconditional solution, otherwise the conjunction of the literals `Goal` delayed (`tnot(G)`, a
+conditional answer `G`, `undefined`). The delays are consumed: the enclosing derivation stays
+unconditional.
+```prolog
+?- call_delays(win(a), D).
+D = win(a).
 ```
 
 ### abolish_all_tables/0
@@ -7541,6 +8184,16 @@ SCCs = [[a, b, c], [d], [e]].
 
 The Java Foreign Function Interface (FFI) predicates allow Prolog programs to interact with Java classes, objects, methods, fields, and arrays. This enables seamless interoperability between Prolog logic and Java libraries.
 
+*v4.6.0* (ISS-2025-0796, wave Q7): argument faults RAISE (they failed silently): an unbound
+argument is `instantiation_error`, a wrong type `type_error(atom|list|integer|java_object|
+java_array, Culprit)`, an unknown class / method / field / constructor
+`existence_error(class|method|field|constructor, Name)` (`static_field` for an instance field
+reached through a class), assigning a final field `permission_error(modify, final_field, Name)`, a
+negative array length `domain_error(not_less_than_zero, N)`, and an exception thrown by the invoked
+Java code `error(java_exception(ExceptionClassName), context(Name/Arity, Message))`. An array
+index outside the array still fails (as `arg/3` does), and `java_instanceof(null, C)` fails. Every
+context is `context(Name/Arity, Message)`.
+
 ### Understanding Java FFI
 
 The FFI bridges Prolog and Java by:
@@ -7829,11 +8482,11 @@ N = 3.
 |---|---|
 | `:- module(Name, [f/1, g/2]).` | Declare the current module and its export list. An empty list exports nothing. |
 | `:- use_module(Name).` | Import every predicate `Name` exports into the current module. |
-| `:- use_module(Name, [f/1]).` | Import only the listed predicates. |
+| `:- use_module(Name, [f/1]).` | Import only the listed predicates (*v4.6.0*: really — `f/1 as g` renames, `except(L)` excludes; it imported everything before). |
 | `:- use_module(library(X)).` | Accepted for the library modules; they autoload anyway, so it is a no-op. |
 | `:- meta_predicate(Spec).` | See below. |
 
-### meta_predicate/1
+### meta_predicate/1 (directive)
 
 `:- meta_predicate(maplist(2, ?, ?)).` says that argument 1 of `maplist/3` is a goal that will be
 called with 2 extra arguments. When a predicate with such a declaration is called from module `C`,
@@ -8328,6 +8981,8 @@ false.
 `copy_term(+Term, -Copy, -Attributes)` copies `Term` without its attributes and returns them as a
 list of goals that would restore them. `unifiable(@X, @Y, -Unifier)` returns the list of
 `Var = Value` bindings that unifying `X` and `Y` would make, **without** making them.
+For a CLP(FD) variable the goals are its domain and the constraints still alive on it, in
+SWI-Prolog's printed forms (v4.6.0; the same goals the toplevel prints after an answer).
 
 ```prolog
 ?- put_attr(X, mymod, 1), term_attvars(f(X, Y), Vs).
@@ -8335,6 +8990,9 @@ Vs = [X].
 
 ?- put_attr(X, mymod, 1), copy_term(X, Y, Attrs).
 Attrs = [put_attr(Y, mymod, 1)].
+
+?- X #> Y, copy_term(X-Y, C, Gs).
+C = _A-_B, Gs = [_B#=<_A+ -1].
 
 ?- unifiable(f(X, b), f(a, Y), U).
 U = [X = a, Y = b].
@@ -8697,13 +9355,20 @@ true.
 ```
 
 ### working_directory/2, file_modified/2, delete_directory/1
-**Purpose**: `working_directory(-Old, +New)` reads and changes the process working directory
+**Purpose**: `working_directory(-Old, +New)` reads and changes the engine's working directory
 (`working_directory(D, D)` only reads it); `file_modified(+Path, -Millis)` gives the modification
 time in epoch milliseconds; `delete_directory(+Path)` removes an empty directory.
 
+*v4.6.0* (ISS-2025-0745): the working directory belongs to the **engine** (each `Prolog`
+instance has its own, starting at the JVM's), never to the JVM: the `user.dir` property is not
+touched. Every relative file name — `open/3,4`, `consult/1` and the loaders, `absolute_file_name/2,3`,
+`exists_file/1`, the filesystem, CSV, persistence and logging built-ins — is resolved against it.
+`Old` ends with `/` (SWI); `New` may be relative to the current directory; a `New` that is not a
+directory is `existence_error(directory, New)`.
+
 ```prolog
 ?- working_directory(D, D).
-D = '/home/user/project'.
+D = '/home/user/project/'.
 
 ?- open('note.txt', write, W), close(W), file_modified('note.txt', T).
 T = 1787644907965.
@@ -8997,7 +9662,7 @@ choice must be made before constructing the engine (or upgraded with `prolog.ena
 | `nbSetval/nbGetval/nbDelete` | global variables from Java |
 | `enableSafeMode()` | sandbox: remove every OS, FFI, filesystem, network, HTTP, JDBC, persistence and threading built-in, `open/3,4`, the loaders, the CSV file predicates and `log_to_file/1` — from the legacy registry and the native table (irreversible for the instance) |
 | `enableSafeMode(SafeModeOptions)` | the same; `new SafeModeOptions().allowFileRead(dir)` keeps read-only `open/3,4` and the loaders for files inside `dir` |
-| `setInferenceBudget(long steps)` | abort a query with `InferenceLimitException` after the given number of resolution steps (0 = unlimited); ONE budget shared by the query's meta-calls and worker threads, and natives that walk or build long lists charge per element |
+| `setInferenceBudget(long steps)` | abort a query with `InferenceLimitException` after the given number of resolution steps (0 = unlimited); ONE budget shared by the query's meta-calls and worker threads, and natives that walk or build long lists charge per element; the bridged libraries charge per 64 characters of text input and per solution, and a regular expression per 256 characters it reads (4.6) |
 | `getFlags()`, `setTracing(boolean)`, `isTracing()` | per-engine ISO flag store and `trace/0` state (each `Prolog` instance is isolated) |
 | `getPredicateIndicatorAtLine(int line)` | map a source line to its clause (IDE breakpoints) |
 | `getEngineContext()` | the durable per-engine context: `setDebugController`/`getDebugController` (IDE debugger wiring) and the running query's `ResourceGuard` |

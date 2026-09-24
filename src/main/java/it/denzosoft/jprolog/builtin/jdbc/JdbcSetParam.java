@@ -2,10 +2,11 @@ package it.denzosoft.jprolog.builtin.jdbc;
 
 // START_CHANGE: ISS-2025-0110 - Prepared statements with parameters and stored procedures
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -30,8 +31,7 @@ public class JdbcSetParam implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 3) {
-            throw new PrologEvaluationException(
-                "jdbc_set_param/3 requires 3 arguments: jdbc_set_param(+Stmt, +Index, +Value).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         Term stmtTerm = query.getArguments().get(0).resolveBindings(bindings);
@@ -39,10 +39,10 @@ public class JdbcSetParam implements BuiltIn {
         Term valueTerm = query.getArguments().get(2).resolveBindings(bindings);
 
         if (!(stmtTerm instanceof Atom)) {
-            throw new PrologEvaluationException("jdbc_set_param/3: Statement must be an atom handle.");
+            throw LibArgs.notA("atom", stmtTerm, "jdbc_set_param", 3, "Statement must be an atom handle");   // ISS-2025-0692
         }
         if (!(indexTerm instanceof Number)) {
-            throw new PrologEvaluationException("jdbc_set_param/3: Index must be a number.");
+            throw LibArgs.notA("number", indexTerm, "jdbc_set_param", 3, "Index must be a number");   // ISS-2025-0692
         }
 
         String handle = ((Atom) stmtTerm).getName();
@@ -54,7 +54,7 @@ public class JdbcSetParam implements BuiltIn {
             solutions.add(bindings);
             return true;
         } catch (SQLException e) {
-            throw new PrologEvaluationException("jdbc_set_param: " + e.getMessage());
+            throw Errors.host(e, "execute", "sql", null, "jdbc_set_param", LibArgs.arity(query));   // ISS-2025-0692
         }
     }
 

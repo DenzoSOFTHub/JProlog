@@ -54,9 +54,22 @@ final class NativeControl {
     static void register(BuiltinTable t) {
         t.register("phrase", 2, new PhraseB(2));
         t.register("phrase", 3, new PhraseB(3));
+        // START_CHANGE: ISS-2025-0797 - 4.6 wave Q7: enhanced_phrase/2,3 are phrase/2,3. The registry
+        // class (builtin.dcg.EnhancedPhrase) never ran the grammar: it expanded the body and answered
+        // TRUE for any non-trivial goal, so enhanced_phrase(Var, L) and enhanced_phrase(f(x), L)
+        // "succeeded". The native table wins over the registry.
+        t.register("enhanced_phrase", 2, new PhraseB(2));
+        t.register("enhanced_phrase", 3, new PhraseB(3));
+        // END_CHANGE: ISS-2025-0797
         t.register("bagof", 3, new BagofB(false));
         t.register("setof", 3, new BagofB(true));
         t.register("aggregate_all", 3, new AggregateAllB());
+        // START_CHANGE: ISS-2025-0716 - wave Q2.7: library(aggregate)'s bagof/setof-based forms
+        t.register("aggregate", 3, new AggregateB(false));
+        t.register("aggregate", 4, new AggregateB(true));
+        t.register("aggregate_all", 4, new AggregateAll4B());
+        t.register("$aggregate_list", 3, new AggregateListB());
+        // END_CHANGE: ISS-2025-0716
         t.register("with_output_to", 2, new WithOutputToB());
     }
 
@@ -278,7 +291,7 @@ final class NativeControl {
      * the i-th distinct variable (depth-first, left to right) is {@code '$bagof_var'(i)}. Two
      * witnesses are variants exactly when their keys are identical ({@code ==}).
      */
-    private static Term variantKey(Term w, Machine m) {
+    static Term variantKey(Term w, Machine m) {                     // ISS-2025-0710: shared
         List<Variable> vs = new ArrayList<Variable>();
         Unify.termVariables(w, vs, m.guard());
         if (vs.isEmpty()) return w;
@@ -389,16 +402,205 @@ final class NativeControl {
         }
     }
 
+    // START_CHANGE: ISS-2025-0716 - wave Q2.7: aggregate/3, aggregate/4 and aggregate_all/4 as
+    // SWI-Prolog's library(aggregate) defines them:
+    //   aggregate(T, G, R)       :- bagof(Pattern, G, L), aggregate_list(T, L, R).
+    //   aggregate(T, D, G, R)    :- setof(D-Pattern, G, Ps), pairs_values(Ps, L), aggregate_list(..).
+    //   aggregate_all(T, D, G, R):- findall(D-Pattern, G, Ps0), sort(Ps0, Ps), pairs_values(..), ..
+    // so aggregate/3,4 GROUP by the free variables of G (bagof semantics, `^` included) and fail
+    // when G has no solution, while aggregate_all/4 counts only distinct D-Pattern pairs. The
+    // template is one of count, count(T), sum(E), max(E), min(E), max(E, W), min(E, W), bag(T),
+    // set(T), or a compound of such specs (r(count, sum(X)) answers r(C, S)). The goal is pushed
+    // onto the machine (bagof/setof/findall are natives), so grouping and backtracking over the
+    // groups are exactly bagof/3's; '$aggregate_list'/3 folds each group.
+    private static final Atom PAT = new Atom("$aggr");
+    private static final Atom ATOM_COUNT = new Atom("count");
+
+    /** True when {@code spec} (dereferenced) is one aggregation spec. */
+    private static boolean simpleSpec(Term spec) {
+        if (spec instanceof Atom) return "count".equals(((Atom) spec).getName());
+        if (!(spec instanceof CompoundTerm)) return false;
+        String f = ((CompoundTerm) spec).getName();
+        int n = ((CompoundTerm) spec).arity();
+        return (n == 1 && ("count".equals(f) || "sum".equals(f) || "max".equals(f) || "min".equals(f)
+                           || "bag".equals(f) || "set".equals(f)))
+            || (n == 2 && ("max".equals(f) || "min".equals(f)));
+    }
+
+    /** Validate the template; answer the bagof pattern it collects. */
+    private static Term aggrPattern(Machine m, Term spec0, String ind) {
+        Term spec = m.deref(spec0);
+        if (spec instanceof Variable) throw Errors.instantiation(ind);
+        if (simpleSpec(spec)) return simplePattern(spec);
+        if (spec instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) spec;
+            Term[] ps = new Term[c.arity()];
+            for (int i = 0; i < ps.length; i++) {
+                Term a = m.deref(c.arg(i));
+                if (a instanceof Variable) throw Errors.instantiation(ind);
+                if (!simpleSpec(a)) throw Errors.domain("aggregate_spec", m.resolve(spec), ind);
+                ps[i] = simplePattern(a);
+            }
+            return new CompoundTerm(PAT, ps);
+        }
+        throw Errors.domain("aggregate_spec", m.resolve(spec), ind);
+    }
+
+    private static Term simplePattern(Term spec) {
+        if (spec instanceof Atom) return ATOM_COUNT;                       // count: nothing to collect
+        CompoundTerm c = (CompoundTerm) spec;
+        if (c.arity() == 2) return new CompoundTerm(MINUS, Arrays.asList(c.arg(0), c.arg(1)));
+        return c.arg(0);
+    }
+
+    /** The goal of aggregate/3,4: bound and callable under its {@code ^} prefix. */
+    private static void aggrGoal(Machine m, Term goal0, String ind) {
+        Term g = m.deref(goal0);
+        while (g instanceof CompoundTerm && "^".equals(((CompoundTerm) g).getName()) && ((CompoundTerm) g).arity() == 2) {
+            g = m.deref(((CompoundTerm) g).arg(1));
+        }
+        if (g instanceof Variable) throw Errors.instantiation(ind);
+        if (!(g instanceof Atom) && !(g instanceof CompoundTerm)) throw Errors.type("callable", m.resolve(g), ind);
+    }
+
+    private static Term conj(Term a, Term b) { return new CompoundTerm(new Atom(","), Arrays.asList(a, b)); }
+    private static Term call3(String f, Term a, Term b, Term c) {
+        return new CompoundTerm(new Atom(f), Arrays.asList(a, b, c));
+    }
+
+    private static final class AggregateB implements Builtin {
+        private final boolean withDiscriminator;
+        AggregateB(boolean withDiscriminator) { this.withDiscriminator = withDiscriminator; }
+
+        @Override
+        public Outcome call(Machine m, Term[] args) {
+            String ind = withDiscriminator ? "aggregate/4" : "aggregate/3";
+            Term pattern = aggrPattern(m, args[0], ind);
+            Term goal = args[withDiscriminator ? 2 : 1];
+            Term result = args[withDiscriminator ? 3 : 2];
+            aggrGoal(m, goal, ind);
+            Variable list = new Variable();
+            if (withDiscriminator) {
+                Term pair = new CompoundTerm(MINUS, Arrays.asList(args[1], pattern));
+                m.pushGoal(conj(call3("setof", pair, goal, list),
+                                call3("$aggregate_list", m.deref(args[0]), new CompoundTerm(new Atom("$values"),
+                                      Collections.singletonList((Term) list)), result)));
+            } else {
+                m.pushGoal(conj(call3("bagof", pattern, goal, list),
+                                call3("$aggregate_list", m.deref(args[0]), list, result)));
+            }
+            return Outcome.SUSPENDED;
+        }
+    }
+
+    private static final class AggregateAll4B implements Builtin {
+        @Override
+        public Outcome call(Machine m, Term[] args) {
+            Term pattern = aggrPattern(m, args[0], "aggregate_all/4");
+            Term goal = m.deref(args[2]);
+            if (goal instanceof Variable) throw Errors.instantiation("aggregate_all/4");
+            if (!(goal instanceof Atom) && !(goal instanceof CompoundTerm)) {
+                throw Errors.type("callable", m.resolve(goal), "aggregate_all/4");
+            }
+            m.checkBody(goal, "aggregate_all", 4);
+            Term pair = new CompoundTerm(MINUS, Arrays.asList(args[1], pattern));
+            List<Term> pairs = sortDedup(m.findAll(pair, goal), m.guard());
+            Term folded = aggregateList(m, m.deref(args[0]), values(pairs), "aggregate_all/4");
+            if (folded == null) return Outcome.FAILURE;
+            return m.unify(args[3], folded) ? Outcome.SUCCESS : Outcome.FAILURE;
+        }
+    }
+
+    private static List<Term> values(List<Term> pairs) {
+        List<Term> out = new ArrayList<Term>(pairs.size());
+        for (int i = 0; i < pairs.size(); i++) out.add(((CompoundTerm) Unify.deref(pairs.get(i))).arg(1));
+        return out;
+    }
+
+    /** '$aggregate_list'(+Spec, +Items, -Result): fold one group. Items may be '$values'(Pairs). */
+    private static final class AggregateListB implements Builtin {
+        @Override
+        public Outcome call(Machine m, Term[] args) {
+            Term src = m.deref(args[1]);
+            boolean pairs = src instanceof CompoundTerm && "$values".equals(((CompoundTerm) src).getName());
+            List<Term> items = NativeLibrary.elements(pairs ? ((CompoundTerm) src).arg(0) : src, m.guard());
+            if (items == null) return Outcome.FAILURE;
+            if (pairs) items = values(items);
+            Term folded = aggregateList(m, m.deref(args[0]), items, "aggregate/3");
+            if (folded == null) return Outcome.FAILURE;
+            return m.unify(args[2], folded) ? Outcome.SUCCESS : Outcome.FAILURE;
+        }
+    }
+
+    /** Fold the pattern instances of one group; null when the fold fails (max/min of nothing). */
+    private static Term aggregateList(Machine m, Term spec, List<Term> items, String ind) {
+        if (!simpleSpec(spec)) {                                       // a compound of specs
+            CompoundTerm c = (CompoundTerm) spec;
+            Term[] out = new Term[c.arity()];
+            for (int i = 0; i < out.length; i++) {
+                List<Term> col = new ArrayList<Term>(items.size());
+                for (int j = 0; j < items.size(); j++) col.add(((CompoundTerm) Unify.deref(items.get(j))).arg(i));
+                out[i] = aggregateList(m, m.deref(c.arg(i)), col, ind);
+                if (out[i] == null) return null;
+            }
+            return new CompoundTerm(c.getFunctor(), out);
+        }
+        String f = (spec instanceof Atom) ? ((Atom) spec).getName() : ((CompoundTerm) spec).getName();
+        int n = (spec instanceof Atom) ? 0 : ((CompoundTerm) spec).arity();
+        if ("count".equals(f)) return Number.valueOf(items.size());
+        if ("bag".equals(f)) return Machine.makeList(items);
+        if ("set".equals(f)) return Machine.makeList(sortDedup(items, m.guard()));
+        if ("sum".equals(f)) {
+            SumAcc acc = new SumAcc();
+            for (int i = 0; i < items.size(); i++) acc.add(m.evalNum(items.get(i), ind));
+            return acc.result();
+        }
+        boolean wantMax = "max".equals(f);
+        Number best = null;
+        Term bestW = null;
+        for (int i = 0; i < items.size(); i++) {
+            Term it = Unify.deref(items.get(i));
+            Term e = (n == 2) ? ((CompoundTerm) it).arg(0) : it;
+            Number v = m.evalNum(e, ind);
+            if (best == null || (wantMax ? numCompare(v, best) > 0 : numCompare(v, best) < 0)) {
+                best = v;
+                if (n == 2) bestW = ((CompoundTerm) it).arg(1);
+            }
+        }
+        if (best == null) return null;
+        return (n == 2) ? new CompoundTerm(new Atom(f), Arrays.asList((Term) best, bestW)) : best;
+    }
+    // END_CHANGE: ISS-2025-0716
+
     /** ISS-2025-0414: exact integer sums (long, then BigInteger), float contagion. */
     private static final class SumAcc {
         private long l;
         private java.math.BigInteger big;
         private double d;
         private boolean isFloat;
+        // START_CHANGE: ISS-2025-0712 - an exact rational sum once a rational is added
+        private java.math.BigInteger rn, rd;
+        // END_CHANGE: ISS-2025-0712
 
         void add(Number n) {
+            // START_CHANGE: ISS-2025-0712
+            if (!isFloat && !n.isFloat() && (rn != null || n instanceof it.denzosoft.jprolog.core.terms.Rational)) {
+                if (rn == null) { rn = (big != null) ? big : java.math.BigInteger.valueOf(l); rd = java.math.BigInteger.ONE; }
+                java.math.BigInteger a = it.denzosoft.jprolog.core.terms.Rational.numeratorOf(n);
+                java.math.BigInteger b = it.denzosoft.jprolog.core.terms.Rational.denominatorOf(n);
+                rn = rn.multiply(b).add(a.multiply(rd));
+                rd = rd.multiply(b);
+                java.math.BigInteger g = rn.gcd(rd);
+                if (g.signum() != 0 && !g.equals(java.math.BigInteger.ONE)) { rn = rn.divide(g); rd = rd.divide(g); }
+                return;
+            }
+            // END_CHANGE: ISS-2025-0712
             if (isFloat || !n.isInteger()) {
-                if (!isFloat) { isFloat = true; d = (big != null) ? big.doubleValue() : (double) l; }
+                if (!isFloat) {
+                    isFloat = true;
+                    d = (rn != null) ? it.denzosoft.jprolog.core.terms.Rational.of(rn, rd).doubleValue()   // ISS-2025-0712
+                      : (big != null) ? big.doubleValue() : (double) l;
+                }
                 d += n.doubleValue();
             } else if (big == null && n.fitsInLong()) {
                 long x = n.longValue();
@@ -416,12 +618,17 @@ final class NativeControl {
 
         Term result() {
             if (isFloat) return new Number(d, false);
+            if (rn != null) return it.denzosoft.jprolog.core.terms.Rational.of(rn, rd);   // ISS-2025-0712
             if (big == null) return Number.valueOf(l);
             return (big.bitLength() <= 63) ? Number.valueOf(big.longValue()) : new Number(big);
         }
     }
 
     private static int numCompare(Number x, Number y) {
+        // ISS-2025-0712: integers and rationals compare exactly
+        if (!x.isInteger() || !y.isInteger()) {
+            if (!x.isFloat() && !y.isFloat()) return it.denzosoft.jprolog.core.terms.Rational.compareExact(x, y);
+        }
         if (x.isInteger() && y.isInteger()) {
             if (x.fitsInLong() && y.fitsInLong()) return Long.compare(x.longValue(), y.longValue());
             return x.bigIntegerValue().compareTo(y.bigIntegerValue());
@@ -446,7 +653,7 @@ final class NativeControl {
             java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
             java.io.PrintStream capture;
             try {
-                capture = new java.io.PrintStream(buf, true, "UTF-8");
+                capture = new ColumnPrintStream(new java.io.PrintStream(buf, true, "UTF-8"), true);   // ISS-2025-0714
             } catch (java.io.UnsupportedEncodingException e) {
                 capture = new java.io.PrintStream(buf, true);
             }

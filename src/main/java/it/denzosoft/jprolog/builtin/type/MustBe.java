@@ -53,7 +53,8 @@ public class MustBe implements BuiltIn {
             case "atomic": ok = (value instanceof Atom) || (value instanceof Number); break;
             case "number": ok = value instanceof Number; break;
             case "integer": ok = (value instanceof Number) && ((Number) value).isInteger(); break;
-            case "float": ok = (value instanceof Number) && !((Number) value).isInteger(); break;
+            case "float": ok = (value instanceof Number) && ((Number) value).isFloat(); break;   // ISS-2025-0712
+            case "rational": ok = (value instanceof Number) && !((Number) value).isFloat(); break;  // ISS-2025-0712
             case "compound": ok = value instanceof CompoundTerm; break;
             case "callable": ok = (value instanceof Atom) || (value instanceof CompoundTerm); break;
             case "var": ok = value instanceof Variable; break;

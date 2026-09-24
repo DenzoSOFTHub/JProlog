@@ -2,10 +2,11 @@ package it.denzosoft.jprolog.builtin.crypto;
 
 // START_CHANGE: ISS-2025-0112 - Cryptographic built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.builtin.LibArgs;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
@@ -63,7 +64,7 @@ public class CryptoUtils implements BuiltIn {
             }
         } catch (Exception e) {
             it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
-            throw new PrologEvaluationException(modeName() + ": " + e.getMessage());
+            throw Errors.host(e, "read", "crypto", null, modeName(), arityOf(query));   // ISS-2025-0684
         }
     }
 
@@ -71,7 +72,7 @@ public class CryptoUtils implements BuiltIn {
             List<Map<String, Term>> solutions) throws Exception {
         List<Term> args = query.getArguments();
         if (args.size() != 4) {
-            throw new PrologEvaluationException("hmac/4 requires 4 arguments: hmac(+Algo, +Key, +Data, -MAC).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0684
         }
         String algo = resolveAtom(args.get(0), bindings);
         String key = resolveAtom(args.get(1), bindings);
@@ -92,7 +93,7 @@ public class CryptoUtils implements BuiltIn {
             List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
         if (args.size() != 2) {
-            throw new PrologEvaluationException("base64_encode/2 requires 2 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0684
         }
         String text = resolveAtom(args.get(0), bindings);
         String encoded = Base64.getEncoder().encodeToString(text.getBytes(StandardCharsets.UTF_8));
@@ -103,7 +104,7 @@ public class CryptoUtils implements BuiltIn {
             List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
         if (args.size() != 2) {
-            throw new PrologEvaluationException("base64_decode/2 requires 2 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0684
         }
         String encoded = resolveAtom(args.get(0), bindings);
         String decoded = new String(Base64.getDecoder().decode(encoded), StandardCharsets.UTF_8);
@@ -114,7 +115,7 @@ public class CryptoUtils implements BuiltIn {
             List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
         if (args.size() != 1) {
-            throw new PrologEvaluationException("uuid/1 requires 1 argument.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0684
         }
         String uuid = java.util.UUID.randomUUID().toString();
         return unifyResult(args.get(0), new Atom(uuid), bindings, solutions);
@@ -124,16 +125,15 @@ public class CryptoUtils implements BuiltIn {
             List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
         if (args.size() != 2) {
-            throw new PrologEvaluationException("random_token/2 requires 2 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0684
         }
-        Term lenTerm = args.get(0).resolveBindings(bindings);
-        if (!(lenTerm instanceof Number)) {
-            throw new PrologEvaluationException("random_token/2: Length must be a number.");
-        }
-        int len = ((Number) lenTerm).getValue().intValue();
+        // START_CHANGE: ISS-2025-0684
+        int len = (int) LibArgs.integer(query, 0, bindings, "random_token", "the length");
         if (len < 1 || len > 1024) {
-            throw new PrologEvaluationException("random_token/2: Length must be 1-1024.");
+            throw Errors.domain("token_length", args.get(0).resolveBindings(bindings), "random_token", 2,
+                                "the length must be 1-1024");
         }
+        // END_CHANGE: ISS-2025-0684
         byte[] bytes = new byte[len];
         SECURE_RANDOM.nextBytes(bytes);
         StringBuilder hex = new StringBuilder(len * 2);
@@ -145,15 +145,16 @@ public class CryptoUtils implements BuiltIn {
             List<Map<String, Term>> solutions) {
         List<Term> args = query.getArguments();
         if (args.size() != 3) {
-            throw new PrologEvaluationException("crypto_random_int/3 requires 3 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0684
         }
-        Term lowTerm = args.get(0).resolveBindings(bindings);
-        Term highTerm = args.get(1).resolveBindings(bindings);
-        if (!(lowTerm instanceof Number) || !(highTerm instanceof Number)) {
-            throw new PrologEvaluationException("crypto_random_int/3: Low and High must be numbers.");
+        // START_CHANGE: ISS-2025-0684
+        int low = (int) LibArgs.integer(query, 0, bindings, "crypto_random_int", "Low");
+        int high = (int) LibArgs.integer(query, 1, bindings, "crypto_random_int", "High");
+        if (high <= low) {
+            throw Errors.domain("empty_range", args.get(1).resolveBindings(bindings), "crypto_random_int", 3,
+                                "High must be greater than Low");
         }
-        int low = ((Number) lowTerm).getValue().intValue();
-        int high = ((Number) highTerm).getValue().intValue();
+        // END_CHANGE: ISS-2025-0684
         int n = low + SECURE_RANDOM.nextInt(high - low);
         return unifyResult(args.get(2), new Number(n), bindings, solutions);
     }
@@ -168,13 +169,22 @@ public class CryptoUtils implements BuiltIn {
         return false;
     }
 
+    // START_CHANGE: ISS-2025-0684 - wave Q1.1: ISO error terms (LIM-038)
     private String resolveAtom(Term term, Map<String, Term> bindings) {
-        Term resolved = term.resolveBindings(bindings);
-        if (!(resolved instanceof Atom)) {
-            throw new PrologEvaluationException(modeName() + ": argument must be an atom.");
-        }
-        return ((Atom) resolved).getName();
+        return LibArgs.text(term.resolveBindings(bindings), modeName(), modeArity(), "the argument");
     }
+
+    private int modeArity() {
+        switch (mode) {
+            case HMAC: case AES_ENCRYPT: case AES_DECRYPT: return 4;
+            case RANDOM_INT: return 3;
+            case UUID: return 1;
+            default: return 2;
+        }
+    }
+
+    private static int arityOf(Term query) { return LibArgs.arity(query); }
+    // END_CHANGE: ISS-2025-0684
 
     private String modeName() {
         switch (mode) {
@@ -209,8 +219,7 @@ public class CryptoUtils implements BuiltIn {
             List<Map<String, Term>> solutions) throws Exception {
         List<Term> args = query.getArguments();
         if (args.size() != 4) {
-            throw new PrologEvaluationException(
-                "crypto_aes_encrypt/4 requires 4 arguments: crypto_aes_encrypt(+PlainText, +Key, +IV, -CipherText).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0684
         }
         String plainText = resolveAtom(args.get(0), bindings);
         byte[] keyBytes = hexToBytes(resolveAtom(args.get(1), bindings));
@@ -218,7 +227,8 @@ public class CryptoUtils implements BuiltIn {
 
         validateAesKeyLength(keyBytes.length);
         if (ivBytes.length != 16) {
-            throw new PrologEvaluationException("crypto_aes_encrypt/4: IV must be 16 bytes (32 hex chars).");
+            throw Errors.domain("aes_iv", args.get(2).resolveBindings(bindings), "crypto_aes_encrypt", 4,
+                                "the IV must be 16 bytes (32 hex chars)");   // ISS-2025-0684
         }
 
         Cipher cipher = Cipher.getInstance(AES_ALGORITHM);
@@ -235,8 +245,7 @@ public class CryptoUtils implements BuiltIn {
             List<Map<String, Term>> solutions) throws Exception {
         List<Term> args = query.getArguments();
         if (args.size() != 4) {
-            throw new PrologEvaluationException(
-                "crypto_aes_decrypt/4 requires 4 arguments: crypto_aes_decrypt(+CipherText, +Key, +IV, -PlainText).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0684
         }
         byte[] cipherBytes = hexToBytes(resolveAtom(args.get(0), bindings));
         byte[] keyBytes = hexToBytes(resolveAtom(args.get(1), bindings));
@@ -244,7 +253,8 @@ public class CryptoUtils implements BuiltIn {
 
         validateAesKeyLength(keyBytes.length);
         if (ivBytes.length != 16) {
-            throw new PrologEvaluationException("crypto_aes_decrypt/4: IV must be 16 bytes (32 hex chars).");
+            throw Errors.domain("aes_iv", args.get(2).resolveBindings(bindings), "crypto_aes_decrypt", 4,
+                                "the IV must be 16 bytes (32 hex chars)");   // ISS-2025-0684
         }
 
         Cipher cipher = Cipher.getInstance(AES_ALGORITHM);
@@ -263,8 +273,7 @@ public class CryptoUtils implements BuiltIn {
             List<Map<String, Term>> solutions) throws Exception {
         List<Term> args = query.getArguments();
         if (args.size() != 2) {
-            throw new PrologEvaluationException(
-                "crypto_hash_password/2 requires 2 arguments: crypto_hash_password(+Password, -Hash).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0684
         }
         String password = resolveAtom(args.get(0), bindings);
 
@@ -288,16 +297,15 @@ public class CryptoUtils implements BuiltIn {
             List<Map<String, Term>> solutions) throws Exception {
         List<Term> args = query.getArguments();
         if (args.size() != 2) {
-            throw new PrologEvaluationException(
-                "crypto_verify_password/2 requires 2 arguments: crypto_verify_password(+Password, +Hash).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0684
         }
         String password = resolveAtom(args.get(0), bindings);
         String storedHash = resolveAtom(args.get(1), bindings);
 
         String[] parts = storedHash.split("\\$");
         if (parts.length != 4 || !"pbkdf2".equals(parts[0])) {
-            throw new PrologEvaluationException(
-                "crypto_verify_password/2: Hash must be in format pbkdf2$iterations$salt$hash.");
+            throw Errors.domain("password_hash", args.get(1).resolveBindings(bindings), "crypto_verify_password", 2,
+                                "the hash must be in format pbkdf2$iterations$salt$hash");   // ISS-2025-0684
         }
 
         int iterations = Integer.parseInt(parts[1]);
@@ -318,15 +326,18 @@ public class CryptoUtils implements BuiltIn {
 
     private void validateAesKeyLength(int length) {
         if (length != 16 && length != 24 && length != 32) {
-            throw new PrologEvaluationException(
-                "AES key must be 16, 24, or 32 bytes (128, 192, or 256 bit). Got: " + length + " bytes.");
+            throw Errors.domain("aes_key_length", it.denzosoft.jprolog.core.terms.Number.valueOf(length), modeName(), 4,
+                                "the AES key must be 16, 24, or 32 bytes");   // ISS-2025-0684
         }
     }
 
-    private static byte[] hexToBytes(String hex) {
-        if (hex.length() % 2 != 0) {
-            throw new PrologEvaluationException("Hex string must have even length.");
+    private byte[] hexToBytes(String hex) {
+        // START_CHANGE: ISS-2025-0684 - a malformed hex argument is a domain error of the predicate
+        if (hex.length() % 2 != 0 || !hex.matches("[0-9a-fA-F]*")) {
+            throw Errors.domain("hex_encoding", new Atom(hex), modeName(), modeArity(),
+                                "expected an even-length hexadecimal string");
         }
+        // END_CHANGE: ISS-2025-0684
         byte[] bytes = new byte[hex.length() / 2];
         for (int i = 0; i < bytes.length; i++) {
             bytes[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);

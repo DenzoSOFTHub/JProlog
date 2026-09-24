@@ -35,6 +35,10 @@ public final class ClpStore {
         final List<Constraint> watchers = new ArrayList<>(4);
         /** Constraints that only care when this variable becomes FIXED (ISS-2025-0642). */
         final List<Constraint> fixWatchers = new ArrayList<>(4);
+        /** ISS-2025-0781: registration position of the engine cell it stands for (-1: none),
+         *  and the scan stamp that de-duplicates it inside one determinedCells() pass. */
+        int regIdx = -1;
+        int seenStamp;
         FdVar(String name) { this.name = name; }
         @Override public String toString() { return name; }
     }
@@ -59,8 +63,45 @@ public final class ClpStore {
         FdVar v = new FdVar(name);
         v.dom = dom;
         vars.add(v);
+        if (unbounded(dom)) unboundedCount++;                  // ISS-2025-0781
         return v;
     }
+
+    // START_CHANGE: ISS-2025-0781 - 4.6 wave Q6 (extra 1): CHANGE TRACKING. The bridge binds the
+    // FD cells whose domain became a single value after every post and every labeling step; it
+    // used to find them by scanning EVERY registered variable (O(n) per step, quadratic for a
+    // 20 000-variable model). The domain trail already records every variable whose domain
+    // changed, in order, so "what changed since the last scan" is the trail suffix from a low-water
+    // mark: undo lowers the mark, consumeChanges() raises it to the top. The same for the
+    // constraint list (a new constraint may make an unbounded variable exactly determined), and a
+    // count of variables with an unbounded domain tells the bridge whether that case can arise.
+    private int dirtyFrom = 0;
+    private int consumedConstraints = 0;
+    private int unboundedCount = 0;
+
+    private static boolean unbounded(IntervalDomain d) { return !d.isEmpty() && !d.isFinite(); }
+
+    /** First trail position not yet consumed by {@link #consumeChanges()}. */
+    public int changedFrom() { return Math.min(dirtyFrom, top); }
+
+    /** The current trail height. */
+    public int trailTop() { return top; }
+
+    /** The variable whose domain the trail entry {@code i} records a change of. */
+    public FdVar trailVar(int i) { return trailVar[i]; }
+
+    /** First constraint not yet consumed. */
+    public int newConstraintsFrom() { return Math.min(consumedConstraints, constraints.size()); }
+
+    /** How many variables (may) have an unbounded, non-empty domain (an over-approximation). */
+    public int unboundedCount() { return unboundedCount; }
+
+    /** Everything recorded so far has been looked at. */
+    public void consumeChanges() {
+        dirtyFrom = top;
+        consumedConstraints = constraints.size();
+    }
+    // END_CHANGE: ISS-2025-0781
 
     public IntervalDomain dom(FdVar v) { return v.dom; }
 
@@ -83,6 +124,7 @@ public final class ClpStore {
         if (next == cur || next.equals(cur)) return !next.isEmpty();
         push(v, cur);
         v.dom = next;
+        if (unbounded(cur) != unbounded(next)) unboundedCount += unbounded(next) ? 1 : -1;   // ISS-2025-0781
         if (next.isEmpty()) return false;
         enqueueWatchers(v.watchers);
         if (next.isSingleton()) enqueueWatchers(v.fixWatchers);
@@ -206,6 +248,12 @@ public final class ClpStore {
 
     /** Install the hook the store polls during long propagation (null = none). */
     public static void setPollHook(Runnable hook) { pollHook = hook; }
+
+    /** Poll the hook now (a long search between propagations, ISS-2025-0769). */
+    static void poll() {
+        Runnable h = pollHook;
+        if (h != null) h.run();
+    }
     // END_CHANGE: ISS-2025-0645
 
     /** Run the propagation queue to a fixpoint. Returns false on any wipeout. */
@@ -246,7 +294,10 @@ public final class ClpStore {
 
     /** Undo all domain changes recorded after {@code mark}. */
     public void undo(int mark) {
+        if (mark < dirtyFrom) dirtyFrom = mark;                                  // ISS-2025-0781
         for (int i = top - 1; i >= mark; i--) {
+            IntervalDomain now = trailVar[i].dom;                                // ISS-2025-0781
+            if (unbounded(now) != unbounded(trailDom[i])) unboundedCount += unbounded(trailDom[i]) ? 1 : -1;
             trailVar[i].dom = trailDom[i];
             trailVar[i] = null;
             trailDom[i] = null;
@@ -267,6 +318,7 @@ public final class ClpStore {
      */
     public void rollbackTo(int domainMark, int constraintMark) {
         undo(domainMark);
+        if (constraintMark < consumedConstraints) consumedConstraints = constraintMark;   // ISS-2025-0781
         for (int i = constraints.size() - 1; i >= constraintMark; i--) {
             Constraint c = constraints.remove(i);
             boolean fixOnly = c.wakesOnFixOnly();

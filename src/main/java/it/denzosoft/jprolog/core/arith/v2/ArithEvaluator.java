@@ -5,6 +5,7 @@ import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
+import it.denzosoft.jprolog.core.terms.Rational;
 import it.denzosoft.jprolog.core.terms.Term;
 import it.denzosoft.jprolog.core.terms.Variable;
 
@@ -220,6 +221,13 @@ public final class ArithEvaluator {
 
     // ----------------------------------------------------------------- unary
     private Number unary(String op, Number x) {
+        // START_CHANGE: ISS-2025-0712 - wave Q2.3: a rational operand (never reached by integers
+        // or floats, so the common path pays one instanceof)
+        if (x instanceof Rational) {
+            Number r = rationalUnary(op, (Rational) x);
+            if (r != null) return r;
+        }
+        // END_CHANGE: ISS-2025-0712
         switch (op) {
             case "-": return x.isInteger() ? big(x.bigIntegerValue().negate()) : f(-x.doubleValue());
             case "+": return x;
@@ -280,6 +288,14 @@ public final class ArithEvaluator {
                 if (x.bigIntegerValue().signum() <= 0) throw new PrologException(ISOErrorTerms.evaluationError("undefined", "msb/1"));
                 return i(x.bigIntegerValue().bitLength() - 1);
             case "succ": requireInt(x, "succ/1"); return big(x.bigIntegerValue().add(BigInteger.ONE));
+            // START_CHANGE: ISS-2025-0712 - rational(X) is the EXACT value of a float,
+            // rationalize(X) the simplest rational that converts back to the same float (SWI);
+            // an integer is its own rational; numerator/denominator of an integer are N and 1.
+            case "rational": return x.isInteger() ? x : exactRational(x, "rational/1");
+            case "rationalize": return x.isInteger() ? x : rationalize(x);
+            case "numerator": requireRational(x, "numerator/1"); return x;
+            case "denominator": requireRational(x, "denominator/1"); return i(1);
+            // END_CHANGE: ISS-2025-0712
             default: throw evaluableError(op, 1);
         }
     }
@@ -305,6 +321,13 @@ public final class ArithEvaluator {
             }
         }
         // END_CHANGE: ISS-2025-0434
+        // START_CHANGE: ISS-2025-0712 - wave Q2.3: exact arithmetic when a rational meets an
+        // integer or a rational; a float operand makes the result a float (the code below).
+        if ((a instanceof Rational || b instanceof Rational) && !a.isFloat() && !b.isFloat()) {
+            Number r = rationalBinary(op, a, b);
+            if (r != null) return r;
+        }
+        // END_CHANGE: ISS-2025-0712
         switch (op) {
             // START_CHANGE: ISS-2025-0359 / ISS-2025-0360 - computed floats go through fc()
             case "+": return bothInt ? big(a.bigIntegerValue().add(b.bigIntegerValue())) : fc(a.doubleValue() + b.doubleValue(), "(+)/2", a, b);
@@ -315,6 +338,10 @@ public final class ArithEvaluator {
                     if (b.bigIntegerValue().signum() == 0) throw new PrologException(ISOErrorTerms.zeroDivisorError("(/)/2"));
                     BigInteger[] qr = a.bigIntegerValue().divideAndRemainder(b.bigIntegerValue());
                     if (qr[1].signum() == 0) return big(qr[0]);              // exact -> integer
+                    // START_CHANGE: ISS-2025-0712 - prefer_rationals (default false, SWI): true
+                    // makes a non-exact integer division a rational
+                    if (preferRationals()) return Rational.of(a.bigIntegerValue(), b.bigIntegerValue());
+                    // END_CHANGE: ISS-2025-0712
                     // START_CHANGE: ISS-2025-0590 - P4.1: an operand past 2^53 has no exact double
                     // image (10^400 is Infinity): divide exactly in decimal, then round once.
                     if (a.bigIntegerValue().bitLength() > 53 || b.bigIntegerValue().bitLength() > 53) {
@@ -391,6 +418,13 @@ public final class ArithEvaluator {
             case "log": checkDomain(a.doubleValue() > 0 && b.doubleValue() > 0, "log/2"); return fc(Math.log(b.doubleValue()) / Math.log(a.doubleValue()), "log/2", a, b);
             // END_CHANGE: ISS-2025-0359
             case "truncate": return roundToInt(a.doubleValue() < 0 ? Math.ceil(a.doubleValue()) : Math.floor(a.doubleValue()), op);
+            // START_CHANGE: ISS-2025-0712 - rdiv/2: exact division of integers (a rational
+            // operand is handled by rationalBinary above); a float is type_error(rational, F)
+            case "rdiv":
+                requireRational(a, "(rdiv)/2"); requireRational(b, "(rdiv)/2");
+                if (b.bigIntegerValue().signum() == 0) throw new PrologException(ISOErrorTerms.zeroDivisorError("(rdiv)/2"));
+                return Rational.of(a.bigIntegerValue(), b.bigIntegerValue());
+            // END_CHANGE: ISS-2025-0712
             default: throw evaluableError(op, 2);
         }
     }
@@ -427,6 +461,7 @@ public final class ArithEvaluator {
 
     private static int compareNum(Number a, Number b) {
         if (a.isInteger() && b.isInteger()) return a.bigIntegerValue().compareTo(b.bigIntegerValue());
+        if (!a.isFloat() && !b.isFloat()) return Rational.compareExact(a, b);   // ISS-2025-0712
         return Double.compare(a.doubleValue(), b.doubleValue());
     }
 
@@ -500,6 +535,104 @@ public final class ArithEvaluator {
         BigInteger r = a.mod(b.abs());
         return (b.signum() < 0 && r.signum() != 0) ? r.subtract(b.abs()) : r;
     }
+
+    // START_CHANGE: ISS-2025-0712 - wave Q2.3: the rational number kind (SWI-Prolog 9).
+    /** The binary operations that stay exact on integers/rationals; null = not handled here. */
+    private static Number rationalBinary(String op, Number a, Number b) {
+        BigInteger na = Rational.numeratorOf(a), da = Rational.denominatorOf(a);
+        BigInteger nb = Rational.numeratorOf(b), db = Rational.denominatorOf(b);
+        switch (op) {
+            case "+": return Rational.of(na.multiply(db).add(nb.multiply(da)), da.multiply(db));
+            case "-": return Rational.of(na.multiply(db).subtract(nb.multiply(da)), da.multiply(db));
+            case "*": return Rational.of(na.multiply(nb), da.multiply(db));
+            case "/": case "rdiv": {
+                String ctx = "/".equals(op) ? "(/)/2" : "(rdiv)/2";
+                if (nb.signum() == 0) throw new PrologException(ISOErrorTerms.zeroDivisorError(ctx));
+                return Rational.of(na.multiply(db), da.multiply(nb));
+            }
+            case "min": return Rational.compareExact(a, b) <= 0 ? a : b;
+            case "max": return Rational.compareExact(a, b) >= 0 ? a : b;
+            case "^": {                                   // rational base, integer exponent: exact
+                if (b instanceof Rational) return null;   // a float result (Math.pow)
+                BigInteger e = b.bigIntegerValue();
+                if (e.bitLength() > 31) throw new PrologException(ISOErrorTerms.resourceError("memory", "(^)/2"));
+                int k = e.intValue();
+                if (k < 0) {
+                    if (na.signum() == 0) throw new PrologException(ISOErrorTerms.zeroDivisorError("(^)/2"));
+                    return Rational.of(da.pow(-k), na.pow(-k));
+                }
+                return Rational.of(na.pow(k), da.pow(k));
+            }
+            default: return null;
+        }
+    }
+
+    /** The unary operations with an exact rational answer; null = the double image is fine. */
+    private static Number rationalUnary(String op, Rational x) {
+        BigInteger n = x.getNumerator(), d = x.getDenominator();
+        switch (op) {
+            case "-": return Rational.of(n.negate(), d);
+            case "+": case "rational": case "rationalize": return x;
+            case "abs": return Rational.of(n.abs(), d);
+            case "sign": return i(n.signum());
+            case "numerator": return big(n);
+            case "denominator": return big(d);
+            case "truncate": return big(n.divide(d));
+            case "floor": return big(floorDiv(n, d));
+            case "ceiling": return big(floorDiv(n.negate(), d).negate());
+            case "integer": case "round": {               // half away from zero
+                BigInteger q = floorDiv(n.abs().shiftLeft(1).add(d), d.shiftLeft(1));
+                return big(n.signum() < 0 ? q.negate() : q);
+            }
+            default: return null;
+        }
+    }
+
+    private void requireRational(Number n, String ctx) {
+        if (n.isFloat()) throw new PrologException(ISOErrorTerms.typeError("rational", n, ctx));
+    }
+
+    private static boolean preferRationals() {
+        Term f = it.denzosoft.jprolog.core.system.PrologFlags.getFlag("prefer_rationals");
+        return f instanceof Atom && "true".equals(((Atom) f).getName());
+    }
+
+    /** The exact value of a finite float. */
+    private static Number exactRational(Number x, String ctx) {
+        double v = x.doubleValue();
+        if (Double.isNaN(v) || Double.isInfinite(v)) throw new PrologException(ISOErrorTerms.evaluationError("undefined", ctx));
+        BigDecimal bd = new BigDecimal(v);
+        BigInteger unscaled = bd.unscaledValue();
+        int scale = bd.scale();
+        if (scale <= 0) return big(unscaled.multiply(BigInteger.TEN.pow(-scale)));
+        return Rational.of(unscaled, BigInteger.TEN.pow(scale));
+    }
+
+    /**
+     * The first continued-fraction convergent of the float's exact value that converts back to
+     * the same float: the simplest "reasonable" rational ({@code rationalize(0.1) =:= 1r10}).
+     * Always terminates — the exact value of a float is a finite continued fraction.
+     */
+    private static Number rationalize(Number x) {
+        double v = x.doubleValue();
+        Number exact = exactRational(x, "rationalize/1");
+        if (!(exact instanceof Rational)) return exact;
+        boolean neg = v < 0;
+        BigInteger n = Rational.numeratorOf(exact).abs(), d = Rational.denominatorOf(exact);
+        double target = Math.abs(v);
+        BigInteger h2 = BigInteger.ZERO, h1 = BigInteger.ONE, k2 = BigInteger.ONE, k1 = BigInteger.ZERO;
+        while (true) {
+            BigInteger[] qr = n.divideAndRemainder(d);
+            BigInteger h = qr[0].multiply(h1).add(h2), k = qr[0].multiply(k1).add(k2);
+            Number cand = Rational.of(h, k);
+            if (qr[1].signum() == 0 || cand.doubleValue() == target) {
+                return neg ? Rational.of(h.negate(), k) : cand;
+            }
+            h2 = h1; h1 = h; k2 = k1; k1 = k;
+            n = d; d = qr[1];
+        }
+    }
+    // END_CHANGE: ISS-2025-0712
 
     private PrologException evaluableError(String name, int arity) {
         Term pi = new CompoundTerm(new Atom("/"), Arrays.asList(new Atom(name), new Number((long) arity)));

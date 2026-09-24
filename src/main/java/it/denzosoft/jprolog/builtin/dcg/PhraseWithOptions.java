@@ -1,7 +1,8 @@
 package it.denzosoft.jprolog.builtin.dcg;
 
+import it.denzosoft.jprolog.core.engine.v4.Errors;
+import it.denzosoft.jprolog.builtin.LibArgs;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.*;
 
 import java.util.*;
@@ -28,7 +29,7 @@ public class PhraseWithOptions implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 4) {
-            throw new PrologEvaluationException("phrase/4 requires exactly 4 arguments: phrase(+DCGBody, ?List, ?Rest, +Options)");
+            throw LibArgs.unknownArity(query); //  ISS-2025-0695: phrase(+DCGBody, ?List, ?Rest, +Options)");
         }
         
         Term dcgBody = query.getArguments().get(0).resolveBindings(bindings);
@@ -45,7 +46,7 @@ public class PhraseWithOptions implements BuiltIn {
             
         } catch (Exception e) {
             it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
-            throw new PrologEvaluationException("phrase/4 error: " + e.getMessage());
+            throw Errors.host(e, "execute", "dcg", null, "phrase_with_options", 4);   // ISS-2025-0695
         }
     }
     
@@ -61,7 +62,7 @@ public class PhraseWithOptions implements BuiltIn {
         }
         
         if (!(optionsTerm instanceof CompoundTerm)) {
-            throw new PrologEvaluationException("phrase/4: Options must be a list");
+            throw LibArgs.notA("list", optionsTerm, "phrase_with_options", 4, "the options");   // ISS-2025-0695
         }
         
         List<Term> optionList = extractListElements(optionsTerm);
@@ -78,7 +79,7 @@ public class PhraseWithOptions implements BuiltIn {
      */
     private void parseOption(Term option, DCGOptions options) {
         if (!(option instanceof CompoundTerm)) {
-            throw new PrologEvaluationException("phrase/4: Invalid option format: " + option);
+            throw LibArgs.notA("compound", option, "phrase_with_options", 4, "an option");   // ISS-2025-0695
         }
         
         CompoundTerm compound = (CompoundTerm) option;
@@ -103,7 +104,8 @@ public class PhraseWithOptions implements BuiltIn {
                                 options.syntaxErrors = actionName;
                                 break;
                             default:
-                                throw new PrologEvaluationException("phrase/4: Invalid syntax_errors value: " + actionName);
+                                throw Errors.domain("syntax_errors", action, "phrase_with_options", 4,
+                                                    "syntax_errors must be error, fail or warning");   // ISS-2025-0695
                         }
                     }
                 }
@@ -117,7 +119,8 @@ public class PhraseWithOptions implements BuiltIn {
                         if (value > 0 && value == (int) value) {
                             options.maxDepth = (int) value;
                         } else {
-                            throw new PrologEvaluationException("phrase/4: max_depth must be a positive integer");
+                            throw Errors.domain("positive_integer", depth, "phrase_with_options", 4,
+                                                "max_depth must be a positive integer");   // ISS-2025-0695
                         }
                     }
                 }
@@ -207,7 +210,10 @@ public class PhraseWithOptions implements BuiltIn {
             // Handle syntax errors according to options
             switch (options.syntaxErrors) {
                 case "error":
-                    throw new PrologEvaluationException("DCG syntax error: " + e.getMessage());
+                    if (e instanceof it.denzosoft.jprolog.core.exceptions.PrologException) {   // ISS-2025-0695
+                        throw (it.denzosoft.jprolog.core.exceptions.PrologException) e;
+                    }
+                    throw Errors.syntax("dcg", "phrase_with_options", 4, String.valueOf(e.getMessage()));
                 case "fail":
                     return false;
                 case "warning":
@@ -216,7 +222,7 @@ public class PhraseWithOptions implements BuiltIn {
                     // END_CHANGE: ISS-2025-0185
                     return false;
                 default:
-                    throw new PrologEvaluationException("DCG error: " + e.getMessage());
+                    throw Errors.host(e, "execute", "dcg", null, "phrase_with_options", 4);   // ISS-2025-0695
             }
         }
     }

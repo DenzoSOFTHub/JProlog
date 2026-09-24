@@ -2,9 +2,10 @@ package it.denzosoft.jprolog.builtin.jdbc;
 
 // START_CHANGE: ISS-2025-0108 - JDBC built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.sql.SQLException;
 import java.util.List;
@@ -32,7 +33,7 @@ public class JdbcTransaction implements BuiltIn {
 
         Term connTerm = args.get(0).resolveBindings(bindings);
         if (!(connTerm instanceof Atom)) {
-            throw new PrologEvaluationException(modeName() + ": Connection must be an atom handle.");
+            throw LibArgs.notA("atom", connTerm, modeName(), LibArgs.nameArity(modeName()), "the connection");   // ISS-2025-0692
         }
         String handle = ((Atom) connTerm).getName();
 
@@ -40,24 +41,24 @@ public class JdbcTransaction implements BuiltIn {
             switch (mode) {
                 case SET_AUTOCOMMIT:
                     if (args.size() != 2) {
-                        throw new PrologEvaluationException("jdbc_set_autocommit/2 requires 2 arguments.");
+                        throw LibArgs.unknownArity(query);   // ISS-2025-0692
                     }
                     Term boolTerm = args.get(1).resolveBindings(bindings);
                     if (!(boolTerm instanceof Atom)) {
-                        throw new PrologEvaluationException("jdbc_set_autocommit/2: second arg must be true or false.");
-                    }
+            throw LibArgs.notA("atom", boolTerm, "jdbc_set_autocommit", 2, "second arg must be true or false");   // ISS-2025-0692
+        }
                     boolean auto = "true".equals(((Atom) boolTerm).getName());
                     JdbcConnectionManager.getInstance().setAutoCommit(handle, auto);
                     break;
                 case COMMIT:
                     if (args.size() != 1) {
-                        throw new PrologEvaluationException("jdbc_commit/1 requires 1 argument.");
+                        throw LibArgs.unknownArity(query);   // ISS-2025-0692
                     }
                     JdbcConnectionManager.getInstance().commit(handle);
                     break;
                 case ROLLBACK:
                     if (args.size() != 1) {
-                        throw new PrologEvaluationException("jdbc_rollback/1 requires 1 argument.");
+                        throw LibArgs.unknownArity(query);   // ISS-2025-0692
                     }
                     JdbcConnectionManager.getInstance().rollback(handle);
                     break;
@@ -65,7 +66,7 @@ public class JdbcTransaction implements BuiltIn {
             solutions.add(bindings);
             return true;
         } catch (SQLException e) {
-            throw new PrologEvaluationException(modeName() + ": " + e.getMessage());
+            throw Errors.host(e, "execute", "sql", null, modeName(), LibArgs.arity(query));   // ISS-2025-0692
         }
     }
 

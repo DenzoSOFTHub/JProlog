@@ -2,9 +2,11 @@ package it.denzosoft.jprolog.builtin.crypto;
 
 // START_CHANGE: ISS-2025-0112 - Cryptographic built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
+import it.denzosoft.jprolog.builtin.LibArgs;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -39,22 +41,20 @@ public class CryptoHash implements BuiltIn {
         Term hashTerm;
 
         if (mode == Mode.GENERIC) {
+            // START_CHANGE: ISS-2025-0684 - wave Q1.1: ISO error terms (LIM-038)
             if (args.size() != 3) {
-                throw new PrologEvaluationException("crypto_hash/3 requires 3 arguments.");
+                throw Errors.existence("procedure", Errors.pi("crypto_hash", args.size()), "crypto_hash", args.size(), null);
             }
-            Term algoTerm = args.get(0).resolveBindings(bindings);
-            if (!(algoTerm instanceof Atom)) {
-                throw new PrologEvaluationException("crypto_hash/3: Algorithm must be an atom.");
-            }
-            algorithm = ((Atom) algoTerm).getName();
-            text = resolveAtom(args.get(1), bindings);
+            algorithm = LibArgs.atom(query, 0, bindings, "crypto_hash", "the algorithm");
+            text = LibArgs.text(query, 1, bindings, "crypto_hash", "the text");
+            // END_CHANGE: ISS-2025-0684
             hashTerm = args.get(2);
         } else {
-            if (args.size() != 2) {
-                throw new PrologEvaluationException(modeName() + " requires 2 arguments.");
+            if (args.size() != 2) {                                     // ISS-2025-0684
+                throw Errors.existence("procedure", Errors.pi(modeName(), args.size()), modeName(), args.size(), null);
             }
             algorithm = modeAlgorithm();
-            text = resolveAtom(args.get(0), bindings);
+            text = LibArgs.text(query, 0, bindings, modeName(), "the text");   // ISS-2025-0684
             hashTerm = args.get(1);
         }
 
@@ -70,7 +70,8 @@ public class CryptoHash implements BuiltIn {
             }
             return false;
         } catch (NoSuchAlgorithmException e) {
-            throw new PrologEvaluationException(modeName() + ": Unknown algorithm: " + algorithm);
+            throw Errors.domain("hash_algorithm", new Atom(algorithm), modeName(), args.size(),
+                                "unknown algorithm");                      // ISS-2025-0684
         }
     }
 
@@ -80,14 +81,6 @@ public class CryptoHash implements BuiltIn {
             sb.append(String.format("%02x", b & 0xFF));
         }
         return sb.toString();
-    }
-
-    private String resolveAtom(Term term, Map<String, Term> bindings) {
-        Term resolved = term.resolveBindings(bindings);
-        if (!(resolved instanceof Atom)) {
-            throw new PrologEvaluationException(modeName() + ": Text must be an atom.");
-        }
-        return ((Atom) resolved).getName();
     }
 
     private String modeAlgorithm() {

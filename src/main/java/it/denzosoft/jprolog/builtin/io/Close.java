@@ -1,9 +1,10 @@
 package it.denzosoft.jprolog.builtin.io;
 
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.v4.PrologStream;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.exceptions.PrologException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
@@ -24,7 +25,7 @@ public class Close implements BuiltIn {
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         int arity = query.getArguments().size();
         if (arity != 1 && arity != 2) {
-            throw new PrologEvaluationException("close/1 or close/2 expected.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
 
         Term streamTerm = query.getArguments().get(0).resolveBindings(bindings);
@@ -70,7 +71,7 @@ public class Close implements BuiltIn {
         if (s == null) {
             throw new PrologException(ISOErrorTerms.existenceError("stream", streamTerm, ctx));
         }
-        throw new PrologEvaluationException("close: Cannot close stream '" + streamTerm + "' (system stream).");
+        throw new PrologException(ISOErrorTerms.permissionError("close", "stream", streamTerm, ctx));   // ISS-2025-0697
         // END_CHANGE: ISS-2025-0472
     }
 

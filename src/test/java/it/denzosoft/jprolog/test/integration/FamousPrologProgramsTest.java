@@ -195,4 +195,105 @@ public class FamousPrologProgramsTest {
         holds("\\+ calc('2+*3', _).");                       // a syntax error fails the parse
         holds("atom_codes('1+2', Cs), phrase(expr(V), Cs, Rest), V == 3, Rest == [].");
     }
+
+    // START_CHANGE: ISS-2025-0798 - 4.6 wave Q7: four programs that use what 4.6 added —
+    // library(solution_sequences), file_search_path/2 library loading, mode-directed tabling and
+    // the CLP(FD) circuit/1 global — run whole, like the classics above.
+
+    @Test(timeout = 30000)
+    public void testSolutionSequencesPipeline() {
+        prolog.consult(
+            "sale(apple, 3).  sale(pear, 5).  sale(apple, 3).  sale(fig, 9).\n"
+          + "sale(kiwi, 2).   sale(pear, 5).  sale(plum, 4).   sale(date, 7).\n"
+          // the distinct sales, cheapest first, second page of two
+          + "page(N, Size, P-C) :- Off is N*Size,\n"
+          + "    limit(Size, offset(Off, order_by([asc(C), asc(P)], distinct(P-C, sale(P, C))))).\n");
+        holds("findall(X, page(0, 2, X), L), L == [kiwi-2, apple-3].");
+        holds("findall(X, page(1, 2, X), L), L == [plum-4, pear-5].");
+        holds("findall(X, page(3, 2, X), L), L == [].");
+        holds("findall(P-C, order_by([desc(C)], distinct(P-C, sale(P, C))), L), "
+            + "L == [fig-9, date-7, pear-5, plum-4, apple-3, kiwi-2].");
+        // the third distinct product in source order, and its position
+        holds("call_nth(distinct(P, sale(P, _)), 3), P == fig.");
+        holds("findall(N-P, call_nth(distinct(P, sale(P, _)), N), L), last(L, Last), Last == 6-date.");
+        // limit/2 stops an infinite generator
+        holds("findall(X, limit(4, (repeat, X = r)), L), L == [r,r,r,r].");
+    }
+
+    @Test(timeout = 30000)
+    public void testFileSearchPathLibraryLoad() throws Exception {
+        java.io.File dir = java.nio.file.Files.createTempDirectory("jprolog-q7-fsp").toFile();
+        java.io.File lib = new java.io.File(dir, "geometry");
+        assertEquals(true, lib.mkdir());
+        java.nio.file.Files.write(new java.io.File(lib, "shapes.pl").toPath(), (
+              ":- module(shapes, [area/2]).\n"
+            + "area(square(S), A) :- A is S*S.\n"
+            + "area(rect(W, H), A) :- A is W*H.\n"
+            + "area(circle(R), A) :- A is pi*R*R.\n").getBytes("UTF-8"));
+        java.nio.file.Files.write(new java.io.File(dir, "totals.pl").toPath(), (
+              ":- module(totals, [total_area/2]).\n"
+            + ":- use_module(geo(shapes)).\n"
+            + "total_area(Shapes, T) :- foldl([S, A0, A]>>(area(S, X), A is A0 + X), Shapes, 0, T).\n")
+            .getBytes("UTF-8"));
+        String d = dir.getAbsolutePath().replace("\\", "/");
+        // an alias to a directory, and an alias defined through another alias
+        holds("assertz(user:file_search_path(mylibs, '" + d + "')), "
+            + "assertz(user:file_search_path(geo, mylibs(geometry))).");
+        holds("use_module(mylibs(totals)).");
+        holds("total_area([square(2), rect(2, 3)], T), T =:= 10.");
+        holds("absolute_file_name(geo(shapes), F, [file_type(prolog), access(read)]), "
+            + "sub_atom(F, _, _, 0, 'geometry/shapes.pl').");
+        // library(X) is searched on the user's library directories too
+        holds("assertz(user:file_search_path(library, mylibs(geometry))).");
+        holds("use_module(library(shapes)), area(circle(1), A), abs(A - pi) < 1.0e-9.");
+        holds("catch(use_module(mylibs(nosuch)), error(existence_error(source_sink, _), _), true).");
+    }
+
+    @Test(timeout = 30000)
+    public void testTabledShortestPathWithMin() {
+        prolog.consult(
+            ":- table path(_, _, min).\n"
+          + "edge(a, b, 4). edge(a, c, 1). edge(c, b, 2). edge(b, d, 5).\n"
+          + "edge(c, d, 8). edge(d, e, 3). edge(e, a, 1). edge(b, e, 9).\n"
+          + "path(X, Y, C) :- edge(X, Y, C).\n"
+          + "path(X, Y, C) :- path(X, Z, C0), edge(Z, Y, C1), C is C0 + C1.\n");
+        // the graph is cyclic (a -> ... -> e -> a): only tabling makes the left recursion terminate
+        holds("path(a, b, C), C == 3.");
+        holds("path(a, d, C), C == 8.");
+        holds("path(a, e, C), C == 11.");
+        holds("path(a, a, C), C == 12.");
+        holds("findall(Y-C, path(a, Y, C), L), msort(L, S), S == [a-12, b-3, c-1, d-8, e-11].");
+        // one answer per target: the aggregate replaces the worse ones
+        holds("aggregate_all(count, path(a, _, _), N), N == 5.");
+        // a bound moded argument is evaluated free and then compared (SWI)
+        holds("path(a, b, 3).");
+        holds("\\+ path(a, b, 4).");
+    }
+
+    @Test(timeout = 60000)
+    public void testKnightsTour6x6WithClpfd() {
+        prolog.consult(
+            ":- use_module(library(clpfd)).\n"
+          + "n_tour(N, Ts) :- length(Ts, N), maplist(kt_len(N), Ts), append(Ts, Vs),\n"
+          + "    kt_succ(Vs, N, 1), circuit(Vs).\n"
+          + "kt_len(N, L) :- length(L, N).\n"
+          + "kt_succ([], _, _).\n"
+          + "kt_succ([V|Vs], N, K0) :- findall(Num, n_k_next(N, K0, Num), [Next|Nexts]),\n"
+          + "    foldl(kt_dom, Nexts, Next, Dom), V in Dom, K1 is K0 + 1, kt_succ(Vs, N, K1).\n"
+          + "kt_dom(N, D0, D0\\/N).\n"
+          + "n_x_y_k(N, X, Y, K) :- [X,Y] ins 1..N, K #= N*(Y-1) + X.\n"
+          + "n_k_next(N, K0, K) :- n_x_y_k(N, X0, Y0, K0), [DX,DY] ins -2 \\/ -1 \\/ 1 \\/ 2,\n"
+          + "    abs(DX) + abs(DY) #= 3, [X,Y] ins 1..N, X #= X0 + DX, Y #= Y0 + DY,\n"
+          + "    n_x_y_k(N, X, Y, K), label([DX,DY]).\n"
+          // an independent check: a permutation, every step a knight move, one cycle through all
+          + "tour_ok(N, Vs) :- NN is N*N, msort(Vs, S), numlist(1, NN, S), kt_walk(Vs, N, 1, NN).\n"
+          + "kt_walk(Vs, N, K, Left) :- nth1(K, Vs, Next), kt_move(N, K, Next), Left1 is Left - 1,\n"
+          + "    ( Left1 =:= 0 -> Next =:= 1 ; Next =\\= 1, kt_walk(Vs, N, Next, Left1) ).\n"
+          + "kt_move(N, A, B) :- XA is (A-1) mod N, YA is (A-1) // N, XB is (B-1) mod N,\n"
+          + "    YB is (B-1) // N, DX is abs(XA-XB), DY is abs(YA-YB),\n"
+          + "    ( DX =:= 1, DY =:= 2 -> true ; DX =:= 2, DY =:= 1 ).\n");
+        holds("once((n_tour(6, Ts), append(Ts, Vs), labeling([ff], Vs))), tour_ok(6, Vs).");
+        holds("\\+ (n_tour(5, Ts), append(Ts, Vs), labeling([ff], Vs)).");   // odd boards have none
+    }
+    // END_CHANGE: ISS-2025-0798
 }

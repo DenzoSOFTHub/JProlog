@@ -6,11 +6,12 @@ import it.denzosoft.jprolog.core.engine.Prolog;
 import it.denzosoft.jprolog.core.engine.SolverContext;
 import it.denzosoft.jprolog.core.engine.Rule;
 import it.denzosoft.jprolog.core.engine.KnowledgeBase;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
+import it.denzosoft.jprolog.builtin.LibArgs;
 import it.denzosoft.jprolog.core.terms.Variable;
 
 import java.io.IOException;
@@ -80,8 +81,8 @@ public class PersistencePredicates implements BuiltInWithContext {
                                      List<Map<String, Term>> solutions) {
         Prolog engine = solver.getPrologContext();
         if (engine == null) {
-            throw new PrologEvaluationException(operationType.name().toLowerCase()
-                    + ": Prolog engine context not available.");
+            throw Errors.systemError("Prolog engine context not available", operationType.name().toLowerCase(),
+                                     LibArgs.arity(query));   // ISS-2025-0694
         }
 
         try {
@@ -102,10 +103,15 @@ public class PersistencePredicates implements BuiltInWithContext {
                 case DB_BATCH_ASSERT:    return doDbBatchAssert(engine, solver, query, bindings, solutions);
                 // END_CHANGE: ISS-2025-0175
                 default:
-                    throw new PrologEvaluationException("Unknown persistence operation: " + operationType);
+                    throw Errors.systemError("unknown persistence operation " + operationType,
+                                             operationType.name().toLowerCase(), LibArgs.arity(query));   // ISS-2025-0694
             }
         } catch (IOException e) {
-            throw new PrologEvaluationException(operationType.name().toLowerCase() + ": " + e.getMessage());
+            // ISS-2025-0694: a host failure of the file, with the file name as the culprit when it is one
+            Term culprit = LibArgs.arity(query) > 0 ? query.getArguments().get(0).resolveBindings(bindings) : null;
+            String op = operationType.name().contains("LOAD") || operationType.name().contains("IMPORT") ? "read" : "write";
+            throw Errors.host(e, op, "file", culprit instanceof Atom ? culprit : null,
+                              operationType.name().toLowerCase(), LibArgs.arity(query));
         }
     }
 
@@ -125,7 +131,7 @@ public class PersistencePredicates implements BuiltInWithContext {
         String filename = resolveAtom(query.getArguments().get(0), bindings, "db_save/1");
         List<Rule> rules = engine.getRules();
         String content = rulesToPrologText(rules);
-        Files.write(Paths.get(filename), content.getBytes());
+        Files.write(Paths.get(it.denzosoft.jprolog.core.engine.v4.EngineState.path(filename)), content.getBytes());
         solutions.add(new HashMap<>(bindings));
         return true;
     }
@@ -137,7 +143,7 @@ public class PersistencePredicates implements BuiltInWithContext {
                              List<Map<String, Term>> solutions) throws IOException {
         checkArity(query, 1, "db_load/1");
         String filename = resolveAtom(query.getArguments().get(0), bindings, "db_load/1");
-        String content = new String(Files.readAllBytes(Paths.get(filename)));
+        String content = new String(Files.readAllBytes(Paths.get(it.denzosoft.jprolog.core.engine.v4.EngineState.path(filename))));
         engine.consult(content);
         solutions.add(new HashMap<>(bindings));
         return true;
@@ -161,22 +167,18 @@ public class PersistencePredicates implements BuiltInWithContext {
                 Term functorTerm = ct.getArguments().get(0).resolveBindings(bindings);
                 Term arityTerm = ct.getArguments().get(1).resolveBindings(bindings);
                 if (!(functorTerm instanceof Atom)) {
-                    throw new PrologEvaluationException(
-                            "db_save_predicate/2: functor must be an atom, got: " + functorTerm);
+                    throw LibArgs.notA("atom", functorTerm, "db_save_predicate", 2, "the functor");   // ISS-2025-0694
                 }
                 if (!(arityTerm instanceof Number)) {
-                    throw new PrologEvaluationException(
-                            "db_save_predicate/2: arity must be a number, got: " + arityTerm);
+                    throw LibArgs.notA("integer", arityTerm, "db_save_predicate", 2, "the arity");   // ISS-2025-0694
                 }
                 functor = ((Atom) functorTerm).getName();
                 arity = ((Number) arityTerm).getValue().intValue();
             } else {
-                throw new PrologEvaluationException(
-                        "db_save_predicate/2: first argument must be Functor/Arity, got: " + specTerm);
+                throw piError(specTerm, "db_save_predicate/2");               // ISS-2025-0694
             }
         } else {
-            throw new PrologEvaluationException(
-                    "db_save_predicate/2: first argument must be Functor/Arity, got: " + specTerm);
+            throw piError(specTerm, "db_save_predicate/2");                   // ISS-2025-0694
         }
 
         List<Rule> allRules = engine.getRules();
@@ -188,7 +190,7 @@ public class PersistencePredicates implements BuiltInWithContext {
         }
 
         String content = rulesToPrologText(filtered);
-        Files.write(Paths.get(filename), content.getBytes());
+        Files.write(Paths.get(it.denzosoft.jprolog.core.engine.v4.EngineState.path(filename)), content.getBytes());
         solutions.add(new HashMap<>(bindings));
         return true;
     }
@@ -253,7 +255,7 @@ public class PersistencePredicates implements BuiltInWithContext {
         }
         json.append("]");
 
-        Files.write(Paths.get(filename), json.toString().getBytes());
+        Files.write(Paths.get(it.denzosoft.jprolog.core.engine.v4.EngineState.path(filename)), json.toString().getBytes());
         solutions.add(new HashMap<>(bindings));
         return true;
     }
@@ -265,7 +267,7 @@ public class PersistencePredicates implements BuiltInWithContext {
                                    List<Map<String, Term>> solutions) throws IOException {
         checkArity(query, 1, "db_import_json/1");
         String filename = resolveAtom(query.getArguments().get(0), bindings, "db_import_json/1");
-        String content = new String(Files.readAllBytes(Paths.get(filename)));
+        String content = new String(Files.readAllBytes(Paths.get(it.denzosoft.jprolog.core.engine.v4.EngineState.path(filename))));
 
         // Simple JSON array parser - extract head and body from each object
         StringBuilder prologText = new StringBuilder();
@@ -343,7 +345,7 @@ public class PersistencePredicates implements BuiltInWithContext {
         String handle = resolveAtom(query.getArguments().get(0), bindings, "db_restore/1");
         String content = snapshots.get(handle);
         if (content == null) {
-            throw new PrologEvaluationException("db_restore/1: unknown snapshot handle '" + handle + "'");
+            throw Errors.existence("snapshot", new Atom(handle), "db_restore", 1, "unknown snapshot handle");   // ISS-2025-0694
         }
 
         // Clear existing rules and load the snapshot
@@ -360,7 +362,7 @@ public class PersistencePredicates implements BuiltInWithContext {
                               List<Map<String, Term>> solutions) {
         // db_clear/0 takes no arguments
         if (query.getArguments() != null && !query.getArguments().isEmpty()) {
-            throw new PrologEvaluationException("db_clear/0 takes no arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0694
         }
         clearAllRules(engine);
         solutions.add(new HashMap<>(bindings));
@@ -464,7 +466,7 @@ public class PersistencePredicates implements BuiltInWithContext {
                               List<Map<String, Term>> solutions) throws IOException {
         // db_sync/0 takes no arguments
         if (query.getArguments() != null && !query.getArguments().isEmpty()) {
-            throw new PrologEvaluationException("db_sync/0 takes no arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0694
         }
 
         // Write all persistent predicates to their backing files
@@ -484,7 +486,7 @@ public class PersistencePredicates implements BuiltInWithContext {
             }
 
             String content = rulesToPrologText(filtered);
-            Files.write(Paths.get(backingFile), content.getBytes());
+            Files.write(Paths.get(it.denzosoft.jprolog.core.engine.v4.EngineState.path(backingFile)), content.getBytes());
         }
 
         solutions.add(new HashMap<>(bindings));
@@ -508,8 +510,7 @@ public class PersistencePredicates implements BuiltInWithContext {
         // Parse the Prolog list into individual terms
         List<Term> elements = termToList(listTerm);
         if (elements == null) {
-            throw new PrologEvaluationException(
-                    "db_batch_assert/1: argument must be a list, got: " + listTerm);
+            throw LibArgs.notA("list", listTerm, "db_batch_assert", 1, "the argument");   // ISS-2025-0694
         }
 
         if (elements.isEmpty()) {
@@ -637,7 +638,7 @@ public class PersistencePredicates implements BuiltInWithContext {
             return (KnowledgeBase) field.get(engine);
         } catch (Exception e) {
             it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
-            throw new PrologEvaluationException("Cannot access knowledge base: " + e.getMessage());
+            throw Errors.systemError("cannot access knowledge base: " + e.getMessage(), "persistence", 0);   // ISS-2025-0694
         }
     }
 
@@ -690,9 +691,29 @@ public class PersistencePredicates implements BuiltInWithContext {
                 }
             }
         }
-        throw new PrologEvaluationException(
-                predicateName + ": argument must be Functor/Arity, got: " + specTerm);
+        throw piError(specTerm, predicateName);                               // ISS-2025-0694
     }
+
+    // START_CHANGE: ISS-2025-0694 - wave Q1.1: ISO error terms (LIM-038)
+    private static String nm(String pi) { int i = pi.lastIndexOf('/'); return i < 0 ? pi : pi.substring(0, i); }
+
+    private static int ar(String pi) {
+        int i = pi.lastIndexOf('/');
+        try { return i < 0 ? 0 : Integer.parseInt(pi.substring(i + 1)); } catch (NumberFormatException e) { return 0; }
+    }
+
+    /** A malformed Name/Arity argument: instantiation_error when (part of) it is unbound. */
+    private static it.denzosoft.jprolog.core.exceptions.PrologException piError(Term spec, String pi) {
+        boolean partial = spec instanceof it.denzosoft.jprolog.core.terms.Variable;
+        if (!partial && spec instanceof CompoundTerm && "/".equals(((CompoundTerm) spec).getName())
+                && spec.getArguments().size() == 2) {
+            partial = spec.getArguments().get(0) instanceof it.denzosoft.jprolog.core.terms.Variable
+                   || spec.getArguments().get(1) instanceof it.denzosoft.jprolog.core.terms.Variable;
+        }
+        if (partial) return Errors.instantiation(nm(pi), ar(pi), "Functor/Arity must be bound");
+        return Errors.type("predicate_indicator", spec, nm(pi), ar(pi), "Functor/Arity expected");
+    }
+    // END_CHANGE: ISS-2025-0694
 
     /**
      * Check expected arity of the query term.
@@ -701,8 +722,7 @@ public class PersistencePredicates implements BuiltInWithContext {
         List<Term> args = query.getArguments();
         int actual = (args == null) ? 0 : args.size();
         if (actual != expected) {
-            throw new PrologEvaluationException(
-                    predicateName + " requires " + expected + " argument(s), got " + actual + ".");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0694
         }
     }
 
@@ -712,7 +732,7 @@ public class PersistencePredicates implements BuiltInWithContext {
     private String resolveAtom(Term term, Map<String, Term> bindings, String predicateName) {
         Term resolved = term.resolveBindings(bindings);
         if (!(resolved instanceof Atom)) {
-            throw new PrologEvaluationException(predicateName + ": argument must be an atom, got: " + resolved);
+            throw LibArgs.notA("atom", resolved, nm(predicateName), ar(predicateName), "the argument");   // ISS-2025-0694
         }
         return ((Atom) resolved).getName();
     }

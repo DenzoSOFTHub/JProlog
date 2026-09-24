@@ -80,6 +80,15 @@ public class Rule {
     transient int kbSlot = -1;
     // END_CHANGE: ISS-2025-0544
 
+    // START_CHANGE: ISS-2025-0730 - 4.6 wave Q3.1: the file a consulted clause came from (the
+    // canonical path of the LOAD's file; an included file's clauses belong to the including load),
+    // null for asserted clauses and text consulted from Java. A reconsult removes only the
+    // clauses its file owns.
+    private String sourceFile;
+    public String getSourceFile() { return sourceFile; }
+    public void setSourceFile(String file) { this.sourceFile = file; }
+    // END_CHANGE: ISS-2025-0730
+
     public int getSourceLine() { return sourceLine; }
     public void setSourceLine(int line) { this.sourceLine = line; }
 

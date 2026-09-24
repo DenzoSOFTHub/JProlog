@@ -48,7 +48,8 @@ In Prolog, operators have precedence levels (1-1200) that determine evaluation o
 
 The authoritative list is the *Operator Precedence Table* at the end of this document, and the
 engine itself: `findall(P-T-N, current_op(P, T, N), L)` in a fresh session returns exactly those
-67 operators (60 before v4.5.0, which added the seven CLP(FD) reification connectives).
+69 operators (60 before v4.5.0, which added the seven CLP(FD) reification connectives; v4.6.0
+added `|` and `as`).
 
 ### Associativity
 - **Left-associative**: `a op b op c` = `(a op b) op c`
@@ -819,8 +820,20 @@ X = 3.
 X = -4.        % floored (toward -inf); -7 // 2 truncates toward zero to -3
 
 ?- X is 6 rdiv 4.
-X = 3/2.       % rational division
+X = 3r2.       % rational division (v4.6: a real rational, printed SWI-style)
+
+?- X is 6 rdiv 3.
+X = 2.         % a whole result is an integer
+
+?- catch(X is 1.5 rdiv 2, E, true).
+E = error(type_error(rational, 1.5), _).
 ```
+
+*v4.6* (ISS-2025-0712): rationals are a number kind (SWI-Prolog 9 with `prefer_rationals = false`,
+so `/` of two integers still gives a float unless the division is exact). `+ - * / min max` and
+`^` with an integer exponent stay exact when a rational meets an integer or a rational; a float
+operand gives a float. The reader accepts the literal `1r3`. See `rational/1,3`, `rationalize/1`,
+`numerator/1`, `denominator/1` in the predicate reference.
 
 ### **/2 (Exponentiation)
 **Purpose**: Raise a number to a power.
@@ -1482,6 +1495,7 @@ Complete precedence table for JProlog operators:
 | 1200 | xfx | :- --> | Rule / DCG rule |
 | 1200 | fx  | :- ?- | Directive / Query |
 | 1150 | fx | dynamic discontiguous multifile module_transparent meta_predicate table | Declaration directives (`:- dynamic foo/1.`) |
+| 1105 | xfy | \| | Bar (*v4.6.0*, ISS-2025-0734): `(a \| b)` reads as `'|'(a, b)`; as a goal and in a DCG body it is `;` |
 | 1100 | xfy | ; | Disjunction (OR) |
 | 1050 | xfy | -> *-> | If-then / Soft-cut |
 | 1000 | xfy | , | Conjunction (AND) |
@@ -1489,6 +1503,7 @@ Complete precedence table for JProlog operators:
 | 700 | xfx | = \\= == \\== | Unification operators |
 | 700 | xfx | @< @=< @> @>= | Term comparison |
 | 700 | xfx | =.. is | Univ, arithmetic evaluation |
+| 700 | xfx | as | *v4.6.0* (ISS-2025-0734): `:- table p/1 as subsumptive`, `use_module(M, [p/1 as q])` |
 | 700 | xfx | =:= =\\= < =< > >= | Arithmetic comparison |
 | 760 | yfx | #<==> | CLP(FD) reified equivalence (v4.5.0) |
 | 750 | xfy | #==> | CLP(FD) reified implication (v4.5.0) |
@@ -1572,7 +1587,11 @@ and reads them back.
 - `name(...)` where `name` is an infix operator is a compound: `- mod(X)` is `-(mod(X))`.
 - Escapes (ISS-2025-0560): `\e` (27), `\s` (space), `\uXXXX`, `\UXXXXXXXX`, `\xHH..\`,
   `\NNN\`; any other escape is a syntax error. `` `text` `` reads as a code list.
-- `(a|b)` still reads as `(a;b)` (SWI 7+ reads `'|'(a,b)`; see LIM-044).
+- *v4.6.0* (ISS-2025-0734): `(a|b)` reads as `'|'(a,b)` — the bar is the infix operator `|`
+  at 1105 `xfy` and `as` is `700 xfx`, both as in the SWI-Prolog 9 manual's table of system
+  operators (section 4.25). `writeq('|'(a,b))` prints `'|'(a,b)`. `op/3` may redefine `|` only
+  as an infix operator of priority 1001 or more (ISO), and `op(0, xfy, '|')` makes the bar an
+  error outside lists again.
 
 ## Summary
 

@@ -59,12 +59,19 @@ public final class Machine {
     // ------------------------------------------------------------------ context
 
     private final Engine engine;
+    /** ISS-2025-0749: the end marker of the signal goals running now; null when none is. */
+    private Goal sigEnd;
     /** ISS-2025-0661: the table sequence number the innermost negation started at; -1 = none. */
     private long negTableFloor = -1;
     private final Bindings B;
     private final ResourceGuard guard;
     private DebugController debugController;
     private String currentContext = "call";
+    // START_CHANGE: ISS-2025-0778 - 4.6 wave Q6.4: the context of a running native is kept as its
+    // name and arity and rendered "name/arity" only when an error asks for it (callNative used to
+    // concatenate the string on EVERY native call — compare/3 inside every predsort comparison).
+    private int currentContextArity = -1;
+    // END_CHANGE: ISS-2025-0778
 
     // START_CHANGE: ISS-2025-0466 - wave W6, design B.10: the module the goal currently being
     // stepped executes in. null == `user`. It is derived, never guessed: the drive loop sets it
@@ -126,14 +133,14 @@ public final class Machine {
     // END_CHANGE: ISS-2025-0540
 
     /** A goal that runs in an explicit module ({@code null} == {@code user}). */
-    private static Goal mg(Term t, int barrier, Goal next, String mod) {
+    static Goal mg(Term t, int barrier, Goal next, String mod) {   // ISS-2025-0780: package
         Goal g = new Goal(t, barrier, next);
         g.module = mod;
         return g;
     }
 
     /** {@code null} for {@code user}, so the hot path never stores a redundant string. */
-    private static String modKey(String name) {
+    static String modKey(String name) {                  // ISS-2025-0780: package
         return (name == null || Modules.USER.equals(name)) ? null : name;
     }
     // END_CHANGE: ISS-2025-0466
@@ -203,7 +210,9 @@ public final class Machine {
     Bindings bindings() { return B; }
 
     /** The predicate indicator errors raised right now are stamped with. */
-    public String currentContext() { return currentContext; }
+    public String currentContext() {
+        return currentContextArity < 0 ? currentContext : currentContext + "/" + currentContextArity;   // ISS-2025-0778
+    }
 
     // ------------------------------------------------------------------ goal stack / choice points
 
@@ -226,6 +235,59 @@ public final class Machine {
             this.term = null; this.cutBarrier = 0; this.next = next; this.action = action; this.frame = null;
         }
     }
+
+    // START_CHANGE: ISS-2025-0779 - 4.6 wave Q6.2/Q6.4: native iterations that run their user
+    // goals ON the goal stack. A Step is pushed as a goal action; when the drive loop reaches it,
+    // it inspects what the goal before it produced, updates its Java-side state and pushes the
+    // next goal (and itself, or its successor) — no nested drive per element. Returning false is a
+    // plain failure: the machine backtracks.
+    /** A continuation that may fail. */
+    abstract static class Step implements Runnable {
+        /** Run the step; {@code false} fails (the machine backtracks). */
+        abstract boolean step(Machine m);
+        @Override public final void run() { throw new IllegalStateException("a Step runs through step()"); }
+    }
+
+    /** Push a Step as the next thing to run. */
+    void pushStep(Step s) { goalStack = new Goal(s, goalStack); }
+
+    /** Push {@code goal} to run next in context {@code module} (null == user), with its own cut
+     *  barrier (the current choice-point height), as call/1 would. */
+    void pushCall(Term goal, String module) { goalStack = mg(goal, cps.size(), goalStack, module); }
+
+    /** The current choice-point height. */
+    int cpHeight() { return cps.size(); }
+
+    /** Remove every choice point above {@code height} (running pending cleanups), as a cut. */
+    void cutBack(int height) { cut(height); }
+
+    /** The context module of the running goal ({@code null} == user). */
+    String ctxModuleKey() { return ctxModule; }
+
+    /**
+     * Push a choice point that has no alternative: backtracking into it FAILS the construct that
+     * pushed it (and reports its Fail port when {@code traceGoal} is not null). It is the floor a
+     * goal-stack iteration fails onto when one of its user goals fails.
+     */
+    void pushFailFrame(Term traceGoal, int traceDepth) {
+        CP cp = new CP(CP.GEN, B.mark());
+        cp.gen = EXHAUSTED_GEN;
+        cp.genExhausted = true;
+        if (traceGoal != null) { cp.traceGoal = traceGoal; cp.traceDepth = traceDepth; cp.traceDebug = debugPortsActive(); }
+        pushCP(cp);
+    }
+
+    /** Called by a native that emits its own Exit/Fail ports later (from a Step): returns the
+     *  depth of its Call port, or -1 when no port is being traced. */
+    int claimNativePorts() {
+        if (nativeTraceGoal == null) return -1;
+        nativePortsHandled = true;
+        return nativeTraceDepth;
+    }
+
+    /** The goal the running native's ports report (null when not traced). */
+    Term nativeTraceGoal() { return nativeTraceGoal; }
+    // END_CHANGE: ISS-2025-0779
 
     /** A lazy alternative supply. Returns the next goal stack, {@link #FAILED} to skip, or
      *  {@link #EXHAUSTED} when spent. Never null: null is a perfectly good (empty) goal stack. */
@@ -279,17 +341,17 @@ public final class Machine {
 
     private static final Clause[] NO_CLAUSES = new Clause[0];
 
-    private Goal goalStack;
+    Goal goalStack;                                   // ISS-2025-0780: package (NativeApply)
     private final ArrayList<CP> cps = new ArrayList<CP>();
     /** Goals woken by binding a frozen/attributed variable; run before the next goal. */
     private final ArrayList<Term> woken = new ArrayList<Term>();
 
-    private void pushCP(CP cp) {
+    void pushCP(CP cp) {                                 // ISS-2025-0780: package
         cps.add(cp);
         B.barrierSerial = cp.serialMark;
     }
 
-    private CP popCP() {
+    CP popCP() {                                         // ISS-2025-0780: package
         CP cp = cps.remove(cps.size() - 1);
         B.barrierSerial = cps.isEmpty() ? 0 : cps.get(cps.size() - 1).serialMark;
         return cp;
@@ -354,6 +416,33 @@ public final class Machine {
     /** Push a goal in front of the current continuation (opaque to cut). */
     public void pushGoal(Term goal) { goalStack = mg(goal, cps.size(), goalStack); }
 
+    // START_CHANGE: ISS-2025-0710 - wave Q2.1: library(solution_sequences) runs its goal INSIDE
+    // the current continuation (lazily — no findall, no nested drive) and looks at each solution
+    // as it arrives. A filter answers per solution: pass it on, reject it (backtrack into the goal
+    // for the next one), or pass it on as the LAST one — which cuts the goal's remaining choice
+    // points exactly as `!` would, so a setup_call_cleanup/3 inside it runs its cleanup now.
+    /** A per-solution decision of {@link #pushFiltered}. */
+    interface SolutionFilter {
+        int ACCEPT = 0, REJECT = 1, ACCEPT_LAST = 2;
+        /** Called with the solution's bindings live; may bind (e.g. call_nth/2's counter). */
+        int onSolution(Machine m);
+    }
+
+    /** {@code call(Goal)} (opaque to cut, in the current context module) with a solution filter. */
+    void pushFiltered(Term goal, final SolutionFilter filter) {
+        final int barrier = cps.size();
+        final Goal cont = goalStack;
+        Goal check = new Goal(new Runnable() {
+            @Override public void run() {
+                int r = filter.onSolution(Machine.this);
+                if (r == SolutionFilter.REJECT) goalStack = new Goal(ATOM_FAIL, 0, goalStack);
+                else if (r == SolutionFilter.ACCEPT_LAST) cut(barrier);
+            }
+        }, cont);
+        goalStack = mg(goal, barrier, check);
+    }
+    // END_CHANGE: ISS-2025-0710
+
     // START_CHANGE: ISS-2025-0453 - wave W3: the native library built-ins are nondeterministic, so
     // pushGenerator has to own the Exit/Redo/Fail ports of the goal that installed it. callNative
     // stashes the traced goal here before the call; the generator's choice point carries it, exactly
@@ -397,6 +486,9 @@ public final class Machine {
     public void solve(Term query, SolutionSink sink) {
         cps.clear();
         woken.clear();
+        sigEnd = null;                                             // ISS-2025-0749
+        delays = null;                                             // ISS-2025-0755
+        lastAnswerDelays = null;
         portDepth = 0;                                             // ISS-2025-0482
         // START_CHANGE: ISS-2025-0479 - a WORKER machine does not attach the debug controller.
         // DebugController keeps ONE call stack and ONE pause lock for the session; a worker firing
@@ -433,6 +525,16 @@ public final class Machine {
             (top && engine.context() != null) ? engine.context().getResourceGuard() : null;
         if (top && engine.context() != null) engine.context().setResourceGuard(guard);
         // END_CHANGE: ISS-2025-0479
+        // START_CHANGE: ISS-2025-0746/0749/0750 - 4.6 wave Q4: a top-level query registers its
+        // thread as able to send messages (the load-cycle check) and publishes its guard for
+        // thread_statistics/3.
+        final it.denzosoft.jprolog.core.engine.ThreadSignals.Box sigBox =
+            it.denzosoft.jprolog.core.engine.ThreadSignals.current();
+        final it.denzosoft.jprolog.core.engine.ResourceGuard prevSigGuard = sigBox.guard;
+        sigBox.guard = guard;
+        sigBox.thread = Thread.currentThread();
+        if (top) it.denzosoft.jprolog.core.engine.ThreadWaits.enterQuery();
+        // END_CHANGE: ISS-2025-0746/0749/0750
         // START_CHANGE: ISS-2025-0492 - this machine takes the bridged built-ins' undo actions
         // while it runs (b_setval/2, op/3, setarg/3, the CLP(FD) store). Saved and restored, so a
         // nested machine hands the role back.
@@ -470,6 +572,8 @@ public final class Machine {
             }
             Undo.exit(prevUndoTarget);                             // ISS-2025-0492
             // END_CHANGE: ISS-2025-0492
+            sigBox.guard = prevSigGuard;                                          // ISS-2025-0750
+            if (top) it.denzosoft.jprolog.core.engine.ThreadWaits.exitQuery();   // ISS-2025-0746
         }
     }
 
@@ -541,6 +645,9 @@ public final class Machine {
     // sees their constraints. Nested sub-queries (runSubQuery) keep the non-copying snapshot: a
     // legacy built-in maps their answers back onto its caller's cells.
     private Map<String, Term> answer(List<String> names, List<Variable> cells) {
+        // ISS-2025-0755: the answer's delayed literals (null: unconditional), for the toplevel
+        lastAnswerDelays = (delays == null) ? null
+            : Unify.copy(Tabling.Delay.conjunction(delays), new IdentityHashMap<Variable, Variable>(), guard);
         Map<String, Term> m = new HashMap<String, Term>();
         if (names.isEmpty()) return m;
         IdentityHashMap<Variable, Variable> vm = new IdentityHashMap<Variable, Variable>();
@@ -569,6 +676,31 @@ public final class Machine {
         while (true) {
             guard.step();
             try {
+                // START_CHANGE: ISS-2025-0749 - 4.6 wave Q4.1: thread_signal/2. A signal is run on
+                // THIS machine's goal stack, in front of the continuation — never asynchronously —
+                // so its bindings and trail entries are ordinary ones and an exception it raises
+                // unwinds from here, as if the interrupted goal had raised it. One volatile read
+                // per step while no signal is pending anywhere in the JVM.
+                // (sigEnd: while signal goals run no further signal is taken, so signals run one
+                // after the other, in the order they were sent)
+                if (it.denzosoft.jprolog.core.engine.ThreadSignals.PENDING.get() != 0 && sigEnd == null
+                        && !it.denzosoft.jprolog.core.engine.ThreadSignals.handling()) {
+                    Term sig = it.denzosoft.jprolog.core.engine.ThreadSignals.poll();
+                    if (sig != null) {
+                        // every queued signal, pushed so that they run in the order they were sent
+                        ArrayList<Term> sigs = new ArrayList<Term>();
+                        for (; sig != null; sig = it.denzosoft.jprolog.core.engine.ThreadSignals.poll()) sigs.add(sig);
+                        sigEnd = new Goal(new Runnable() {
+                            @Override public void run() { sigEnd = null; }
+                        }, goalStack);
+                        goalStack = sigEnd;
+                        for (int i = sigs.size() - 1; i >= 0; i--) {
+                            goalStack = mg(signalGoal(sigs.get(i)), cps.size(), goalStack, null);
+                        }
+                        continue;
+                    }
+                }
+                // END_CHANGE: ISS-2025-0749
                 if (!woken.isEmpty()) {                       // freeze/attribute-woken goals run next
                     for (int i = woken.size() - 1; i >= 0; i--) {
                         // ISS-2025-0466: a wake goal is engine-internal ('$attr_unify'/4) and
@@ -584,7 +716,17 @@ public final class Machine {
                 }
                 Goal g = goalStack;
                 goalStack = g.next;
-                if (g.action != null) { g.action.run(); continue; }
+                if (g.action != null) {
+                    // START_CHANGE: ISS-2025-0779 - a Step is a continuation that can FAIL (the
+                    // frame of a native iteration: predsort's merge, the apply family)
+                    if (g.action instanceof Step) {
+                        if (!((Step) g.action).step(this) && !backtrack(floor)) return;
+                        continue;
+                    }
+                    // END_CHANGE: ISS-2025-0779
+                    g.action.run();
+                    continue;
+                }
                 ctxModule = g.module;                         // ISS-2025-0466
                 Term raw = g.term;
                 // START_CHANGE: ISS-2025-0540 - wave P2.1: a body goal whose call site already
@@ -602,6 +744,22 @@ public final class Machine {
                     }
                     // END_CHANGE: ISS-2025-0540
                     Object so = ((Clause.Skel) raw).site;
+                    // START_CHANGE: ISS-2025-0779 - a body goal that resolved to a v4 native
+                    // calls it directly (no stepN name tests, no native-table probe)
+                    if (so instanceof NativeSite) {
+                        NativeSite ns = (NativeSite) so;
+                        if (ns.engine == engine && ns.stamp == engine.dispatchStamp()) {
+                            siteHits++;
+                            CompoundTerm nc = (CompoundTerm) Clause.instantiate(raw, g.frame);
+                            int na = nc.arity();
+                            Term[] nargs = new Term[na];
+                            for (int i = 0; i < na; i++) nargs[i] = nc.arg(i);
+                            if (callNative(ns.builtin, nc, nc.getName(), na, nargs).intValue() != 1
+                                    && !backtrack(floor)) return;
+                            continue;
+                        }
+                    }
+                    // END_CHANGE: ISS-2025-0779
                     if (so instanceof CallSite) {
                         CallSite site = (CallSite) so;
                         if (site.engine == engine && site.stamp == engine.dispatchStamp()
@@ -647,26 +805,40 @@ public final class Machine {
                 if (t instanceof Variable) throw Errors.instantiation("call");
                 throw Errors.type("callable", Unify.resolve(t, guard), "call");
             } catch (PrologException e) {
+                sigEnd = null;                                // ISS-2025-0749: a signal may have thrown
                 Term ball = e.getErrorTerm();
                 if (ball == null) throw e;
                 if (!handleBall(Unify.copy(ball, new IdentityHashMap<Variable, Variable>(), guard), floor)) throw e;
             } catch (StackOverflowError so) {
+                sigEnd = null;                                // ISS-2025-0749
                 // The v4 core is iterative, but a legacy built-in can still overflow. Convert it
                 // to a catchable ISO error INSIDE the loop so the running program's catch/3 sees
                 // it (design B.6, limit L-14) — the v2 engine only converted after unwinding.
                 if (!handleBall(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms
-                        .resourceError("stack_overflow", currentContext), floor)) {
+                        .resourceError("stack_overflow", currentContext()), floor)) {
                     throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms
-                        .resourceError("stack_overflow", currentContext));
+                        .resourceError("stack_overflow", currentContext()));
                 }
             } catch (OutOfMemoryError oom) {
                 cps.clear();                                   // free the frames before doing anything
                 B.clearIfUnreachable(true);
                 throw new PrologException(it.denzosoft.jprolog.builtin.exception.ISOErrorTerms
-                    .resourceError("memory", currentContext));
+                    .resourceError("memory", currentContext()));
             }
         }
     }
+
+    // START_CHANGE: ISS-2025-0749
+    /**
+     * The goal a signal runs as: {@code \+ \+ G} under {@code ignore/1} — once, its bindings
+     * undone, a failure ignored, an exception propagated (SWI runs a signal goal the same way).
+     */
+    public static Term signalGoal(Term g) {
+        Term nn = new CompoundTerm(new Atom("\\+"), new Term[] {
+            new CompoundTerm(new Atom("\\+"), new Term[] {g})});
+        return new CompoundTerm(new Atom("ignore"), new Term[] {nn});
+    }
+    // END_CHANGE: ISS-2025-0749
 
     /** One drive step for an atom goal. Returns false to stop the run. */
     private boolean step0(Atom a, Goal g, int floor) {
@@ -699,6 +871,14 @@ public final class Machine {
         List<Term> a = c.getArguments();
         int n = a.size();
 
+        // START_CHANGE: ISS-2025-0734 - 4.6 wave Q3.5: a goal '|'(A, B) is (A ; B) — SWI keeps
+        // '|'/2 as a control construct "equivalent to ;/2" now that the reader no longer turns the
+        // bar into `;`. Same cut barrier, so a `!` inside it is transparent like one in `;`.
+        if (n == 2 && "|".equals(f)) {
+            c = new CompoundTerm(new Atom(";"), a);
+            f = ";";
+        }
+        // END_CHANGE: ISS-2025-0734
         if (n == 2) {
             if (",".equals(f)) {
                 goalStack = mg(a.get(0), g.cutBarrier, mg(a.get(1), g.cutBarrier, goalStack));
@@ -766,7 +946,7 @@ public final class Machine {
             // a consumer inside it that reads a table created BEFORE the negation started (an
             // incomplete ancestor) raises permission_error instead of answering inconsistently.
             // Outside a tabled evaluation nothing changes (the inline if-then-else below).
-            final Tabling tb = engine.tabling();
+            final Tabling tb = tablingHere();                   // ISS-2025-0776: cached per machine
             if (tb.evaluating() && tb.ownedByCurrentThread()) {
                 Term neg = a.get(0);
                 if (g.module != null) neg = new CompoundTerm(new Atom(":"), new Term[] {new Atom(g.module), neg});
@@ -791,13 +971,13 @@ public final class Machine {
             // arguments are appended: `call([X,Y]>>Body, 1, Y)` must copy the lambda, bind X=1 and
             // run Body — appending would have built the nonexistent `>>/4`.
             Term callee = Unify.deref(a.get(0));
-            List<Term> extra = (n == 1) ? java.util.Collections.<Term>emptyList() : a.subList(1, n);
             Term goal;
             if (Lambdas.isLambda(callee)) {
+                List<Term> extra = (n == 1) ? java.util.Collections.<Term>emptyList() : a.subList(1, n);
                 goal = Lambdas.expand(this, callee, extra);
                 if (goal == null) goal = (n == 1) ? a.get(0) : addArgs(callee, extra);
             } else {
-                goal = (n == 1) ? a.get(0) : addArgs(callee, extra);
+                goal = (n == 1) ? a.get(0) : addArgs(callee, c, 1, n);   // ISS-2025-0777
             }
             // END_CHANGE: ISS-2025-0455
             checkBody(goal, "call", n);                         // ISS-2025-0518
@@ -840,6 +1020,17 @@ public final class Machine {
             pushCP(frame);
             goalStack = mg(a.get(0), cps.size(), new Goal(new Runnable() {
                 @Override public void run() {
+                    // START_CHANGE: ISS-2025-0775 - 4.6 wave Q6 (extra 6): Goal exited leaving no
+                    // choice point above the frame, so catch/3 is deterministic (SWI): the frame
+                    // is dropped while it is on top (the trust-me position) instead of surviving
+                    // as a choice point — `setup_call_cleanup(true, catch(true, _, true), D = 1)`
+                    // did not run its cleanup at exit.
+                    if (!cps.isEmpty() && cps.get(cps.size() - 1) == frame) {
+                        popCP();
+                        B.clearIfUnreachable(cps.isEmpty());
+                        return;
+                    }
+                    // END_CHANGE: ISS-2025-0775
                     frame.active = false;                       // ISO 7.8.9: only during Goal's extent
                     B.pushUndo(new Runnable() { @Override public void run() { frame.active = true; } });
                 }
@@ -923,8 +1114,27 @@ public final class Machine {
 
     /** The tail of {@link #stepN}: a native, a registry built-in, or a user predicate. */
     private boolean stepPlain(CompoundTerm c, Goal g, int floor, String f, int n) {   // ISS-2025-0542
+        // START_CHANGE: ISS-2025-0777 - 4.6 wave Q6.1: a run-time goal whose functor already
+        // resolved (in this context, under this dispatch stamp) to a plain predicate goes straight
+        // to its clauses, like a body goal with a call site.
+        if (rtName != null && (g.frame == null || !(g.term instanceof Clause.Skel))) {
+            CallSite site = rtLookup(f, n, g.module);
+            if (site != null) {
+                rtSiteHits++;
+                boolean ok = (site.module == null) ? callSite(site.pred, c) : callModuleSite(site, c);
+                return ok || backtrack(floor);
+            }
+        }
+        // END_CHANGE: ISS-2025-0777
+        long natStamp = engine.dispatchStamp();               // ISS-2025-0779: read before the probe
         Builtin nat = engine.natives().lookup(f, n);
         if (nat != null) {                                    // v4 natives run even while debugging:
+            // START_CHANGE: ISS-2025-0779 - remember it on the body skeleton (natives are found
+            // before anything else, in every context module, so the site is context-free)
+            if (g.term instanceof Clause.Skel && g.frame != null && !SITE_EXCLUDED.contains(f)) {
+                ((Clause.Skel) g.term).site = new NativeSite(engine, natStamp, nat);
+            }
+            // END_CHANGE: ISS-2025-0779
             Term[] args = new Term[n];                        // they emit their own ports
             for (int i = 0; i < n; i++) args[i] = c.arg(i);
             Integer r = callNative(nat, c, f, n, args);
@@ -997,9 +1207,23 @@ public final class Machine {
         }
     }
 
+    // START_CHANGE: ISS-2025-0779
+    /** The resolved call site of a body goal that is a v4 native (immutable). */
+    static final class NativeSite {
+        final Engine engine;
+        final long stamp;
+        final Builtin builtin;
+        NativeSite(Engine engine, long stamp, Builtin builtin) {
+            this.engine = engine;
+            this.stamp = stamp;
+            this.builtin = builtin;
+        }
+    }
+    // END_CHANGE: ISS-2025-0779
+
     /** Names stepN (or the inline table) handles itself, possibly depending on the arguments. */
     private static final java.util.Set<String> SITE_EXCLUDED = new java.util.HashSet<String>(Arrays.asList(
-        ",", ";", "->", "*->", "=", "^", ":", Modules.MCTX, "\\+", "not", "call", ">>", "\\", "/",
+        ",", ";", "|", "->", "*->", "=", "^", ":", Modules.MCTX, "\\+", "not", "call", ">>", "\\", "/",
         "findall", "catch", "throw", "assertz", "assert", "asserta", "retract", "setup_call_cleanup",
         "call_cleanup", "once", "ignore", "forall", "between", "length",
         "is", "<", ">", "=<", ">=", "=:=", "=\\=", "==", "\\==", "@<", "@>", "@=<", "@>=", "\\=",
@@ -1007,18 +1231,50 @@ public final class Machine {
 
     /** Number of goals that took the call-site fast path (test hook). */
     long siteHits;
+    /** Activations that needed no choice point (one candidate clause; test hook, ISS-2025-0779). */
+    long singleClauseActivations;
+    /** Nested once-drives (runOnce) started on this machine (test hook, ISS-2025-0779). */
+    long runOnceCalls;
+    /** Native library(apply) levels entered (test hook, ISS-2025-0780). */
+    long applyLevels;
+
+    // START_CHANGE: ISS-2025-0776 - 4.6 wave Q6 (extra): the table space of THIS machine. A machine
+    // runs on one thread and inside one Tabling context (a worker machine is created after
+    // Tabling.enterWorker and never outlives it), so the per-thread lookup Engine.tabling() does
+    // (a ThreadLocal probe) is done once per machine instead of on every negation.
+    private Tabling tablingCache;
+    private Thread tablingThread;
+    /** Number of per-thread table-space lookups this machine made (test hook). */
+    long tablingLookups;
+
+    Tabling tablingHere() {
+        Thread t = Thread.currentThread();
+        if (tablingThread != t) {
+            tablingCache = engine.tabling();
+            tablingThread = t;
+            tablingLookups++;
+        }
+        return tablingCache;
+    }
+    // END_CHANGE: ISS-2025-0776
 
     /** @param overriding the goal names a registry built-in that the context overrides with
      *  clauses (maplist/3 inside library(apply)); that answer is covered by the same stamp. */
     private void installCallSite(Goal g, String f, int n, boolean overriding) {
-        if (!(g.term instanceof Clause.Skel) || g.frame == null) return;
+        // START_CHANGE: ISS-2025-0777 - 4.6 wave Q6.1: a goal built at run time (call/N, the goal
+        // of findall/forall/\+/once, a top-level query, a maplist closure) has no skeleton to hold
+        // its site; it is remembered in the machine's per-functor cache instead (rtSites).
+        boolean skel = g.term instanceof Clause.Skel && g.frame != null;
+        // END_CHANGE: ISS-2025-0777
         if (SITE_EXCLUDED.contains(f)) return;
         long stamp = engine.dispatchStamp();                 // read BEFORE the probes it covers
         if (engine.natives().lookup(f, n) != null) return;
         if (!overriding && engine.registry() != null && engine.registry().isBuiltIn(f, n)) return;
         if (engine.tables() != null && engine.tables().isTabled(f, n)) return;
         if (g.module == null && ctxModule == null) {
-            ((Clause.Skel) g.term).site = new CallSite(engine, stamp, engine.store().lookup(f, n));
+            CallSite site = new CallSite(engine, stamp, engine.store().lookup(f, n));
+            if (skel) ((Clause.Skel) g.term).site = site;
+            else rtStore(f, n, site);                                  // ISS-2025-0777
             return;
         }
         // A body goal of a MODULE clause (library(apply)'s maplist recursion, ...): cached only
@@ -1028,9 +1284,52 @@ public final class Machine {
         Modules ms = engine.modules4();
         Modules.Pred mp = ms.localPred(ctxModule, f, n);
         if (mp == null) return;
-        ((Clause.Skel) g.term).site = new CallSite(engine, stamp, null, ctxModule, mp,
-            ms.metaSpec(ctxModule, f, n));
+        CallSite msite = new CallSite(engine, stamp, null, ctxModule, mp, ms.metaSpec(ctxModule, f, n));
+        if (skel) ((Clause.Skel) g.term).site = msite;
+        else rtStore(f, n, msite);                                     // ISS-2025-0777
     }
+
+    // START_CHANGE: ISS-2025-0777 - 4.6 wave Q6.1: the per-functor call-site cache of goals that
+    // are built at run time. Direct-mapped by (name, arity); an entry is the same immutable
+    // CallSite a body skeleton holds, so it carries the context module it was resolved in and the
+    // dispatch stamp that validates it — a stale or colliding entry just takes the slow path and is
+    // overwritten. Bounded (RT_SITES entries), per machine (a machine is single-threaded).
+    private static final int RT_SITES = 256;
+    private String[] rtName;
+    private int[] rtArity;
+    private CallSite[] rtSite;
+    /** Number of run-time goals that took the cached path (test hook). */
+    long rtSiteHits;
+
+    private static int rtSlot(String f, int n) {
+        int h = f.hashCode() * 31 + n;
+        return (h ^ (h >>> 16)) & (RT_SITES - 1);
+    }
+
+    private void rtStore(String f, int n, CallSite site) {
+        if (rtName == null) {
+            rtName = new String[RT_SITES];
+            rtArity = new int[RT_SITES];
+            rtSite = new CallSite[RT_SITES];
+        }
+        int i = rtSlot(f, n);
+        rtName[i] = f;
+        rtArity[i] = n;
+        rtSite[i] = site;
+    }
+
+    /** The cached site of a run-time goal {@code f/n} in the current context, or null. */
+    private CallSite rtLookup(String f, int n, String module) {
+        if (rtName == null) return null;
+        int i = rtSlot(f, n);
+        String nm = rtName[i];
+        if (nm == null || rtArity[i] != n || !(nm == f || nm.equals(f))) return null;
+        CallSite site = rtSite[i];
+        if (site.engine != engine || site.stamp != engine.dispatchStamp()) return null;
+        if (site.module == null ? module != null : !site.module.equals(module)) return null;
+        return site;
+    }
+    // END_CHANGE: ISS-2025-0777
 
     /** callUser for a cached MODULE site: the context module's own clauses for the indicator. */
     private boolean callModuleSite(CallSite site, Term t) {
@@ -1056,7 +1355,9 @@ public final class Machine {
         final int dd = debugTraceActive() ? enterPort() : -1;
         if (dd >= 0) portCall(goal, dd);
         String prev = currentContext;
-        currentContext = f + "/" + n;
+        int prevArity = currentContextArity;                  // ISS-2025-0778
+        currentContext = f;
+        currentContextArity = n;
         // ISS-2025-0453: save/restore, because a native may run a sub-query that calls other natives
         Term prevTG = nativeTraceGoal;
         int prevTD = nativeTraceDepth;
@@ -1074,6 +1375,7 @@ public final class Machine {
         } finally {
             handled = nativePortsHandled;
             currentContext = prev;
+            currentContextArity = prevArity;                   // ISS-2025-0778
             nativeTraceGoal = prevTG;
             nativeTraceDepth = prevTD;
             nativePortsHandled = prevHandled;
@@ -1404,7 +1706,11 @@ public final class Machine {
     // an ordinary `call(foo(X))` pays one functor comparison.
     /** Check the control spine of {@code goal}; context {@code name/arity} of the construct. */
     void checkBody(Term goal, String name, int arity) {
-        checkBodyCtx(Unify.deref(goal), name + "/" + arity);
+        // ISS-2025-0777: the "name/arity" context is built only when there is something to check
+        // (it was concatenated on every call/N, once/1, findall/3, ...)
+        Term d = Unify.deref(goal);
+        if (!(d instanceof CompoundTerm) || !isControlConstruct((CompoundTerm) d)) return;
+        checkBodyCtx(d, name + "/" + arity);
     }
 
     private void checkBodyCtx(Term d, String ctx) {
@@ -1418,7 +1724,8 @@ public final class Machine {
     private static boolean isControlConstruct(CompoundTerm c) {
         int n = c.getArguments().size();
         String f = c.getName();
-        if (n == 2) return ",".equals(f) || ";".equals(f) || "->".equals(f) || "*->".equals(f);
+        if (n == 2) return ",".equals(f) || ";".equals(f) || "->".equals(f) || "*->".equals(f)
+            || "|".equals(f);                                   // ISS-2025-0734
         return n == 1 && "\\+".equals(f);
     }
 
@@ -1459,6 +1766,7 @@ public final class Machine {
 
     /** Run {@code goal} to its first solution on this machine, KEEPING its bindings. */
     boolean runOnce(Term goal) {
+        runOnceCalls++;                                        // ISS-2025-0779: test hook
         Goal saved = goalStack;
         String savedMod = ctxModule;                           // ISS-2025-0466
         int floor = cps.size();
@@ -1715,7 +2023,7 @@ public final class Machine {
             if ("atomic".equals(f)) return (x instanceof Atom || x instanceof Number || x instanceof PrologString) ? 1 : 0;
             if ("number".equals(f)) return x instanceof Number ? 1 : 0;
             if ("integer".equals(f)) return (x instanceof Number && ((Number) x).isInteger()) ? 1 : 0;
-            if ("float".equals(f)) return (x instanceof Number && !((Number) x).isInteger()) ? 1 : 0;
+            if ("float".equals(f)) return (x instanceof Number && ((Number) x).isFloat()) ? 1 : 0;   // ISS-2025-0712: 1r3 is no float
             if ("compound".equals(f)) return x instanceof CompoundTerm ? 1 : 0;
             if ("callable".equals(f)) return (x instanceof Atom || x instanceof CompoundTerm) ? 1 : 0;
             return -1;
@@ -1763,6 +2071,18 @@ public final class Machine {
             if ("=:=".equals(op)) return c == 0;
             return c != 0;
         }
+        // START_CHANGE: ISS-2025-0712 - an integer/rational pair compares exactly (1r3 =\= 0.333..
+        // is about floats; 1r3 < 1 is not)
+        if (!a.isFloat() && !b.isFloat()) {
+            int c = it.denzosoft.jprolog.core.terms.Rational.compareExact(a, b);
+            if ("<".equals(op)) return c < 0;
+            if (">".equals(op)) return c > 0;
+            if ("=<".equals(op)) return c <= 0;
+            if (">=".equals(op)) return c >= 0;
+            if ("=:=".equals(op)) return c == 0;
+            return c != 0;
+        }
+        // END_CHANGE: ISS-2025-0712
         double x = a.doubleValue(), y = b.doubleValue();
         if ("<".equals(op)) return x < y;
         if (">".equals(op)) return x > y;
@@ -1933,6 +2253,32 @@ public final class Machine {
         return list;
     }
 
+    // START_CHANGE: ISS-2025-0777 - 4.6 wave Q6.1: call/N appends its extra arguments into ONE
+    // array (no ArrayList, no List-to-array copy); the result adopts it.
+    /** {@code goal} with {@code src[from..to)} appended as extra arguments (call/N). */
+    Term addArgs(Term goal, CompoundTerm src, int from, int to) {
+        int k = to - from;
+        if (goal instanceof Atom) {
+            Term[] out = new Term[k];
+            for (int i = 0; i < k; i++) out[i] = src.arg(from + i);
+            return new CompoundTerm((Atom) goal, out);
+        }
+        if (goal instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) goal;
+            if ((":".equals(c.getName()) || Modules.MCTX.equals(c.getName())) && c.arity() == 2) {
+                return new CompoundTerm(c.getFunctor(), new Term[] {
+                    c.arg(0), addArgs(Unify.deref(c.arg(1)), src, from, to)});
+            }
+            int m = c.arity();
+            Term[] out = new Term[m + k];
+            for (int i = 0; i < m; i++) out[i] = c.arg(i);
+            for (int i = 0; i < k; i++) out[m + i] = src.arg(from + i);
+            return new CompoundTerm(c.getFunctor(), out);
+        }
+        return goal;
+    }
+    // END_CHANGE: ISS-2025-0777
+
     Term addArgs(Term goal, List<Term> extra) {
         if (goal instanceof Atom) return new CompoundTerm((Atom) goal, new ArrayList<Term>(extra));
         if (goal instanceof CompoundTerm) {
@@ -1967,6 +2313,13 @@ public final class Machine {
             return callTabled(unifyGoal, lookup, g0);      // ISS-2025-0463
         }
         Clause[] clauses = selectClauses(lookup, g0, flat);
+        // START_CHANGE: ISS-2025-0733 - inside module M, a predicate stored as `M:H` clauses (a
+        // qualified clause written outside M, or assertz(M:H)) is M's own predicate
+        if (clauses == null && !flat && ctxModule != null && hasFlatQualified(ctxModule, g0)) {
+            Term q = new CompoundTerm(new Atom(":"), new Term[] {new Atom(ctxModule), g0});
+            return callUser(q, q, true);
+        }
+        // END_CHANGE: ISS-2025-0733
         return activate(withMetaContext(g0, unifyGoal, selModule), unifyGoal,
                         clauses, selFrom, selLimit, selModule, lookup);      // ISS-2025-0546: a window
     }
@@ -2012,6 +2365,15 @@ public final class Machine {
      */
     private boolean activate(Term unifyGoal, Term traceGoal, Clause[] clauses, final int from,
                              final int limit, final String defMod, Term lookupForUnknown) {
+        // START_CHANGE: ISS-2025-0780 - 4.6 wave Q6.2: library(apply)'s maplist/foldl/include/
+        // exclude/partition, reached through ordinary resolution (so a user or module definition
+        // of the same name still wins), run as a native frame with the same ports and choice
+        // points as their two clauses (NativeApply).
+        if (clauses != null && limit - from == 2 && clauses[from].apply != null) {
+            return NativeApply.enter(this, (NativeApply.Op) clauses[from].apply,
+                                     Unify.deref(unifyGoal), traceGoal, defMod);
+        }
+        // END_CHANGE: ISS-2025-0780
         Term g0 = Unify.deref(unifyGoal);
         if (it.denzosoft.jprolog.core.engine.Profiler.isEnabled()) {
             if (g0 instanceof Atom) it.denzosoft.jprolog.core.engine.Profiler.recordCall(((Atom) g0).getName(), 0);
@@ -2033,6 +2395,32 @@ public final class Machine {
             if (debugging) debugPort(DebugEvent.Port.FAIL, g, tdepth);
             return false;
         }
+        // START_CHANGE: ISS-2025-0779 - 4.6 wave Q6.4/Q6.5: ONE candidate clause and no port to
+        // report — the choice point would be pushed only to be trust-me popped at once (no
+        // alternative, no traced frame to keep for Exit), so the head is unified and the body
+        // pushed directly. Same barrier (the height before the frame), same logical-update view
+        // (the clause must be alive in the current generation); a failed head unification leaves
+        // its partial bindings to the backtrack that follows, exactly as a popped frame would.
+        // A traced/debugged call keeps the frame (its Exit/Fail/Redo bookkeeping lives there).
+        if (!(tracing || debugging) && limit - from == 1) {
+            Clause cl = clauses[from];
+            if (!cl.isAlive(engine.store().generation())) return false;
+            Term[] frame = (cl.nvars == 0) ? LegacyBuiltinAdapter.NO_FRAME : new Term[cl.nvars];
+            if (!cl.unifyHead(unifyGoal, frame, B)) return false;
+            cl.fillBodySlots(frame);
+            Goal after = goalStack;
+            int bar = cps.size();
+            Term[] body = cl.body;
+            for (int i = body.length - 1; i >= 0; i--) {
+                Goal bg = new Goal(body[i], frame, bar, after);
+                bg.module = defMod;
+                after = bg;
+            }
+            goalStack = after;
+            singleClauseActivations++;
+            return true;
+        }
+        // END_CHANGE: ISS-2025-0779
         final Goal cont = goalStack;
         final int barrier = cps.size();
         final boolean ftrace = tracing, fdebug = debugging;
@@ -2055,10 +2443,19 @@ public final class Machine {
                     // BEFORE this clause binds anything), this alternative is the last one and the
                     // frame is deterministic — it must not print a Redo/Fail later. SWI gets the
                     // same effect from its argument indexing (maplist(G, [], []) has no Fail).
-                    if ((ftrace || fdebug) && !self.genExhausted && !anyMayMatch(self)) {
-                        self.genExhausted = true;
-                        self.idx = self.limit;
+                    // START_CHANGE: ISS-2025-0715 - wave Q2.4: the look-ahead runs ALWAYS, not only
+                    // while tracing. The first-argument index cannot tell `foldl(_, [], A, A)` from
+                    // `foldl(G, [X|Xs], A0, A)` (the closure is the first argument), so the last
+                    // step of every apply-library recursion left a choice point behind and
+                    // `foldl([X,A0,A]>>(A is A0+X), [1,2,3], 0, S)` answered `S = 6 ;` / `false`
+                    // where SWI (JIT multi-argument indexing) is deterministic. It also jumps the
+                    // cursor over clauses that cannot match, so it costs no extra head attempts.
+                    if (!self.genExhausted) {
+                        int nx = nextMayMatch(self);
+                        if (nx < 0) { self.genExhausted = true; self.idx = self.limit; }
+                        else self.idx = nx;
                     }
+                    // END_CHANGE: ISS-2025-0715
                     // END_CHANGE: ISS-2025-0668
                     Term[] frame = (cl.nvars == 0) ? LegacyBuiltinAdapter.NO_FRAME : new Term[cl.nvars];
                     if (!cl.unifyHead(self.goal, frame, B)) return FAILED;
@@ -2139,7 +2536,7 @@ public final class Machine {
         Clause[] own = ms.localClauses(mod, name, n,
             (inner instanceof CompoundTerm && n > 0)
                 ? Clause.argKey(Unify.deref(((CompoundTerm) inner).getArguments().get(0))) : null);
-        if (own != null && own.length > 0) {
+        if (own != null) {                                   // ISS-2025-0770: an index miss fails
             // START_CHANGE: ISS-2025-0611 - P4.17 (decision §8): the module DEFINES it, so it runs
             // there whether or not it is exported — export only governs IMPORT (SWI). The
             // ISS-2025-0314 export check on qualified calls is reversed.
@@ -2162,6 +2559,30 @@ public final class Machine {
         if (engine.store().lookup(":", 2).size() == 0) return false;
         return callUser(qc, qc, true);
     }
+
+    // START_CHANGE: ISS-2025-0733
+    /** Is there an {@code M:H} clause (flat store) for {@code mod} and the predicate of {@code goal}? */
+    boolean hasFlatQualified(String mod, Term goal) {
+        ClauseStore.Predicate p = engine.store().lookup(":", 2);
+        if (p.size() == 0) return false;
+        String f;
+        int n;
+        if (goal instanceof Atom) { f = ((Atom) goal).getName(); n = 0; }
+        else if (goal instanceof CompoundTerm) { f = ((CompoundTerm) goal).getName(); n = ((CompoundTerm) goal).arity(); }
+        else return false;
+        Clause[] all = p.all();
+        for (int i = 0; i < all.length; i++) {
+            Term h = all[i].head;
+            if (!(h instanceof CompoundTerm) || ((CompoundTerm) h).arity() != 2) continue;
+            Term mt = ((CompoundTerm) h).arg(0);
+            Term g = ((CompoundTerm) h).arg(1);
+            if (!(mt instanceof Atom) || !mod.equals(((Atom) mt).getName())) continue;
+            if (g instanceof Atom && n == 0 && f.equals(((Atom) g).getName())) return true;
+            if (g instanceof CompoundTerm && ((CompoundTerm) g).arity() == n && f.equals(((CompoundTerm) g).getName())) return true;
+        }
+        return false;
+    }
+    // END_CHANGE: ISS-2025-0733
 
     /** Run {@code goal} as a {@code system} built-in: 1 = succeeded, 0 = failed, -1 = not one. */
     private int callSystem(Term goal, String f, int n) {
@@ -2226,7 +2647,7 @@ public final class Machine {
         //       which is the overwhelmingly common case and costs one null test)
         if (ms != null && ctxModule != null) {
             Clause[] own = ms.localClauses(ctxModule, f, ar, key);
-            if (own != null && own.length > 0) { selLimit = own.length; selModule = ctxModule; return own; }
+            if (own != null) { selLimit = own.length; selModule = ctxModule; return own; }   // ISS-2025-0770
             Modules.Hit h = ms.fromImports(ctxModule, f, ar, key);
             if (h != null) { selLimit = h.clauses.length; selModule = modKey(h.module); return h.clauses; }
         }
@@ -2238,6 +2659,12 @@ public final class Machine {
             p.view(key, view);
             selFrom = view.from;
             selLimit = view.to;
+            // START_CHANGE: ISS-2025-0733 - the body of an `M:H` clause runs in module M
+            if (ar == 2 && ":".equals(f)) {
+                Term qm = Unify.deref(((CompoundTerm) goal).arg(0));
+                if (qm instanceof Atom) selModule = modKey(((Atom) qm).getName());
+            }
+            // END_CHANGE: ISS-2025-0733
             return view.a;
         }
 
@@ -2273,6 +2700,11 @@ public final class Machine {
         // procedure really is unknown and the ISO `unknown` flag applies as it does without
         // modules. A predicate the context module CAN see never reaches this method.
         if (engine.kb().isDynamic(f, ar)) return;
+        // START_CHANGE: ISS-2025-0730 - a multifile predicate is defined: a call with no clause
+        // fails (SWI), in user or, for `:- multifile m:p/1`, in module m
+        if (engine.kb().isDeclared(f, ar)) return;
+        if (ctxModule != null && engine.kb().isQualifiedDeclared(ctxModule, f, ar)) return;
+        // END_CHANGE: ISS-2025-0730
         Term mode = it.denzosoft.jprolog.core.system.PrologFlags.getFlag("unknown");
         String m = (mode instanceof Atom) ? ((Atom) mode).getName() : "error";
         if ("fail".equals(m)) return;
@@ -2309,16 +2741,16 @@ public final class Machine {
         // COMPLETE, do I produce it — plus the frame it installs must be atomic against other
         // threads on this engine, and an evaluation this call STARTS keeps the claim until its SCC
         // completes. `exitCall` gives it back when nothing is left evaluating.
-        engine.tabling().enterCall();
+        final Tabling tb = tablingHere();          // ISS-2025-0752 / ISS-2025-0776: cached per machine
+        tb.enterCall();
         try {
-            return callTabledClaimed(unifyGoal, lookup, g0);
+            return callTabledClaimed(tb, unifyGoal, lookup, g0);
         } finally {
-            engine.tabling().exitCall();
+            tb.exitCall();
         }
     }
 
-    private boolean callTabledClaimed(Term unifyGoal, Term lookup, Term g0) {
-        final Tabling tb = engine.tabling();
+    private boolean callTabledClaimed(final Tabling tb, Term unifyGoal, Term lookup, Term g0) {
         final boolean tracing = it.denzosoft.jprolog.builtin.debug.Trace.isTracingEnabled();
         final boolean debugging = debugPortsActive();
         final int tdepth = (tracing || debugging) ? enterPort() : 0;   // ISS-2025-0482
@@ -2326,8 +2758,13 @@ public final class Machine {
         if (tracing) tracePort("Call", unifyGoal, tdepth);
         if (debugging) debugPort(DebugEvent.Port.CALL, unifyGoal, tdepth);
 
+        // START_CHANGE: ISS-2025-0754 - 4.6 wave Q4.4: a mode-directed table is evaluated with its
+        // MODED arguments free (SWI); the caller's bound value then filters the aggregated answer.
+        if (engine.tables().hasModes()) g0 = freeModedArguments(g0);
+        // END_CHANGE: ISS-2025-0754
         String key = Tabling.variantKey(g0, guard);
         Tabling.Table table = tb.get(key);
+        if (table == null) table = tb.getShared(key);                  // ISS-2025-0752: shared, complete
         boolean produce;
         if (table == null) {
             produce = true;
@@ -2367,8 +2804,10 @@ public final class Machine {
                 limit = clauses.length;
             }
             if (table == null) {
-                table = tb.create(key, Tabling.indicatorOf(g0),
-                    Unify.copy(g0, new IdentityHashMap<Variable, Variable>(), guard));
+                String ind = Tabling.indicatorOf(g0);
+                table = tb.create(key, ind,
+                    Unify.copy(g0, new IdentityHashMap<Variable, Variable>(), guard),
+                    engine.tables().isShared(ind));                               // ISS-2025-0752
                 table.modes = engine.tables().getModes(table.indicator);   // ISS-2025-0572
             }
         }
@@ -2393,6 +2832,112 @@ public final class Machine {
         if (debugging) debugPort(DebugEvent.Port.FAIL, unifyGoal, tdepth);
         return false;
     }
+
+    // START_CHANGE: ISS-2025-0755 - 4.6 wave Q4.5: minimal well-founded semantics.
+    /** The delayed literals the current derivation depends on (null: unconditional). Trailed. */
+    private Tabling.Delay delays;
+    /** The delay list of the last top-level answer, as a conjunction (null: unconditional). */
+    private Term lastAnswerDelays;
+
+    Tabling.Delay delays() { return delays; }
+
+    /** Replace the delay list; backtracking restores the old one. */
+    void setDelays(Tabling.Delay d) {
+        final Tabling.Delay old = delays;
+        if (old == d) return;
+        delays = d;
+        B.pushUndo(new Runnable() { @Override public void run() { delays = old; } });
+    }
+
+    void addDelay(Tabling.Delay lit) { setDelays(lit.push(delays)); }
+
+    /**
+     * The delayed literals of the answer just handed to the solution sink, as a conjunction —
+     * non-null means the answer is CONDITIONAL, i.e. undefined in the well-founded semantics.
+     */
+    public Term answerDelays() { return lastAnswerDelays; }
+
+    /**
+     * {@code tnot(G)} for a tabled {@code G} (SWI's algorithm, on linear tabling): an unconditional
+     * answer of G makes it fail; no answer in a COMPLETE table makes it succeed; otherwise — G's
+     * table is still being evaluated by an ancestor (a loop through negation) or holds only
+     * conditional answers — it succeeds with {@code tnot(G)} DELAYED, and the SCC's completion
+     * simplifies the resulting conditional answers.
+     */
+    boolean tnot(Term goal) {
+        Term g = Unify.deref(goal);
+        if (g instanceof CompoundTerm && ":".equals(((CompoundTerm) g).getName()) && ((CompoundTerm) g).arity() == 2) {
+            g = Unify.deref(((CompoundTerm) g).arg(1));
+        }
+        if (g instanceof Variable) throw Errors.instantiation("tnot/1");
+        if (!(g instanceof Atom) && !(g instanceof CompoundTerm)) throw Errors.type("callable", g, "tnot/1");
+        if (engine.tables() == null || !isTabled(g)) {
+            String n = (g instanceof Atom) ? ((Atom) g).getName() : ((CompoundTerm) g).getName();
+            int ar = (g instanceof Atom) ? 0 : ((CompoundTerm) g).arity();
+            throw Errors.permission("tnot", "non_tabled_procedure", Errors.pi(n, ar), "tnot/1");
+        }
+        Tabling tb = engine.tabling();
+        String key = Tabling.variantKey(g, guard);
+        Tabling.Table t = tb.get(key);
+        if (t == null) t = tb.getShared(key);
+        if (t == null || t.status != Tabling.COMPLETE) {
+            long savedFloor = negTableFloor;
+            negTableFloor = -1;                  // tnot handles incomplete tables itself
+            try {
+                forEachSolution(g, new SolutionVisitor() {
+                    @Override public boolean visit() { return true; }
+                });
+            } finally {
+                negTableFloor = savedFloor;
+            }
+            t = tb.get(key);
+            if (t == null) t = tb.getShared(key);
+        }
+        if (t == null) return true;                                  // no table: no answer
+        if (t.hasUnconditional()) return false;
+        if (t.status == Tabling.COMPLETE && !t.hasAnswers()) return true;
+        if (t.status != Tabling.COMPLETE) tb.noteIncompleteRead(t);   // the SCC must iterate
+        Term shown = new CompoundTerm(new Atom("tnot"), new Term[] {
+            Unify.copy(g, new IdentityHashMap<Variable, Variable>(), guard)});
+        addDelay(new Tabling.Delay(Tabling.Delay.NEG, t, -1, shown, null));
+        return true;
+    }
+
+    /** {@code call_delays(G, D)}: run G; D is the conjunction of the literals G delayed. */
+    void pushCallDelays(Term goal, final Term out) {
+        final Tabling.Delay saved = delays;
+        setDelays(null);
+        Goal after = new Goal(new Runnable() {
+            @Override public void run() {
+                Term conj = Tabling.Delay.conjunction(delays);
+                setDelays(saved);
+                if (!Unify.unify(out, conj, B)) goalStack = new Goal(ATOM_FAIL, 0, goalStack);
+            }
+        }, goalStack);
+        goalStack = mg(goal, cps.size(), after);
+    }
+    // END_CHANGE: ISS-2025-0755
+
+    // START_CHANGE: ISS-2025-0754
+    /** {@code g0} with every non-index argument of its table's modes replaced by a fresh variable. */
+    private Term freeModedArguments(Term g0) {
+        if (!(g0 instanceof CompoundTerm)) return g0;
+        CompoundTerm c = (CompoundTerm) g0;
+        it.denzosoft.jprolog.core.engine.TableStore.ModeSpec[] modes =
+            engine.tables().getModes(c.getName() + "/" + c.arity());
+        if (modes == null) return g0;
+        Term[] args = null;
+        for (int i = 0; i < c.arity() && i < modes.length; i++) {
+            if (modes[i].isIndex() || Unify.deref(c.arg(i)) instanceof Variable) continue;
+            if (args == null) {
+                args = new Term[c.arity()];
+                for (int j = 0; j < args.length; j++) args[j] = c.arg(j);
+            }
+            args[i] = new Variable();
+        }
+        return (args == null) ? g0 : new CompoundTerm(c.getFunctor(), args);
+    }
+    // END_CHANGE: ISS-2025-0754
 
     /** Activate {@code cl} against {@code goal}: unify the head into a fresh frame and push the
      *  body in front of {@code after}. Null when the head does not match. */
@@ -2442,7 +2987,7 @@ public final class Machine {
         Term b = Unify.deref(body);
         while (b instanceof CompoundTerm && ((CompoundTerm) b).getArguments().size() == 2) {
             String f = ((CompoundTerm) b).getName();
-            if (!",".equals(f) && !";".equals(f) && !"->".equals(f)) break;
+            if (!",".equals(f) && !";".equals(f) && !"->".equals(f) && !"|".equals(f)) break;   // ISS-2025-0734
             checkBodyGoals(((CompoundTerm) b).getArguments().get(0), context);
             b = Unify.deref(((CompoundTerm) b).getArguments().get(1));
         }
@@ -2507,7 +3052,94 @@ public final class Machine {
     }
     // END_CHANGE: ISS-2025-0501
 
+    // START_CHANGE: ISS-2025-0733 - 4.6 wave Q3 (extra): a module-qualified clause. `M:(H :- B)`
+    // is `(M:H :- B)`; `user:H` is the user predicate H (it was stored as a flat ':'/2 clause
+    // `user:H` that an unqualified call never found); any other `M:H` stays the `M:H` clause the
+    // qualified call, clause/2 and retract/1 find, and module M now exists (current_module/1).
+    /** The clause with {@code user:} removed from its head and {@code M:(H:-B)} made {@code (M:H:-B)}. */
+    static Term normalizeQualifiedClause(Term clause) {
+        Term q = Unify.deref(clause);
+        if (q instanceof CompoundTerm && ":".equals(((CompoundTerm) q).getName()) && ((CompoundTerm) q).arity() == 2) {
+            Term mt = Unify.deref(((CompoundTerm) q).arg(0));
+            Term x = Unify.deref(((CompoundTerm) q).arg(1));
+            if (mt instanceof Atom && x instanceof CompoundTerm && ":-".equals(((CompoundTerm) x).getName())
+                    && ((CompoundTerm) x).arity() == 2) {
+                q = new CompoundTerm(new Atom(":-"), Arrays.asList(
+                    (Term) new CompoundTerm(new Atom(":"), Arrays.asList(mt, ((CompoundTerm) x).arg(0))),
+                    ((CompoundTerm) x).arg(1)));
+            }
+        }
+        if (q instanceof CompoundTerm && ":-".equals(((CompoundTerm) q).getName()) && ((CompoundTerm) q).arity() == 2) {
+            Term h = stripUser(((CompoundTerm) q).arg(0));
+            if (h != Unify.deref(((CompoundTerm) q).arg(0))) {
+                return new CompoundTerm(new Atom(":-"), Arrays.asList(h, ((CompoundTerm) q).arg(1)));
+            }
+            return q;
+        }
+        return stripUser(q);
+    }
+
+    /** {@code (M:H :- B)} with B's goals qualified by {@code ctx} when M is another module. */
+    private static Term qualifyClauseBody(CompoundTerm c, String ctx) {
+        Term h = Unify.deref(c.arg(0));
+        if (!(h instanceof CompoundTerm) || !":".equals(((CompoundTerm) h).getName()) || ((CompoundTerm) h).arity() != 2) return c;
+        Term mt = Unify.deref(((CompoundTerm) h).arg(0));
+        if (!(mt instanceof Atom) || ((Atom) mt).getName().equals(ctx)) return c;
+        return new CompoundTerm(new Atom(":-"), Arrays.asList(h, qualifyGoal(c.arg(1), ctx)));
+    }
+
+    /** {@code g} with every goal outside a control construct run in module {@code m} ({@code m:G}). */
+    public static Term qualifyGoal(Term g0, String m) {
+        Term g = Unify.deref(g0);
+        if (g instanceof Atom && "!".equals(((Atom) g).getName())) return g;
+        if (g instanceof CompoundTerm) {
+            CompoundTerm c = (CompoundTerm) g;
+            String f = c.getName();
+            int n = c.arity();
+            if (n == 2 && ":".equals(f)) return g;
+            if (n == 2 && (",".equals(f) || ";".equals(f) || "->".equals(f) || "*->".equals(f) || "|".equals(f))) {
+                return new CompoundTerm(c.getFunctor(), Arrays.asList(qualifyGoal(c.arg(0), m), qualifyGoal(c.arg(1), m)));
+            }
+            if (n == 1 && "\\+".equals(f)) {
+                return new CompoundTerm(c.getFunctor(), java.util.Collections.singletonList(qualifyGoal(c.arg(0), m)));
+            }
+        }
+        return new CompoundTerm(new Atom(":"), Arrays.asList((Term) new Atom(m), g));
+    }
+
+    /** {@code user:H} (also nested, {@code user:user:H}) as {@code H}; anything else unchanged. */
+    static Term stripUser(Term t) {
+        Term h = Unify.deref(t);
+        while (h instanceof CompoundTerm && ":".equals(((CompoundTerm) h).getName()) && ((CompoundTerm) h).arity() == 2) {
+            Term mt = Unify.deref(((CompoundTerm) h).arg(0));
+            if (!(mt instanceof Atom) || !Modules.USER.equals(((Atom) mt).getName())) break;
+            h = Unify.deref(((CompoundTerm) h).arg(1));
+        }
+        return h;
+    }
+
+    /** A qualified head {@code M:H} names module M: create it (current_module/1 sees it). */
+    private void noteQualifiedHead(Term head) {
+        Term h = Unify.deref(head);
+        if (h instanceof CompoundTerm && ":".equals(((CompoundTerm) h).getName()) && ((CompoundTerm) h).arity() == 2) {
+            Term mt = Unify.deref(((CompoundTerm) h).arg(0));
+            if (mt instanceof Atom && engine.prolog() != null) engine.prolog().ensureModule(((Atom) mt).getName());
+        }
+    }
+    // END_CHANGE: ISS-2025-0733
+
     private void assertClause(Term clause, boolean front) {
+        // START_CHANGE: ISS-2025-0733 - (M:H :- B) keeps B in the CALLER's module (SWI); M:(H :- B)
+        // runs B in M
+        Term raw = Unify.deref(clause);
+        boolean wholeQualified = raw instanceof CompoundTerm && ":".equals(((CompoundTerm) raw).getName())
+            && ((CompoundTerm) raw).arity() == 2;
+        clause = normalizeQualifiedClause(clause);
+        if (!wholeQualified && clause instanceof CompoundTerm && ":-".equals(((CompoundTerm) clause).getName())
+                && ((CompoundTerm) clause).arity() == 2) {
+            clause = qualifyClauseBody((CompoundTerm) clause, contextModule());
+        }
+        // END_CHANGE: ISS-2025-0733
         Term checkedHead = checkClauseArgument(clause, front ? "asserta/1" : "assertz/1", true);
         checkModifiable(checkedHead, front ? "asserta/1" : "assertz/1");
         // START_CHANGE: ISS-2025-0527 - wave P1.14: a cyclic clause cannot be stored. The copy
@@ -2518,6 +3150,7 @@ public final class Machine {
         if (c == null) throw Errors.representation("cyclic_term", front ? "asserta/1" : "assertz/1");
         // END_CHANGE: ISS-2025-0527
         engine.store().assertRule(toRule(c), front);
+        noteQualifiedHead(checkedHead);                         // ISS-2025-0733
         invalidateTables(checkedHead);                          // ISS-2025-0464
     }
 
@@ -2535,7 +3168,7 @@ public final class Machine {
     // END_CHANGE: ISS-2025-0464
 
     private boolean retractClause(Term clause) {
-        Term q = Unify.deref(clause);
+        Term q = normalizeQualifiedClause(clause);                  // ISS-2025-0733
         Term checkedHead = checkClauseArgument(q, "retract/1", false);
         checkModifiable(checkedHead, "retract/1");
         Term head;
@@ -2683,7 +3316,7 @@ public final class Machine {
     // ------------------------------------------------------------------ backtracking
 
     /** Try the next alternative of {@code cp}, undoing the trail first. */
-    private boolean advance(CP cp) {
+    boolean advance(CP cp) {                             // ISS-2025-0780: package
         while (true) {
             B.undo(cp.trailMark);                              // ISS-2025-0492: one trail
             Goal gs = cp.gen.next(cp);
@@ -2709,6 +3342,7 @@ public final class Machine {
                 // END_CHANGE: ISS-2025-0668
                     popCP();
                     B.clearIfUnreachable(cps.isEmpty());
+                    B.tidy(cp.trailMark);                           // ISS-2025-0787
                 }
                 // END_CHANGE: ISS-2025-0482
                 return true;
@@ -2762,7 +3396,7 @@ public final class Machine {
         return (d != null && d.needsPorts()) ? d : null;
     }
 
-    private boolean debugPortsActive() { return debugPortsTarget() != null; }
+    boolean debugPortsActive() { return debugPortsTarget() != null; }   // ISS-2025-0780: package
     // END_CHANGE: ISS-2025-0494
 
     // START_CHANGE: ISS-2025-0482 - wave W8: the four-port DEPTH is the machine's own call-nesting
@@ -2786,37 +3420,52 @@ public final class Machine {
 
     // START_CHANGE: ISS-2025-0668 - trace ports of deterministic frames (see advance()).
     /** At an Exit port: drop {@code cp} when it is exhausted and nothing was left above it. */
-    private void popIfDeterministicTop(CP cp) {
+    void popIfDeterministicTop(CP cp) {                  // ISS-2025-0780: package
         if ((cp.genExhausted || cp.gen == EXHAUSTED_GEN) && !cps.isEmpty() && cps.get(cps.size() - 1) == cp) {
             popCP();
             B.clearIfUnreachable(cps.isEmpty());
+            B.tidy(cp.trailMark);                               // ISS-2025-0787
         }
     }
 
-    /** True when some live clause after {@code cp.idx} could still match {@code cp.goal}. */
-    private static boolean anyMayMatch(CP cp) {
+    // START_CHANGE: ISS-2025-0715 - the allocation-free, always-on form of anyMayMatch.
+    /** The index of the first live clause at or after {@code cp.idx} whose head could still match
+     *  {@code cp.goal} (no per-argument principal-functor clash), or -1 when there is none. */
+    private static int nextMayMatch(CP cp) {
         Term g = Unify.deref(cp.goal);
-        if (!(g instanceof CompoundTerm)) return cp.idx < cp.limit;
+        if (!(g instanceof CompoundTerm)) return cp.idx;
         CompoundTerm gc = (CompoundTerm) g;
         int n = gc.arity();
-        Object[] keys = new Object[n];
-        for (int i = 0; i < n; i++) keys[i] = Clause.argKey(Unify.deref(gc.arg(i)));
         for (int j = cp.idx; j < cp.limit; j++) {
             Clause cl = cp.clauses[j];
             if (!cl.isAlive(cp.generation)) continue;
-            if (!(cl.head instanceof CompoundTerm)) return true;
+            if (!(cl.head instanceof CompoundTerm)) return j;
             CompoundTerm h = (CompoundTerm) cl.head;
-            if (h.arity() != n) return true;
+            if (h.arity() != n) return j;
             boolean clash = false;
-            for (int i = 0; i < n && !clash; i++) {
-                if (keys[i] == null) continue;
-                Object hk = Clause.argKey(h.arg(i));
-                clash = hk != null && !hk.equals(keys[i]);
-            }
-            if (!clash) return true;
+            for (int i = 0; i < n && !clash; i++) clash = argClash(Unify.deref(gc.arg(i)), h.arg(i));
+            if (!clash) return j;
         }
-        return false;
+        return -1;
     }
+
+    /** True when a (dereferenced) goal argument certainly cannot unify with a head argument:
+     *  both are non-variables with different principal functors. Conservative everywhere else. */
+    private static boolean argClash(Term a, Term h) {
+        if (a instanceof Variable || h instanceof VarRef || h instanceof Variable || a == h) return false;
+        if (a instanceof Atom) return !(h instanceof Atom) || !((Atom) a).getName().equals(((Atom) h).getName());
+        if (a instanceof CompoundTerm) {
+            if (!(h instanceof CompoundTerm)) return true;
+            CompoundTerm x = (CompoundTerm) a, y = (CompoundTerm) h;
+            return x.arity() != y.arity() || !x.getName().equals(y.getName());
+        }
+        if (h instanceof Atom || h instanceof CompoundTerm) return true;
+        Object ka = Clause.argKey(a), kh = Clause.argKey(h);
+        return ka != null && kh != null && !ka.equals(kh);
+    }
+    // END_CHANGE: ISS-2025-0715
+
+    // ISS-2025-0715: anyMayMatch (the tracing-only look-ahead) is replaced by nextMayMatch.
 
     /** The goal as a port shows it: an engine-internal {@code '$mctx'(M, G)} meta-argument
      *  prints as {@code G} (in {@code user}) or {@code M:G}, not as the wrapper. */
@@ -2846,6 +3495,9 @@ public final class Machine {
     /** The current four-port nesting level (the depth the next Call would report). */
     int portDepth() { return portDepth; }
 
+    /** ISS-2025-0780: a frame's Exit/Fail puts the depth back to the frame's own level. */
+    void setPortDepth(int d) { portDepth = d; }
+
     void portCall(Term g, int d) { portDepth = d + 1; noteOpen(g, d); tracePort("Call", g, d); debugPort(DebugEvent.Port.CALL, g, d); }
     void portExit(Term g, int d) { portDepth = d; tracePort("Exit", g, d); debugPort(DebugEvent.Port.EXIT, g, d); }
     void portFail(Term g, int d) { portDepth = d; tracePort("Fail", g, d); debugPort(DebugEvent.Port.FAIL, g, d); }
@@ -2857,7 +3509,7 @@ public final class Machine {
     // only on a traced/debugged Call or Redo, so an untraced run never touches it.
     private Term[] openGoals;
 
-    private void noteOpen(Term g, int d) {
+    void noteOpen(Term g, int d) {                       // ISS-2025-0780: package
         if (d < 0) return;
         if (openGoals == null) openGoals = new Term[Math.max(16, d + 1)];
         else if (d >= openGoals.length) openGoals = Arrays.copyOf(openGoals, Math.max(d + 1, openGoals.length << 1));
@@ -2890,7 +3542,7 @@ public final class Machine {
     }
     // END_CHANGE: ISS-2025-0528
 
-    private void debugPort(DebugEvent.Port port, Term goal, int depth) {
+    void debugPort(DebugEvent.Port port, Term goal, int depth) {   // ISS-2025-0780: package
         DebugController dc = debugPortsTarget();               // ISS-2025-0494
         if (dc == null) return;
         dc.notifyPort(port, snapshotFor(dc, portView(goal)), new HashMap<String, Term>(), depth);   // ISS-2025-0668
@@ -2915,7 +3567,7 @@ public final class Machine {
     private static final int MAX_TRACE_INDENT = 40;
     // END_CHANGE: ISS-2025-0482
 
-    private void tracePort(String port, Term goal, int depth) {
+    void tracePort(String port, Term goal, int depth) {  // ISS-2025-0780: package
         if (!it.denzosoft.jprolog.builtin.debug.Trace.isTracingEnabled()) return;
         try {
             StringBuilder sb = new StringBuilder();

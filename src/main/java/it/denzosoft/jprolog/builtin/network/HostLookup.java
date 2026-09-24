@@ -2,9 +2,10 @@ package it.denzosoft.jprolog.builtin.network;
 
 // START_CHANGE: ISS-2025-0109 - Network communication built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -21,15 +22,14 @@ public class HostLookup implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 2) {
-            throw new PrologEvaluationException(
-                "hostname_address/2 requires 2 arguments: hostname_address(+Host, -IP).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0693
         }
 
         Term hostTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term ipTerm = query.getArguments().get(1);
 
         if (!(hostTerm instanceof Atom)) {
-            throw new PrologEvaluationException("hostname_address/2: Hostname must be an atom.");
+            throw LibArgs.notA("atom", hostTerm, "hostname_address", 2, "Hostname must be an atom");   // ISS-2025-0693
         }
 
         try {
@@ -43,7 +43,7 @@ public class HostLookup implements BuiltIn {
             }
             return false;
         } catch (UnknownHostException e) {
-            throw new PrologEvaluationException("hostname_address: Unknown host: " + ((Atom) hostTerm).getName());
+            throw Errors.existence("host", hostTerm, "hostname_address", 2, "unknown host");   // ISS-2025-0693
         }
     }
 }

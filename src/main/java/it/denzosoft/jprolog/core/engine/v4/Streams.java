@@ -277,10 +277,10 @@ public final class Streams {
             if (base == null || base == s) return tl;
         }
         // END_CHANGE: ISS-2025-0606
-        if (s == userOutput) return System.out;
-        if (s == userError) return System.err;
+        if (s == userOutput) return sysOut();   // ISS-2025-0714
+        if (s == userError) return sysErr();   // ISS-2025-0714
         PrintStream ps = s.out();
-        return (ps != null) ? ps : System.out;
+        return (ps != null) ? ps : sysOut();   // ISS-2025-0714
     }
 
     /**
@@ -293,21 +293,63 @@ public final class Streams {
         if (name == null || "current_output".equals(name)) return out();
         if ("user_output".equals(name)) {
             PrintStream tl = THREAD_OUTPUT.get();
-            return (tl != null) ? tl : System.out;
+            return (tl != null) ? tl : sysOut();   // ISS-2025-0714
         }
-        if ("user_error".equals(name)) return System.err;
+        if ("user_error".equals(name)) return sysErr();   // ISS-2025-0714
         PrologStream s = byAlias.get(name);
         if (s == null || s.input) return null;
         return s.out();
     }
 
+    // START_CHANGE: ISS-2025-0714 - wave Q2.6: the live System.out/System.err, each wrapped ONCE in
+    // a ColumnPrintStream (re-wrapped when a test or the console swaps the system stream), so the
+    // console has a column for line_position/2 and format/2's column stops.
+    private static PrintStream sysOutRaw, sysErrRaw;
+    private static ColumnPrintStream sysOutCol, sysErrCol;
+
+    static PrintStream sysOut() {
+        PrintStream cur = System.out;
+        if (cur instanceof ColumnPrintStream) return cur;
+        synchronized (Streams.class) {
+            if (cur != sysOutRaw || sysOutCol == null) { sysOutRaw = cur; sysOutCol = new ColumnPrintStream(cur, false); }
+            return sysOutCol;
+        }
+    }
+
+    static PrintStream sysErr() {
+        PrintStream cur = System.err;
+        if (cur instanceof ColumnPrintStream) return cur;
+        synchronized (Streams.class) {
+            if (cur != sysErrRaw || sysErrCol == null) { sysErrRaw = cur; sysErrCol = new ColumnPrintStream(cur, false); }
+            return sysErrCol;
+        }
+    }
+
+    /** The column {@code ps} has reached, or -1 when it does not track one. */
+    public static long columnOf(PrintStream ps) {
+        return (ps instanceof ColumnPrintStream) ? ((ColumnPrintStream) ps).column() : -1;
+    }
+
+    /** line_position/2 of user_output (id 1, honouring the capture) and user_error (id 2). */
+    static long systemColumn(int id) {
+        PrintStream ps;
+        if (id == 2) ps = sysErr();
+        else {
+            PrintStream tl = THREAD_OUTPUT.get();
+            ps = (tl != null) ? tl : sysOut();
+        }
+        long c = columnOf(ps);
+        return c < 0 ? 0 : c;
+    }
+    // END_CHANGE: ISS-2025-0714
+
     /** The {@link PrintStream} to write {@code s} through, honouring the thread-local override. */
     public PrintStream writerFor(PrologStream s) {
         if (s == userOutput) {
             PrintStream tl = THREAD_OUTPUT.get();
-            return (tl != null) ? tl : System.out;
+            return (tl != null) ? tl : sysOut();   // ISS-2025-0714
         }
-        if (s == userError) return System.err;
+        if (s == userError) return sysErr();   // ISS-2025-0714
         return s.out();
     }
 

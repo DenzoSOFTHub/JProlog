@@ -2,10 +2,11 @@ package it.denzosoft.jprolog.builtin.network;
 
 // START_CHANGE: ISS-2025-0109 - Network communication built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -21,8 +22,7 @@ public class TcpConnect implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 3) {
-            throw new PrologEvaluationException(
-                "tcp_connect/3 requires 3 arguments: tcp_connect(+Host, +Port, -Socket).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0693
         }
 
         Term hostTerm = query.getArguments().get(0).resolveBindings(bindings);
@@ -30,10 +30,10 @@ public class TcpConnect implements BuiltIn {
         Term socketTerm = query.getArguments().get(2);
 
         if (!(hostTerm instanceof Atom)) {
-            throw new PrologEvaluationException("tcp_connect/3: Host must be an atom.");
+            throw LibArgs.notA("atom", hostTerm, "tcp_connect", 3, "Host must be an atom");   // ISS-2025-0693
         }
         if (!(portTerm instanceof Number)) {
-            throw new PrologEvaluationException("tcp_connect/3: Port must be a number.");
+            throw LibArgs.notA("number", portTerm, "tcp_connect", 3, "Port must be a number");   // ISS-2025-0693
         }
 
         String host = ((Atom) hostTerm).getName();
@@ -49,7 +49,7 @@ public class TcpConnect implements BuiltIn {
             SocketManager.getInstance().closeSocket(handle);
             return false;
         } catch (IOException e) {
-            throw new PrologEvaluationException("tcp_connect: " + e.getMessage());
+            throw Errors.host(e, "read", "socket", null, "tcp_connect", LibArgs.arity(query));   // ISS-2025-0693
         }
     }
 }

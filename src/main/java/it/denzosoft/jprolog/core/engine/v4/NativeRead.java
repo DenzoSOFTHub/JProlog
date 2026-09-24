@@ -131,23 +131,27 @@ final class NativeRead {
             int c = src.read();
             if (c < 0) return token ? sb.toString() : null;
             if (isLayout(c)) { sb.appendCodePoint(c); continue; }
+            // ISS-2025-0738: comments are kept VERBATIM (the lexer skips them), so an offset in the
+            // collected text is an offset in the stream (subterm_positions) and comments(-L) can
+            // report them
             if (c == '%') {                          // line comment
-                while ((c = src.read()) >= 0 && c != '\n') { /* skip */ }
-                sb.append('\n');
+                sb.append('%');
+                while ((c = src.read()) >= 0 && c != '\n') sb.appendCodePoint(c);
+                if (c >= 0) sb.append('\n');
                 if (c < 0) return token ? sb.toString() : null;
                 continue;
             }
             if (c == '/' && src.peek() == '*') {     // block comment
                 src.read();
+                sb.append("/*");
                 int prev = 0;
                 for (;;) {
                     int d = src.read();
                     if (d < 0) return token ? sb.toString() : null;
-                    if (d == '\n') sb.append('\n');
+                    sb.appendCodePoint(d);
                     if (prev == '*' && d == '/') break;
                     prev = d;
                 }
-                sb.append(' ');
                 continue;
             }
             token = true;
@@ -253,6 +257,26 @@ final class NativeRead {
         }
     }
 
+    // START_CHANGE: ISS-2025-0738
+    /** The comments of the last {@link #parsePositions} on this thread ({start, line, end}). */
+    private static final ThreadLocal<List<int[]>> lastComments = new ThreadLocal<List<int[]>>();
+
+    /** {@link #parse} recording subterm positions (offset by {@code base}) and the comments. */
+    static Parsed parsePositions(String text, String dq, String ctx, int base) {
+        TermReader r;
+        try {
+            List<int[]> comments = new ArrayList<int[]>();
+            lastComments.set(comments);
+            r = new TermReader(Lexer.tokenize(text, comments), Ops.current().table())
+                .withFreshVariables(true).withPositions(base);
+            if (dq != null) r.withDoubleQuotes(dq);
+            return new Parsed(r.readSingle(), r);
+        } catch (Lexer.LexException | TermReader.ParseException e) {
+            throw syntax(e.getMessage(), ctx);
+        }
+    }
+    // END_CHANGE: ISS-2025-0738
+
     /** {@link #parse} for the text built-ins (term_to_atom/2, term_string/2, atom_to_term/3). */
     static Term parseText(String text, String ctx) {
         return parse(text, null, ctx).term;
@@ -284,7 +308,7 @@ final class NativeRead {
 
     /** The parsed read_term option list. */
     private static final class ReadOptions {
-        Term variables, variableNames, singletons, termPosition, comments;
+        Term variables, variableNames, singletons, termPosition, comments, subtermPositions;
         String syntaxErrors = "error";
         String doubleQuotes;
     }
@@ -307,7 +331,7 @@ final class NativeRead {
                 case "variable_names": o.variableNames = a; break;
                 case "singletons": o.singletons = a; break;
                 case "term_position": o.termPosition = a; break;
-                case "subterm_positions": break;
+                case "subterm_positions": o.subtermPositions = a; break;          // ISS-2025-0738
                 case "comments": o.comments = a; break;
                 case "module": case "backquoted_string": case "cycles": case "dotlists":
                 case "var_prefix": case "quasi_quotations": case "process_comment":
@@ -360,6 +384,9 @@ final class NativeRead {
             IOStreamUtils.checkStreamType(s, false, "input", ctx);
             IOStreamUtils.beforeRead(s, ctx);
             Term position = null;
+            final long startChar = s.charCount();                          // ISS-2025-0738
+            final long startLine = s.lineCount();
+            final long startLinePos = s.linePosition();
             if (o.termPosition != null) {
                 position = new CompoundTerm(new Atom("$stream_position"), Arrays.<Term>asList(
                     Number.valueOf(s.charCount()), Number.valueOf(s.lineCount()),
@@ -377,7 +404,9 @@ final class NativeRead {
                 term = END_OF_FILE;
             } else {
                 try {
-                    Parsed p = parse(text, o.doubleQuotes, ctx);
+                    Parsed p = (o.subtermPositions != null || o.comments != null)
+                        ? parsePositions(text, o.doubleQuotes, ctx, (int) startChar)           // ISS-2025-0738
+                        : parse(text, o.doubleQuotes, ctx);
                     term = p.term;
                     reader = p.reader;
                 } catch (PrologException pe) {
@@ -394,7 +423,34 @@ final class NativeRead {
             if (o.singletons != null
                     && !m.unifyOrUndo(o.singletons, reader == null ? NIL : bindingList(reader, true))) return Outcome.FAILURE;
             if (o.termPosition != null && !m.unifyOrUndo(o.termPosition, position)) return Outcome.FAILURE;
-            if (o.comments != null && !m.unifyOrUndo(o.comments, NIL)) return Outcome.FAILURE;
+            // START_CHANGE: ISS-2025-0738 - subterm_positions(P) and comments(L) (SWI)
+            if (o.subtermPositions != null) {
+                Term sp = (reader == null || reader.lastPositions() == null) ? new Atom("none") : reader.lastPositions();
+                if (text == null) {
+                    long e = s.charCount();
+                    sp = new CompoundTerm(new Atom("-"), Arrays.<Term>asList(Number.valueOf(e), Number.valueOf(e)));
+                }
+                if (!m.unifyOrUndo(o.subtermPositions, sp)) return Outcome.FAILURE;
+            }
+            if (o.comments != null) {
+                Term cl = NIL;
+                if (text != null && lastComments.get() != null) {
+                    List<Term> items = new ArrayList<Term>();
+                    for (int[] c : lastComments.get()) {
+                        int col = text.lastIndexOf('\n', c[0] - 1);
+                        long lp = (c[1] == 1) ? startLinePos + c[0] : c[0] - col - 1;
+                        Term sp = new CompoundTerm(new Atom("$stream_position"), Arrays.<Term>asList(
+                            Number.valueOf(startChar + c[0]), Number.valueOf(startLine + c[1] - 1),
+                            Number.valueOf(lp), Number.valueOf(startChar + c[0])));
+                        items.add(new CompoundTerm(new Atom("-"), Arrays.<Term>asList(sp,
+                            new it.denzosoft.jprolog.core.terms.PrologString(text.substring(c[0], c[2])))));
+                    }
+                    cl = NativeLibrary.listOf(items, NIL);
+                }
+                lastComments.remove();
+                if (!m.unifyOrUndo(o.comments, cl)) return Outcome.FAILURE;
+            }
+            // END_CHANGE: ISS-2025-0738
             return Outcome.SUCCESS;
         }
     }

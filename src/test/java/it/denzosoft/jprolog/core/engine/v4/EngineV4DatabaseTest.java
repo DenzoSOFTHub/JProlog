@@ -114,7 +114,8 @@ public class EngineV4DatabaseTest {
     public void testISS0499_CurrentPredicateIsLazy() {
         List<Map<String, Term>> one = prolog.solve("once(current_predicate(_)).");
         assertEquals(1, one.size());
-        assertEquals(3, prolog.solve("current_predicate(_).").size());
+        // ISS-2025-0737 (4.6 wave Q3.3): + user:file_search_path/2, dynamic and multifile (SWI)
+        assertEquals(4, prolog.solve("current_predicate(_).").size());
     }
 
     // ================================================================ retractall/1, abolish/1

@@ -168,6 +168,14 @@ public final class DCGTranslator {
         }
         if (nt instanceof CompoundTerm) {
             CompoundTerm c = (CompoundTerm) nt;
+            // START_CHANGE: ISS-2025-0713 - a module-qualified non-terminal M:NT (head or body)
+            // becomes M:NT(..., S0, S), as SWI translates it — not ':'(M, NT, S0, S), a :/4
+            // predicate nothing else can call. Needed by `prolog:message(T) --> ...` (Q2.5).
+            if (":".equals(c.getName()) && c.getArguments().size() == 2) {
+                return new CompoundTerm(new Atom(":"), Arrays.asList(c.getArguments().get(0),
+                    addArgs(c.getArguments().get(1), s0, s)));
+            }
+            // END_CHANGE: ISS-2025-0713
             List<Term> args = new ArrayList<>(c.getArguments());
             args.add(s0);
             args.add(s);

@@ -2,10 +2,11 @@ package it.denzosoft.jprolog.builtin.network;
 
 // START_CHANGE: ISS-2025-0109 - Network communication built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -24,8 +25,7 @@ public class TcpReceive implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 3) {
-            throw new PrologEvaluationException(
-                "tcp_receive/3 requires 3 arguments: tcp_receive(+Socket, -Data, +MaxBytes).");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0693
         }
 
         Term sockTerm = query.getArguments().get(0).resolveBindings(bindings);
@@ -33,15 +33,15 @@ public class TcpReceive implements BuiltIn {
         Term maxTerm = query.getArguments().get(2).resolveBindings(bindings);
 
         if (!(sockTerm instanceof Atom)) {
-            throw new PrologEvaluationException("tcp_receive/3: Socket must be an atom handle.");
+            throw LibArgs.notA("atom", sockTerm, "tcp_receive", 3, "Socket must be an atom handle");   // ISS-2025-0693
         }
         if (!(maxTerm instanceof Number)) {
-            throw new PrologEvaluationException("tcp_receive/3: MaxBytes must be a number.");
+            throw LibArgs.notA("number", maxTerm, "tcp_receive", 3, "MaxBytes must be a number");   // ISS-2025-0693
         }
 
         int maxBytes = ((Number) maxTerm).getValue().intValue();
         if (maxBytes <= 0 || maxBytes > 1048576) {
-            throw new PrologEvaluationException("tcp_receive/3: MaxBytes must be between 1 and 1048576.");
+            throw Errors.domain("buffer_size", maxTerm, "tcp_receive", 3, "MaxBytes must be between 1 and 1048576");   // ISS-2025-0693
         }
 
         try {
@@ -68,7 +68,7 @@ public class TcpReceive implements BuiltIn {
             }
             return false;
         } catch (IOException e) {
-            throw new PrologEvaluationException("tcp_receive: " + e.getMessage());
+            throw Errors.host(e, "read", "socket", null, "tcp_receive", LibArgs.arity(query));   // ISS-2025-0693
         }
     }
 }

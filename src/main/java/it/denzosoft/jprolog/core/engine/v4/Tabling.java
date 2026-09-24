@@ -63,8 +63,76 @@ import java.util.Map;
  * whole, so a later call recomputes it instead of reading a partial table.
  *
  * <p>Not thread-safe: one {@link Engine} is evaluated by one {@link Machine} on one thread.
+ *
+ * <p>START_CHANGE: ISS-2025-0752 - 4.6 wave Q4.3: <b>table spaces</b>. An instance of this class
+ * is one table space. The engine's MAIN space serves every non-worker thread (they are all the
+ * Prolog thread {@code main}; the one-evaluation-at-a-time claim below still arbitrates between
+ * them), and every worker machine ({@code thread_create/2,3}, the {@code concurrent_*} pool) runs
+ * on a PRIVATE space of its own for its lifetime ({@link #enterWorker}) — SWI-Prolog's default,
+ * "tables are private to a thread". A predicate declared {@code :- table p/1 as shared} also
+ * publishes its COMPLETE tables into the engine-wide {@link Shared} store, where every thread's
+ * call finds them; an INCOMPLETE table is always owned by the space evaluating it. A thread that
+ * calls a shared variant another thread is still evaluating does NOT wait for it (SWI does): it
+ * evaluates the variant in its own space, and whichever completes first is published — so no
+ * cross-thread wait, hence no tabling deadlock, at the price of possibly duplicated work.
+ * Invalidation crosses spaces through per-predicate stamps and an abolish epoch: a table whose
+ * stamp is stale is dropped when it is next looked up. END_CHANGE: ISS-2025-0752
  */
 final class Tabling {
+
+    // START_CHANGE: ISS-2025-0752
+    /** What every table space of one engine shares: completed shared tables and the stamps. */
+    static final class Shared {
+        final java.util.concurrent.ConcurrentHashMap<String, Table> complete =
+            new java.util.concurrent.ConcurrentHashMap<String, Table>();
+        final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong> stamps =
+            new java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>();
+        final java.util.concurrent.atomic.AtomicLong epoch = new java.util.concurrent.atomic.AtomicLong();
+
+        java.util.concurrent.atomic.AtomicLong stampOf(String indicator) {
+            java.util.concurrent.atomic.AtomicLong a = stamps.get(indicator);
+            if (a == null) {
+                java.util.concurrent.atomic.AtomicLong fresh = new java.util.concurrent.atomic.AtomicLong();
+                a = stamps.putIfAbsent(indicator, fresh);
+                if (a == null) a = fresh;
+            }
+            return a;
+        }
+
+        boolean valid(Table t) {
+            return t.stamp == t.stampRef.get() && t.epoch == epoch.get();
+        }
+    }
+
+    /** The private space of the worker machine running on this thread (null: the main space). */
+    private static final ThreadLocal<Tabling> WORKER = new ThreadLocal<Tabling>();
+
+    final Object owner;        // the Engine
+    final Shared shared;
+
+    Tabling(Object owner, Shared shared) {
+        this.owner = owner;
+        this.shared = shared;
+    }
+
+    /** The space the calling thread uses on {@code engine}. */
+    static Tabling current(Engine engine, Tabling main) {
+        Tabling t = WORKER.get();
+        return (t != null && t.owner == engine) ? t : main;
+    }
+
+    /** A worker machine starts: give this thread a private space; returns the previous one. */
+    static Tabling enterWorker(Engine engine) {
+        Tabling prev = WORKER.get();
+        WORKER.set(new Tabling(engine, engine.tablingShared()));
+        return prev;
+    }
+
+    /** The worker machine ended: its private tables go with it. */
+    static void exitWorker(Tabling prev) {
+        if (prev == null) WORKER.remove(); else WORKER.set(prev);
+    }
+    // END_CHANGE: ISS-2025-0752
 
     static final int EVALUATING = 0, COMPLETE = 1, ABANDONED = 2;
 
@@ -87,9 +155,29 @@ final class Tabling {
         // tabling) and the position of the one kept answer per index-argument key. A superseded
         // answer's slot is set to null and the better answer APPENDED, so a consumer that is
         // iterating by position still sees the improvement (and the SCC runs another round).
-        String[] modes;
+        it.denzosoft.jprolog.core.engine.TableStore.ModeSpec[] modes;         // ISS-2025-0754
         java.util.HashMap<String, Integer> modedPos;
         // END_CHANGE: ISS-2025-0572
+        // START_CHANGE: ISS-2025-0752 - validity across spaces, and the `shared` declaration
+        java.util.concurrent.atomic.AtomicLong stampRef;
+        long stamp;
+        long epoch;
+        boolean sharedDecl;
+        // END_CHANGE: ISS-2025-0752
+        // START_CHANGE: ISS-2025-0755 - minimal WFS: the delay lists of the CONDITIONAL answers
+        // (answer index -> the alternative delay lists it was derived with), the answer keys of the
+        // conditional answers, and two counters so tnot/1 answers in O(1).
+        java.util.HashMap<Integer, List<Delay>> conds;
+        java.util.HashMap<String, Integer> condIndex;
+        int uncond;      // unconditional answers
+        int removed;     // null slots in answers (superseded moded answers, answers proved false)
+
+        boolean hasUnconditional() { return uncond > 0; }
+
+        boolean hasAnswers() { return answers.size() - removed > 0; }
+
+        boolean isConditional(int idx) { return conds != null && conds.containsKey(idx); }
+        // END_CHANGE: ISS-2025-0755
 
         Table(String key, String indicator, Term template, long seq) {
             this.key = key;
@@ -123,10 +211,41 @@ final class Tabling {
 
     long round() { return round; }
 
-    Table get(String key) { return tables.get(key); }
+    /** The table of {@code key} in this space; a COMPLETE one invalidated meanwhile is dropped. */
+    Table get(String key) {
+        Table t = tables.get(key);
+        if (t != null && t.status == COMPLETE && t.stampRef != null && !shared.valid(t)) {  // ISS-2025-0752
+            tables.remove(key);
+            liveAnswers -= t.answers.size();
+            t.status = ABANDONED;
+            return null;
+        }
+        return t;
+    }
 
-    Table create(String key, String indicator, Term template) {
+    // START_CHANGE: ISS-2025-0752
+    /** A COMPLETE shared table of {@code key} published by any space, or null. */
+    Table getShared(String key) {
+        if (shared.complete.isEmpty()) return null;
+        Table t = shared.complete.get(key);
+        if (t != null && !shared.valid(t)) {
+            shared.complete.remove(key, t);
+            return null;
+        }
+        return t;
+    }
+    // END_CHANGE: ISS-2025-0752
+
+    Table create(String key, String indicator, Term template) { return create(key, indicator, template, false); }
+
+    Table create(String key, String indicator, Term template, boolean sharedDecl) {
         Table t = new Table(key, indicator, template, ++seqCounter);
+        // START_CHANGE: ISS-2025-0752
+        t.stampRef = shared.stampOf(indicator);
+        t.stamp = t.stampRef.get();
+        t.epoch = shared.epoch.get();
+        t.sharedDecl = sharedDecl;
+        // END_CHANGE: ISS-2025-0752
         tables.put(key, t);
         evalStack.add(t);
         return t;
@@ -257,15 +376,158 @@ final class Tabling {
     /** Mark the leader's whole SCC complete: every table still EVALUATING that was created at or
      *  after the leader (they can only be reached through it). */
     void completeScc(Table leader) {
+        List<Table> scc = null;                              // ISS-2025-0755: to simplify
+        List<Table> pub = null;                              // ISS-2025-0752: to publish
         for (int i = evalStack.size() - 1; i >= 0; i--) {
             Table t = evalStack.get(i);
             if (t.seq < leader.seq) break;
             t.status = COMPLETE;
             t.producing = false;
             evalStack.remove(i);
+            if (t.conds != null && !t.conds.isEmpty()) {
+                if (scc == null) scc = new ArrayList<Table>();
+                scc.add(t);
+            }
+            if (t.sharedDecl) {
+                if (pub == null) pub = new ArrayList<Table>();
+                pub.add(t);
+            }
+        }
+        if (scc != null) simplify(scc);                      // ISS-2025-0755
+        // ISS-2025-0752: a shared predicate's completed table is published for every thread
+        if (pub != null) {
+            for (Table t : pub) if (shared.valid(t)) shared.complete.putIfAbsent(t.key, t);
         }
         releaseIfIdle();                                     // ISS-2025-0488
     }
+
+    // START_CHANGE: ISS-2025-0755 - 4.6 wave Q4.5: minimal well-founded semantics.
+    /**
+     * One literal of a delay list. A conditional answer was derived assuming its delayed literals;
+     * after the SCC completes, {@link #simplify} resolves the ones whose truth is then known.
+     * <ul>
+     *   <li>{@code NEG}: {@code tnot(G)} over G's table, delayed because the table was incomplete
+     *       (a loop through negation) or had only conditional answers. True once G has no answer,
+     *       false once G has an unconditional one.</li>
+     *   <li>{@code POS}: a conditional answer of another table was used positively. True once that
+     *       answer is unconditional, false once it has been proved false.</li>
+     *   <li>{@code UNDEF}: {@code undefined/0} — never resolved.</li>
+     * </ul>
+     */
+    static final class Delay {
+        static final int NEG = 0, POS = 1, UNDEF = 2;
+        final int kind;
+        final Table table;
+        final int answer;
+        final Term goal;
+        final Delay next;
+
+        Delay(int kind, Table table, int answer, Term goal, Delay next) {
+            this.kind = kind; this.table = table; this.answer = answer; this.goal = goal; this.next = next;
+        }
+
+        Delay push(Delay rest) { return new Delay(kind, table, answer, goal, rest); }
+
+        /** A signature of the whole list, for deduplicating alternatives. */
+        static String sig(Delay d) {
+            StringBuilder sb = new StringBuilder();
+            for (; d != null; d = d.next) {
+                sb.append(d.kind).append(':').append(d.table == null ? "-" : d.table.key)
+                  .append('#').append(d.answer).append(';');
+            }
+            return sb.toString();
+        }
+
+        /** The literals as a conjunction ({@code true} for an empty list), for call_delays/2. */
+        static Term conjunction(Delay d) {
+            List<Term> lits = new ArrayList<Term>();
+            for (; d != null; d = d.next) lits.add(d.goal);
+            if (lits.isEmpty()) return new Atom("true");
+            Term t = lits.get(lits.size() - 1);
+            for (int i = lits.size() - 2; i >= 0; i--) {
+                t = new CompoundTerm(new Atom(","), new Term[] {lits.get(i), t});
+            }
+            return t;
+        }
+    }
+
+    private static final int TRUE_ = 1, FALSE_ = 0, UNKNOWN_ = 2;
+
+    private static int truth(Delay lit) {
+        switch (lit.kind) {
+            case Delay.NEG: {
+                Table t = lit.table;
+                if (t == null || t.status == ABANDONED) return UNKNOWN_;
+                if (t.hasUnconditional()) return FALSE_;
+                if (t.status == COMPLETE && !t.hasAnswers()) return TRUE_;
+                return UNKNOWN_;
+            }
+            case Delay.POS: {
+                Table t = lit.table;
+                if (t == null || t.status == ABANDONED) return UNKNOWN_;
+                if (lit.answer >= t.answers.size() || t.answers.get(lit.answer) == null) {
+                    return (t.status == COMPLETE) ? FALSE_ : UNKNOWN_;
+                }
+                return t.isConditional(lit.answer) ? UNKNOWN_ : TRUE_;
+            }
+            default:
+                return UNKNOWN_;
+        }
+    }
+
+    /**
+     * Simplify the conditional answers of a just-completed SCC to a fixpoint: an answer with an
+     * alternative whose literals are all true becomes unconditional; one whose every alternative
+     * holds a false literal is removed (proved false); the rest stay conditional — "undefined".
+     * What SLG resolution adds on top (answer completion of unsupported positive loops among
+     * conditional answers) is not done: such answers stay undefined (LIM-046).
+     */
+    private void simplify(List<Table> scc) {
+        boolean changed = true;
+        int guardRounds = 0;
+        while (changed && guardRounds++ < 100000) {
+            changed = false;
+            for (Table t : scc) {
+                if (t.conds == null || t.conds.isEmpty()) continue;
+                for (java.util.Iterator<Map.Entry<Integer, List<Delay>>> it = t.conds.entrySet().iterator(); it.hasNext();) {
+                    Map.Entry<Integer, List<Delay>> e = it.next();
+                    List<Delay> alts = e.getValue();
+                    List<Delay> kept = new ArrayList<Delay>(alts.size());
+                    boolean proved = false;
+                    boolean altered = false;
+                    for (Delay alt : alts) {
+                        Delay rest = null;
+                        boolean dead = false;
+                        boolean dropped = false;
+                        for (Delay d = alt; d != null; d = d.next) {
+                            int v = truth(d);
+                            if (v == FALSE_) { dead = true; break; }
+                            if (v == TRUE_) { dropped = true; continue; }
+                            rest = d.push(rest);
+                        }
+                        if (dead) { altered = true; continue; }
+                        if (rest == null) { proved = true; break; }
+                        if (dropped) altered = true;
+                        kept.add(dropped ? rest : alt);
+                    }
+                    int idx = e.getKey();
+                    if (proved) {
+                        it.remove();
+                        t.uncond++;
+                        changed = true;
+                    } else if (kept.isEmpty()) {
+                        it.remove();
+                        if (t.answers.get(idx) != null) { t.answers.set(idx, null); t.removed++; }
+                        changed = true;
+                    } else if (altered) {
+                        e.setValue(kept);
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    // END_CHANGE: ISS-2025-0755
 
     /**
      * An evaluation was abandoned in mid-production (an exception unwound past it, a cut discarded
@@ -330,6 +592,8 @@ final class Tabling {
 
     /** {@code abolish_all_tables/0}: drop every answer table (declarations are kept). */
     void abolishAll() {
+        shared.epoch.incrementAndGet();          // ISS-2025-0752: every space's tables are stale
+        shared.complete.clear();
         tables.clear();
         evalStack.clear();
         producing.clear();
@@ -339,6 +603,12 @@ final class Tabling {
     /** {@code abolish_table/1} and the assert/retract invalidation: drop one predicate's tables. */
     void abolish(String functor, int arity) {
         String ind = functor + "/" + arity;
+        // ISS-2025-0752: the other spaces' tables of ind become stale, the shared ones go now
+        java.util.concurrent.atomic.AtomicLong st = shared.stamps.get(ind);
+        if (st != null) st.incrementAndGet();
+        for (java.util.Iterator<Table> si = shared.complete.values().iterator(); si.hasNext();) {
+            if (ind.equals(si.next().indicator)) si.remove();
+        }
         java.util.Iterator<Map.Entry<String, Table>> it = tables.entrySet().iterator();
         while (it.hasNext()) {
             Table t = it.next().getValue();
@@ -355,12 +625,19 @@ final class Tabling {
      * are invalidated, and never while an evaluation is running (see the class comment).
      */
     void invalidate(String functor, int arity) {
-        if (!producing.isEmpty() || tables.isEmpty()) return;
+        // ISS-2025-0752: stamps exist only for predicates that ever had a table, in any space
+        if (!producing.isEmpty() || shared.stamps.isEmpty()) return;
         abolish(functor, arity);
     }
 
     /** Snapshot for {@code current_table/2}. */
-    List<Table> snapshot() { return new ArrayList<Table>(tables.values()); }
+    List<Table> snapshot() {
+        List<Table> out = new ArrayList<Table>(tables.values());
+        for (Table t : shared.complete.values()) {                           // ISS-2025-0752
+            if (!tables.containsKey(t.key) && shared.valid(t)) out.add(t);
+        }
+        return out;
+    }
 
     /** Test hook: the number of live tables. */
     int tableCount() { return tables.size(); }
@@ -441,7 +718,41 @@ final class Tabling {
         t.register("abolish_all_tables", 0, new AbolishAllB());
         t.register("abolish_table", 1, new AbolishOneB());
         t.register("current_table", 2, new CurrentTableB());
+        // START_CHANGE: ISS-2025-0755 - 4.6 wave Q4.5: minimal WFS
+        t.register("tnot", 1, new TnotB());
+        t.register("undefined", 0, new UndefinedB());
+        t.register("call_delays", 2, new CallDelaysB());
+        // END_CHANGE: ISS-2025-0755
     }
+
+    // START_CHANGE: ISS-2025-0755
+    /** {@code tnot(:Goal)}: tabled negation under the (minimal) well-founded semantics. */
+    private static final class TnotB implements Builtin {
+        @Override public Outcome call(Machine m, Term[] args) {
+            return m.tnot(args[0]) ? Outcome.SUCCESS : Outcome.FAILURE;
+        }
+    }
+
+    /** {@code undefined/0}: succeeds with an undefined truth value (a delay that never resolves). */
+    private static final class UndefinedB implements Builtin {
+        private static final Atom UNDEFINED = new Atom("undefined");
+        @Override public Outcome call(Machine m, Term[] args) {
+            m.addDelay(new Delay(Delay.UNDEF, null, -1, UNDEFINED, null));
+            return Outcome.SUCCESS;
+        }
+    }
+
+    /** {@code call_delays(:Goal, -Delays)}: Delays is `true` or the conjunction Goal delayed. */
+    private static final class CallDelaysB implements Builtin {
+        @Override public Outcome call(Machine m, Term[] args) {
+            Term g = m.deref(args[0]);
+            if (g instanceof Variable) throw Errors.instantiation("call_delays/2");
+            if (!(g instanceof Atom) && !(g instanceof CompoundTerm)) throw Errors.type("callable", g, "call_delays/2");
+            m.pushCallDelays(g, args[1]);
+            return Outcome.SUCCESS;
+        }
+    }
+    // END_CHANGE: ISS-2025-0755
 
     /** Abolishing tables from INSIDE a tabled evaluation would pull the store out from under the
      *  running generator frames, so it is a permission error (XSB refuses it too). */
@@ -586,21 +897,62 @@ final class Tabling {
             if (table.modes != null) { recordModed(); return; }   // ISS-2025-0572
             keyBuf.setLength(0);
             String k = appendKey(keyBuf, prod, m.guard()).toString();
+            Delay d = m.delays();                                    // ISS-2025-0755
+            if (d == null) {
+                if (table.seen.add(k)) {
+                    table.answers.add(Unify.copy(prod, new IdentityHashMap<Variable, Variable>(), m.guard()));
+                    table.uncond++;                                  // ISS-2025-0755
+                    tb.answerRecorded();
+                } else if (table.condIndex != null) {
+                    // START_CHANGE: ISS-2025-0755 - a conditional answer derived unconditionally
+                    Integer idx = table.condIndex.remove(k);
+                    if (idx != null && table.answers.get(idx) != null && table.conds.remove(idx) != null) {
+                        table.uncond++;
+                        tb.answerRecorded();                         // growth: the SCC iterates
+                    }
+                    // END_CHANGE: ISS-2025-0755
+                }
+                return;
+            }
+            // START_CHANGE: ISS-2025-0755 - a CONDITIONAL answer: kept with its delay list
+            if (table.conds == null) {
+                table.conds = new java.util.HashMap<Integer, List<Delay>>();
+                table.condIndex = new java.util.HashMap<String, Integer>();
+            }
             if (table.seen.add(k)) {
                 table.answers.add(Unify.copy(prod, new IdentityHashMap<Variable, Variable>(), m.guard()));
+                int idx = table.answers.size() - 1;
+                List<Delay> alts = new ArrayList<Delay>(1);
+                alts.add(d);
+                table.conds.put(idx, alts);
+                table.condIndex.put(k, idx);
                 tb.answerRecorded();
+                return;
             }
+            Integer idx = table.condIndex.get(k);
+            if (idx == null) return;                                 // already unconditional
+            List<Delay> alts = table.conds.get(idx);
+            if (alts == null) return;
+            String sig = Delay.sig(d);
+            for (Delay a : alts) if (Delay.sig(a).equals(sig)) return;
+            if (alts.size() < 64) alts.add(d);                       // a bounded disjunction
+            // END_CHANGE: ISS-2025-0755
         }
 
-        // START_CHANGE: ISS-2025-0572
+        // START_CHANGE: ISS-2025-0572, ISS-2025-0754 - 4.6 wave Q4.4: SWI's aggregation
+        // (boot/tabling.pl, update/7 and update_goal/5): EVERY moded argument is aggregated on its
+        // own — first, last, min/max by the standard order of terms, sum, lattice(PI) (the join
+        // call(PI, Old, New, Agg)) and po(PI) (keep Old when call(PI, Old, New) succeeds, else
+        // New) — and the answer is replaced only when the aggregate is not a variant of the old
+        // one. A lattice join that fails rejects the new answer.
         private void recordModed() {
             Term p = Unify.deref(prod);
             if (!(p instanceof CompoundTerm)) { table.modes = null; record(); return; }
             List<Term> as = ((CompoundTerm) p).getArguments();
-            String[] modes = table.modes;
+            it.denzosoft.jprolog.core.engine.TableStore.ModeSpec[] modes = table.modes;
             keyBuf.setLength(0);
             for (int i = 0; i < as.size() && i < modes.length; i++) {
-                if ("index".equals(modes[i])) appendKey(keyBuf, as.get(i), m.guard());
+                if (modes[i].isIndex()) appendKey(keyBuf, as.get(i), m.guard());
                 else keyBuf.append('*');
                 keyBuf.append('\u0001');
             }
@@ -610,33 +962,70 @@ final class Tabling {
             if (pos == null) {
                 table.answers.add(Unify.copy(prod, new IdentityHashMap<Variable, Variable>(), m.guard()));
                 table.modedPos.put(k, table.answers.size() - 1);
+                table.uncond++;                                          // ISS-2025-0755
                 tb.answerRecorded();
                 return;
             }
             Term old = table.answers.get(pos);
             List<Term> olds = ((CompoundTerm) old).getArguments();
-            boolean better = false;
-            for (int i = 0; i < modes.length && i < as.size(); i++) {
-                String md = modes[i];
-                if ("min".equals(md) || "max".equals(md)) {
-                    int c = Unify.compareTerms(Unify.deref(as.get(i)), olds.get(i), m.guard());
-                    better = "min".equals(md) ? c < 0 : c > 0;
-                    break;
-                }
-                if ("last".equals(md)) {
-                    StringBuilder a = new StringBuilder(), b = new StringBuilder();
-                    appendKey(a, as.get(i), m.guard());
-                    appendKey(b, olds.get(i), m.guard());
-                    better = !a.toString().equals(b.toString());
-                    break;
-                }
+            Term[] next = new Term[as.size()];
+            boolean changed = false;
+            for (int i = 0; i < as.size(); i++) {
+                Term o = olds.get(i);
+                if (i >= modes.length || modes[i].isIndex()) { next[i] = o; continue; }
+                Term nx = aggregate(modes[i], o, Unify.deref(as.get(i)));
+                if (nx == null) return;                                   // the join failed
+                next[i] = nx;
+                if (!changed && !variantKey(nx, m.guard()).equals(variantKey(o, m.guard()))) changed = true;
             }
-            if (!better) return;
+            if (!changed) return;
+            Term fresh = Unify.copy(new CompoundTerm(((CompoundTerm) old).getFunctor(), next),
+                new IdentityHashMap<Variable, Variable>(), m.guard());
             table.answers.set(pos, null);
-            table.answers.add(Unify.copy(prod, new IdentityHashMap<Variable, Variable>(), m.guard()));
+            table.removed++;                                             // ISS-2025-0755
+            table.answers.add(fresh);
             table.modedPos.put(k, table.answers.size() - 1);
             tb.answerRecorded();
         }
+
+        /** The new aggregate of one moded argument, or null when a lattice join fails. */
+        private Term aggregate(it.denzosoft.jprolog.core.engine.TableStore.ModeSpec md, Term o, Term nw) {
+            switch (md.kind) {
+                case "first": return o;
+                case "last":  return nw;
+                case "min":   return Unify.compareTerms(o, nw, m.guard()) < 0 ? o : nw;
+                case "max":   return Unify.compareTerms(o, nw, m.guard()) > 0 ? o : nw;
+                case "sum": {
+                    Variable j = new Variable();
+                    Term plus = new CompoundTerm(new Atom("+"), new Term[] {o, nw});
+                    return solveFor(new CompoundTerm(new Atom("is"), new Term[] {j, plus}), j, null);
+                }
+                case "lattice": {
+                    Variable j = new Variable();
+                    return solveFor(new CompoundTerm(new Atom(md.pred), new Term[] {o, nw, j}), j, md.module);
+                }
+                case "po": {
+                    Term t = solveFor(new CompoundTerm(new Atom(md.pred), new Term[] {o, nw}), ATOM_TRUE, md.module);
+                    return (t != null) ? o : nw;
+                }
+                default:      return nw;
+            }
+        }
+
+        /** The first solution's (copied) {@code out} for {@code goal}, or null; no binding survives. */
+        private Term solveFor(Term goal, final Term out, String module) {
+            Term g = (module == null) ? goal : new CompoundTerm(new Atom(":"), new Term[] {new Atom(module), goal});
+            final Term[] r = {null};
+            m.forEachSolution(g, new Machine.SolutionVisitor() {
+                @Override public boolean visit() {
+                    r[0] = Unify.copy(out, new IdentityHashMap<Variable, Variable>(), m.guard());
+                    return false;
+                }
+            });
+            return r[0];
+        }
+
+        private static final Atom ATOM_TRUE = new Atom("true");
         // END_CHANGE: ISS-2025-0572
 
         @Override
@@ -650,6 +1039,8 @@ final class Tabling {
                     while (ci < limit) {
                         Clause cl = clauses[ci++];
                         if (!cl.isAlive(generation)) continue;
+                        // ISS-2025-0755: an answer's delay list is what THIS body delays (trailed)
+                        if (m.delays() != null) m.setDelays(null);
                         Machine.Goal after = new Machine.Goal(recorder,
                             new Machine.Goal(FAIL, bodyBarrier, null));
                         Machine.Goal gs = m.buildClauseBody(cl, prod, bodyBarrier, after, defModule);
@@ -675,6 +1066,10 @@ final class Tabling {
                     if (ans == null) continue;                            // ISS-2025-0572: superseded
                     Term inst = Unify.copy(ans, new IdentityHashMap<Variable, Variable>(), m.guard());
                     if (!m.unifyOrUndo(callGoal, inst)) { m.guard().step(); continue; }
+                    // ISS-2025-0755: a conditional answer makes the caller's derivation conditional
+                    if (table.conds != null && table.isConditional(ai - 1)) {
+                        m.addDelay(new Delay(Delay.POS, table, ai - 1, inst, null));
+                    }
                     // Only a COMPLETE table can be trusted to have handed out its last answer; an
                     // EVALUATING one may still grow inside this very round (invariant 2/13).
                     if (table.status == COMPLETE && ai >= table.answers.size()) cp.genExhausted = true;

@@ -301,7 +301,7 @@ public class JpcReader {
                 byte[] numBytes = b.bytes(numLen);
                 int denLen = b.varint();
                 byte[] denBytes = b.bytes(denLen);
-                return new Rational(new java.math.BigInteger(numBytes), new java.math.BigInteger(denBytes));
+                return Rational.of(new java.math.BigInteger(numBytes), new java.math.BigInteger(denBytes));   // ISS-2025-0712: normalised
             }
             // END_CHANGE: ISS-2025-0185
             default:

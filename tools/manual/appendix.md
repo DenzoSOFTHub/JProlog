@@ -71,7 +71,7 @@ choice must be made before constructing the engine (or upgraded with `prolog.ena
 | `nbSetval/nbGetval/nbDelete` | global variables from Java |
 | `enableSafeMode()` | sandbox: remove every OS, FFI, filesystem, network, HTTP, JDBC, persistence and threading built-in, `open/3,4`, the loaders, the CSV file predicates and `log_to_file/1` — from the legacy registry and the native table (irreversible for the instance) |
 | `enableSafeMode(SafeModeOptions)` | the same; `new SafeModeOptions().allowFileRead(dir)` keeps read-only `open/3,4` and the loaders for files inside `dir` |
-| `setInferenceBudget(long steps)` | abort a query with `InferenceLimitException` after the given number of resolution steps (0 = unlimited); ONE budget shared by the query's meta-calls and worker threads, and natives that walk or build long lists charge per element |
+| `setInferenceBudget(long steps)` | abort a query with `InferenceLimitException` after the given number of resolution steps (0 = unlimited); ONE budget shared by the query's meta-calls and worker threads, and natives that walk or build long lists charge per element; the bridged libraries charge per 64 characters of text input and per solution, and a regular expression per 256 characters it reads (4.6) |
 | `getFlags()`, `setTracing(boolean)`, `isTracing()` | per-engine ISO flag store and `trace/0` state (each `Prolog` instance is isolated) |
 | `getPredicateIndicatorAtLine(int line)` | map a source line to its clause (IDE breakpoints) |
 | `getEngineContext()` | the durable per-engine context: `setDebugController`/`getDebugController` (IDE debugger wiring) and the running query's `ResourceGuard` |

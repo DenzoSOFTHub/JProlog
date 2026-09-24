@@ -2,11 +2,12 @@ package it.denzosoft.jprolog.builtin.jdbc;
 
 // START_CHANGE: ISS-2025-0108 - JDBC built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.utils.CollectionUtils;
 
 import java.sql.DatabaseMetaData;
@@ -34,7 +35,7 @@ public class JdbcMetadata implements BuiltIn {
         List<Term> args = query.getArguments();
         Term connTerm = args.get(0).resolveBindings(bindings);
         if (!(connTerm instanceof Atom)) {
-            throw new PrologEvaluationException(modeName() + ": Connection must be an atom handle.");
+            throw LibArgs.notA("atom", connTerm, modeName(), LibArgs.nameArity(modeName()), "the connection");   // ISS-2025-0692
         }
         String connHandle = ((Atom) connTerm).getName();
 
@@ -48,14 +49,14 @@ public class JdbcMetadata implements BuiltIn {
                 default: return false;
             }
         } catch (SQLException e) {
-            throw new PrologEvaluationException(modeName() + ": " + e.getMessage());
+            throw Errors.host(e, "execute", "sql", null, modeName(), LibArgs.arity(query));   // ISS-2025-0692
         }
     }
 
     private boolean executeTables(DatabaseMetaData meta, List<Term> args,
             Map<String, Term> bindings, List<Map<String, Term>> solutions) throws SQLException {
         if (args.size() != 2) {
-            throw new PrologEvaluationException("jdbc_tables/2 requires 2 arguments.");
+            throw LibArgs.unknownArity(modeName(), args.size());   // ISS-2025-0692
         }
         // START_CHANGE: ISS-2025-0260 - try-with-resources so the metadata ResultSet is closed
         // even if rs.next()/getString throws mid-iteration.
@@ -79,11 +80,11 @@ public class JdbcMetadata implements BuiltIn {
     private boolean executeColumns(DatabaseMetaData meta, List<Term> args,
             Map<String, Term> bindings, List<Map<String, Term>> solutions) throws SQLException {
         if (args.size() != 3) {
-            throw new PrologEvaluationException("jdbc_columns/3 requires 3 arguments.");
+            throw LibArgs.unknownArity(modeName(), args.size());   // ISS-2025-0692
         }
         Term tableTerm = args.get(1).resolveBindings(bindings);
         if (!(tableTerm instanceof Atom)) {
-            throw new PrologEvaluationException("jdbc_columns/3: Table must be an atom.");
+            throw LibArgs.notA("atom", tableTerm, "jdbc_columns", 3, "Table must be an atom");   // ISS-2025-0692
         }
         String tableName = ((Atom) tableTerm).getName();
 

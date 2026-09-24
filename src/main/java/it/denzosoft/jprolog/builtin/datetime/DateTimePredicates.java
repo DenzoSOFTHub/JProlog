@@ -2,11 +2,12 @@ package it.denzosoft.jprolog.builtin.datetime;
 
 // START_CHANGE: ISS-2025-0114 - Date/time built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
+import it.denzosoft.jprolog.builtin.LibArgs;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.time.*;
 import java.time.format.DateTimeFormatter;
@@ -136,8 +137,8 @@ public class DateTimePredicates implements BuiltIn {
     private boolean doParseTime(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 3, "parse_time/3");
-        String format = resolveAtom(query.getArguments().get(0), bindings);
-        String dateStr = resolveAtom(query.getArguments().get(1), bindings);
+        String format = resolveAtom(query, 0, bindings);
+        String dateStr = resolveAtom(query, 1, bindings);
 
         LocalDateTime dt = LocalDateTime.parse(dateStr, DateTimeFormatter.ofPattern(format));
         long millis = dt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
@@ -148,11 +149,11 @@ public class DateTimePredicates implements BuiltIn {
     private boolean doDateAdd(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 4, "date_add/4");
-        String dateStr = resolveAtom(query.getArguments().get(0), bindings);
+        String dateStr = resolveAtom(query, 0, bindings);
         Term amtTerm = query.getArguments().get(1).resolveBindings(bindings);
-        String unit = resolveAtom(query.getArguments().get(2), bindings);
+        String unit = resolveAtom(query, 2, bindings);
 
-        if (!(amtTerm instanceof Number)) throw new PrologEvaluationException("date_add/4: Amount must be a number.");
+        LibArgs.number(query, 1, bindings, "date_add", "the amount");     // ISS-2025-0687
         long amount = ((Number) amtTerm).getValue().longValue();
 
         LocalDate date = LocalDate.parse(dateStr);
@@ -162,7 +163,7 @@ public class DateTimePredicates implements BuiltIn {
             case "weeks": result = date.plusWeeks(amount); break;
             case "months": result = date.plusMonths(amount); break;
             case "years": result = date.plusYears(amount); break;
-            default: throw new PrologEvaluationException("date_add/4: Unknown unit: " + unit);
+            default: throw Errors.domain("date_unit", new Atom(unit), "date_add", 4, "unknown unit");   // ISS-2025-0687
         }
         return unify(query.getArguments().get(3), new Atom(result.toString()), bindings, solutions);
     }
@@ -170,9 +171,9 @@ public class DateTimePredicates implements BuiltIn {
     private boolean doDateDiff(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 4, "date_diff/4");
-        String d1 = resolveAtom(query.getArguments().get(0), bindings);
-        String d2 = resolveAtom(query.getArguments().get(1), bindings);
-        String unit = resolveAtom(query.getArguments().get(2), bindings);
+        String d1 = resolveAtom(query, 0, bindings);
+        String d2 = resolveAtom(query, 1, bindings);
+        String unit = resolveAtom(query, 2, bindings);
 
         LocalDate date1 = LocalDate.parse(d1);
         LocalDate date2 = LocalDate.parse(d2);
@@ -182,7 +183,7 @@ public class DateTimePredicates implements BuiltIn {
             case "weeks": diff = ChronoUnit.WEEKS.between(date1, date2); break;
             case "months": diff = ChronoUnit.MONTHS.between(date1, date2); break;
             case "years": diff = ChronoUnit.YEARS.between(date1, date2); break;
-            default: throw new PrologEvaluationException("date_diff/4: Unknown unit: " + unit);
+            default: throw Errors.domain("date_unit", new Atom(unit), "date_diff", 4, "unknown unit");   // ISS-2025-0687
         }
         return unify(query.getArguments().get(3), new Number(diff), bindings, solutions);
     }
@@ -190,7 +191,7 @@ public class DateTimePredicates implements BuiltIn {
     private boolean doDayOfWeek(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 2, "day_of_week/2");
-        String dateStr = resolveAtom(query.getArguments().get(0), bindings);
+        String dateStr = resolveAtom(query, 0, bindings);
         LocalDate date = LocalDate.parse(dateStr);
         String dayName = date.getDayOfWeek().name().toLowerCase();
         return unify(query.getArguments().get(1), new Atom(dayName), bindings, solutions);
@@ -199,7 +200,7 @@ public class DateTimePredicates implements BuiltIn {
     private boolean doDateParts(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 4, "date_parts/4");
-        String dateStr = resolveAtom(query.getArguments().get(0), bindings);
+        String dateStr = resolveAtom(query, 0, bindings);
         LocalDate date = LocalDate.parse(dateStr);
         Map<String, Term> nb = new HashMap<>(bindings);
         if (query.getArguments().get(1).resolveBindings(bindings).unify(new Number(date.getYear()), nb) &&
@@ -214,7 +215,7 @@ public class DateTimePredicates implements BuiltIn {
     private boolean doTimeParts(Term query, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {
         checkArity(query, 4, "time_parts/4");
-        String dtStr = resolveAtom(query.getArguments().get(0), bindings);
+        String dtStr = resolveAtom(query, 0, bindings);
         LocalDateTime dt = parseDateTime(dtStr);
         Map<String, Term> nb = new HashMap<>(bindings);
         if (query.getArguments().get(1).resolveBindings(bindings).unify(new Number(dt.getHour()), nb) &&
@@ -403,21 +404,45 @@ public class DateTimePredicates implements BuiltIn {
             try { return LocalDate.parse(s).atStartOfDay(); }
             catch (Exception e2) {
                 it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e2);   // ISS-2025-0431
-                throw new PrologEvaluationException("Cannot parse datetime: " + s);
+                throw Errors.syntax("datetime", modeName(), LibArgs.nameArity(modeName()),
+                                    "cannot parse datetime: " + s);          // ISS-2025-0687
             }
         }
     }
 
     private void checkArity(Term query, int expected, String name) {
-        if (query.getArguments().size() != expected)
-            throw new PrologEvaluationException(name + " requires " + expected + " arguments.");
+        if (LibArgs.arity(query) != expected) throw LibArgs.unknownArity(query);   // ISS-2025-0687
     }
 
-    private String resolveAtom(Term term, Map<String, Term> bindings) {
-        Term resolved = term.resolveBindings(bindings);
-        if (!(resolved instanceof Atom)) throw new PrologEvaluationException(modeName() + ": argument must be an atom.");
+    // START_CHANGE: ISS-2025-0687 - wave Q1.1: ISO error terms error(Formal, context(Name/Arity, Msg)),
+    // not message atoms (LIM-038)
+    private static int arityOf(Term query) {
+        return query.getArguments() == null ? 0 : query.getArguments().size();
+    }
+
+    /** Argument {@code i} as text: an atom (or a string); unbound is an instantiation error. */
+    private String resolveAtom(Term query, int i, Map<String, Term> bindings) {
+        int n = arityOf(query);
+        Term resolved = query.getArguments().get(i).resolveBindings(bindings);
+        if (resolved instanceof it.denzosoft.jprolog.core.terms.Variable) {
+            throw Errors.instantiation(modeName(), n, "argument " + (i + 1) + " must be bound");
+        }
+        if (resolved instanceof it.denzosoft.jprolog.core.terms.PrologString) {
+            return ((it.denzosoft.jprolog.core.terms.PrologString) resolved).getStringValue();
+        }
+        if (!(resolved instanceof Atom)) {
+            throw Errors.type("atom", resolved, modeName(), n, "argument " + (i + 1) + " must be an atom");
+        }
         return ((Atom) resolved).getName();
     }
+
+    /** {@code term} as text (atom or string), raising the ISO error of {@link #modeName()}. */
+    private String resolveAtom(Term term, Map<String, Term> bindings) {
+        String nm = modeName();
+        return it.denzosoft.jprolog.builtin.LibArgs.text(term.resolveBindings(bindings), nm,
+            it.denzosoft.jprolog.builtin.LibArgs.nameArity(nm), "the argument");
+    }
+    // END_CHANGE: ISS-2025-0687
 
     private boolean unify(Term target, Term value, Map<String, Term> bindings,
             List<Map<String, Term>> solutions) {

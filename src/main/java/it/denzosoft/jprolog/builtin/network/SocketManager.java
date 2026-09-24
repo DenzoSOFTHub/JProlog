@@ -43,7 +43,7 @@ public final class SocketManager {
     public Socket getSocket(String handle) {
         Socket s = clientSockets.get(handle);
         if (s == null) {
-            throw new IllegalArgumentException("Unknown socket handle: " + handle);
+            throw it.denzosoft.jprolog.core.engine.v4.Errors.existence("socket", new it.denzosoft.jprolog.core.terms.Atom(handle), "socket");   // ISS-2025-0693
         }
         return s;
     }
@@ -67,7 +67,7 @@ public final class SocketManager {
     public ServerSocket getServerSocket(String handle) {
         ServerSocket ss = serverSockets.get(handle);
         if (ss == null) {
-            throw new IllegalArgumentException("Unknown server socket handle: " + handle);
+            throw it.denzosoft.jprolog.core.engine.v4.Errors.existence("server_socket", new it.denzosoft.jprolog.core.terms.Atom(handle), "socket");   // ISS-2025-0693
         }
         return ss;
     }

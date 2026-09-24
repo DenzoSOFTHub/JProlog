@@ -2,10 +2,11 @@
 package it.denzosoft.jprolog.builtin.debug;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.util.*;
 
@@ -45,7 +46,7 @@ public class Leash implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments() == null || query.getArguments().size() != 1) {
-            throw new PrologEvaluationException("leash/1 requires exactly 1 argument");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0696
         }
 
         Term arg = query.getArguments().get(0).resolveBindings(bindings);
@@ -82,8 +83,7 @@ public class Leash implements BuiltIn {
                     newPorts.add("REDO");
                     break;
                 default:
-                    throw new PrologEvaluationException(
-                        "leash/1: unknown port or mode '" + atomName + "'. Use full, none, half, loose, or a list of [call, exit, fail, redo].");
+                    throw Errors.domain("leash_mode", arg, "leash", 1, "use full, none, half, loose, or a list of call, exit, fail, redo");   // ISS-2025-0696
             }
         } else if (arg instanceof CompoundTerm) {
             // Parse as a Prolog list of port atoms
@@ -97,20 +97,19 @@ public class Leash implements BuiltIn {
                         if (ALL_PORTS.contains(portName)) {
                             newPorts.add(portName);
                         } else {
-                            throw new PrologEvaluationException(
-                                "leash/1: invalid port '" + ((Atom) head).getName() + "'. Valid ports: call, exit, fail, redo.");
+                            throw Errors.domain("leash_port", head, "leash", 1, "valid ports: call, exit, fail, redo");   // ISS-2025-0696
                         }
                     } else {
-                        throw new PrologEvaluationException("leash/1: port list elements must be atoms");
+                        throw LibArgs.notA("atom", head, "leash", 1, "a port");   // ISS-2025-0696
                     }
                     current = ct.getArguments().get(1).resolveBindings(bindings);
                 } else {
-                    throw new PrologEvaluationException("leash/1: argument must be a port mode atom or a list of port atoms");
+                    throw LibArgs.notA("list", current, "leash", 1, "the port list");   // ISS-2025-0696
                 }
             }
             // current should be [] (empty list / atom)
         } else {
-            throw new PrologEvaluationException("leash/1: argument must be an atom or list of port atoms");
+            throw LibArgs.notA("list", arg, "leash", 1, "the leash mode");   // ISS-2025-0696
         }
 
         // Update global leash state

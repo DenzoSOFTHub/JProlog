@@ -59,6 +59,13 @@ public class DCGTransformer {
      * @return The transformed head with difference list arguments
      */
     private Term transformHead(Term head) {
+        // START_CHANGE: ISS-2025-0733 - M:Head --> Body defines M:Head' (was a ':'/4 head)
+        if (head instanceof CompoundTerm && ":".equals(((CompoundTerm) head).getName())
+                && ((CompoundTerm) head).getArguments().size() == 2) {
+            return TermUtils.createCompound(":", ((CompoundTerm) head).getArguments().get(0),
+                transformHead(((CompoundTerm) head).getArguments().get(1)));
+        }
+        // END_CHANGE: ISS-2025-0733
         if (head instanceof Atom) {
             // atom --> atom(S0, S)
             String name = ((Atom) head).getName();
@@ -130,6 +137,22 @@ public class DCGTransformer {
 
                 case ";": // Disjunction
                     return transformDisjunction(compound, input, output);
+
+                // START_CHANGE: ISS-2025-0733 - legacy translator: (A | B) is alternation and
+                // M:NT calls M:NT' (it translated both into a plain '|'/4 or ':'/4 non-terminal)
+                case "|":
+                    if (TermUtils.getArity(compound) == 2) {
+                        return transformDisjunction(TermUtils.createCompound(";",
+                            compound.getArguments().get(0), compound.getArguments().get(1)), input, output);
+                    }
+                    return transformNonTerminal(compound, input, output);
+                case ":":
+                    if (TermUtils.getArity(compound) == 2) {
+                        return TermUtils.createCompound(":", compound.getArguments().get(0),
+                            transformBody(compound.getArguments().get(1), input, output));
+                    }
+                    return transformNonTerminal(compound, input, output);
+                // END_CHANGE: ISS-2025-0733
 
                 // START_CHANGE: LIM-011 - If-then in DCG
                 case "->": // If-then

@@ -2,9 +2,10 @@ package it.denzosoft.jprolog.builtin.jdbc;
 
 // START_CHANGE: ISS-2025-0108 - JDBC built-in predicates
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 
 import java.util.List;
 import java.util.Map;
@@ -18,12 +19,12 @@ public class JdbcDriverLoad implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments().size() != 1) {
-            throw new PrologEvaluationException("jdbc_driver_load/1 requires exactly 1 argument.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         Term classTerm = query.getArguments().get(0).resolveBindings(bindings);
         if (!(classTerm instanceof Atom)) {
-            throw new PrologEvaluationException("jdbc_driver_load/1: Class name must be an atom.");
+            throw LibArgs.notA("atom", classTerm, "jdbc_driver_load", 1, "Class name must be an atom");   // ISS-2025-0692
         }
 
         String className = ((Atom) classTerm).getName();
@@ -32,7 +33,7 @@ public class JdbcDriverLoad implements BuiltIn {
             solutions.add(bindings);
             return true;
         } catch (ClassNotFoundException e) {
-            throw new PrologEvaluationException("jdbc_driver_load: Driver class not found: " + className);
+            throw Errors.existence("class", new Atom(className), "jdbc_driver_load", 1, "driver class not found");   // ISS-2025-0692
         }
     }
 }

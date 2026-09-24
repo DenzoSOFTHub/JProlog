@@ -38,6 +38,18 @@ final class NativeMisc {
     private static final Atom NIL = new Atom("[]");
 
     static void register(BuiltinTable t) {
+        // START_CHANGE: ISS-2025-0711 - wave Q2.2: SWI's memory-management hooks. The JVM owns
+        // garbage collection, atoms are Java strings and there are no Prolog stacks to trim, so
+        // all three simply succeed. garbage_collect/0 deliberately does NOT call System.gc(): the
+        // engine is embeddable and often shares its JVM, where a program-triggered full GC is a
+        // latency (and, from untrusted code, a denial-of-service) hazard.
+        Builtin succeed = new Builtin() {
+            @Override public Outcome call(Machine m, Term[] args) { return Outcome.SUCCESS; }
+        };
+        t.register("garbage_collect", 0, succeed);
+        t.register("garbage_collect_atoms", 0, succeed);
+        t.register("trim_stacks", 0, succeed);
+        // END_CHANGE: ISS-2025-0711
         t.register("sort", 4, new Sort4());
         t.register("predsort", 3, new PredSort3());
         // START_CHANGE: ISS-2025-0608 - P4.15: statistics/0,2 native, SWI keys and shapes
@@ -376,29 +388,163 @@ final class NativeMisc {
             // per level) calling the comparator through one reusable goal shape: the functor atom
             // and the fixed arguments are taken once, each call builds one argument array.
             Term[] arr = es.toArray(new Term[es.size()]);
-            Cmp cmp = new Cmp(pred);
-            int n = mergeSort(m, cmp, arr, new Term[arr.length], 0, arr.length);
-            if (n < 0) return Outcome.FAILURE;   // SWI: Pred failed on some pair
-            List<Term> sorted = Arrays.asList(arr).subList(0, n);
-            return m.unify(args[2], NativeLibrary.listOf(sorted, NIL)) ? Outcome.SUCCESS : Outcome.FAILURE;
+            Cmp cmp = new Cmp(m, pred);
+            // START_CHANGE: ISS-2025-0779 - 4.6 wave Q6.4: the comparisons run ON THE GOAL STACK
+            // of this machine instead of one nested drive (runOnce) each. The merge sort is an
+            // explicit state machine (Sorter); a comparison pushes the comparator goal followed by
+            // a Step that reads its Order, cuts the comparator's choice points and undoes its
+            // bindings (once/1 semantics, exactly as before), then advances the sort. A fail frame
+            // under the whole run makes a failing comparator fail predsort/3; the Exit/Fail ports
+            // of predsort/3 are emitted by the run itself, so a traced run still shows the
+            // comparator calls INSIDE the predsort call. Same comparison sequence as before.
+            if (arr.length <= 1) {
+                return m.unify(args[2], NativeLibrary.listOf(Arrays.asList(arr), NIL)) ? Outcome.SUCCESS : Outcome.FAILURE;
+            }
+            Sorter st = new Sorter(cmp, arr, args[2], m.ctxModuleKey());
+            st.traceGoal = m.nativeTraceGoal();
+            st.traceDepth = m.claimNativePorts();
+            st.floor = m.cpHeight();
+            m.pushFailFrame(st.traceDepth >= 0 ? st.traceGoal : null, st.traceDepth);
+            return st.proceed(m) ? Outcome.SUCCESS : Outcome.FAILURE;
+            // END_CHANGE: ISS-2025-0779
         }
+
+        // START_CHANGE: ISS-2025-0779
+        /** The top-down merge sort of ISS-2025-0549 as an explicit frame stack. */
+        private static final class Sorter extends Machine.Step {
+            final Cmp cmp;
+            final Term[] a, tmp;
+            final Term out;
+            final String module;
+            Term traceGoal;
+            int traceDepth = -1;
+            int floor;
+            // frame stack: lo, hi, mid, le, re, i, j, k, phase
+            int[] fs = new int[9 * 8];
+            int sp = 0;                 // number of frames
+            int result;                 // the returned end of the frame just popped
+            // the pending comparison
+            Variable order;
+            int cmpHeight, cmpMark;
+
+            Sorter(Cmp cmp, Term[] a, Term out, String module) {
+                this.cmp = cmp;
+                this.a = a;
+                this.tmp = new Term[a.length];
+                this.out = out;
+                this.module = module;
+                push(0, a.length);
+            }
+
+            private void push(int lo, int hi) {
+                if ((sp + 1) * 9 > fs.length) fs = Arrays.copyOf(fs, fs.length * 2);
+                int b = sp * 9;
+                fs[b] = lo; fs[b + 1] = hi; fs[b + 8] = 0;
+                sp++;
+            }
+
+            /** Run the sort until it needs a comparison (pushed) or is done. False = fail. */
+            boolean proceed(Machine m) {
+                while (sp > 0) {
+                    int b = (sp - 1) * 9;
+                    int lo = fs[b], hi = fs[b + 1];
+                    switch (fs[b + 8]) {
+                        case 0:
+                            if (hi - lo <= 1) { result = hi; sp--; continue; }
+                            fs[b + 2] = (lo + hi) >>> 1;
+                            fs[b + 8] = 1;
+                            push(lo, fs[b + 2]);
+                            continue;
+                        case 1:
+                            fs[b + 3] = result;                         // le
+                            fs[b + 8] = 2;
+                            push(fs[b + 2], hi);
+                            continue;
+                        case 2:
+                            fs[b + 4] = result;                         // re
+                            fs[b + 5] = lo; fs[b + 6] = fs[b + 2]; fs[b + 7] = lo;
+                            fs[b + 8] = 3;
+                            continue;
+                        default: {
+                            int i = fs[b + 5], j = fs[b + 6], le = fs[b + 3], re = fs[b + 4];
+                            if (i < le && j < re) {                     // one comparison
+                                m.guard().step();
+                                order = new Variable();
+                                cmpHeight = m.cpHeight();
+                                cmpMark = m.bindings().mark();
+                                m.pushStep(this);
+                                m.pushCall(cmp.goal(m, order, a[i], a[j]), module);
+                                return true;
+                            }
+                            int k = fs[b + 7];
+                            while (i < le) tmp[k++] = a[i++];
+                            while (j < re) tmp[k++] = a[j++];
+                            System.arraycopy(tmp, lo, a, lo, k - lo);
+                            result = k;
+                            sp--;
+                        }
+                    }
+                }
+                // done: drop the fail frame (and anything above it), then answer
+                m.cutBack(floor);
+                boolean ok = m.unify(out, NativeLibrary.listOf(Arrays.asList(a).subList(0, result), NIL));
+                if (traceDepth >= 0) {
+                    if (ok) m.portExit(traceGoal, traceDepth); else m.portFail(traceGoal, traceDepth);
+                }
+                return ok;
+            }
+
+            @Override boolean step(Machine m) {
+                Term o = Unify.deref(order);
+                String on = (o instanceof Atom) ? ((Atom) o).getName() : null;
+                m.cutBack(cmpHeight);                                 // once/1: no comparator CP
+                m.bindings().undo(cmpMark);                           // and none of its bindings
+                order = null;
+                int c;
+                if ("<".equals(on)) c = -1;
+                else if (">".equals(on)) c = 1;
+                else if ("=".equals(on)) c = 0;
+                else {
+                    // An Order outside <, =, > makes predsort FAIL (SWI, ISS-2025-0419)
+                    return false;                                      // onto the fail frame
+                }
+                int b = (sp - 1) * 9;
+                int i = fs[b + 5], j = fs[b + 6], k = fs[b + 7];
+                if (c < 0)      tmp[k++] = a[i++];
+                else if (c > 0) tmp[k++] = a[j++];
+                else            { tmp[k++] = a[i++]; j++; }         // '=' merges
+                fs[b + 5] = i; fs[b + 6] = j; fs[b + 7] = k;
+                return proceed(m);
+            }
+        }
+        // END_CHANGE: ISS-2025-0779
 
         /** The comparator goal {@code call(Pred, O, A, B)} with Pred's functor and args prefetched. */
         private static final class Cmp {
             final Atom functor;
             final Term[] fixed;
-            Cmp(Term pred) {
-                if (pred instanceof CompoundTerm) {
+            final Term qualified;        // ISS-2025-0779: M:P / '$mctx'(M, P) goes through addArgs
+            Cmp(Machine m, Term pred) {
+                if (pred instanceof CompoundTerm && ((CompoundTerm) pred).arity() == 2
+                        && (":".equals(((CompoundTerm) pred).getName())
+                            || Modules.MCTX.equals(((CompoundTerm) pred).getName()))) {
+                    qualified = pred;
+                    functor = null;
+                    fixed = null;
+                } else if (pred instanceof CompoundTerm) {
                     CompoundTerm c = (CompoundTerm) pred;
+                    qualified = null;
                     functor = c.getFunctor();
                     fixed = new Term[c.arity()];
                     for (int i = 0; i < fixed.length; i++) fixed[i] = c.arg(i);
                 } else {
+                    qualified = null;
                     functor = (Atom) pred;
                     fixed = new Term[0];
                 }
             }
-            Term goal(Term o, Term a, Term b) {
+            Term goal(Machine m, Term o, Term a, Term b) {
+                if (qualified != null) return m.addArgs(qualified, Arrays.asList(o, a, b));
                 Term[] as = new Term[fixed.length + 3];
                 System.arraycopy(fixed, 0, as, 0, fixed.length);
                 as[fixed.length] = o;
@@ -408,60 +554,8 @@ final class NativeMisc {
             }
         }
 
-        /**
-         * Sort {@code a[lo..hi)} in place (stable; '=' drops the right-hand element) and return the
-         * new end of the range, or -1 when the comparator failed or answered outside {@code <,=,>}.
-         */
-        private static int mergeSort(Machine m, Cmp cmp, Term[] a, Term[] tmp, int lo, int hi) {
-            if (hi - lo <= 1) return hi;
-            int mid = (lo + hi) >>> 1;
-            int le = mergeSort(m, cmp, a, tmp, lo, mid);
-            if (le < 0) return -1;
-            int re = mergeSort(m, cmp, a, tmp, mid, hi);
-            if (re < 0) return -1;
-            int i = lo, j = mid, k = lo;
-            while (i < le && j < re) {
-                m.guard().step();
-                int o = compare(m, cmp, a[i], a[j]);
-                if (o == Integer.MIN_VALUE) return -1;
-                if (o < 0)      tmp[k++] = a[i++];
-                else if (o > 0) tmp[k++] = a[j++];
-                else            { tmp[k++] = a[i++]; j++; }   // '=' merges
-            }
-            while (i < le) tmp[k++] = a[i++];
-            while (j < re) tmp[k++] = a[j++];
-            System.arraycopy(tmp, lo, a, lo, k - lo);
-            return k;
-        }
-
-        /**
-         * One {@code call(Pred, Order, A, B)}: -1/0/1, or MIN_VALUE for "fail". The comparison runs
-         * inside its own mark/undo extent (invariant 1: undo BEFORE closing the extent), so a
-         * comparator that binds parts of the elements leaves nothing behind.
-         */
-        private static int compare(Machine m, Cmp cmp, Term a, Term b) {
-            Variable order = new Variable();
-            Term goal = cmp.goal(order, a, b);
-            Bindings bs = m.bindings();
-            int mark = bs.mark();
-            bs.forceTrail++;
-            String out = null;
-            try {
-                if (m.runOnce(goal)) {
-                    Term o = Unify.deref(order);
-                    if (o instanceof Atom) out = ((Atom) o).getName();
-                }
-                bs.undo(mark);
-            } finally {
-                bs.forceTrail--;
-            }
-            // An Order outside <, =, > makes predsort FAIL (SWI, ISS-2025-0419) - never an error,
-            // and never a silent default ordering.
-            if ("<".equals(out)) return -1;
-            if (">".equals(out)) return 1;
-            if ("=".equals(out)) return 0;
-            return Integer.MIN_VALUE;
-        }
+        // ISS-2025-0779: the recursive mergeSort/compare (one runOnce per comparison) is replaced
+        // by Sorter above.
         // END_CHANGE: ISS-2025-0549
     }
 
@@ -676,7 +770,20 @@ final class NativeMisc {
                 throw Errors.type("atom", m.resolve(nT), "current_op/3");
             }
             // END_CHANGE: ISS-2025-0504
-            final List<Ops.Def> defs = Ops.current().visible();
+            // START_CHANGE: ISS-2025-0775 - 4.6 wave Q6 (extra): only the operators that agree
+            // with the BOUND arguments are candidates, so the generator knows which alternative is
+            // its last and announces it (Machine.lastSolution) — `current_op(P, T, '|')` answered
+            // `P = 1105, T = xfy ; false` because the scan went on over every other operator.
+            final List<Ops.Def> all = Ops.current().visible();
+            final List<Ops.Def> defs = new java.util.ArrayList<Ops.Def>();
+            for (int k = 0; k < all.size(); k++) {
+                Ops.Def d = all.get(k);
+                if (pT instanceof Number && ((Number) pT).longValue() != d.precedence) continue;
+                if (sT instanceof Atom && !((Atom) sT).getName().equals(d.type)) continue;
+                if (nT instanceof Atom && !((Atom) nT).getName().equals(d.name)) continue;
+                defs.add(d);
+            }
+            // END_CHANGE: ISS-2025-0775
             if (defs.isEmpty()) return Outcome.FAILURE;
             final int[] i = {0};
             Generator gen = new Generator() {

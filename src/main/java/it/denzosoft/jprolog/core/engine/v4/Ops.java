@@ -69,7 +69,12 @@ public final class Ops {
      */
     private final Map<String, String> owner = new ConcurrentHashMap<String, String>();
 
-    private volatile String moduleContext = "user";
+    // START_CHANGE: ISS-2025-0748 - 4.6 wave Q4 (extra): the module an op/3 is attributed to is
+    // PER THREAD, like the module being loaded (ModuleManager's per-thread current module since
+    // ISS-2025-0739). It was one engine-wide field, so a thread loading a module file made an
+    // op/3 run at the same moment by another thread module-local to that module.
+    private final ThreadLocal<String> moduleContext = new ThreadLocal<String>();
+    // END_CHANGE: ISS-2025-0748
 
     /** The store of the engine current on this thread. */
     public static Ops current() { return EngineState.current().ops(); }
@@ -78,11 +83,15 @@ public final class Ops {
     public OperatorTable globalTable() { return global; }
 
     /** The module an {@code op/3} is currently attributed to; {@code "user"} means global. */
-    public String moduleContext() { return moduleContext; }
+    public String moduleContext() {
+        String m = moduleContext.get();                                       // ISS-2025-0748
+        return (m == null) ? "user" : m;
+    }
 
-    /** Set by {@code Prolog} when a {@code :- module/2} directive is consulted. */
+    /** Set by {@code Prolog} when a {@code :- module/2} directive is consulted (this thread only). */
     public void setModuleContext(String module) {
-        this.moduleContext = (module == null || module.isEmpty()) ? "user" : module;
+        if (module == null || module.isEmpty() || "user".equals(module)) moduleContext.remove();   // ISS-2025-0748
+        else moduleContext.set(module);
     }
 
     /** True when {@code module} is the global scope. */
@@ -106,7 +115,7 @@ public final class Ops {
      * ({@code op/3} under a choice point must be undone on failure — R1).
      */
     public Runnable define(final int precedence, final String type, final String name) {
-        return define(precedence, type, name, moduleContext);
+        return define(precedence, type, name, moduleContext());             // ISS-2025-0748
     }
 
     /** Define/remove an operator explicitly in {@code module}. */
@@ -179,7 +188,7 @@ public final class Ops {
     // ------------------------------------------------------------------
 
     /** Every operator visible in the module currently in context, in a stable order. */
-    public List<Def> visible() { return visibleIn(moduleContext); }
+    public List<Def> visible() { return visibleIn(moduleContext()); }
 
     /**
      * Every operator visible in {@code module}: the global ones plus the ones that module declared,

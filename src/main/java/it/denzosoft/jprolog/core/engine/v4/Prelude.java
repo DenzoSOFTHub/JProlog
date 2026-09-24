@@ -58,7 +58,8 @@ final class Prelude {
         "/prelude/apply.pl",
         "/prelude/pairs.pl",
         "/prelude/coroutining.pl",
-        "/prelude/clpfd.pl"            // ISS-2025-0646/0650: the library(clpfd) global predicates
+        "/prelude/clpfd.pl",           // ISS-2025-0646/0650: the library(clpfd) global predicates
+        "/prelude/ordsets.pl"          // ISS-2025-0790: 4.6 wave Q7 - library(ordsets)
     };
 
     /** One library module as the index knows it: no clauses, just the header. */
@@ -210,7 +211,13 @@ final class Prelude {
      * {@code EngineV4ModulesTest.testISS0467_PreludeHeadersMatchTheClauses} checks that every
      * exported indicator really is defined by the file (and vice versa).
      */
-    private static Lib header(String resource, String src) {
+    // START_CHANGE: ISS-2025-0792 - wave Q7: comments are blanked out before the scan. A `%` line
+    // comment inside the export list swallowed the text up to the end of the line — the next
+    // export included — and a `/* */` block did the same to everything it spanned, so the next
+    // export after a comment silently disappeared from the owner index (a call raised
+    // existence_error). Package-private for PreludeHeaderTest's synthetic resource.
+    static Lib header(String resource, String src) {
+        src = blankComments(src);
         int i = src.indexOf(":- module(");
         if (i < 0) return null;
         int open = src.indexOf('(', i);
@@ -245,6 +252,47 @@ final class Prelude {
         }
         return new Lib(name, resource, exports);
     }
+
+    /**
+     * The source with every {@code %} line comment and {@code /* *\/} block comment replaced by
+     * spaces (newlines kept), leaving quoted atoms, strings, back-quoted text and {@code 0'c}
+     * character codes alone.
+     */
+    static String blankComments(String s) {
+        StringBuilder b = new StringBuilder(s);
+        int n = s.length();
+        for (int k = 0; k < n; k++) {
+            char ch = s.charAt(k);
+            if (ch == '0' && k + 1 < n && s.charAt(k + 1) == '\'' && (k == 0 || !Character.isLetterOrDigit(s.charAt(k - 1)))) {
+                k += 2;                                   // 0'c: skip the quote and the character
+                if (k < n && s.charAt(k) == '\\') k++;   // 0'\n
+                continue;
+            }
+            if (ch == '\'' || ch == '"' || ch == '`') {
+                for (k++; k < n; k++) {
+                    char c = s.charAt(k);
+                    if (c == '\\') { k++; continue; }
+                    if (c == ch) {
+                        if (k + 1 < n && s.charAt(k + 1) == ch) { k++; continue; }   // doubled quote
+                        break;
+                    }
+                }
+                continue;
+            }
+            if (ch == '%') {
+                for (; k < n && s.charAt(k) != '\n'; k++) b.setCharAt(k, ' ');
+                continue;
+            }
+            if (ch == '/' && k + 1 < n && s.charAt(k + 1) == '*') {
+                int end = s.indexOf("*/", k + 2);
+                int stop = end < 0 ? n : end + 2;
+                for (; k < stop; k++) if (s.charAt(k) != '\n') b.setCharAt(k, ' ');
+                k--;
+            }
+        }
+        return b.toString();
+    }
+    // END_CHANGE: ISS-2025-0792
 
     private static int skipQuoted(String s, int start) {
         for (int k = start + 1; k < s.length(); k++) {

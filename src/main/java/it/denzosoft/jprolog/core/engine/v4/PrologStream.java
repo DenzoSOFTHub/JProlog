@@ -92,7 +92,7 @@ public final class PrologStream {
 
     static PrologStream forFileRead(int id, String file, Charset cs) throws IOException {
         PrologStream s = new PrologStream(id, true);
-        FileInputStream fis = new FileInputStream(file);
+        FileInputStream fis = new FileInputStream(EngineState.file(file));   // ISS-2025-0745
         s.fileName = file;
         s.mode = "read";
         s.rawIn = fis;
@@ -106,7 +106,7 @@ public final class PrologStream {
 
     static PrologStream forFileWrite(int id, String file, boolean append, Charset cs) throws IOException {
         PrologStream s = new PrologStream(id, false);
-        FileOutputStream fos = new FileOutputStream(file, append);
+        FileOutputStream fos = new FileOutputStream(EngineState.file(file), append);   // ISS-2025-0745
         s.fileName = file;
         s.mode = append ? "append" : "write";
         s.outChannel = fos.getChannel();
@@ -241,7 +241,10 @@ public final class PrologStream {
     public long lineCount() { return input ? lineCount : (counter == null ? 1 : counter.lines); }
 
     /** The 0-based column of the read/write head. */
-    public long linePosition() { return input ? linePos : (counter == null ? 0 : counter.linePos); }
+    public long linePosition() {
+        if (!input && systemStream && counter == null) return Streams.systemColumn(id);   // ISS-2025-0714
+        return input ? linePos : (counter == null ? 0 : counter.linePos);
+    }
 
     /** True when the last read hit the end of the stream. */
     public boolean atEndOfStream() {

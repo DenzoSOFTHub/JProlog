@@ -28,6 +28,11 @@ public class ToCodesSimple implements BuiltIn {
         
         Term sourceTerm = query.getArguments().get(0).resolveBindings(bindings);
         Term codesTerm = query.getArguments().get(1).resolveBindings(bindings);
+        // START_CHANGE: ISS-2025-0797 - 4.6 wave Q7: both sides unbound raises instead of failing
+        if (sourceTerm instanceof Variable && codesTerm instanceof Variable) {
+            throw it.denzosoft.jprolog.core.engine.v4.Errors.instantiation("to_codes", 2, "one argument must be bound");
+        }
+        // END_CHANGE: ISS-2025-0797
         
         // If source is atom and codes is variable
         if (sourceTerm instanceof Atom && codesTerm instanceof Variable) {

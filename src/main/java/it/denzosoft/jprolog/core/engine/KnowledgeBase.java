@@ -57,6 +57,7 @@ public class KnowledgeBase {
         final String key;                                             // "name/arity"
         volatile long version = 0;                                    // bumped on every write
         volatile boolean dynamic = false;                             // ISS-2025-0347
+        volatile boolean multifile = false;                           // ISS-2025-0730
         final RuleSeq rules = new RuleSeq();
         volatile long fullVersion = -1;
         volatile List<Rule> full = Collections.emptyList();
@@ -289,6 +290,98 @@ public class KnowledgeBase {
     public void markDynamic(PredEntry e) {
         e.dynamic = true;
     }
+
+    // START_CHANGE: ISS-2025-0730 - 4.6 wave Q3.1: multifile/1. A multifile predicate is DEFINED
+    // (a call with no clause fails instead of raising existence_error), accepts clauses from
+    // several files, and a reconsult of one of them removes only that file's clauses.
+    /** Mark {@code functor/arity} (of module {@code user}) as multifile. */
+    public void markMultifile(String functor, int arity) {
+        entry(functor, arity).multifile = true;
+    }
+
+    /** Was {@code functor/arity} declared multifile? */
+    public boolean isMultifile(String functor, int arity) {
+        PredEntry e = predEntries.get(functor + "/" + arity);
+        return e != null && e.multifile;
+    }
+
+    /** Is {@code functor/arity} declared (dynamic or multifile) although it may have no clause? */
+    public boolean isDeclared(String functor, int arity) {
+        PredEntry e = predEntries.get(functor + "/" + arity);
+        return e != null && (e.dynamic || e.multifile);
+    }
+
+    /** Declarations of predicates of OTHER modules ({@code :- multifile m:p/1}), as "m:p/1". */
+    private final java.util.Set<String> qualifiedDeclared = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    public void declareQualified(String module, String functor, int arity) {
+        qualifiedDeclared.add(module + ":" + functor + "/" + arity);
+    }
+
+    public boolean isQualifiedDeclared(String module, String functor, int arity) {
+        return !qualifiedDeclared.isEmpty() && qualifiedDeclared.contains(module + ":" + functor + "/" + arity);
+    }
+
+    /** Every "m:name/arity" declared through {@link #declareQualified}. */
+    public java.util.Set<String> qualifiedDeclarations() {
+        return new java.util.HashSet<String>(qualifiedDeclared);
+    }
+
+    /**
+     * The reconsult of {@code file}: remove the clauses of {@code functor/arity} it owns — and,
+     * unless the predicate is multifile, the clauses no file owns (asserted ones: reloading
+     * resets a file's predicates). Clauses OTHER files added always stay. Returns how many went.
+     */
+    public int removeClausesOwnedBy(String functor, int arity, final String file) {
+        PredEntry e = predEntries.get(functor + "/" + arity);
+        if (e == null || file == null) return 0;
+        final boolean multi = e.multifile;
+        synchronized (this) {
+            List<Rule> gone = e.rules.removeIf(r -> file.equals(r.getSourceFile())
+                || (!multi && r.getSourceFile() == null));
+            if (!gone.isEmpty()) e.version++;
+            return gone.size();
+        }
+    }
+    // END_CHANGE: ISS-2025-0730
+
+    // START_CHANGE: ISS-2025-0794 - 4.6 wave Q7: a reloaded file's clauses of a MULTIFILE predicate
+    // keep their place. SWI-Prolog 9 (manual 4.3.2, "Reloading files, active code and threads")
+    // reloads a predicate against its existing clauses — an unchanged clause is kept where it is and
+    // a new one is inserted "before the current clause" — so f1 {p(a)}, f2 {p(b)}, reconsult f1
+    // keeps [a,b]. JProlog removed the file's clauses and appended the new ones: [b,a]. The reload
+    // now collects the surviving clauses that FOLLOW the file's first clause and moves them behind
+    // the file's new clauses when the load ends.
+    /**
+     * For a multifile {@code functor/arity}: the clauses {@code file} does NOT own that follow the
+     * first clause it owns, in order (empty when the file owns none or the predicate is not
+     * multifile).
+     */
+    public List<Rule> rulesAfterFirstOwnedBy(String functor, int arity, String file) {
+        PredEntry e = predEntries.get(functor + "/" + arity);
+        List<Rule> out = new ArrayList<Rule>();
+        if (e == null || file == null || !e.multifile) return out;
+        synchronized (this) {
+            boolean seen = false;
+            for (Rule r : e.rules.toList()) {
+                if (file.equals(r.getSourceFile())) seen = true;
+                else if (seen) out.add(r);
+            }
+        }
+        return out;
+    }
+
+    /** Move the still-stored {@code rules} of {@code functor/arity} to its end, keeping their order. */
+    public void moveToEnd(String functor, int arity, List<Rule> rules) {
+        PredEntry e = predEntries.get(functor + "/" + arity);
+        if (e == null || rules.isEmpty()) return;
+        synchronized (this) {
+            for (Rule r : rules) {
+                if (e.rules.remove(r) != null) appendRule(e, r);
+            }
+        }
+    }
+    // END_CHANGE: ISS-2025-0794
 
     /** True when {@code functor/arity} was declared dynamic or created by assert/retractall. */
     public boolean isDynamic(String functor, int arity) {
@@ -813,7 +906,7 @@ public class KnowledgeBase {
         synchronized (this) {
             Set<String> out = new HashSet<>();
             for (PredEntry e : predEntries.values()) {
-                if (e.rules.size() > 0 || e.dynamic) out.add(e.key);
+                if (e.rules.size() > 0 || e.dynamic || e.multifile) out.add(e.key);   // ISS-2025-0730
             }
             return out;
         }

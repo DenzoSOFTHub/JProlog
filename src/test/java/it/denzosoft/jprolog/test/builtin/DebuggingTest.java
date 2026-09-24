@@ -160,8 +160,9 @@ public class DebuggingTest {
         assertTrue("spy with invalid format should fail", solutions.isEmpty());
         
         // Test with unbound variable
-        solutions = prolog.solve("spy(X)");
-        assertTrue("spy with unbound variable should fail", solutions.isEmpty());
+        // ISS-2025-0797 (4.6 Q7): SWI raises instantiation_error (invariant 65); it failed
+        solutions = prolog.solve("catch(spy(X), error(instantiation_error, _), true)");
+        assertFalse("spy with unbound variable raises instantiation_error", solutions.isEmpty());
     }
     
     @Test

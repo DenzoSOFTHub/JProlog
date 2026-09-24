@@ -1,5 +1,7 @@
 package it.denzosoft.jprolog.builtin.io;
 
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.builtin.exception.ISOErrorTerms;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.v4.PrologStream;
@@ -34,7 +36,7 @@ public class Open implements BuiltIn {
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         int arity = query.getArguments().size();
         if (arity != 3 && arity != 4) {
-            throw new PrologEvaluationException("open/3 or open/4 expected.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
 
         Term fileTerm = query.getArguments().get(0).resolveBindings(bindings);

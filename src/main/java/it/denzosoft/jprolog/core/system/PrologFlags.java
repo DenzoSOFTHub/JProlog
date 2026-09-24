@@ -146,19 +146,19 @@ public class PrologFlags {
         // START_CHANGE: ISS-2025-0675 - the version flags said 2.0.15 since 2.x. They now follow
         // the release, in SWI's shapes: version = Major*10000 + Minor*100 + Patch (an integer),
         // version_data = jprolog(Major, Minor, Patch, []).
-        FLAGS.put("prolog_version", new Atom("jprolog-4.5.0"));
+        FLAGS.put("prolog_version", new Atom("jprolog-4.6.0"));   // ISS-2025-0799: release 4.6.0
         // END_CHANGE: ISS-2025-0675
         
         // dialect/1 - Prolog dialect
         FLAGS.put("dialect", new Atom("iso"));
         
         // version/1 - Implementation version
-        FLAGS.put("version", it.denzosoft.jprolog.core.terms.Number.valueOf(40500L));   // ISS-2025-0675
+        FLAGS.put("version", it.denzosoft.jprolog.core.terms.Number.valueOf(40600L));   // ISS-2025-0675, ISS-2025-0799
         
         // version_data/1 - Structured version data
         FLAGS.put("version_data", new it.denzosoft.jprolog.core.terms.CompoundTerm(new Atom("jprolog"),   // ISS-2025-0675
             new it.denzosoft.jprolog.core.terms.Term[] {
-                it.denzosoft.jprolog.core.terms.Number.valueOf(4L), it.denzosoft.jprolog.core.terms.Number.valueOf(5L),
+                it.denzosoft.jprolog.core.terms.Number.valueOf(4L), it.denzosoft.jprolog.core.terms.Number.valueOf(6L),   // ISS-2025-0799
                 it.denzosoft.jprolog.core.terms.Number.valueOf(0L), new Atom("[]")}));
         
         // occurs_check/1 - Whether unification performs occurs check
@@ -198,6 +198,15 @@ public class PrologFlags {
         
         // toplevel_print_options/1 - Options for toplevel printing
         FLAGS.put("toplevel_print_options", new Atom("[]"));
+
+        // START_CHANGE: ISS-2025-0712 - wave Q2.3: rationals exist but are not preferred (SWI 9's
+        // default): `X is 1/3` stays a float; true makes a non-exact integer division a rational.
+        // rational_syntax is informational: the reader accepts 1r3 (SWI's `compatibility`).
+        FLAGS.put("prefer_rationals", new Atom("false"));
+        FLAGS.put("rational_syntax", new Atom("compatibility"));
+        // END_CHANGE: ISS-2025-0712
+        // ISS-2025-0713 - wave Q2.5: SWI's verbose flag; silent suppresses informational messages
+        FLAGS.put("verbose", new Atom("normal"));
         
         // write_strings/1 - How to write string objects
         FLAGS.put("write_strings", new Atom("true"));
@@ -301,6 +310,7 @@ public class PrologFlags {
             case "version_data":
             case "encoding":  // System encoding is fixed
             case "argv":      // Command line arguments are set at startup
+            case "rational_syntax":                   // ISS-2025-0712: the reader has one syntax
                 return true;
             default:
                 return false;
@@ -343,12 +353,15 @@ public class PrologFlags {
             case "character_escapes":
             case "initialization":
             case "strict_iso":
+            case "prefer_rationals":                  // ISS-2025-0712
             case "optimize":
             case "write_strings":
             case "traditional":
                 return "true".equals(atomValue) || "false".equals(atomValue);
                 
             // Multi-value flags
+            case "verbose":                           // ISS-2025-0713
+                return "normal".equals(atomValue) || "silent".equals(atomValue);
             case "unknown":
             case "syntax_errors":
                 return "error".equals(atomValue) || "fail".equals(atomValue) || "warning".equals(atomValue);

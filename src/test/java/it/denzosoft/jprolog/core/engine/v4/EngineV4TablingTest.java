@@ -358,12 +358,14 @@ public class EngineV4TablingTest {
         assertSucceeds("findall(X, tp(X), [2]).");
     }
 
-    /** {@code tnot/1} is not implemented: it must raise a clean existence error, never misbehave. */
+    // START_CHANGE: ISS-2025-0755 - tnot/1 is implemented since 4.6 (wave Q4.5): repinned
+    /** {@code tnot/1} over a complete table: fails on an answer, succeeds on none. */
     @Test(timeout = 30000)
     public void testISS0464_TnotRaisesAnExistenceError() {
         prolog.consult(":- table p/1.\np(1).\n");
-        assertSucceeds("catch(tnot(p(1)), error(existence_error(procedure, tnot/1), _), true).");
+        assertSucceeds("\\+ tnot(p(1)), tnot(p(2)).");
     }
+    // END_CHANGE: ISS-2025-0755
 
     // ================================================================ ISS-2025-0465
 

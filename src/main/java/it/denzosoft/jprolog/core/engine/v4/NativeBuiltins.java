@@ -64,9 +64,12 @@ final class NativeBuiltins {
         // character I/O predicates) as natives over Streams/Writer.
         NativeIo.register(t);
         // END_CHANGE: ISS-2025-0496
+        NativeRecords.register(t);   // ISS-2025-0791: 4.6 wave Q7 - recorded database, flag/3
+        NativeStreams.register(t);   // ISS-2025-0785: 4.6 wave Q6.3 - the stream half of io
         // START_CHANGE: ISS-2025-0566 - 4.5 wave P3: the term readers and in-memory input (v2 parser)
         NativeRead.register(t);
         NativeExpand.register(t);   // ISS-2025-0571
+        NativeSequences.register(t);   // ISS-2025-0710: library(solution_sequences)
         // END_CHANGE: ISS-2025-0566
         // START_CHANGE: ISS-2025-0497 - 4.1 wave B: the atom/string/character/conversion families
         // and the last three eager list built-ins.

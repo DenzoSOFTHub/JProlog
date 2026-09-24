@@ -1,5 +1,58 @@
 # JProlog - Release Notes
 
+## Release 4.6.0 - 2026-09-24
+
+### The completeness release (waves Q1..Q7)
+
+Seven waves closed the residue of 4.5: ISO error terms in the extended libraries (Q1), missing
+standard predicates (Q2), loader/modules/reader (Q3), threads and tabling (Q4), CLP(FD) (Q5),
+performance (Q6) and a residue sweep plus this release (Q7). ISS-2025-0680 .. ISS-2025-0799
+(ranges per wave in CHANGELOG.md). Spec and wave records:
+`docs/reports/report-completeness-4.6-2026-09-23.md`.
+
+**1547/1547 JUnit tests** (4.5.0: 1452), **20/20 example programs** with unchanged per-program
+counts. Deliberate differences from ISO/SWI: `docs/references/ref-deviations.md` §4a–§4e.
+
+#### Upgrading — READ THIS
+
+- Library argument faults are `error(Formal, context(Name/Arity, Message))`, not message atoms;
+  an unimplemented arity of a built-in name is `existence_error(procedure, PI)`.
+- `(a|b)` is `'|'(a,b)` (not `;`), `as` is an operator; reconsult removes only the file's own
+  clauses and a reloaded multifile file keeps its place; discontiguous clauses warn.
+- `working_directory/2` is per engine (the JVM's `user.dir` is never written).
+- Worker threads have private tables (`:- table p/1 as shared` to share complete ones).
+- CLP(FD) answers print residual constraints; `X #= Y` unifies.
+- Every `print_message/2` kind goes to `user_error`.
+- The FFI (`java_*`), the graph library, `json_get/3`, `spy/1` and the text conversions with both
+  sides unbound RAISE on a bad argument (they failed); `enhanced_phrase/2,3` run the grammar.
+- `current_prolog_flag(version, V)` is `40600`.
+
+#### What is new
+
+- `library(solution_sequences)`, rationals (`rdiv`, `1r3`), `aggregate/3,4`, `message_hook/3`,
+  `prolog:message//1`.
+- `multifile/1`, `goal_expansion/2`, `file_search_path/2`, `absolute_file_name/2,3`,
+  `use_module/2` import lists, `subterm_positions/1`, `comments/1`, `Prolog.runMain()`.
+- `thread_signal/2`, thread pools, `thread_statistics/3`, `message_queue_property/2`,
+  `mutex_property/2`; mode-directed tabling with `lattice`/`po`; `tnot/1`, `undefined/0`.
+- CLP(FD): residual goals, `circuit/1`, `cumulative/1,2`, `automaton/3,8`, `chain/2`,
+  `lex_chain/1`, `disjoint2/1`, `zcompare/3`, BigInteger coefficients.
+- SWI `append/2`, `nextto/3`, `max_member/2,3`, `min_member/2,3`, `list_to_set/2`,
+  `proper_length/2`, `library(ordsets)`, the recorded database and `flag/3`.
+- Performance: `call/N` −43 %, native maplist/foldl/include/exclude/partition, native stream
+  built-ins, CLP(FD) change queues, incremental module mirror; nrev −19 %, loop −13 %.
+
+#### Deleted
+
+`FileSystemPredicates.Mode.ABS_FILE_NAME` / `doAbsFileName` (dead code).
+
+#### Known limitations
+
+LIM-038 resolved; LIM-037, LIM-041 .. LIM-046 shrunk; LIM-047 new (library goals that still fail
+or succeed on a bad input; `phrase_with_options/4`). See `docs/tracking/track-limitations.md`.
+
+---
+
 ## Release 4.5.0 - 2026-09-23
 
 ### The production-readiness release (waves P1..P7)

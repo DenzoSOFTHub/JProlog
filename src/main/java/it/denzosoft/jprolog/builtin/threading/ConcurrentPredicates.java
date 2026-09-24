@@ -213,10 +213,13 @@ public class ConcurrentPredicates implements BuiltInWithContext {
         try {
             for (int i = 0; i < futures.size(); i++) {
                 Future<Map<String, Term>> done;
+                it.denzosoft.jprolog.core.engine.ThreadWaits.enterAwait();   // ISS-2025-0739
                 try {
                     done = cs.take();
                 } catch (InterruptedException ie) {
                     throw parentCancelled(futures);
+                } finally {
+                    it.denzosoft.jprolog.core.engine.ThreadWaits.exitAwait();
                 }
                 Map<String, Term> result = await(done, futures);
                 if (result != null) {
@@ -271,10 +274,13 @@ public class ConcurrentPredicates implements BuiltInWithContext {
         try {
             for (int i = 0; i < futures.size(); i++) {
                 Future<Map<String, Term>> done;
+                it.denzosoft.jprolog.core.engine.ThreadWaits.enterAwait();   // ISS-2025-0739
                 try {
                     done = cs.take();
                 } catch (InterruptedException ie) {
                     throw parentCancelled(futures);
+                } finally {
+                    it.denzosoft.jprolog.core.engine.ThreadWaits.exitAwait();
                 }
                 if (await(done, futures) != null) {
                     Map<String, Term> nb = new HashMap<>(bindings);
@@ -339,10 +345,16 @@ public class ConcurrentPredicates implements BuiltInWithContext {
 
     /** A task that runs {@code goal} on a worker machine: its first answer, or null on failure. */
     private static Callable<Map<String, Term>> firstAnswer(final SolverContext solver, final Term goal) {
+        final Thread parent = Thread.currentThread();                         // ISS-2025-0739
         return () -> {
-            List<Map<String, Term>> temp = new ArrayList<>();
-            boolean ok = solver.solveInWorker(goal, new HashMap<String, Term>(), temp, 1);
-            return (ok && !temp.isEmpty()) ? temp.get(0) : null;
+            it.denzosoft.jprolog.core.engine.ThreadWaits.enterWorker(parent);   // ISS-2025-0739
+            try {
+                List<Map<String, Term>> temp = new ArrayList<>();
+                boolean ok = solver.solveInWorker(goal, new HashMap<String, Term>(), temp, 1);
+                return (ok && !temp.isEmpty()) ? temp.get(0) : null;
+            } finally {
+                it.denzosoft.jprolog.core.engine.ThreadWaits.exitWorker();
+            }
         };
     }
 
@@ -353,6 +365,7 @@ public class ConcurrentPredicates implements BuiltInWithContext {
      * exception; either way the sibling futures are cancelled first.
      */
     private static <T> T await(Future<T> f, List<? extends Future<?>> all) {
+        it.denzosoft.jprolog.core.engine.ThreadWaits.enterAwait();           // ISS-2025-0739
         try {
             return f.get();
         } catch (InterruptedException ie) {
@@ -362,6 +375,8 @@ public class ConcurrentPredicates implements BuiltInWithContext {
         } catch (ExecutionException ee) {
             cancelAll(all);
             throw rethrow(ee.getCause() != null ? ee.getCause() : ee);
+        } finally {
+            it.denzosoft.jprolog.core.engine.ThreadWaits.exitAwait();         // ISS-2025-0739
         }
     }
 

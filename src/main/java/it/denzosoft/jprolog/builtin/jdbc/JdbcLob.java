@@ -2,11 +2,12 @@ package it.denzosoft.jprolog.builtin.jdbc;
 
 // START_CHANGE: ISS-2025-0111 - CLOB and BLOB support for JDBC
 import it.denzosoft.jprolog.core.engine.BuiltIn;
-import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Atom;
 import it.denzosoft.jprolog.core.terms.CompoundTerm;
 import it.denzosoft.jprolog.core.terms.Number;
 import it.denzosoft.jprolog.core.terms.Term;
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.utils.CollectionUtils;
 
 import java.io.*;
@@ -64,9 +65,9 @@ public class JdbcLob implements BuiltIn {
                 default: return false;
             }
         } catch (SQLException e) {
-            throw new PrologEvaluationException(modeName() + ": " + e.getMessage());
+            throw Errors.host(e, "execute", "sql", null, modeName(), LibArgs.arity(query));   // ISS-2025-0692
         } catch (IOException e) {
-            throw new PrologEvaluationException(modeName() + ": I/O error: " + e.getMessage());
+            throw Errors.host(e, "read", "file", null, modeName(), LibArgs.arity(query));   // ISS-2025-0692
         }
     }
 
@@ -76,7 +77,7 @@ public class JdbcLob implements BuiltIn {
             List<Map<String, Term>> solutions) throws SQLException {
         List<Term> args = query.getArguments();
         if (args.size() != 3) {
-            throw new PrologEvaluationException("jdbc_set_clob/3 requires 3 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         String handle = resolveAtom(args.get(0), bindings, "Statement");
@@ -94,7 +95,7 @@ public class JdbcLob implements BuiltIn {
             List<Map<String, Term>> solutions) throws SQLException, IOException {
         List<Term> args = query.getArguments();
         if (args.size() != 3) {
-            throw new PrologEvaluationException("jdbc_set_blob/3 requires 3 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         String handle = resolveAtom(args.get(0), bindings, "Statement");
@@ -103,7 +104,7 @@ public class JdbcLob implements BuiltIn {
 
         File file = new File(filePath);
         if (!file.exists()) {
-            throw new PrologEvaluationException("jdbc_set_blob/3: File not found: " + filePath);
+            throw Errors.existence("file", new Atom(filePath), "jdbc_set_blob", 3, "file not found");   // ISS-2025-0692
         }
 
         // START_CHANGE: ISS-2025-0173 - Read file into byte array to avoid FileInputStream leak
@@ -131,7 +132,7 @@ public class JdbcLob implements BuiltIn {
             List<Map<String, Term>> solutions) throws SQLException {
         List<Term> args = query.getArguments();
         if (args.size() != 3) {
-            throw new PrologEvaluationException("jdbc_set_blob_bytes/3 requires 3 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         String handle = resolveAtom(args.get(0), bindings, "Statement");
@@ -141,11 +142,11 @@ public class JdbcLob implements BuiltIn {
         byte[] bytes = new byte[byteTerms.size()];
         for (int i = 0; i < byteTerms.size(); i++) {
             if (!(byteTerms.get(i) instanceof Number)) {
-                throw new PrologEvaluationException("jdbc_set_blob_bytes/3: Byte list must contain numbers.");
+                throw LibArgs.notA("integer", byteTerms.get(i), "jdbc_set_blob_bytes", 3, "a byte");   // ISS-2025-0692
             }
             int b = ((Number) byteTerms.get(i)).getValue().intValue();
             if (b < 0 || b > 255) {
-                throw new PrologEvaluationException("jdbc_set_blob_bytes/3: Byte value out of range (0-255): " + b);
+                throw Errors.type("byte", byteTerms.get(i), "jdbc_set_blob_bytes", 3, "byte value out of range (0-255)");   // ISS-2025-0692
             }
             bytes[i] = (byte) b;
         }
@@ -163,7 +164,7 @@ public class JdbcLob implements BuiltIn {
             List<Map<String, Term>> solutions) throws SQLException, IOException {
         List<Term> args = query.getArguments();
         if (args.size() != 3) {
-            throw new PrologEvaluationException("jdbc_get_clob/3 requires 3 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         String connHandle = resolveAtom(args.get(0), bindings, "Connection");
@@ -204,7 +205,7 @@ public class JdbcLob implements BuiltIn {
             List<Map<String, Term>> solutions) throws SQLException, IOException {
         List<Term> args = query.getArguments();
         if (args.size() != 3) {
-            throw new PrologEvaluationException("jdbc_get_blob_to_file/3 requires 3 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         String connHandle = resolveAtom(args.get(0), bindings, "Connection");
@@ -244,7 +245,7 @@ public class JdbcLob implements BuiltIn {
             List<Map<String, Term>> solutions) throws SQLException, IOException {
         List<Term> args = query.getArguments();
         if (args.size() != 3) {
-            throw new PrologEvaluationException("jdbc_get_blob_bytes/3 requires 3 arguments.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0692
         }
 
         String connHandle = resolveAtom(args.get(0), bindings, "Connection");
@@ -316,7 +317,7 @@ public class JdbcLob implements BuiltIn {
     private String resolveAtom(Term term, Map<String, Term> bindings, String argName) {
         Term resolved = term.resolveBindings(bindings);
         if (!(resolved instanceof Atom)) {
-            throw new PrologEvaluationException(modeName() + ": " + argName + " must be an atom.");
+            throw LibArgs.notA("atom", resolved, modeName(), LibArgs.nameArity(modeName()), argName);   // ISS-2025-0692
         }
         return ((Atom) resolved).getName();
     }
@@ -324,7 +325,7 @@ public class JdbcLob implements BuiltIn {
     private int resolveInt(Term term, Map<String, Term> bindings, String argName) {
         Term resolved = term.resolveBindings(bindings);
         if (!(resolved instanceof Number)) {
-            throw new PrologEvaluationException(modeName() + ": " + argName + " must be a number.");
+            throw LibArgs.notA("number", resolved, modeName(), LibArgs.nameArity(modeName()), argName);   // ISS-2025-0692
         }
         return ((Number) resolved).getValue().intValue();
     }

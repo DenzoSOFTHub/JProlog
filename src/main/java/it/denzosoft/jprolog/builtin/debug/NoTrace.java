@@ -1,5 +1,7 @@
 package it.denzosoft.jprolog.builtin.debug;
 
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
 import it.denzosoft.jprolog.core.terms.Term;
@@ -24,7 +26,7 @@ public class NoTrace implements BuiltIn {
     @Override
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         if (query.getArguments() != null && !query.getArguments().isEmpty()) {
-            throw new PrologEvaluationException("notrace/0 takes no arguments");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         
         Trace.setTracingEnabled(false);

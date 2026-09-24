@@ -1,5 +1,7 @@
 package it.denzosoft.jprolog.builtin.io;
 
+import it.denzosoft.jprolog.builtin.LibArgs;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.engine.BuiltIn;
 import it.denzosoft.jprolog.core.engine.v4.Writer;
 import it.denzosoft.jprolog.core.exceptions.PrologEvaluationException;
@@ -22,7 +24,7 @@ public class PortrayClause implements BuiltIn {
     public boolean execute(Term query, Map<String, Term> bindings, List<Map<String, Term>> solutions) {
         int arity = (query.getArguments() == null) ? 0 : query.getArguments().size();
         if (arity != 1 && arity != 2) {
-            throw new PrologEvaluationException("portray_clause/1 or portray_clause/2 expected.");
+            throw LibArgs.unknownArity(query);   // ISS-2025-0697
         }
         PrintStream out;
         Term clause;

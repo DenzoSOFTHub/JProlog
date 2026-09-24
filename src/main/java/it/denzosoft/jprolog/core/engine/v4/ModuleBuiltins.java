@@ -64,10 +64,23 @@ final class ModuleBuiltins {
      */
     private static final class PredicateProperty implements Builtin {
         @Override public Outcome call(Machine m, Term[] args) {
-            Term head = m.deref(args[0]);
+            Term head = Machine.stripUser(args[0]);                  // ISS-2025-0733: user:H is H
             Term prop = m.deref(args[1]);
             String f = null;
             int n = 0;
+            // START_CHANGE: ISS-2025-0733 - predicate_property(M:H, P) for a predicate module M
+            // defines itself (its own clauses, its `M:H` clauses, a multifile declaration)
+            if (head instanceof CompoundTerm && ":".equals(((CompoundTerm) head).getName())
+                    && ((CompoundTerm) head).getArguments().size() == 2) {
+                Term mt = m.deref(((CompoundTerm) head).getArguments().get(0));
+                Term inner = m.deref(((CompoundTerm) head).getArguments().get(1));
+                if (mt instanceof Atom && (inner instanceof Atom || inner instanceof CompoundTerm)) {
+                    List<Term> qp = qualifiedProperties(m, ((Atom) mt).getName(), inner);
+                    if (qp != null) return enumerateList(m, prop, qp);
+                    head = inner;
+                }
+            }
+            // END_CHANGE: ISS-2025-0733
             if (head instanceof Atom) { f = ((Atom) head).getName(); n = 0; }
             else if (head instanceof CompoundTerm) {
                 f = ((CompoundTerm) head).getName();
@@ -109,6 +122,40 @@ final class ModuleBuiltins {
             return (r == 1) ? Outcome.SUSPENDED : Outcome.FAILURE;
         }
 
+        // START_CHANGE: ISS-2025-0733
+        private static List<Term> qualifiedProperties(Machine m, String mod, Term inner) {
+            String f = (inner instanceof Atom) ? ((Atom) inner).getName() : ((CompoundTerm) inner).getName();
+            int n = (inner instanceof Atom) ? 0 : ((CompoundTerm) inner).getArguments().size();
+            Engine e = m.engine();
+            boolean own = e.modules4().localKeys(mod, true).contains(f + "/" + n);
+            boolean flat = m.hasFlatQualified(mod, inner);
+            boolean decl = e.kb().isQualifiedDeclared(mod, f, n);
+            if (!own && !flat && !decl) return null;
+            List<Term> props = new ArrayList<Term>();
+            props.add(new Atom("defined"));
+            props.add(new Atom("visible"));
+            props.add(new Atom(flat && !own ? "dynamic" : "static"));
+            if (decl) props.add(new Atom("multifile"));
+            props.add(new CompoundTerm(new Atom("defined_in"), Arrays.<Term>asList(new Atom(mod))));
+            return props;
+        }
+
+        private static Outcome enumerateList(Machine m, final Term prop, final List<Term> props) {
+            final int[] i = {0};
+            Generator gen = new Generator() {
+                @Override public boolean next(Machine mm) {
+                    while (i[0] < props.size()) {
+                        Term p = props.get(i[0]++);
+                        if (i[0] >= props.size()) mm.lastSolution();
+                        if (mm.unifyOrUndo(prop, p)) return true;
+                    }
+                    return false;
+                }
+            };
+            return m.pushGenerator(gen) ? Outcome.SUSPENDED : Outcome.FAILURE;
+        }
+        // END_CHANGE: ISS-2025-0733
+
         private static Term rebuild(Term[] args) {
             return new CompoundTerm(new Atom("predicate_property"), Arrays.asList(args[0], args[1]));
         }
@@ -149,7 +196,8 @@ final class ModuleBuiltins {
             List<it.denzosoft.jprolog.core.engine.Rule> rules = (kb == null) ? null : kb.getRulesForPredicate(f, n);
             int clauses = (rules == null) ? 0 : rules.size();
             boolean dyn = kb != null && kb.isDynamic(f, n);
-            boolean user = clauses > 0 || dyn;
+            boolean multi = kb != null && kb.isMultifile(f, n);            // ISS-2025-0730
+            boolean user = clauses > 0 || dyn || multi;
             boolean lib = e.modules4().isLibraryIndicatorKey(key);
             if (!builtin && !user && !lib && !inModule) return null;
             if (builtin && !user) {
@@ -165,6 +213,7 @@ final class ModuleBuiltins {
             } else {
                 props.add(new Atom("static"));
             }
+            if (multi) props.add(new Atom("multifile"));                  // ISS-2025-0730
             // ISS-2025-0572: predicate_property(P, tabled)
             if (e.tables() != null && e.tables().isTabled(f, n)) props.add(new Atom("tabled"));
             return props;

@@ -79,6 +79,59 @@ public final class TermReader {
     private final Map<String, Integer> occurrences = new HashMap<>();
     private final List<Variable> allVariables = new ArrayList<>();
 
+    // START_CHANGE: ISS-2025-0738 - 4.6 wave Q3.7: subterm positions (SWI's position terms:
+    // From-To, string_position/2, brace_term_position/3, list_position/4, term_position/5,
+    // parentheses_term_position/3). Off by default: consult pays one null test per primary.
+    private boolean positions;
+    private int posBase;
+    private Term lastPos;
+
+    /** Record subterm positions, offset by {@code base} (the text's offset in its stream). */
+    public TermReader withPositions(int base) { this.positions = true; this.posBase = base; return this; }
+
+    /** The position term of the last term read (with {@link #withPositions}), or null. */
+    public Term lastPositions() { return lastPos; }
+
+    private Term ft(int from, int to) {
+        return new CompoundTerm(new Atom("-"), java.util.Arrays.<Term>asList(
+            new Number((long) (posBase + from)), new Number((long) (posBase + to))));
+    }
+
+    private Term tokPos(Lexer.Token t) { return ft(t.pos, t.end); }
+
+    private Term pos(String f, Term... args) {
+        return new CompoundTerm(new Atom(f), java.util.Arrays.asList(args));
+    }
+
+    private Number off(int o) { return new Number((long) (posBase + o)); }
+
+    /** From and To of a position term (absolute). */
+    private static long posFrom(Term p) {
+        return ((Number) ((CompoundTerm) p).getArguments().get(0)).longValue();
+    }
+
+    private static long posTo(Term p) {
+        return ((Number) ((CompoundTerm) p).getArguments().get(1)).longValue();
+    }
+
+    private static Term listOf(List<Term> xs) {
+        Term l = new Atom("[]");
+        for (int i = xs.size() - 1; i >= 0; i--) {
+            l = new CompoundTerm(new Atom("."), java.util.Arrays.asList(xs.get(i), l));
+        }
+        return l;
+    }
+
+    private Term opPos(Term leftPos, int opFrom, int opTo, Term rightPos) {
+        long from = leftPos != null ? posFrom(leftPos) : posBase + opFrom;
+        long to = rightPos != null ? posTo(rightPos) : posBase + opTo;
+        List<Term> args = new ArrayList<>(2);
+        if (leftPos != null) args.add(leftPos);
+        if (rightPos != null) args.add(rightPos);
+        return pos("term_position", new Number(from), new Number(to), off(opFrom), off(opTo), listOf(args));
+    }
+    // END_CHANGE: ISS-2025-0738
+
     /** Fix the double_quotes mode instead of reading the flag (read_term option double_quotes). */
     public TermReader withDoubleQuotes(String mode) { this.fixedDqMode = mode; return this; }
     /** Give every variable of a read term a fresh, unnamed cell (the name stays in variableNames). */
@@ -243,12 +296,16 @@ public final class TermReader {
     private static final class Parsed {
         final Term term;
         final int prec;
+        Term pos;                                                   // ISS-2025-0738
         Parsed(Term term, int prec) { this.term = term; this.prec = prec; }
+        Parsed(Term term, int prec, Term pos) { this.term = term; this.prec = prec; this.pos = pos; }
     }
 
     /** Read a term whose priority is at most {@code maxPrec}. */
     Term readTerm(int maxPrec) {
-        return parse(maxPrec).term;
+        Parsed p = parse(maxPrec);
+        lastPos = p.pos;                                            // ISS-2025-0738
+        return p.term;
     }
 
     private Parsed parse(int maxPrec) {
@@ -283,6 +340,10 @@ public final class TermReader {
     private int[] pPrec = new int[16];
     private int[] pOuter = new int[16];
     private int pTop;
+    // ISS-2025-0738: with positions on, the left operand's position and the operator's span
+    private Term[] pLPos = new Term[16];
+    private int[] pOpFrom = new int[16];
+    private int[] pOpTo = new int[16];
 
     private void pushPending(Term left, String name, int prec, int outerMax) {
         if (pTop == pLeft.length) {
@@ -291,6 +352,9 @@ public final class TermReader {
             pName = java.util.Arrays.copyOf(pName, n);
             pPrec = java.util.Arrays.copyOf(pPrec, n);
             pOuter = java.util.Arrays.copyOf(pOuter, n);
+            pLPos = java.util.Arrays.copyOf(pLPos, n);
+            pOpFrom = java.util.Arrays.copyOf(pOpFrom, n);
+            pOpTo = java.util.Arrays.copyOf(pOpTo, n);
         }
         pLeft[pTop] = left; pName[pTop] = name; pPrec[pTop] = prec; pOuter[pTop] = outerMax;
         pTop++;
@@ -302,22 +366,28 @@ public final class TermReader {
             Operator op = peekInfixOrPostfix();
             if (op != null && op.getPrecedence() <= maxPrec && left.prec <= op.getLeftPrecedence()) {
                 String name = op.getName();
-                next(); // consume the operator token
+                Lexer.Token opTok = next(); // consume the operator token
                 if (op.isInfix()) {
                     pushPending(left.term, name, op.getPrecedence(), maxPrec);
+                    if (positions) {                                        // ISS-2025-0738
+                        pLPos[pTop - 1] = left.pos; pOpFrom[pTop - 1] = opTok.pos; pOpTo[pTop - 1] = opTok.end;
+                    }
                     maxPrec = op.getRightPrecedence();
                     left = parsePrimary(maxPrec);
                 } else { // postfix
                     left = new Parsed(new CompoundTerm(new Atom(name),
-                            java.util.Arrays.asList(left.term)), op.getPrecedence());
+                            java.util.Arrays.asList(left.term)), op.getPrecedence(),
+                            positions ? opPos(left.pos, opTok.pos, opTok.end, null) : null);   // ISS-2025-0738
                 }
                 continue;
             }
             if (pTop == base) return left;
             pTop--;
             left = new Parsed(new CompoundTerm(new Atom(pName[pTop]),
-                    java.util.Arrays.asList(pLeft[pTop], left.term)), pPrec[pTop]);
+                    java.util.Arrays.asList(pLeft[pTop], left.term)), pPrec[pTop],
+                    positions ? opPos(pLPos[pTop], pOpFrom[pTop], pOpTo[pTop], left.pos) : null);   // ISS-2025-0738
             pLeft[pTop] = null;
+            if (positions) pLPos[pTop] = null;
             maxPrec = pOuter[pTop];
         }
     }
@@ -329,13 +399,16 @@ public final class TermReader {
      * (1000 xfy) and {@code ;/2} (1100 xfy) respectively.
      */
     private static final Operator COMMA_OP = new Operator(1000, Operator.Type.XFY, ",");
-    private static final Operator BAR_OP = new Operator(1100, Operator.Type.XFY, ";");
+    // START_CHANGE: ISS-2025-0734 - 4.6 wave Q3.5: the bar reads as the infix operator '|'
+    // declared in the operator table (SWI 7+: `(a|b)` is '|'(a,b); 1105 xfy by default), not as
+    // `;`. A goal '|'(A,B) runs as (A;B) and a DCG body treats it as alternation.
+    // END_CHANGE: ISS-2025-0734
 
     private Operator peekInfixOrPostfix() {
         Lexer.Token t = peek();
         switch (t.kind) {
             case COMMA: return COMMA_OP;     // ISS-2025-0561: shared, not one per token
-            case BAR:   return BAR_OP;
+            case BAR:   return ops.getInfixOperator("|");     // ISS-2025-0734
             case ATOM: {
                 Operator infix = ops.getInfixOperator(t.text);
                 if (infix != null) return infix;
@@ -350,30 +423,40 @@ public final class TermReader {
         switch (t.kind) {
             case NUMBER:
                 next();
-                return new Parsed(t.number, 0);
+                return new Parsed(t.number, 0, positions ? tokPos(t) : null);
             case VAR:
                 next();
-                return new Parsed(variable(t.text), 0);
+                return new Parsed(variable(t.text), 0, positions ? tokPos(t) : null);
             case STRING:
                 next();
-                return new Parsed(stringTerm(t.text), 0);
+                return new Parsed(stringTerm(t.text), 0,
+                    positions ? pos("string_position", off(t.pos), off(t.end)) : null);
             // START_CHANGE: ISS-2025-0579 - `text` is a code list (SWI default back_quotes=codes)
             case BACKQUOTE:
                 next();
                 if (dqMode == null) sampleFlags();
                 return new Parsed(stringTerm(t.text, "codes".equals(bqMode) || bqMode == null ? "codes"
-                        : ("symbol_char".equals(bqMode) ? "atom" : bqMode)), 0);
+                        : ("symbol_char".equals(bqMode) ? "atom" : bqMode)), 0,
+                    positions ? pos("string_position", off(t.pos), off(t.end)) : null);
             // END_CHANGE: ISS-2025-0579
             case LPAREN: {
                 next();
-                Term inner = readTerm(1200);
+                Parsed inner = parse(1200);                                 // ISS-2025-0738
+                Lexer.Token close = peek();
                 expect(Lexer.Kind.RPAREN, ")");
-                return new Parsed(inner, 0); // parenthesised term has priority 0
+                return new Parsed(inner.term, 0, positions                 // parenthesised: priority 0
+                    ? pos("parentheses_term_position", off(t.pos), off(close.end), inner.pos) : null);
             }
-            case LBRACKET:
-                return new Parsed(parseList(), 0);
-            case LBRACE:
-                return new Parsed(parseBrace(), 0);
+            case LBRACKET: {
+                Term[] lp = positions ? new Term[1] : null;
+                Term l = parseList(lp);
+                return new Parsed(l, 0, positions ? lp[0] : null);
+            }
+            case LBRACE: {
+                Term[] bp = positions ? new Term[1] : null;
+                Term b = parseBrace(bp);
+                return new Parsed(b, 0, positions ? bp[0] : null);
+            }
             case ATOM:
                 return parseAtomOrPrefix(t, maxPrec);
             default:
@@ -390,8 +473,11 @@ public final class TermReader {
         if (after.kind == Lexer.Kind.LPAREN && !after.precededByLayout) {
             next();                       // atom
             next();                       // '('
-            List<Term> args = parseArgList();
-            return new Parsed(new CompoundTerm(new Atom(name), args), 0);
+            List<Term> argPos = positions ? new ArrayList<>() : null;       // ISS-2025-0738
+            List<Term> args = parseArgList(argPos);
+            return new Parsed(new CompoundTerm(new Atom(name), args), 0, positions
+                ? pos("term_position", off(t.pos), off(tokens.get(idx - 1).end), off(t.pos), off(t.end), listOf(argPos))
+                : null);
         }
 
         // (2) Negative number literal:  '-' immediately adjacent to a number (ISO 6.3.1.2).
@@ -400,7 +486,7 @@ public final class TermReader {
                 && after.kind == Lexer.Kind.NUMBER && !after.precededByLayout) {
             next();                       // '-'
             Lexer.Token numT = next();    // number
-            return new Parsed(applySign(name, (Number) numT.number), 0);
+            return new Parsed(applySign(name, (Number) numT.number), 0, positions ? ft(t.pos, numT.end) : null);
         }
 
         // (3) Prefix operator — but only if a term can actually follow (else: operator-as-atom).
@@ -412,7 +498,8 @@ public final class TermReader {
             next();                       // operator atom
             Parsed arg = parse(prefix.getRightPrecedence());
             return new Parsed(new CompoundTerm(new Atom(name),
-                    java.util.Arrays.asList(arg.term)), prefix.getPrecedence());
+                    java.util.Arrays.asList(arg.term)), prefix.getPrecedence(),
+                    positions ? opPos(null, t.pos, t.end, arg.pos) : null);    // ISS-2025-0738
         }
         // START_CHANGE: ISS-2025-0566 - SWI leniency: a prefix operator whose priority exceeds
         // the context (`X = \+a`, `f(:- a)`, `[dynamic p]`) is still applied, with its operand
@@ -423,45 +510,61 @@ public final class TermReader {
             next();                       // operator atom
             Parsed arg = parse(Math.min(prefix.getRightPrecedence(), maxPrec));
             return new Parsed(new CompoundTerm(new Atom(name),
-                    java.util.Arrays.asList(arg.term)), maxPrec);
+                    java.util.Arrays.asList(arg.term)), maxPrec,
+                    positions ? opPos(null, t.pos, t.end, arg.pos) : null);    // ISS-2025-0738
         }
         // END_CHANGE: ISS-2025-0566
 
         // (4) Plain atom (includes an operator used as an atom: X = -, foo(-, +), ...).
         next();
-        return new Parsed(new Atom(name), 0);
+        return new Parsed(new Atom(name), 0, positions ? tokPos(t) : null);
     }
 
     /** Arguments of a compound: parse(999) items separated by ',', until ')'. */
-    private List<Term> parseArgList() {
+    private List<Term> parseArgList(List<Term> argPos) {
         List<Term> args = new ArrayList<>();
-        args.add(parse(999).term);
+        Parsed a = parse(999);
+        args.add(a.term);
+        if (argPos != null) argPos.add(a.pos);                          // ISS-2025-0738
         while (peek().kind == Lexer.Kind.COMMA) {
             next();
-            args.add(parse(999).term);
+            a = parse(999);
+            args.add(a.term);
+            if (argPos != null) argPos.add(a.pos);
         }
         expect(Lexer.Kind.RPAREN, ")");
         return args;
     }
 
-    private Term parseList() {
-        next(); // '['
+    private Term parseList(Term[] lp) {
+        Lexer.Token open = next(); // '['
         if (peek().kind == Lexer.Kind.RBRACKET) {
-            next();
+            Lexer.Token close = next();
+            if (lp != null) lp[0] = ft(open.pos, close.end);              // ISS-2025-0738: [] is an atom
             return new Atom("[]");
         }
         List<Term> elems = new ArrayList<>();
-        elems.add(parse(999).term);
+        List<Term> elemPos = lp != null ? new ArrayList<>() : null;
+        Parsed e = parse(999);
+        elems.add(e.term);
+        if (elemPos != null) elemPos.add(e.pos);
         while (peek().kind == Lexer.Kind.COMMA) {
             next();
-            elems.add(parse(999).term);
+            e = parse(999);
+            elems.add(e.term);
+            if (elemPos != null) elemPos.add(e.pos);
         }
         Term tail = new Atom("[]");
+        Term tailPos = new Atom("none");
         if (peek().kind == Lexer.Kind.BAR) {
             next();
-            tail = parse(999).term;
+            Parsed tp = parse(999);
+            tail = tp.term;
+            if (lp != null) tailPos = tp.pos;
         }
+        Lexer.Token close = peek();
         expect(Lexer.Kind.RBRACKET, "]");
+        if (lp != null) lp[0] = pos("list_position", off(open.pos), off(close.end), listOf(elemPos), tailPos);
         Term list = tail;
         for (int i = elems.size() - 1; i >= 0; i--) {
             list = new CompoundTerm(new Atom("."), java.util.Arrays.asList(elems.get(i), list));
@@ -469,15 +572,18 @@ public final class TermReader {
         return list;
     }
 
-    private Term parseBrace() {
-        next(); // '{'
+    private Term parseBrace(Term[] bp) {
+        Lexer.Token open = next(); // '{'
         if (peek().kind == Lexer.Kind.RBRACE) {
-            next();
+            Lexer.Token close = next();
+            if (bp != null) bp[0] = ft(open.pos, close.end);              // ISS-2025-0738
             return new Atom("{}");
         }
-        Term inner = readTerm(1200);
+        Parsed inner = parse(1200);                                     // ISS-2025-0738
+        Lexer.Token close = peek();
         expect(Lexer.Kind.RBRACE, "}");
-        return new CompoundTerm(new Atom("{}"), java.util.Arrays.asList(inner));
+        if (bp != null) bp[0] = pos("brace_term_position", off(open.pos), off(close.end), inner.pos);
+        return new CompoundTerm(new Atom("{}"), java.util.Arrays.asList(inner.term));
     }
 
     // ====================================================================== helpers
@@ -541,6 +647,11 @@ public final class TermReader {
 
     private Term applySign(String sign, Number n) {
         if (!"-".equals(sign)) return n;
+        // ISS-2025-0712: -1r3 is a negative rational literal
+        if (n instanceof it.denzosoft.jprolog.core.terms.Rational) {
+            it.denzosoft.jprolog.core.terms.Rational r = (it.denzosoft.jprolog.core.terms.Rational) n;
+            return it.denzosoft.jprolog.core.terms.Rational.of(r.getNumerator().negate(), r.getDenominator());
+        }
         if (n.isInteger()) {
             return new Number(n.bigIntegerValue().negate());
         }

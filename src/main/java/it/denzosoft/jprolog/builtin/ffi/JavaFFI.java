@@ -2,6 +2,7 @@
 package it.denzosoft.jprolog.builtin.ffi;
 
 import it.denzosoft.jprolog.core.engine.BuiltIn;
+import it.denzosoft.jprolog.core.engine.v4.Errors;
 import it.denzosoft.jprolog.core.terms.*;
 import it.denzosoft.jprolog.core.terms.Number;
 
@@ -126,9 +127,95 @@ public class JavaFFI implements BuiltIn {
             return result;
         } catch (Exception e) {
             it.denzosoft.jprolog.core.engine.ControlFlow.rethrowIfControl(e);   // ISS-2025-0431
-            return false;
+            // START_CHANGE: ISS-2025-0796 - 4.6 wave Q7: an argument fault RAISES (invariant 65) and a
+            // host failure maps to an error term; every exception used to become a silent failure.
+            throw hostError(e);
+            // END_CHANGE: ISS-2025-0796
         }
     }
+
+    // START_CHANGE: ISS-2025-0796 - 4.6 wave Q7: the FFI's ISO argument checks. 22 probed goals
+    // (unbound or f(x) arguments) FAILED silently; they now raise instantiation_error / type_error,
+    // and an unknown class / method / field / constructor raises existence_error(class|method|
+    // field|constructor, Name). An exception thrown by the invoked Java code is
+    // error(java_exception(ExceptionClass), context(Name/Arity, Message)) — JPL's formal, with the
+    // class name instead of a reference. All contexts are context(Name/Arity, Message).
+    private String pname() { return operationType.name().toLowerCase(); }
+
+    private int parity() {
+        switch (operationType) {
+            case JAVA_CALL: return 4;
+            case JAVA_NEW: case JAVA_GET_FIELD: case JAVA_SET_FIELD:
+            case JAVA_ARRAY_NEW: case JAVA_ARRAY_GET: case JAVA_ARRAY_SET: return 3;
+            case JAVA_RELEASE_REF: return 1;
+            case JAVA_GC: return 0;
+            default: return 2;
+        }
+    }
+
+    private it.denzosoft.jprolog.core.exceptions.PrologException hostError(Exception e) {
+        if (e instanceof it.denzosoft.jprolog.core.exceptions.PrologException) {
+            return (it.denzosoft.jprolog.core.exceptions.PrologException) e;
+        }
+        Throwable t = e instanceof InvocationTargetException && e.getCause() != null ? e.getCause() : e;
+        String msg = t.getMessage() != null ? t.getMessage() : t.getClass().getName();
+        return Errors.error(new CompoundTerm(new Atom("java_exception"),
+            java.util.Collections.<Term>singletonList(new Atom(t.getClass().getName()))), pname(), parity(), msg);
+    }
+
+    /** An atom or string argument, as text. */
+    private String needText(Term t, String what) {
+        if (t instanceof Variable) throw Errors.instantiation(pname(), parity(), what + " must be bound");
+        String s = termToString(t);
+        if (s == null) throw Errors.type("atom", t, pname(), parity(), what + " must be an atom or a string");
+        return s;
+    }
+
+    private Class<?> needClass(String className) {
+        Class<?> c = resolveClass(className);
+        if (c == null) throw Errors.existence("class", new Atom(className), pname(), parity(), "unknown Java class " + className);
+        return c;
+    }
+
+    private List<Object> needList(Term t, Map<String, Term> bindings) {
+        List<Object> l = prologListToJavaList(t, bindings);
+        if (l != null) return l;
+        Term tail = t;
+        while (tail instanceof CompoundTerm && ".".equals(((CompoundTerm) tail).getName())
+                && ((CompoundTerm) tail).getArguments().size() == 2) {
+            tail = ((CompoundTerm) tail).getArguments().get(1).resolveBindings(bindings);
+        }
+        if (tail instanceof Variable) throw Errors.instantiation(pname(), parity(), "the argument list must be a proper list");
+        throw Errors.type("list", t, pname(), parity(), "the argument list must be a list");
+    }
+
+    /** A Java object reference (an array when {@code array}). */
+    private Object needRef(Term t, boolean array) {
+        if (t instanceof Variable) throw Errors.instantiation(pname(), parity(), "the Java reference must be bound");
+        Object o = resolveJavaObject(t);
+        if (o == null || (array && !o.getClass().isArray())) {
+            throw Errors.type(array ? "java_array" : "java_object", t, pname(), parity(),
+                array ? "expected a reference to a Java array" : "expected a Java object reference");
+        }
+        return o;
+    }
+
+    private int needInt(Term t, String what) {
+        if (t instanceof Variable) throw Errors.instantiation(pname(), parity(), what + " must be bound");
+        if (!(t instanceof Number) || !((Number) t).isInteger()) {
+            throw Errors.type("integer", t, pname(), parity(), what + " must be an integer");
+        }
+        return (int) ((Number) t).longValue();
+    }
+
+    /** The target of java_call/get_field/set_field: a reference, or a class name for a static access. */
+    private void needTarget(Term t) {
+        if (t instanceof Variable) throw Errors.instantiation(pname(), parity(), "the target must be bound");
+        if (!(t instanceof Atom) && !(t instanceof PrologString)) {
+            throw Errors.type("java_object", t, pname(), parity(), "the target must be a Java reference or a class name");
+        }
+    }
+    // END_CHANGE: ISS-2025-0796
 
     // ---------------------------------------------------------------
     // java_new(+ClassName, +ArgList, -Instance)
@@ -140,18 +227,16 @@ public class JavaFFI implements BuiltIn {
         Term argListTerm = args.get(1).resolveBindings(bindings);
         Term instanceTerm = args.get(2).resolveBindings(bindings);
 
-        String className = termToString(classNameTerm);
-        if (className == null) return false;
-
-        Class<?> clazz = resolveClass(className);
-        if (clazz == null) return false;
-
-        List<Object> javaArgs = prologListToJavaList(argListTerm, bindings);
-        if (javaArgs == null) return false;
+        String className = needText(classNameTerm, "the class name");              // ISS-2025-0796
+        Class<?> clazz = needClass(className);
+        List<Object> javaArgs = needList(argListTerm, bindings);
 
         Object[] argArray = javaArgs.toArray();
         Constructor<?> constructor = findConstructor(clazz, argArray);
-        if (constructor == null) return false;
+        if (constructor == null) {
+            throw Errors.existence("constructor", new Atom(className), pname(), parity(),
+                "no constructor of " + className + " accepts " + argArray.length + " such arguments");
+        }
 
         constructor.setAccessible(true);
         Object[] convertedArgs = convertArguments(constructor.getParameterTypes(), argArray);
@@ -172,11 +257,9 @@ public class JavaFFI implements BuiltIn {
         Term argListTerm = args.get(2).resolveBindings(bindings);
         Term resultTerm = args.get(3).resolveBindings(bindings);
 
-        String methodName = termToString(methodNameTerm);
-        if (methodName == null) return false;
-
-        List<Object> javaArgs = prologListToJavaList(argListTerm, bindings);
-        if (javaArgs == null) return false;
+        needTarget(targetTerm);                                                    // ISS-2025-0796
+        String methodName = needText(methodNameTerm, "the method name");
+        List<Object> javaArgs = needList(argListTerm, bindings);
 
         Object[] argArray = javaArgs.toArray();
 
@@ -196,7 +279,6 @@ public class JavaFFI implements BuiltIn {
         } else {
             // Try interpreting targetTerm as a class name for static call
             String className = termToString(targetTerm);
-            if (className == null) return false;
             clazz = resolveClass(className);
             if (clazz != null) {
                 isStatic = true;
@@ -209,7 +291,11 @@ public class JavaFFI implements BuiltIn {
         }
 
         Method method = findMethod(clazz, methodName, argArray, isStatic);
-        if (method == null) return false;
+        if (method == null) {
+            throw Errors.existence("method", new Atom(methodName), pname(), parity(),   // ISS-2025-0796
+                "no " + (isStatic ? "static " : "") + "method " + clazz.getName() + "." + methodName
+                + " accepts " + argArray.length + " such arguments");
+        }
 
         method.setAccessible(true);
         Object[] convertedArgs = convertArguments(method.getParameterTypes(), argArray);
@@ -229,8 +315,8 @@ public class JavaFFI implements BuiltIn {
         Term fieldNameTerm = args.get(1).resolveBindings(bindings);
         Term valueTerm = args.get(2).resolveBindings(bindings);
 
-        String fieldName = termToString(fieldNameTerm);
-        if (fieldName == null) return false;
+        needTarget(targetTerm);                                                    // ISS-2025-0796
+        String fieldName = needText(fieldNameTerm, "the field name");
 
         Object target = resolveJavaObject(targetTerm);
         Class<?> clazz;
@@ -244,18 +330,21 @@ public class JavaFFI implements BuiltIn {
             clazz = target.getClass();
             isStatic = false;
         } else {
-            String className = termToString(targetTerm);
-            if (className == null) return false;
-            clazz = resolveClass(className);
-            if (clazz == null) return false;
+            clazz = needClass(termToString(targetTerm));                        // ISS-2025-0796
             isStatic = true;
         }
 
         Field field = findField(clazz, fieldName);
-        if (field == null) return false;
+        if (field == null) {
+            throw Errors.existence("field", new Atom(fieldName), pname(), parity(),       // ISS-2025-0796
+                "no field " + clazz.getName() + "." + fieldName);
+        }
 
         field.setAccessible(true);
-        if (isStatic && !Modifier.isStatic(field.getModifiers())) return false;
+        if (isStatic && !Modifier.isStatic(field.getModifiers())) {
+            throw Errors.existence("static_field", new Atom(fieldName), pname(), parity(),   // ISS-2025-0796
+                clazz.getName() + "." + fieldName + " is an instance field");
+        }
         Object value = field.get(isStatic ? null : target);
 
         Term resultTerm = javaObjectToTerm(value);
@@ -272,8 +361,8 @@ public class JavaFFI implements BuiltIn {
         Term fieldNameTerm = args.get(1).resolveBindings(bindings);
         Term valueTermArg = args.get(2).resolveBindings(bindings);
 
-        String fieldName = termToString(fieldNameTerm);
-        if (fieldName == null) return false;
+        needTarget(targetTerm);                                                    // ISS-2025-0796
+        String fieldName = needText(fieldNameTerm, "the field name");
 
         Object target = resolveJavaObject(targetTerm);
         Class<?> clazz;
@@ -287,19 +376,28 @@ public class JavaFFI implements BuiltIn {
             clazz = target.getClass();
             isStatic = false;
         } else {
-            String className = termToString(targetTerm);
-            if (className == null) return false;
-            clazz = resolveClass(className);
-            if (clazz == null) return false;
+            clazz = needClass(termToString(targetTerm));                        // ISS-2025-0796
             isStatic = true;
         }
 
         Field field = findField(clazz, fieldName);
-        if (field == null) return false;
+        if (field == null) {
+            throw Errors.existence("field", new Atom(fieldName), pname(), parity(),       // ISS-2025-0796
+                "no field " + clazz.getName() + "." + fieldName);
+        }
 
         field.setAccessible(true);
-        if (Modifier.isFinal(field.getModifiers())) return false;
-        if (isStatic && !Modifier.isStatic(field.getModifiers())) return false;
+        if (Modifier.isFinal(field.getModifiers())) {
+            throw Errors.permission("modify", "final_field", new Atom(fieldName), pname(), parity(),   // ISS-2025-0796
+                clazz.getName() + "." + fieldName + " is final");
+        }
+        if (isStatic && !Modifier.isStatic(field.getModifiers())) {
+            throw Errors.existence("static_field", new Atom(fieldName), pname(), parity(),
+                clazz.getName() + "." + fieldName + " is an instance field");
+        }
+        if (valueTermArg instanceof Variable) {
+            throw Errors.instantiation(pname(), parity(), "the value must be bound");
+        }
 
         Object javaValue = termToJavaObject(valueTermArg);
         field.set(isStatic ? null : target, javaValue);
@@ -315,14 +413,13 @@ public class JavaFFI implements BuiltIn {
         Term objTerm = args.get(0).resolveBindings(bindings);
         Term classNameTerm = args.get(1).resolveBindings(bindings);
 
-        Object obj = resolveJavaObject(objTerm);
-        if (obj == null) return false;
-
-        String className = termToString(classNameTerm);
-        if (className == null) return false;
-
-        Class<?> clazz = resolveClass(className);
-        if (clazz == null) return false;
+        // ISS-2025-0796: null is an instance of nothing (fails); anything else must be a reference
+        if (objTerm instanceof Atom && "null".equals(((Atom) objTerm).getName())) {
+            needClass(needText(classNameTerm, "the class name"));
+            return false;
+        }
+        Object obj = needRef(objTerm, false);
+        Class<?> clazz = needClass(needText(classNameTerm, "the class name"));
 
         return clazz.isInstance(obj);
     }
@@ -336,11 +433,7 @@ public class JavaFFI implements BuiltIn {
         Term classNameTerm = args.get(0).resolveBindings(bindings);
         Term classObjTerm = args.get(1).resolveBindings(bindings);
 
-        String className = termToString(classNameTerm);
-        if (className == null) return false;
-
-        Class<?> clazz = resolveClass(className);
-        if (clazz == null) return false;
+        Class<?> clazz = needClass(needText(classNameTerm, "the class name"));   // ISS-2025-0796
 
         Term refTerm = registerObject(clazz);
         return unifyTerms(classObjTerm, refTerm, bindings);
@@ -356,14 +449,10 @@ public class JavaFFI implements BuiltIn {
         Term lengthTerm = args.get(1).resolveBindings(bindings);
         Term arrayTerm = args.get(2).resolveBindings(bindings);
 
-        String typeName = termToString(typeTerm);
-        if (typeName == null) return false;
-
-        if (!(lengthTerm instanceof Number)) return false;
-        int length = (int) ((Number) lengthTerm).longValue();
-
-        Class<?> componentType = resolveClass(typeName);
-        if (componentType == null) return false;
+        String typeName = needText(typeTerm, "the component type");                // ISS-2025-0796
+        int length = needInt(lengthTerm, "the length");
+        if (length < 0) throw Errors.domain("not_less_than_zero", lengthTerm, pname(), parity(), "negative array length");
+        Class<?> componentType = needClass(typeName);
 
         Object array = Array.newInstance(componentType, length);
         Term refTerm = registerObject(array);
@@ -380,12 +469,9 @@ public class JavaFFI implements BuiltIn {
         Term indexTerm = args.get(1).resolveBindings(bindings);
         Term elementTerm = args.get(2).resolveBindings(bindings);
 
-        Object array = resolveJavaObject(arrayTerm);
-        if (array == null || !array.getClass().isArray()) return false;
-
-        if (!(indexTerm instanceof Number)) return false;
-        int index = (int) ((Number) indexTerm).longValue();
-
+        Object array = needRef(arrayTerm, true);                                   // ISS-2025-0796
+        int index = needInt(indexTerm, "the index");
+        // an index outside the array FAILS, as arg/3 does for a position outside the term
         if (index < 0 || index >= Array.getLength(array)) return false;
 
         Object element = Array.get(array, index);
@@ -403,12 +489,9 @@ public class JavaFFI implements BuiltIn {
         Term indexTerm = args.get(1).resolveBindings(bindings);
         Term valueTerm = args.get(2).resolveBindings(bindings);
 
-        Object array = resolveJavaObject(arrayTerm);
-        if (array == null || !array.getClass().isArray()) return false;
-
-        if (!(indexTerm instanceof Number)) return false;
-        int index = (int) ((Number) indexTerm).longValue();
-
+        Object array = needRef(arrayTerm, true);                                   // ISS-2025-0796
+        int index = needInt(indexTerm, "the index");
+        // an index outside the array FAILS, as arg/3 does for a position outside the term
         if (index < 0 || index >= Array.getLength(array)) return false;
 
         Object value = termToJavaObject(valueTerm);
@@ -425,8 +508,7 @@ public class JavaFFI implements BuiltIn {
         Term arrayTerm = args.get(0).resolveBindings(bindings);
         Term lengthTerm = args.get(1).resolveBindings(bindings);
 
-        Object array = resolveJavaObject(arrayTerm);
-        if (array == null || !array.getClass().isArray()) return false;
+        Object array = needRef(arrayTerm, true);                                   // ISS-2025-0796
 
         int length = Array.getLength(array);
         Term resultTerm = new Number((long) length)   /* ISS-2025-0424 */;
@@ -442,6 +524,7 @@ public class JavaFFI implements BuiltIn {
         Term objTerm = args.get(0).resolveBindings(bindings);
         Term resultTerm = args.get(1).resolveBindings(bindings);
 
+        if (objTerm instanceof Variable) throw Errors.instantiation(pname(), parity(), "the object must be bound");   // ISS-2025-0796
         // Check if it's a Java reference
         Object obj = resolveJavaObject(objTerm);
         if (obj != null) {
@@ -472,6 +555,7 @@ public class JavaFFI implements BuiltIn {
         Term inputTerm = args.get(0).resolveBindings(bindings);
         Term resultTerm = args.get(1).resolveBindings(bindings);
 
+        if (inputTerm instanceof Variable) throw Errors.instantiation(pname(), parity(), "the term must be bound");   // ISS-2025-0796
         Object javaObj = termToJavaObject(inputTerm);
         Term refTerm = registerObject(javaObj);
         return unifyTerms(resultTerm, refTerm, bindings);
@@ -485,7 +569,8 @@ public class JavaFFI implements BuiltIn {
         if (args.size() != 1) return false;
 
         Term refKeyTerm = args.get(0).resolveBindings(bindings);
-        if (!(refKeyTerm instanceof Atom)) return false;
+        if (refKeyTerm instanceof Variable) throw Errors.instantiation(pname(), parity(), "the reference must be bound");   // ISS-2025-0796
+        if (!(refKeyTerm instanceof Atom)) throw Errors.type("atom", refKeyTerm, pname(), parity(), "the reference must be an atom");
 
         String refKey = ((Atom) refKeyTerm).getName();
         return refTable.remove(refKey) != null;
